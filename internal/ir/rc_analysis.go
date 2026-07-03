@@ -1753,64 +1753,6 @@ func (b *builder) safeForControlFlowDrop(name string) bool {
 	return false
 }
 
-// typeIsStringArrayFree reports whether `t`'s deep-drop reclaims no string or
-// array buffer — i.e. t is built transitively from scalars, enums, structs, and
-// tuples only (no string / array / slice / Map, no unresolved generic). `seen`
-// breaks recursive-type cycles (a self-recursive enum like List is fine: the
-// back-edge is assumed free, and any string/array on a real payload is caught on
-// its own first visit before the back-edge is taken).
-func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
-	switch ty := t.(type) {
-	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
-		return true
-	case ast.StringType, ast.ArrayType, ast.SliceType:
-		return false
-	case ast.TupleType:
-		for _, e := range ty.Elems {
-			if !b.typeIsStringArrayFree(e, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.StructType:
-		if ty.Name == "Map" {
-			return false
-		}
-		if seen[ty.Name] {
-			return true
-		}
-		seen[ty.Name] = true
-		sd, ok := b.info.Structs[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, f := range sd.Fields {
-			if !b.typeIsStringArrayFree(f.Type, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.EnumType:
-		if seen[ty.Name] {
-			return true
-		}
-		seen[ty.Name] = true
-		ed, ok := b.info.Enums[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, v := range ed.Variants {
-			for _, pl := range v.Payloads {
-				if !b.typeIsStringArrayFree(pl, seen) {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	return false
-}
-
 // flowsIntoUncountedAlias reports whether `name` appears inside an
 // expression that produces an UNCOUNTED pointer alias of it within `st`: a
 // pointer-returning call (the result may BE the arg, e.g. `id(x)` / a

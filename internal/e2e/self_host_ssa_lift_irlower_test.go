@@ -26,8 +26,9 @@ import (
 // tuple_get, incl. nested), f64 scalars (const_f64 + fadd / fmul /
 // fgt / … + fneg), i32<->f64 casts (i32_to_f64 / f64_to_i32), string
 // concat / equality (str_concat / str_eq), the string builder
-// (strbuf_reset / _append / _take), and the process / output ops
-// (print_str / eprint_str / exit), with
+// (strbuf_reset / _append / _take), the process / output ops
+// (print_str / eprint_str / exit), string indexing (str_index), and
+// Option / Result (opt_make / opt_none / opt_tag / opt_payload), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -169,6 +170,18 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"print", `function main(): i32 { print("hello"); return 5; }`},
 		{"write", `function main(): i32 { write("hi"); return 3; }`},
 		{"eprint", `function main(): i32 { eprint("err"); return 7; }`},
+		// String indexing over real irlower output (slice 10): a single byte
+		// read, a loop summing bytes, and indexing a string literal.
+		{"strindex", `function main(): i32 { var s: string = "ABC"; return s[1]; }`},
+		{"strsum", `function main(): i32 { var s: string = "AB"; var sum = 0; var i = 0; while (i < s.len()) { sum = sum + s[i]; i = i + 1; } return sum; }`},
+		{"strlit0", `function main(): i32 { return ("XY")[0]; }`},
+		// Option / Result over real irlower output (slice 11): a Some payload
+		// bind, a None arm, a function returning Option matched at the call site,
+		// and a Result (Ok/Err) match.
+		{"optsome", `function main(): i32 { var o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }`},
+		{"optnone", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`},
+		{"optchain", `function f(n: i32): Option[i32] { if (n > 0) { return Some(n * 2); } return None; } function main(): i32 { match (f(5)) { Some(v) => { return v; }, None => { return 0; } } }`},
+		{"result", `function g(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n + 1); } return Err(9); } function main(): i32 { match (g(10)) { Ok(v) => { return v; }, Err(e) => { return e; } } }`},
 	}
 	for _, tc := range cases {
 		tc := tc

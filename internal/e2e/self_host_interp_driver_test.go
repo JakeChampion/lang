@@ -232,6 +232,30 @@ var interpProgs = []struct {
 	{"enum-method-payload", "enum Sh { Circle(i32), Sq(i32) } function (s: Sh) area(): i32 { match (s) { Sh.Circle(r) => { return r * r * 3; }, Sh.Sq(w) => { return w * w; } } } function main(): i32 { var s = Sh.Sq(4); return s.area(); }", 16},
 	{"enum-method-nullary", "enum Dir { N, S, E, W } function (d: Dir) dx(): i32 { match (d) { Dir.E => { return 1; }, Dir.W => { return 0 - 1; }, _ => { return 0; } } } function main(): i32 { var d = Dir.E; return d.dx(); }", 1},
 	{"enum-method-with-arg", "enum Opt { Some(i32), None } function (o: Opt) unwrap_or(dflt: i32): i32 { match (o) { Opt.Some(x) => { return x; }, Opt.None => { return dflt; } } } function main(): i32 { return Opt.Some(7).unwrap_or(0) + Opt.None.unwrap_or(5); }", 12},
+
+	// i64 values beyond i32 range. The interp's VInt is a 32-bit slot, so an
+	// i64 literal / arithmetic result that exceeds i32 previously truncated
+	// (`5000000000` wrapped). A second integer variant, VInt64, now holds
+	// wide values as two i32 halves (a raw i64 union payload trips a
+	// native-backend drop fault; two i32 fields drop cleanly). A declared
+	// i64 type at a var/param binding promotes a compact value to VInt64 so
+	// arithmetic takes the 64-bit path even when operands fit i32
+	// (100000 * 100000 must not overflow), and an i64 operation always
+	// yields a wide result so a running accumulator keeps its width; `as
+	// i32` narrows back. Division/mod of a negative-low-word value exercises
+	// the unpack-mask path (an inline `& 4294967295` i64 literal is
+	// mis-emitted by the native backend as a sign-extended 32-bit immediate,
+	// so the mask is held in a local).
+	{"i64-literal-div", "function main(): i32 { var x: i64 = 5000000000; return (x / 1000000000) as i32; }", 5},
+	{"i64-mul-fits-operands", "function main(): i32 { var x: i64 = 100000; var y: i64 = x * 100000; return (y / 1000000000) as i32; }", 10},
+	{"i64-accumulator", "function main(): i32 { var s: i64 = 0; var i: i32 = 0; while (i < 5) { s = s + 1000000000; i = i + 1; } return (s / 1000000000) as i32; }", 5},
+	{"i64-negative-div", "function main(): i32 { var x: i64 = 8000000000; return (x / 1000000000) as i32; }", 8},
+	{"i64-mod", "function main(): i32 { var x: i64 = 5000000007; return (x % 1000000000) as i32; }", 7},
+	{"i64-param-promote", "function scale(n: i64): i64 { return n * 1000000; } function main(): i32 { return (scale(5000) / 1000000000) as i32; }", 5},
+	{"i64-array-sum", "function main(): i32 { var xs: i64[] = [5000000000, 3000000000]; var s: i64 = 0; for v in xs { s = s + v; } return (s / 1000000000) as i32; }", 8},
+	{"i64-compare", "function main(): i32 { var x: i64 = 5000000000; if (x > 4000000000) { return 1; } return 0; }", 1},
+	// i32 arithmetic is unchanged — overflow still wraps via the 32-bit path.
+	{"i32-overflow-unchanged", "function main(): i32 { var x: i32 = 100000; return x * 100000; }", 0},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

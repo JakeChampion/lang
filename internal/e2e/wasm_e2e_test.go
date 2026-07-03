@@ -911,7 +911,6 @@ func TestWASMU8Array(t *testing.T) {
 	}
 }
 
-
 // Methods on user-defined enums. The receiver clause `(self:
 // Color)` makes `c.is_red()` resolve to a hoisted top-level
 // function `__method_Color_is_red`. Verifies dispatch on a

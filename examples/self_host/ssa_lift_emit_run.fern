@@ -217,6 +217,28 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "strindex") {
+        // return "ABC"[1];  => 66 ('B')
+        // Exercises the slice-10 str_index lift (load_elem at idx+1 over the
+        // [len, byte-per-word] string) through optimise / regalloc / emit.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_str("ABC"), ir.op_const_i32(1), ir.op_str_index(),
+                ir.op_return()
+            ] }
+        ];
+    }
+    if (name == "optval") {
+        // return Some(42).payload;  => 42
+        // Exercises the slice-11 Option lift (opt_make tag 0 + opt_payload) —
+        // the 2-word { tag, payload } box — through optimise / regalloc / emit.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_i32(42), ir.op_opt_make(0), ir.op_opt_payload(),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

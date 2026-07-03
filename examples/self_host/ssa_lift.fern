@@ -46,6 +46,12 @@
 //   - slice 9: PROCESS / OUTPUT — `print_str` -> the `write` inst (raw stdout,
 //     no newline), `eprint_str` -> the `print` inst fd 2 (stderr + newline),
 //     `exit` -> the `exit` inst (a diverging regular inst, not a terminator).
+//   - slice 10: STRING INDEX — `str_index` (`s[i]`) -> load_elem at word i+1,
+//     the same [len, byte-per-word] shape arr_get uses.
+//   - slice 11: OPTION / RESULT — `opt_make` (Some/Ok/Err) / `opt_none` /
+//     `opt_tag` / `opt_payload` lowered to build_func's 2-word { tag@0,
+//     payload@1 } box (payload 8-byte so pointers round-trip). The i64 / f64
+//     payload variants (opt_make_w / opt_payload_w, width 64) bail.
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -304,6 +310,24 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var slv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: slv, args: [sp, zc], imm: 0, str: "" });
                 stack = stack.append(slv);
+            }
+        } else if (k == "str_index") {
+            // `s[i]` → the byte at word i+1 (word 0 is the length). The SSA
+            // string is a [len, byte-per-word] block — the same shape as an i32
+            // array — so this is arr_get's lowering: load_elem at idx+1,
+            // mirroring build_func's ExprIndex on a string.
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var sixi: i32 = stack[stack.len() - 1];
+                var sixb: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var sione: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: sione, args: [], imm: 1, str: "" });
+                var sioff: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: sioff, args: [sixi, sione], imm: 0, str: "+" });
+                var siv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: siv, args: [sixb, sioff], imm: 0, str: "" });
+                stack = stack.append(siv);
             }
         } else if (k == "str_concat") {
             // `a + b` on strings → the SSA `concat` inst (a fresh heap string),
@@ -702,6 +726,75 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var tssv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: tssv, args: [tsp, tsi, tsv], imm: 0, str: "" });
             }
+        } else if (k == "opt_make") {
+            // Some(x) / Ok(x) / Err(x) → a 2-word box { tag@0, payload@1 },
+            // matching build_func's Option lowering. The payload (popped) is
+            // stored 8-byte (imm 64) so a pointer payload round-trips; the tag is
+            // op's i32_imm. Width-64 (i64 / f64) payloads (opt_make_w, same
+            // kind_tag) bail — their payload read needs float/i64 classification.
+            if (op.width == 64) { ok = false; }
+            else if (stack.len() < 1) { ok = false; }
+            else {
+                var omp: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var omb: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "alloc", result: omb, args: [], imm: 2, str: "" });
+                var omz: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: omz, args: [], imm: 0, str: "" });
+                var omt: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: omt, args: [], imm: op.i32_imm, str: "" });
+                var omts: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: omts, args: [omb, omz, omt], imm: 0, str: "" });
+                var omo: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: omo, args: [], imm: 1, str: "" });
+                var omps: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: omps, args: [omb, omo, omp], imm: 64, str: "" });
+                stack = stack.append(omb);
+            }
+        } else if (k == "opt_none") {
+            // None → the empty Option box { tag@0 = 1, payload@1 = 0 }.
+            var onb: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "alloc", result: onb, args: [], imm: 2, str: "" });
+            var onz: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: onz, args: [], imm: 0, str: "" });
+            var ont: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: ont, args: [], imm: 1, str: "" });
+            var onts: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: onts, args: [onb, onz, ont], imm: 0, str: "" });
+            var ono: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: ono, args: [], imm: 1, str: "" });
+            var onp: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: onp, args: [], imm: 0, str: "" });
+            var onps: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: onps, args: [onb, ono, onp], imm: 64, str: "" });
+            stack = stack.append(onb);
+        } else if (k == "opt_tag") {
+            // opt_tag(box) → the discriminant at word 0 (Some/Ok 0, None/Err 1).
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var otb: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var otz: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: otz, args: [], imm: 0, str: "" });
+                var otv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: otv, args: [otb, otz], imm: 0, str: "" });
+                stack = stack.append(otv);
+            }
+        } else if (k == "opt_payload") {
+            // opt_payload(box) → the payload at word 1, read 8-byte (imm 64) to
+            // match the store. The i64 / f64 payload variant (opt_payload_w, same
+            // kind_tag, width 64) bails.
+            if (op.width == 64) { ok = false; }
+            else if (stack.len() < 1) { ok = false; }
+            else {
+                var opb: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var opo: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: opo, args: [], imm: 1, str: "" });
+                var opv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: opv, args: [opb, opo], imm: 64, str: "" });
+                stack = stack.append(opv);
+            }
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }
         } else if (k == "return") {
@@ -948,24 +1041,30 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var bidx: i32[] = [];
                 var jb: i32 = 0;
                 while (jb < edge_owner.len()) { if (edge_owner[jb] == buid) { bidx = bidx.append(jb); } jb = jb + 1; }
-                var has_ft: boolean = (!cur_dead) && (cur_term.kind == "");
+                var falls_through: boolean = (!cur_dead) && (cur_term.kind == "");
                 var fcur: i32 = cur_id;
                 var fslots: i32[] = slots;
-                if (has_ft) {
-                    cur_term = STerm_br(eid);
+                // A LIVE current block is always emitted: with a synthesized
+                // br-to-exit if it runs off the end, or as-is if it already ended
+                // in a `return`. Only the fall-through case feeds the exit merge.
+                // (Without the return case, a match arm's body — a block whose
+                // fall-through path ends in `return` — would dangle: branched-to
+                // by the arm's brif but never appended.)
+                if (!cur_dead) {
+                    if (falls_through) { cur_term = STerm_br(eid); }
                     blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
                 }
                 var bpreds: i32[] = [];
                 var qb: i32 = 0;
                 while (qb < bidx.len()) { bpreds = bpreds.append(edge_block[bidx[qb]]); qb = qb + 1; }
-                if (has_ft) { bpreds = bpreds.append(fcur); }
+                if (falls_through) { bpreds = bpreds.append(fcur); }
                 var eo_insts: ssa.SInst[] = [];
                 var es: i32 = 0;
                 while (es < nslots) {
                     var vals: i32[] = [];
                     var qe: i32 = 0;
                     while (qe < bidx.len()) { vals = vals.append(edge_vals[bidx[qe] * nslots + es]); qe = qe + 1; }
-                    if (has_ft) { vals = vals.append(fslots[es]); }
+                    if (falls_through) { vals = vals.append(fslots[es]); }
                     if (vals.len() == 0) {
                         // unreachable exit; leave slot as-is.
                     } else {
@@ -1000,6 +1099,17 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
     if (ok) {
         if (cur_term.kind == "" && stack.len() >= 1) {
             cur_term = STerm_ret(stack[stack.len() - 1]);
+        } else if (cur_term.kind == "" && !cur_dead) {
+            // A REACHABLE final block with no value on the stack still needs a
+            // terminator so it is emitted. This is the exhaustive-match exit:
+            // when every arm diverges (returns), the block's structural exit is
+            // reachable only through the dead "no arm matched" default edge — a
+            // br into a block that would otherwise be dropped (empty + untermed),
+            // dangling that edge's label. A dummy `ret 0` (never executed) makes
+            // the block real. Mirrors how native fills an unreachable exit.
+            var dz: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: dz, args: [], imm: 0, str: "" });
+            cur_term = STerm_ret(dz);
         }
         if (cur_term.kind != "" || cur_insts.len() > 0 || cur_id == 0) {
             blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });

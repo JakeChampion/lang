@@ -102,12 +102,19 @@ two separable moves:
 
   The honest boundary, measured against the byte-identity
   constraint (not against taste):
-  - **Exit dec sweep**: blocked as a post-pass. Each `return`'s
-    sweep can allocate fresh scratch slots (the enum-param tag
-    stash, #2828) whose numbering interleaves with body scratch
-    slots in emission order; post-hoc insertion would renumber
-    them. Convertible only after scratch allocation is itself
-    hoisted or virtualised.
+  - **Exit dec sweep**: WAS blocked as a post-pass — each
+    `return`'s sweep could allocate fresh scratch slots (the
+    enum-param tag stash, #2828) whose numbering interleaved with
+    body scratch. #4476 removed the blocker: every inline enum
+    slot-drop now shares ONE per-function tag stash
+    (`b.enumDropTagSlot`, allocated on first use), so the sweep
+    allocates nothing after its first enum drop. The change is
+    deliberately NOT byte-identical (scratch slots renumber,
+    frames shrink); its characterisation oracle proved the entire
+    self-host-corpus output identical modulo frame offsets /
+    frame sizes on x86-64 and identical after frame-access-form
+    normalisation on arm64. Converting the sweep itself to the
+    anchor→splice template is now unblocked.
   - **Alias incs / overwrite decs / precise drops / reuse
     plumbing**: inherent to expression lowering — they are part of
     each expression's value production, and their positions are
@@ -125,14 +132,30 @@ two separable moves:
   consumes exactly this decomposition: port each analysis as a
   pure AST→tables function (differential-diff the tables), then
   port the insertion helpers site by site.
-- **Paired simplifications** (same review, each shrinks what the
-  port mirrors): unify the type-classification predicates
-  (`isOwnedByDefaultType`, `preciseDroppableType`,
-  `typeIsStringArrayFree`, `enumRcPayloadsEligible*`, …) into one
-  capability table; one per-param ownership verdict enum
-  (borrowed / owned / consumed-threaded / read-only-comparator);
-  factor the duplicated last-use micro-analyses.
-- **Stage-boundary alignment** (related, not blocking): native
-  runs closure conversion inside `ir.LowerWith` while the
-  self-host runs `lift_lambdas` as an explicit pass — align the
-  boundaries (either side) before the goal-2 port deepens.
+- **Paired simplifications** (same review; #4474 epic — landed):
+  the type-classification predicates consolidated into
+  `rc_caps.go` behind a documented capability matrix, with the
+  layered tracked-sets made explicit (`arrElemIsRcTracked` ⊂
+  `rcTrackedSlotType` ⊂ the sweep set) — #4477; one per-param
+  ownership verdict ladder (`paramVerdict`: NotOwnedType / Owned /
+  Borrowed / ReadOnlyComparator / TrmcExcluded / TrmcConsume)
+  replacing the paramBorrowable trio — #4478; the duplicated
+  last-use micro-analyses factored behind `identOrder`/`isLast` +
+  `stmtReferencesName` — #4480; the C2 consuming-match pairing
+  folded into the plan (`computeConsumingMatchReuse`) — #4475.
+- **Stage-boundary CONTRACT** (#4481 — resolved as a contract, not
+  a pass move): native runs closure conversion inside
+  `ir.LowerWith` while the self-host runs `lift_lambdas` as an
+  explicit driver-level pass, and neither side's move is cheap
+  (`LowerWith` has a caller per backend; `lift_lambdas` also
+  feeds the legacy AST backends and the eligibility report). What
+  goal 2 actually needs is invariant, not structural: **the RC
+  decision analyses run on the post-closure-conversion,
+  post-shadowrename AST on BOTH compilers** — native via
+  `computeRcAnalyses` inside `LowerWith` (after
+  `closureconv.ConvertWith`), self-host by running its analyses
+  on the `lift_lambdas` output. The rcPlan differential harness
+  (#4482) enforces this operationally: analyses run at a
+  different pipeline point see different ASTs and the table diffs
+  go noisy immediately. Revisit a structural move only if the
+  harness shows a divergence actually caused by pass position.

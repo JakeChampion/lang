@@ -356,7 +356,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     if (target == "arm64") {
         unit = asm_arm64.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
     } else {
-        unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
+        unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi, []);
     }
     // Emit to stdout first, then populate the cache. Both consume `unit`; doing
     // the file write last keeps the ordering unambiguous and avoids relying on

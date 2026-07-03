@@ -24,6 +24,14 @@ import "./util";
 // =================== VALUES ====================
 
 pub struct VInt { v: i32 }
+// VInt64 holds an integer beyond i32 range (an i64 literal or the result
+// of i64 arithmetic). The value is stored as two i32 halves rather than a
+// single i64 field on purpose: a union variant carrying a raw i64 payload
+// trips a native-backend codegen fault in the compiled interpreter (the
+// i64 slot is mishandled on the drop path), whereas two i32 fields are
+// laid out and dropped cleanly. The full i64 is reconstructed into a local
+// only for arithmetic (local i64s are fine); it never lives in the union.
+pub struct VInt64 { hi: i32, lo: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
 // VFloat carries a 64-bit IEEE 754 float. Literals tagged
@@ -60,9 +68,55 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VFunc | VMap | VStruct | VErr;
+pub type Value = VInt | VInt64 | VBool | VString | VFloat | VArr | VTuple | VFunc | VMap | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
+// v_int64 packs an i64 into a VInt64's two i32 halves; unpack_i64 rebuilds
+// the i64. `lo` keeps the low 32 bits (masked so a negative low half isn't
+// sign-extended into the high word); `hi` is the arithmetic-shifted top 32.
+function v_int64(n: i64): Value { return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32 }; }
+function unpack_i64(x: VInt64): i64 {
+    // The low-32 mask is held in a local, NOT written inline as
+    // `& 4294967295`: the native backend mis-emits that i64 literal as a
+    // sign-extended 32-bit immediate (-1), so an inline mask is a no-op and
+    // a negative `lo` stays sign-extended into the high word (which then
+    // corrupts e.g. an i64 divide). A `var` forces a full 64-bit load.
+    var lo_mask: i64 = 4294967295;
+    return ((x.hi as i64) << 32) | ((x.lo as i64) & lo_mask);
+}
+// box_i64 narrows an i64 result back to a compact VInt when it fits i32,
+// so values that fall back into range don't stay wide (and downstream i32
+// consumers keep seeing a VInt). Only genuinely-wide results stay VInt64.
+function box_i64(n: i64): Value {
+    if (n >= -2147483648 && n <= 2147483647) { return v_int(n as i32); }
+    return v_int64(n);
+}
+// coerce_int_width promotes a compact VInt to a VInt64 when a binding's
+// declared type is a 64-bit integer, so arithmetic on it takes the 64-bit
+// path even when the value happens to fit i32 — `var x: i64 = 100000;
+// x * 100000` must not overflow as i32. The interpreter is otherwise
+// untyped at the value level, so this declared-type hint at var/param
+// binding sites is where width intent enters.
+function coerce_int_width(val: Value, type_name: string): Value {
+    if (type_name == "i64" || type_name == "u64") {
+        match (val) {
+            VInt(i) => { return v_int64(i.v as i64); },
+            _ => { return val; }
+        }
+    }
+    return val;
+}
+// is_int_like / is_vint64 / vint_as_i64 bridge the two integer variants so
+// integer arithmetic can widen to 64 bits when either operand is a VInt64.
+function is_int_like(v: Value): boolean {
+    match (v) { VInt(_) => { return true; }, VInt64(_) => { return true; }, _ => { return false; } }
+}
+function is_vint64(v: Value): boolean {
+    match (v) { VInt64(_) => { return true; }, _ => { return false; } }
+}
+function vint_as_i64(v: Value): i64 {
+    match (v) { VInt(i) => { return i.v as i64; }, VInt64(i) => { return unpack_i64(i); }, _ => { return 0; } }
+}
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
@@ -254,6 +308,38 @@ function str_to_f64(s: string): f64 {
 // ExprBinary arm so the operator semantics live in one place,
 // mirroring the VM's apply_binary (SH-048).
 function eval_binary(op: string, lv: Value, rv: Value): Value {
+    // 64-bit integer arithmetic: when either operand is a VInt64, widen
+    // both to i64, compute in 64 bits, then box back (narrowing to a VInt
+    // when the result fits i32). The pure VInt (i32) path below is left
+    // untouched, so i32 overflow wrapping and every existing case behave
+    // exactly as before. Total div/mod semantics match the i32 path
+    // (x/0 == 0, x%0 == x).
+    if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
+        var a: i64 = vint_as_i64(lv);
+        var b: i64 = vint_as_i64(rv);
+        // An i64-typed operation always yields a VInt64, even when the
+        // result happens to fit i32: narrowing here would strip the width
+        // from e.g. a running accumulator (`s = s + 1000000000` whose
+        // partial sum dips into i32 range), so the next op would wrap on
+        // the i32 path. Only literals narrow by magnitude (box_i64 in
+        // ExprNumber); an explicit `as i32` is the way back to a VInt.
+        if (op == "+") { return v_int64(a + b); }
+        if (op == "-") { return v_int64(a - b); }
+        if (op == "*") { return v_int64(a * b); }
+        if (op == "/") { if (b == 0) { return v_int64(0); } var q64: i64 = a / b; return v_int64(q64); }
+        if (op == "%") { if (b == 0) { return v_int64(a); } var r64: i64 = a % b; return v_int64(r64); }
+        if (op == "<") { return v_bool(a < b); }
+        if (op == "<=") { return v_bool(a <= b); }
+        if (op == ">") { return v_bool(a > b); }
+        if (op == ">=") { return v_bool(a >= b); }
+        if (op == "==") { return v_bool(a == b); }
+        if (op == "!=") { return v_bool(a != b); }
+        if (op == "&") { return v_int64(a & b); }
+        if (op == "|") { return v_int64(a | b); }
+        if (op == "^") { return v_int64(a ^ b); }
+        if (op == "<<") { return v_int64(a << b); }
+        if (op == ">>") { return v_int64(a >> b); }
+    }
     // `+` overloads i32 (arithmetic) and string (concat).
     if (op == "+") {
         match (lv) {
@@ -398,6 +484,7 @@ function eval_unary(op: string, ov: Value): Value {
     if (op == "-") {
         match (ov) {
             VInt(i) => { return v_int(0 - i.v); },
+            VInt64(i) => { return v_int64(0 - unpack_i64(i)); },
             VFloat(f) => { return v_float(0.0 - f.v); },
             _ => { return v_err("unary `-` operand not i32 or f64"); }
         }
@@ -423,20 +510,38 @@ function eval_unary(op: string, ov: Value): Value {
     if (op == "as_u8" || op == "as_byte") {
         match (ov) {
             VInt(i) => { return v_int(i.v & 255); },
+            VInt64(i) => { return v_int((unpack_i64(i) & 255) as i32); },
             VFloat(f) => { return v_int((f.v as i32) & 255); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
-    if (op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64") {
+    // `as i32` / `as u32` narrow a wider integer to 32 bits (a VInt64
+    // truncates to its low 32 bits — this is what brings an i64 value back
+    // into i32 range, e.g. `(5000000000 as i32)`). The low half already IS
+    // that value.
+    if (op == "as_i32" || op == "as_u32") {
         match (ov) {
             VInt(i) => { return v_int(i.v); },
+            VInt64(i) => { return v_int(i.lo); },
             VFloat(f) => { return v_int(f.v as i32); },
+            _ => { return v_err("`as` integer cast operand not numeric"); }
+        }
+    }
+    // `as i64` / `as u64` keep 64-bit width: a VInt64 passes through, a
+    // small VInt stays a VInt (an in-range value round-trips identically),
+    // and a float widens to i64.
+    if (op == "as_i64" || op == "as_u64") {
+        match (ov) {
+            VInt(i) => { return v_int(i.v); },
+            VInt64(i) => { return ov; },
+            VFloat(f) => { return v_int64(f.v as i64); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
     if (op == "as_f64" || op == "as_f32") {
         match (ov) {
             VInt(i) => { return v_float(i.v as f64); },
+            VInt64(i) => { return v_float(unpack_i64(i) as f64); },
             VFloat(f) => { return v_float(f.v); },
             _ => { return v_err("`as` float cast operand not numeric"); }
         }
@@ -449,15 +554,29 @@ function eval_unary(op: string, ov: Value): Value {
     return v_err("unknown unary op: " + op);
 }
 
+// eval_number_literal parses a numeric literal to a Value. Kept OUT of
+// eval_expr's ExprNumber arm on purpose: inlining the i64 path (an extra
+// i64 local, the range compare, and the digits_to_i64 / box_i64 calls)
+// into the already-huge eval_expr pushed its arm64 frame / register
+// pressure over a threshold and tripped a layout-sensitive native-codegen
+// abort (the arm64 sibling of the #3425 x86 heap Heisenbug) — even though
+// the logic is correct in isolation. A separate function keeps eval_expr
+// small. Hex / binary literals keep i32 low-bits semantics via lit_to_i32
+// (digits_to_i32/i64 stop at the `x`/`b` and yield 0, #4341); decimal
+// literals parse as i64 so a value beyond i32 range survives, and box_i64
+// narrows it back to a compact VInt when it fits.
+function eval_number_literal(is_float: boolean, t: string): Value {
+    if (is_float) { return v_float(str_to_f64(t)); }
+    var hs: i32 = 0;
+    if (t.len() > 0 && t[0] == 45) { hs = 1; }
+    var is_radix: boolean = t.len() > hs + 1 && t[hs] == 48 && (t[hs + 1] == 120 || t[hs + 1] == 88 || t[hs + 1] == 98 || t[hs + 1] == 66);
+    if (is_radix) { return v_int(util.lit_to_i32(t)); }
+    return box_i64(util.digits_to_i64(t));
+}
+
 function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
-        parser.ExprNumber(n) => {
-            if (n.is_float) { return v_float(str_to_f64(n.text)); }
-            // lit_to_i32 (not the decimal-only digits_to_i32) so a `0x`/`0b`
-            // literal keeps its value — digits_to_i32 stops at the `x`/`b` and
-            // silently yields 0 (#4341). Decimal falls through unchanged.
-            return v_int(util.lit_to_i32(n.text));
-        },
+        parser.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text); },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },
         parser.ExprIdent(id) => {
@@ -927,7 +1046,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     var env: Env = Env { names: fv.captured_names, values: fv.captured_values, funcs: funcs, aliases: aliases };
     var j: i32 = 0;
     while (j < fv.params.len()) {
-        env = env.bind(fv.params[j].name, args[j]);
+        env = env.bind(fv.params[j].name, coerce_int_width(args[j], fv.params[j].type_name));
         j = j + 1;
     }
     var step: StepResult = eval_block(fv.body, env);
@@ -1074,7 +1193,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             env = env.bind(fd.receiver_name, recv);
             var j: i32 = 0;
             while (j < fd.params.len()) {
-                env = env.bind(fd.params[j].name, args[j]);
+                env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
@@ -1119,7 +1238,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             var env: Env = new_env_with_funcs_aliases(funcs, aliases);
             var j: i32 = 0;
             while (j < fd.params.len()) {
-                env = env.bind(fd.params[j].name, args[j]);
+                env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
@@ -1143,6 +1262,14 @@ function value_eq(a: Value, b: Value): boolean {
         VInt(ai) => {
             match (b) {
                 VInt(bi) => { return ai.v == bi.v; },
+                VInt64(bi) => { return (ai.v as i64) == unpack_i64(bi); },
+                _ => { return false; }
+            }
+        },
+        VInt64(ai) => {
+            match (b) {
+                VInt(bi) => { return unpack_i64(ai) == (bi.v as i64); },
+                VInt64(bi) => { return ai.hi == bi.hi && ai.lo == bi.lo; },
                 _ => { return false; }
             }
         },
@@ -1243,7 +1370,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // never yields the __noreturn__ sentinel (that's statement-level),
             // so any VErr here is a real error to propagate.
             if (is_err(val)) { return StepResult { env: env, ret: val }; }
-            var env2: Env = env.bind(v.name, val);
+            var env2: Env = env.bind(v.name, coerce_int_width(val, v.type_name));
             return StepResult { env: env2, ret: v_err("__noreturn__") };
         },
         parser.StmtReturn(r) => {
