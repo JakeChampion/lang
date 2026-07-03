@@ -201,11 +201,16 @@ findings. Ranked by leverage.
   hand-rolled byte scan (and the `generic_value_ty` / `generic_key_is_i32` helper
   scans it drove). Byte-identical, locked by a 51-case golden
   (`ty_from_ref_run.fern` + `TestSelfHostTyFromRef`, `ty_tag(ty_from_name s)` over
-  every decode branch) plus the bootstrap / per-module fixpoints. _Remaining:_
-  retarget the rest onto `parse_type_ref` — asmcore `split_tuple_ret` /
-  `tuple_ret_tag_at`, the checker's six `type_from_name*`, wasm — then have the
-  parser store `TypeRef` directly so the string becomes render output. Unblocks
-  #4394 lever 1 (symbol interning ripples into this type system).
+  every decode branch) plus the bootstrap / per-module fixpoints.
+  _Slice 3 landed:_ asmcore `split_tuple_ret` / `tuple_ret_tag_at` now decode a
+  tuple spelling via `parse_type_ref` (element idx = `args[idx]`), retiring their
+  top-level-comma scans. Byte-identical, locked by `tuple_tags_run.fern` +
+  `TestSelfHostTupleTags` (a golden of both decoders over element / OK-type /
+  index / out-of-range / non-tuple / 3+-element paths) + the fixpoints.
+  _Remaining:_ retarget the checker's six `type_from_name*` and wasm onto
+  `parse_type_ref`, then have the parser store `TypeRef` directly so the string
+  becomes render output. Unblocks #4394 lever 1 (symbol interning ripples into
+  this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress
