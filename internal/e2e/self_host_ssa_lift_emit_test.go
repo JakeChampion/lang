@@ -99,6 +99,7 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"castrt", 15},    // i32<->f64 casts: i32_to_f64 + f64_to_i32 (slice 6)
 		{"strcat", 6},     // string: const_str + str_concat + str_len (slice 7)
 		{"strbuf", 5},     // string builder: strbuf_reset/append/take (slice 8)
+		{"exitprog", 42},  // process: exit (diverging inst) (slice 9)
 	}
 	for _, tc := range cases {
 		tc := tc

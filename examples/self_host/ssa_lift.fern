@@ -43,6 +43,9 @@
 //   - slice 8: STRING BUILDER — `strbuf_reset` / `strbuf_append` (void) /
 //     `strbuf_take` (pushes the built string) -> the matching SSA strbuf
 //     insts, the global amortised-O(1) builder build_func also emits.
+//   - slice 9: PROCESS / OUTPUT — `print_str` -> the `write` inst (raw stdout,
+//     no newline), `eprint_str` -> the `print` inst fd 2 (stderr + newline),
+//     `exit` -> the `exit` inst (a diverging regular inst, not a terminator).
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -354,6 +357,44 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             var sbt: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind: "strbuf_take", result: sbt, args: [], imm: 0, str: "" });
             stack = stack.append(sbt);
+        } else if (k == "print_str") {
+            // Raw stdout write of a string's bytes (NO newline) → the SSA `write`
+            // inst; `print(s)` is desugared to print_str(s + "\n") upstream, so
+            // print_str itself never adds one. Like strbuf, the op pushes a dummy
+            // result its statement `drop` discards.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var pv: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var pwv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "write", result: pwv, args: [pv], imm: 0, str: "" });
+                stack = stack.append(pwv);
+            }
+        } else if (k == "eprint_str") {
+            // stderr line-print (bytes + a trailing newline) → the SSA `print`
+            // inst with fd 2 (build_func's print adds the newline; __fern_ssa_print
+            // writes to the imm fd). Pushes a dummy result the statement drop eats.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var ev: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var epv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "print", result: epv, args: [ev], imm: 2, str: "" });
+                stack = stack.append(epv);
+            }
+        } else if (k == "exit") {
+            // exit(code): terminate via the exit syscall. Emitted as a regular
+            // (diverging) inst — NOT a lift terminator — exactly as build_func
+            // does: the following statement `drop` + `return` still emit as dead
+            // code the running exit never reaches. Pops the code, pushes a dummy.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var xv: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var xrv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "exit", result: xrv, args: [xv], imm: 0, str: "" });
+                stack = stack.append(xrv);
+            }
         } else if (k == "load_local") {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
             else { stack = stack.append(slots[op.i32_imm]); }
