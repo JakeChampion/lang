@@ -336,13 +336,43 @@ inner is written. Coverage: `internal/e2e/self_host_loop_reuse_ir_test.go`
 `loop-nested-struct-field-*` (cross) and `loop-funcupdate-nested-struct-*`
 (self-overwrite) — reuse fires (box 3 not 4) and 5M-iter churn stays balanced.
 
-### The blocker for the remaining kinds (enum / tuple / Map / closure fields)
+### Direct enum field — exit-reclaim LANDED on the register backends (#4297 A2)
+
+A struct with a **direct enum field** (`Tagged { e: Shape, n: i32 }`) is now in
+the exit-drop set on the register backends (x86-64 + arm64): `decl_is_enum` admits
+it to `struct_has_reclaim_array_field`, `emit_ir_struct_drop_one` / `emit_arm64_struct_drop_one`
+gained a `k_enum` arm that SHALLOW-frees the enum box via `__fern_arr_dec` (one
+level — the variant payload leaks, matching the shallow `k_struct` gap), and the
+ExprStructLit lowering alias-incs a NON-fresh enum field (a fresh variant ctor
+`V(args)`/`V` is sole-owned, handed over with no inc). Enum boxes are rc-headered
+(`op_struct_make`), so the inc/dec are sound. Pinned by
+`TestSelfHostStructEnumFieldReclaimIR{X86_64,Arm64}` (fresh-gate churn, aliased,
+base-copy, enum-alongside-array). Both x86 fixpoint suites stay byte-identical.
+
+**wasm is deliberately NOT included and is UNCHANGED by this slice.** The wasm-IR
+path does not use irlower's op-based construction (`emit_expr` in `wasm.fern`
+emits struct literals directly) nor `emit_struct_field_drops` — it reclaims via a
+SEPARATE `$__fern_release_<T>` family (`struct_enum_drop_helpers` /
+`struct_release_field_inner`) with its own construction/release balance. So the
+irlower Sites above emit ZERO ops on the wasm path (verified: no `rc_inc` in the
+emitted WAT), leaving the pre-existing wasm enum-field leak exactly as-is (safe,
+no double-free). Closing it is a SEPARATE follow-up in the `$__fern_release`
+subsystem: `struct_release_field_inner` (wasm.fern:1378) already has enum-field
+handling but `is_enum_type_name` keys off `cx.mr_types` (method-having types), so a
+method-less enum field is misclassified as scalar; and the wasm construction side
+would need a matching enum-field inc in `emit_expr` (both the override and
+base-copy paths) or the `$__fern_release` recursion double-frees a base-copied
+enum field. Do NOT reuse the register-backend irlower incs for it — they don't run
+on the wasm path.
+
+### The blocker for the remaining kinds (tuple / Map / closure fields)
 
 These are **not** admissible yet, and the blocker is NOT reuse — it is
-**struct-field exit-reclaim**. A struct with a direct enum/tuple/Map/closure
+**struct-field exit-reclaim**. A struct with a direct tuple/Map/closure
 field is not in the exit-drop set today (`struct_has_reclaim_array_field`
-excludes them; it admits only leak-safe arrays, struct/enum ARRAYS, and direct
-nested-structs). Consequences if reuse admitted such a kind without exit-reclaim:
+excludes them; it admits only leak-safe arrays, struct/enum ARRAYS, direct
+nested-structs, and — since #4297 A2 — direct enum fields on the register
+backends). Consequences if reuse admitted such a kind without exit-reclaim:
 
 - reuse would release the *old* field on overwrite but the *new* field would
   never be dropped when the reused box is finally freed → a **per-iteration
