@@ -460,7 +460,29 @@ function eval_expr(e: parser.Expr, env: Env): Value {
         },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },
-        parser.ExprIdent(id) => { return env.lookup(id.name); },
+        parser.ExprIdent(id) => {
+            var idv: Value = env.lookup(id.name);
+            // A bare identifier with no local binding may name a
+            // `const`: the parser desugars `const N = expr;` into a
+            // zero-arg function `N()`, and the native compiler lowers a
+            // bare `N` reference to a call. Mirror that here — if no
+            // local binding exists but a zero-arg, non-method function
+            // of this name does, evaluate it as a nullary call. Regular
+            // zero-arg functions referenced bare are a checker error
+            // (E002) upstream, so on valid programs this only fires for
+            // consts.
+            if (is_err(idv)) {
+                var ci: i32 = 0;
+                while (ci < env.funcs.len()) {
+                    if (env.funcs[ci].name == id.name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0) {
+                        var no_args: Value[] = [];
+                        return call_func(id.name, no_args, env.funcs, env.aliases);
+                    }
+                    ci = ci + 1;
+                }
+            }
+            return idv;
+        },
         parser.ExprBinary(b) => {
             var lv: Value = eval_expr(b.left, env);
             if (is_err(lv)) { return lv; }
