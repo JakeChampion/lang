@@ -102,12 +102,19 @@ two separable moves:
 
   The honest boundary, measured against the byte-identity
   constraint (not against taste):
-  - **Exit dec sweep**: blocked as a post-pass. Each `return`'s
-    sweep can allocate fresh scratch slots (the enum-param tag
-    stash, #2828) whose numbering interleaves with body scratch
-    slots in emission order; post-hoc insertion would renumber
-    them. Convertible only after scratch allocation is itself
-    hoisted or virtualised.
+  - **Exit dec sweep**: WAS blocked as a post-pass — each
+    `return`'s sweep could allocate fresh scratch slots (the
+    enum-param tag stash, #2828) whose numbering interleaved with
+    body scratch. #4476 removed the blocker: every inline enum
+    slot-drop now shares ONE per-function tag stash
+    (`b.enumDropTagSlot`, allocated on first use), so the sweep
+    allocates nothing after its first enum drop. The change is
+    deliberately NOT byte-identical (scratch slots renumber,
+    frames shrink); its characterisation oracle proved the entire
+    self-host-corpus output identical modulo frame offsets /
+    frame sizes on x86-64 and identical after frame-access-form
+    normalisation on arm64. Converting the sweep itself to the
+    anchor→splice template is now unblocked.
   - **Alias incs / overwrite decs / precise drops / reuse
     plumbing**: inherent to expression lowering — they are part of
     each expression's value production, and their positions are
