@@ -165,6 +165,11 @@ var interpProgs = []struct {
 	// line shredded (no `use` arm in parse_block/parse_stmt). apply invokes the
 	// callback with 41, so r + 1 == 42.
 	{"use-monadic-bind", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); } function main(): i32 { use r <- apply(41); return r + 1; }", 42},
+	// `as u8` truncates to the low 8 bits at runtime (#4348 item 3, cast slice):
+	// the interp treated the cast as identity, so a u8 cast didn't wrap. Now
+	// `(255 + 1) as u8 == 0` (256 & 255) and an in-range value is unchanged.
+	{"cast-u8-wrap", "function main(): i32 { var x = 255; return ((x + 1) as u8) as i32; }", 0},
+	{"cast-u8-inrange", "function main(): i32 { var x = 200; return (x as u8) as i32; }", 200},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
