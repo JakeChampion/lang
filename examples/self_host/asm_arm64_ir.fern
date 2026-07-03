@@ -1165,6 +1165,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         i = i + 1;
     }
 
+    // Function-boundary label (mirrors asm_ir.fern — issue #4442). Any control-
+    // flow target that resolves to `ops.len()` (a br/if to a scope left without
+    // its `end`, so find_matching_end walks off the end) lands here at the
+    // function exit. In a well-formed stream nothing references it; it prevents a
+    // dangling `.Lira_<fn>_<len>` link failure when a stream is unbalanced.
+    s = s.write(lp + util.i32_to_string(r.ops.len()) + ":\n");
+
     // Fallback (subset functions always end in `return`).
     s = s.write("    mov x0, #0\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
     return s;

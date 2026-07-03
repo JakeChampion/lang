@@ -5,8 +5,46 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"testing"
 )
+
+// localLabelRe matches a self-host control-flow label — the x86-64 `.Lir_*`
+// emitter (asm_ir.fern) and the arm64 `.Lira_*` emitter (asm_arm64_ir.fern).
+var localLabelRe = regexp.MustCompile(`\.Lira?_[A-Za-z0-9_.]+`)
+
+// assertNoDanglingLocalLabels fails if the emitted asm references a `.Lir_*` /
+// `.Lira_*` control-flow label it never defines — the exact dangling-label link
+// failure of issue #4442 (`undefined reference to .Lir_main_13`), caught here as
+// a clear test error naming the label instead of a downstream gcc/ld crash. A
+// definition is a line `<label>:`; every other occurrence is a reference.
+func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
+	t.Helper()
+	defined := map[string]bool{}
+	referenced := map[string]bool{}
+	for _, line := range strings.Split(string(asm), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if lbl, ok := strings.CutSuffix(trimmed, ":"); ok && localLabelRe.MatchString(lbl) && !strings.ContainsAny(lbl, " \t") {
+			defined[lbl] = true
+			continue
+		}
+		for _, m := range localLabelRe.FindAllString(line, -1) {
+			referenced[m] = true
+		}
+	}
+	var dangling []string
+	for r := range referenced {
+		if !defined[r] {
+			dangling = append(dangling, r)
+		}
+	}
+	if len(dangling) > 0 {
+		sort.Strings(dangling)
+		t.Fatalf("%s: dangling local label(s) referenced but never defined: %v", ctx, dangling)
+	}
+}
 
 // readFileIRCases exercise the `read_file(path)` builtin through the IR path on
 // x86-64, arm64, and wasm (the wasm IR path opens the path under preopen fd 3 —
@@ -55,6 +93,7 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 			if !bytes.Contains(asm, []byte("call __fern_read_file")) {
 				t.Fatalf("%s: no call to __fern_read_file — did not lower through the IR path", tc.name)
 			}
+			assertNoDanglingLocalLabels(t, tc.name, asm)
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -182,6 +221,7 @@ func TestSelfHostReadFileIRArm64(t *testing.T) {
 			if !bytes.Contains(asm, []byte("bl __fern_read_file")) {
 				t.Fatalf("%s: no bl __fern_read_file — did not lower through the arm64 IR path", tc.name)
 			}
+			assertNoDanglingLocalLabels(t, "arm64 "+tc.name, asm)
 			bin := buildBinArm64(t, arm64gcc, dir, "rf_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)
 			run.Dir = dir
