@@ -172,7 +172,7 @@ pub struct StmtUnknown { kind: string }
 //
 // `on_error` is 1 for an `errdefer` — cleanup that runs only on an error
 // exit (a `return` of a None/Err value), not on success or falloff. 0 for
-// a plain `defer`. lower_defers schedules the two elem_kinds at the right exits.
+// a plain `defer`. lower_defers schedules the two kinds at the right exits.
 pub struct StmtDefer { action: Stmt, on_error: i32 }
 
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
@@ -1816,7 +1816,7 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 // declared while a guard-false still falls through to the next arm.
 // The native checker validated arity / exhaustiveness / types before
 // any of this runs on the self-host path, so no diagnostics are
-// re-implemented here. Element elem_kinds: 0 = binder, 1 = `_`, 2 = literal.
+// re-implemented here. Element kinds: 0 = binder, 1 = `_`, 2 = literal.
 struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // parse_tuple_arm_pattern consumes `(p0, p1, …)` with the cursor on the
