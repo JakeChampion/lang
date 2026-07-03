@@ -228,12 +228,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Init, selfName, siblings, seen)
 	case *ast.ExprStmt:
 		walkExprForNames(n.Expr, selfName, siblings, seen)
-	case *ast.Switch:
-		walkExprForNames(n.Tag, selfName, siblings, seen)
-		for _, k := range n.Cases {
-			walkBodyForNames(k.Body, selfName, siblings, seen)
-		}
-		walkBodyForNames(n.Default, selfName, siblings, seen)
 	case *ast.Match:
 		walkExprForNames(n.Tag, selfName, siblings, seen)
 		for _, arm := range n.Arms {
@@ -570,30 +564,6 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 			return nil, err
 		}
 		n.Expr = ne
-		return n, nil
-	case *ast.Switch:
-		nt, err := c.rewriteExpr(n.Tag, ctx)
-		if err != nil {
-			return nil, err
-		}
-		n.Tag = nt
-		for _, k := range n.Cases {
-			for i, v := range k.Values {
-				nv, err := c.rewriteExpr(v, ctx)
-				if err != nil {
-					return nil, err
-				}
-				k.Values[i] = nv
-			}
-			if err := c.rewriteBlock(k.Body, ctx); err != nil {
-				return nil, err
-			}
-		}
-		if n.Default != nil {
-			if err := c.rewriteBlock(n.Default, ctx); err != nil {
-				return nil, err
-			}
-		}
 		return n, nil
 	case *ast.IfLet:
 		ns, err := c.rewriteExpr(n.Source, ctx)

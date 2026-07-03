@@ -1454,21 +1454,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `(...)[]` ret type; excluding array types lets it take the array
 		// move-on-return path. Build via append, return, read .0/.1 at the caller.
 		{"tuple-array-build-return", "function enum2(xs: i32[]): (i32, i32)[] { var out: (i32, i32)[] = []; var i = 0; for x in xs { out = out.append((i, x * x)); i = i + 1; } return out; } function main(): i32 { var e = enum2([5, 6, 7]); if (e.len() == 3 && e[1].0 == 1 && e[1].1 == 36 && e[2].1 == 49) { return 0; } return 1; }"},
-		// `switch` statements — lift_lambdas now desugars every switch to the
-		// nested if/else-if chain the IR path already lowers (mirroring the AST
-		// backend's desugar_switch_in_stmt), so a module whose only IR-ineligible
-		// construct was a switch lowers via the IR path instead of bailing. Covers
-		// the i32 / multi-value-case / no-default / fall-through-assign / nested /
-		// string-scrutinee shapes.
-		{"switch-i32", "function f(n: i32): i32 { switch (n) { case 1: return 10; case 2: return 20; default: return 0; } } function main(): i32 { return f(2); }"},
-		{"switch-multi-value", "function f(n: i32): i32 { switch (n) { case 1, 2, 3: return 100; default: return 0; } } function main(): i32 { return f(3); }"},
-		{"switch-no-default", "function f(n: i32): i32 { var r = 0; switch (n) { case 5: r = 50; } return r; } function main(): i32 { return f(5); }"},
-		{"switch-assign", "function main(): i32 { var x = 0; switch (2) { case 1: x = 10; case 2: x = 20; default: x = 99; } return x; }"},
-		{"switch-nested", "function f(a: i32, b: i32): i32 { switch (a) { case 1: switch (b) { case 1: return 11; default: return 19; } default: return 0; } } function main(): i32 { return f(1, 1); }"},
-		{"switch-string", "function f(s: string): i32 { switch (s) { case \"a\": return 1; case \"b\": return 2; default: return 9; } } function main(): i32 { return f(\"b\"); }"},
-		// `defer` / `errdefer` — lift_lambdas now runs parser.lower_defers_module
-		// (after the switch desugar), scheduling the deferred action at every
-		// scope exit, exactly as module_with_builtins does for the AST backend.
+		// `defer` / `errdefer` — lift_lambdas now runs parser.lower_defers_module,
+		// scheduling the deferred action at every scope exit, exactly as
+		// module_with_builtins does for the AST backend.
 		// A module whose only IR-ineligible construct was a defer now lowers via
 		// the IR path. Covers basic / early-return / two-defer-order / errdefer.
 		{"defer-basic", "function main(): i32 { var x = 0; defer { x = 99; } x = 1; return x; }"},

@@ -16,8 +16,8 @@ Reserved across all syntactic positions:
 function var let use as
 if else while for loop break continue return
 true false boolean void string
-i32 i64 u8 u32 u64 usize f32 f64
-switch case default
+i8 i16 i32 i64 u8 u16 u32 u64 usize f32 f64
+default
 struct enum type
 import pub const
 match when
@@ -70,7 +70,6 @@ isn't significant.
 - **`for (init; cond; step) { ... }`** — three-part loop.
 - **`loop { ... }`** — infinite loop; exit with `break` / `return`.
 - **`match (expr) { Pat(b) => { ... }, ... }`** — pattern dispatch.
-- **`switch (expr) { case 1: ...; default: ... }`** — value dispatch.
 - **`let Pat(b) = expr else { ... };`** — refutable binding; the `else`
   block must diverge.
 - **`defer expr;`** / **`errdefer expr;`** — schedule expr to run on

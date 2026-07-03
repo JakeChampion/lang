@@ -2083,45 +2083,6 @@ function main(): i32 {
 	}
 }
 
-func TestX86_64Switch(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"multi-value case match", `function classify(n: i32): i32 {
-    switch (n) {
-        case 0: return 100;
-        case 1, 2, 3: return 200;
-        case 7: return 700;
-    }
-    return 0;
-}
-function main(): i32 { return classify(2); }`, 200},
-		{"falls through to post-switch when no case matches", `function main(): i32 {
-    var x: i32 = 99;
-    switch (x) {
-        case 1: return 1;
-        case 2: return 2;
-    }
-    return 0;
-}`, 0},
-		{"default branch", `function main(): i32 {
-    var x: i32 = 99;
-    switch (x) {
-        case 1: return 1;
-        default: return 42;
-    }
-    return 0;
-}`, 42},
-	} {
-		_, code := compileAndRunX86_64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
-		}
-	}
-}
-
 func TestX86_64FStringInterpolation(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -2900,31 +2861,6 @@ function main(): i32 {
     if (trace.get_or("first-defer", 0) != 10) { return 5; }
     if (trace.get_or("second-defer", 0) != 20) { return 6; }
     return 0;
-}`},
-		{"switch_basic", `function classify(n: i32): i32 {
-    switch (n) {
-        case 0: return 100;
-        case 1, 2, 3: return 200;
-        case 7: return 700;
-        default: return 0;
-    }
-    return 0 - 1;
-}
-function main(): i32 {
-    var sum: i32 = classify(0) + classify(2) + classify(7) + classify(99);
-    if (sum == 1000) { return 0; }
-    return 1;
-}`},
-		{"switch_break_in_loop", `function main(): i32 {
-    var sum: i32 = 0;
-    for (var i: i32 = 0; i < 5; i = i + 1) {
-        switch (i) {
-            case 2: break;
-            default: sum = sum + i;
-        }
-    }
-    if (sum == 8) { return 0; }
-    return 1;
 }`},
 		{"fstring_interp", `
 import "std/i32";

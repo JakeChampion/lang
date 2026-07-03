@@ -212,15 +212,6 @@ func insertDefersInStmt(s ast.Stmt, kept map[string]string) {
 				insertDefersInStmt(a.Body, kept)
 			}
 		}
-	case *ast.Switch:
-		for _, c := range x.Cases {
-			if c.Body != nil {
-				insertDefersInStmt(c.Body, kept)
-			}
-		}
-		if x.Default != nil {
-			insertDefersInStmt(x.Default, kept)
-		}
 	}
 }
 

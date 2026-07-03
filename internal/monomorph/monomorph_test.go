@@ -412,16 +412,6 @@ function main(): i32 {
     for (var i: i32 = id(0); i < 3; i = id(i) + 1) { sum = id(sum) + i; }
     return sum;
 }`},
-		{node: "Switch.Tag+Cases", src: `function id[T](x: T): T { return x; }
-function main(): i32 {
-    var n: i32 = 0;
-    switch (id(2)) {
-        case 1: { n = id(10); }
-        case 2: { n = id(20); }
-        default: { n = id(-1); }
-    }
-    return n;
-}`},
 		{node: "Match.Tag+Arms", src: `function id[T](x: T): T { return x; }
 enum L { Red, Green }
 function main(): i32 {
@@ -561,7 +551,6 @@ func allASTNodesWithChildren() []string {
 		(*ast.Var)(nil),
 		(*ast.Destructure)(nil),
 		(*ast.ExprStmt)(nil),
-		(*ast.Switch)(nil),
 		(*ast.Match)(nil),
 		(*ast.FuncDecl)(nil),
 	}

@@ -144,16 +144,6 @@ function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.y; }`},
 		{node: "Var", src: `function main(): i32 { var x: i32 = 7; return x; }`},
 		{node: "Destructure", src: `function main(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; return a + b; }`},
 		{node: "ExprStmt", src: `function main(): i32 { var n: i32 = 0; n = n + 1; return n; }`},
-		{node: "Switch", src: `function main(): i32 {
-    var n: i32 = 2;
-    var out: i32 = 0;
-    switch (n) {
-        case 1: { out = 10; }
-        case 2: { out = 20; }
-        default: { out = -1; }
-    }
-    return out;
-}`},
 		{node: "Match", src: `enum Light { Red, Green }
 function main(): i32 {
     var l: Light = Green;
@@ -294,7 +284,6 @@ func allStmtNodeNames() []string {
 		(*ast.Var)(nil),
 		(*ast.Destructure)(nil),
 		(*ast.ExprStmt)(nil),
-		(*ast.Switch)(nil),
 		(*ast.Match)(nil),
 		(*ast.FuncDecl)(nil),
 	}

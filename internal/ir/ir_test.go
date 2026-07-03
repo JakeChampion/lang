@@ -276,23 +276,6 @@ func TestLowerClosureValueRcTracked(t *testing.T) {
 	}
 }
 
-func TestLowerSwitch(t *testing.T) {
-	prog := lowerSource(t, `function f(n: i32): i32 {
-		switch (n) {
-			case 1, 2: return 10;
-			case 3: return 30;
-			default: return 0;
-		}
-		return -1;
-	}`)
-	mustContainOp(t, prog, "f", OpStoreLocal) // tag stash
-	mustContainOp(t, prog, "f", OpEq)
-	// Each value compares with br_if 0 to the inner block; no-match
-	// falls through to a br to the outer per-case block.
-	mustContainOp(t, prog, "f", OpBrIf)
-	mustContainOp(t, prog, "f", OpBr)
-}
-
 func TestLowerIfExpr(t *testing.T) {
 	prog := lowerSource(t, `function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	// IfExpr lowers to a typed `if i32 ... else ... end`.
@@ -1307,10 +1290,11 @@ func TestStructuredControlFlowIsBalanced(t *testing.T) {
 		for (var i: i32 = 0; i < n; i = i + 1) {
 			if (i == 5) { break; }
 			if (i == 7) { continue; }
-			switch (i) {
-				case 1, 2: sum = sum + 10;
-				case 3: sum = sum + 30;
-				default: sum = sum + 1;
+			match (i) {
+				1 => { sum = sum + 10; },
+				2 => { sum = sum + 10; },
+				3 => { sum = sum + 30; },
+				_ => { sum = sum + 1; }
 			}
 		}
 		while (sum > 100) {
@@ -1354,13 +1338,13 @@ func TestLowerNumScratchTracked(t *testing.T) {
 	if got := len(pPlain.Funcs[0].ScratchTypes); got != 0 {
 		t.Errorf("plain function: ScratchTypes.len() = %d, want 0", got)
 	}
-	// A program using array, struct, and switch helpers should report
+	// A program using array, struct, and match helpers should report
 	// at least one scratch slot per helper kind.
 	pHelpers := lowerSource(t, `struct P { x: i32 }
 		function f(n: i32): i32 {
 			var a: i32[] = [1, 2, 3];
 			var p: P = P { x: 5 };
-			switch (n) { case 0: return 0; default: return 1; }
+			match (n) { 0 => { return 0; }, _ => { return 1; } }
 		}`)
 	if got := len(pHelpers.Funcs[0].ScratchTypes); got < 3 {
 		t.Errorf("helper-heavy function: ScratchTypes.len() = %d, want >= 3", got)

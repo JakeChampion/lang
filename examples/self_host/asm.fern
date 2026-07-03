@@ -3459,10 +3459,8 @@ function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
-        // StmtDefer / StmtSwitch are lowered away (lower_defers /
-        // desugar_switches) before emit; these arms only satisfy
-        // exhaustiveness (StmtSwitch defensively emits its lowered form).
-        parser.StmtSwitch(_) => { return emit_stmt(parser.desugar_switch_in_stmt(stmt), s); },
+        // StmtDefer is lowered away (lower_defers) before emit; this arm only
+        // satisfies exhaustiveness.
         parser.StmtDefer(_) => { return s.write("    # unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
             // Capture whether we're returning an rc-tracked array BEFORE

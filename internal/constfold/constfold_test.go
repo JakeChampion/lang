@@ -265,15 +265,6 @@ func countIdents(prog *ast.Program, target string) int {
 			walkExpr(x.Init)
 		case *ast.ExprStmt:
 			walkExpr(x.Expr)
-		case *ast.Switch:
-			walkExpr(x.Tag)
-			for _, c := range x.Cases {
-				for _, v := range c.Values {
-					walkExpr(v)
-				}
-				walkStmt(c.Body)
-			}
-			walkStmt(x.Default)
 		}
 	}
 	for _, fn := range prog.Funcs {

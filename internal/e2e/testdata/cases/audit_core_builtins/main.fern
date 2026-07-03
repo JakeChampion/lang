@@ -10,8 +10,9 @@ import "std/i32";
 //   integer arithmetic / comparison / bitwise / unary minus, operator
 //   precedence, boolean logic incl. short-circuit non-evaluation,
 //   compound assignment, if/else, if-expression, while, C-style for,
-//   for-in array, for-in string, inclusive + half-open ranges, switch
-//   (comma cases + default), break / continue, nested blocks, return.
+//   for-in array, for-in string, inclusive + half-open ranges, match
+//   (multiple literal arms + wildcard), break / continue, nested blocks,
+//   return.
 
 // A right-hand side that traps (divide by zero). Short-circuit must
 // ensure this never runs when the left operand decides the result.
@@ -21,10 +22,12 @@ function trap_rhs(): boolean {
 }
 
 function classify(n: i32): i32 {
-    switch (n) {
-        case 0: return 100;
-        case 1, 2, 3: return 42;
-        default: return 7;
+    match (n) {
+        0 => { return 100; },
+        1 => { return 42; },
+        2 => { return 42; },
+        3 => { return 42; },
+        _ => { return 7; }
     }
 }
 
@@ -117,10 +120,10 @@ function main(): i32 {
     for k in 0..4 { hs = hs + k; }
     if (hs != 6) { print("FAIL range-half"); return 49; }
 
-    // --- switch (comma cases + default) ---
-    if (classify(0) != 100) { print("FAIL switch0"); return 50; }
-    if (classify(2) != 42) { print("FAIL switch2"); return 51; }
-    if (classify(9) != 7) { print("FAIL switch-def"); return 52; }
+    // --- match (multiple literal arms + wildcard) ---
+    if (classify(0) != 100) { print("FAIL match0"); return 50; }
+    if (classify(2) != 42) { print("FAIL match2"); return 51; }
+    if (classify(9) != 7) { print("FAIL match-wild"); return 52; }
 
     // --- break / continue ---
     var brk: i32 = 0;

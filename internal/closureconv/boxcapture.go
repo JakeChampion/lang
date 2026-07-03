@@ -251,19 +251,6 @@ func rewriteBoxedStmt(s ast.Stmt, boxed map[string]ast.Type) {
 		// An assignment statement (`x = v;`) is an *ast.Assign wrapped here;
 		// rewriteBoxedExpr handles the Assign (target + value).
 		x.Expr = rewriteBoxedExpr(x.Expr, boxed)
-	case *ast.Switch:
-		x.Tag = rewriteBoxedExpr(x.Tag, boxed)
-		for ci := range x.Cases {
-			for vi := range x.Cases[ci].Values {
-				x.Cases[ci].Values[vi] = rewriteBoxedExpr(x.Cases[ci].Values[vi], boxed)
-			}
-			if x.Cases[ci].Body != nil {
-				rewriteBoxedStmt(x.Cases[ci].Body, boxed)
-			}
-		}
-		if x.Default != nil {
-			rewriteBoxedStmt(x.Default, boxed)
-		}
 	case *ast.Match:
 		x.Tag = rewriteBoxedExpr(x.Tag, boxed)
 		for ai := range x.Arms {

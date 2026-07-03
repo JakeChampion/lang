@@ -143,7 +143,6 @@ Adding them is a copy-paste of the wasm test with a different runner.
 ### Both natives lack (vs wasm)
 
 - ~~`Test*Defer` (defer with conditional / early-return)~~ ✅ both
-- ~~`Test*Switch` (switch-with-break-in-loop)~~ ✅ both
 - ~~`Test*FStringInterpolation`~~ ✅ both
 - ~~`Test*Generic*`~~ ✅ `TestArm64Generic` / `TestX86_64Generic`
 - ~~`Test*Tuple*`~~ ✅ both

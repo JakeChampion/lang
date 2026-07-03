@@ -103,7 +103,7 @@ function is_keyword(name: string): boolean {
         || name == "i32" || name == "i64"
         || name == "u8" || name == "u32" || name == "u64"
         || name == "usize" || name == "f32" || name == "f64"
-        || name == "as" || name == "switch" || name == "case" || name == "default"
+        || name == "as" || name == "default"
         || name == "struct" || name == "import" || name == "pub" || name == "const"
         || name == "enum" || name == "type" || name == "match" || name == "when"
         || name == "defer" || name == "errdefer"

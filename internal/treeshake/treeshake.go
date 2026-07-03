@@ -424,17 +424,6 @@ func walkStmt(s ast.Stmt, byName map[string]*ast.FuncDecl, enqueue func(string))
 		walkExpr(x.Init, byName, enqueue)
 	case *ast.ExprStmt:
 		walkExpr(x.Expr, byName, enqueue)
-	case *ast.Switch:
-		walkExpr(x.Tag, byName, enqueue)
-		for _, k := range x.Cases {
-			for _, v := range k.Values {
-				walkExpr(v, byName, enqueue)
-			}
-			walkStmt(k.Body, byName, enqueue)
-		}
-		if x.Default != nil {
-			walkStmt(x.Default, byName, enqueue)
-		}
 	case *ast.Match:
 		walkExpr(x.Tag, byName, enqueue)
 		for _, arm := range x.Arms {

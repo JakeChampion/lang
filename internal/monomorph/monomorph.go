@@ -1094,15 +1094,6 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 		substituteExpr(x.Value, sub)
 	case *ast.Defer:
 		substituteExpr(x.Expr, sub)
-	case *ast.Switch:
-		substituteExpr(x.Tag, sub)
-		for _, cs := range x.Cases {
-			for _, v := range cs.Values {
-				substituteExpr(v, sub)
-			}
-			substituteBlock(cs.Body, sub)
-		}
-		substituteBlock(x.Default, sub)
 	case *ast.Match:
 		substituteExpr(x.Tag, sub)
 		for _, arm := range x.Arms {
@@ -1821,17 +1812,6 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		walkBlock(x.Body, fn)
 	case *ast.Defer:
 		walkExpr(x.Expr, fn)
-	case *ast.Switch:
-		walkExpr(x.Tag, fn)
-		for _, c := range x.Cases {
-			for _, v := range c.Values {
-				walkExpr(v, fn)
-			}
-			walkBlock(c.Body, fn)
-		}
-		if x.Default != nil {
-			walkBlock(x.Default, fn)
-		}
 	}
 }
 
