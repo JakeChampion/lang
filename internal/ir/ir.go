@@ -4124,15 +4124,6 @@ type builder struct {
 	// decide whether a closure has a __closure_drop_<name> thunk
 	// (rc-tracked captures present) worth dispatching to.
 	closureCaps map[string][]ast.Param
-	// consumingMatchReuse marks a construction C (an arm's variant constructor)
-	// that reuses a CONSUMING match's scrutinee box in place (C2 — true
-	// zero-alloc FBIP): instead of freeing the consumed `own` box and allocating
-	// a fresh one for the arm's `return Ctor(..)`, the box shell is handed
-	// straight to C via the reuse token. The scrutinee's old payloads were MOVED
-	// into the arm bindings (reclaimed downstream), so unlike a general reuse C
-	// must NOT drop the box's old fields — this flag tells emitEnumNew to skip
-	// emitReuseOldFieldDrops. Rides on RcReuseEnabled.
-	consumingMatchReuse map[*ast.Call]bool
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
@@ -4507,7 +4498,6 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// params, borrow-aware free eligibility, moves, array-set incs, reuse)
 	// computed up front in one place; see rc_analysis.go (#4393).
 	b.computeRcAnalyses()
-	b.consumingMatchReuse = map[*ast.Call]bool{}
 	b.closureTarget = map[string]string{}
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
@@ -5177,7 +5167,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	if dName, paired := b.rc.reuseSources[callNode]; paired && callNode != nil {
 		var dSize int32
 		reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
-		if b.consumingMatchReuse[callNode] {
+		if b.rc.consumingMatchReuse[callNode] {
 			// Consuming-match reuse (C2): the scrutinee's pointer payloads were
 			// MOVED into the arm bindings and are reclaimed downstream, so the
 			// reused box's OLD fields must not be dropped — only its shell is
@@ -5232,7 +5222,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
 		// Inc-and-passthrough (leaves the value on the stack for the store).
 		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
-		if b.enumRcPayloadsEligible(enumName) && !b.consumingMatchReuse[callNode] &&
+		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
 			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
@@ -6613,14 +6603,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// constructed box share the enum's uniform box size — so instead of
 				// freeing the consumed box and allocating a fresh one, hand the box
 				// shell straight to that construction via the reuse token (true
-				// zero-alloc FBIP). Rides on RcReuseEnabled; otherwise free (C1).
-				reuseCtor := b.consumingReuseCtor(arm, consumeEnum)
-				scrutIdent, scrutIsIdent := n.Tag.(*ast.Ident)
-				_, already := b.rc.reuseSources[reuseCtor]
-				if ast.RcReuseEnabled && reuseCtor != nil && scrutIsIdent && !already {
-					b.rc.reuseSources[reuseCtor] = scrutIdent.Name
-					b.consumingMatchReuse[reuseCtor] = true
-				} else {
+				// zero-alloc FBIP). The pairing is DECIDED at analysis time now
+				// (computeConsumingMatchReuse fills rc.reuseSources +
+				// rc.consumingMatchReuse); an unregistered arm frees the box (C1).
+				if reuseCtor := b.consumingReuseCtor(arm, consumeEnum); reuseCtor == nil || !b.rc.consumingMatchReuse[reuseCtor] {
 					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
 				}
 			}

@@ -74,9 +74,10 @@ two separable moves:
   mirrors as parallel arrays. Two documented wrinkles:
   `preciseDrops` is filled at its later `lowerFunc` call site (the
   drop-fn registry-order constraint), and the C2 consuming-match
-  reuse still registers its scrutinee pairing in `reuseSources`
-  mid-lowering — an insertion-time decision a later slice should
-  fold into the plan.
+  reuse initially still registered its scrutinee pairing in
+  `reuseSources` mid-lowering — folded into the plan by #4475
+  (`computeConsumingMatchReuse`), so the plan is immutable once
+  `computeRcAnalyses` returns.
 - **Slice 3 (landed): carve the insertion helpers.** The
   Op-emitting RC half moved verbatim to `rc_insert.go` (~2.7k
   lines, 44 functions): the exit dec sweep
