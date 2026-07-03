@@ -158,6 +158,13 @@ var interpProgs = []struct {
 	// (`y = e; x = y;`), so every target receives the value.
 	{"chained-assign-2", "function main(): i32 { var x = 0; var y = 0; x = y = 20; return x + y; }", 40},
 	{"chained-assign-3", "function main(): i32 { var x = 0; var y = 0; var z = 0; x = y = z = 14; return x + y + z; }", 42},
+	// Callback-passing `use x <- call();` monadic bind (#4335): the rest of the
+	// block becomes a callback lambda appended as the call's last argument, and
+	// the block returns the call's result — `use r <- apply(41); return r + 1;`
+	// desugars to `return apply(41, (r) => { return r + 1; });`. Previously the
+	// line shredded (no `use` arm in parse_block/parse_stmt). apply invokes the
+	// callback with 41, so r + 1 == 42.
+	{"use-monadic-bind", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); } function main(): i32 { use r <- apply(41); return r + 1; }", 42},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
