@@ -3256,7 +3256,13 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
                             if (pv.type_name.len() > 0) {
                                 if (util.has_str(seen, pv.type_name)) {
                                     out = out.append(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
-                                } else {
+                                } else if (!m.arms[a].has_guard) {
+                                    // Only an UNGUARDED arm fully covers its variant. A
+                                    // guarded arm (`V(x) when cond =>`) may fall through, so
+                                    // it must NOT mark V covered — the standard
+                                    // guarded-then-unguarded shape (`Red when.. =>, Red =>`)
+                                    // is legal, and E030 still requires the later unguarded
+                                    // arm. Mirrors native checker.go:8318-8331 (#4344).
                                     seen = seen.append(pv.type_name);
                                 }
                                 // E015: payload-binding arity. A known variant's
@@ -4342,8 +4348,11 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                                 var cqual: string = cpv.type_name[0:cdp];
                                                 var cbare: string = cpv.type_name[cdp + 1:cpv.type_name.len()];
                                                 if (cqual == mun.name) {
-                                                    // Correctly qualified — covers the bare variant.
-                                                    covered = covered.append(cbare);
+                                                    // Correctly qualified — an UNGUARDED arm covers
+                                                    // the bare variant. A guarded arm may fall
+                                                    // through, so it does NOT count toward
+                                                    // exhaustiveness (#4344).
+                                                    if (!m.arms[ca].has_guard) { covered = covered.append(cbare); }
                                                     if (!util.has_str(usig.variants, cbare)) {
                                                         out = out.append(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
                                                     }
@@ -4355,7 +4364,11 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                                 // (unknown qualifier: Go reports a module-source
                                                 // mismatch this port doesn't model — left alone.)
                                             } else {
-                                                covered = covered.append(cpv.type_name);
+                                                // Only an UNGUARDED arm covers its variant for
+                                                // exhaustiveness; a guarded arm may fall through
+                                                // (#4344). E014 (below) still fires for a guarded
+                                                // arm naming a foreign variant.
+                                                if (!m.arms[ca].has_guard) { covered = covered.append(cpv.type_name); }
                                                 // E014: a variant pattern that names
                                                 // something outside the scrutinee's
                                                 // enum/union, reported at the arm.
