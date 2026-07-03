@@ -677,8 +677,11 @@ think they're free additions to make.
 ## Known compiler bugs surfaced during this work
 
 - **Generic prelude functions break unrelated `i8`-literal
-  inference at monomorph re-check time.** Adding any
-  `function foo[T](...)` to the prelude trips the
+  inference at monomorph re-check time.** (Moot since #4408
+  retired `i8`/`i16`/`u16` — kept as historical record; the
+  underlying re-check inference bug this surfaced may still
+  apply to other sub-i32 polymorphic literals, i.e. `u8`.)
+  Adding any `function foo[T](...)` to the prelude trips the
   `TestWASMSubI32Widths` family — the `-7` in
   `var s: i8 = -7;` re-fails as "operator '-' requires
   i32, got i8" during the post-monomorph type re-check.

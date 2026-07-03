@@ -387,6 +387,21 @@ world-driven composer (P2) wires it.
      `boolean[]` result reuses the u8[]-result byte-expansion wrapper verbatim
      (only the `is_extern_composite_ret` gate + the wrapper's ret-type check
      accept `"boolean[]"`). Gated by `TestSelfHostExternBoolArrayResultCustomProvider`.
+   - **Update (#4408):** `i8`/`i16`/`u16` were retired from the Fern
+     language (zero-to-low real usage, full per-stride backend cost).
+     The two "Sub-word integer fields" passages below describe the
+     shipped-then-retired `s8`/`s16`/`u16` marshalling as historical
+     record — a Fern struct field can no longer be narrower than
+     `u8`/`i32`, so those widths widen to `i32`/`u32` on the Fern side
+     now (the WIT-side `.wit` interface is free to still declare
+     `s8`/`u16`; the canonical ABI already flattens those to i32 at
+     the wire, so nothing there changes — only whether *Fern* can
+     mirror the field at its native sub-word size is gone). The gated
+     tests (`TestExternRecordParamSubwordCustomProvider` /
+     `TestExternRecordResultSubwordCustomProvider` and their
+     self-host mirrors) were widened to `i32`/`u32` fields
+     accordingly, still exercising multi-field record marshalling
+     end to end.
    - **Record (struct) parameters — ✅ done (Go).** A Fern struct passed to an
      `@import` extern whose WIT signature takes a `record` flattens to its
      fields' core types (the canonical ABI passes a small record inline). The

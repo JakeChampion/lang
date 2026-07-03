@@ -157,9 +157,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"hex-or", "function main(): i32 { return (0x40 | 0x01) & 255; }"},
 		// Int→int casts (op_int_cast). Non-overflowing where they'd differ from
 		// native, so the AST path agrees — masking matches asm.fern's as_<ty>.
+		// (i8/i16/u16 were retired (#4408); u8 is the only sub-word type left,
+		// so the u16-mask and i8-sign-extend cast cases that used to live here
+		// are gone rather than force-substituted onto a width that no longer
+		// exists.)
 		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"}, // 300 & 255 = 44
-		{"cast-u16-mask", "function main(): i32 { return ((70000 as u16) as i32) & 255; }"},
-		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"}, // 200 -> -56 -> &255 = 200
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return ((x as u8) as i32); }"},
 		// Array builder methods: .with (reassign-self -> in-place arr_set) and
 		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes. These
@@ -227,8 +229,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// constructing them + reading fields lowers. d.month*100 + d.day + s.days =
 		// 6*100 + 15 + 3 = 618 (exit 106 mod 256). Was BAIL (Date layout unknown).
 		{"builtin-struct-date", "function f(): i32 { var d = Date { year: 2026, month: 6, day: 15 }; var s = Span { years: 0, months: 0, weeks: 0, days: 3, hours: 0, minutes: 0, seconds: 0, nanos: 0 }; return d.month * 100 + d.day + s.days; } function main(): i32 { return f(); }"},
-		// Sub-word (u8[]) array as a STRUCT FIELD (is_leaksafe_array_field now
-		// admits u8[]/u16[]/i8[]/i16[]) — a byte-buffer struct (the BytesWriter
+		// Sub-word (u8[]) array as a STRUCT FIELD (is_leaksafe_array_field
+		// admits u8[], the only sub-word array type left after #4408) — a
+		// byte-buffer struct (the BytesWriter
 		// shape from std/io_buffered). The field stores a pointer; elements ride
 		// the i32[] 4-byte-slot representation (op_arr_push / op_arr_get(32)), the
 		// sub-word value pre-wrapped by `as u8` at the push site. Binding the
@@ -250,9 +253,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// fresh u8[] move source) as a u8[] struct-lit field value. 65+66+67 = 198.
 		{"bytes-call-field", "struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s.bytes(), pos: 0 }; } function (x: S) sum(): i32 { var d: u8[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + (d[i] as i32); i = i + 1; } return t; } function main(): i32 { var x: S = mk(\"ABC\"); return x.sum(); }"},
 		// A sub-word (u8[]) array as a TUPLE element — the std/stream
-		// `(s: Stream) read_all(): (u8[], Stream)` cursor-idiom shape. u8[]/u16[]/
-		// i8[]/i16[] ride the same i32[] 4-byte-slot tuple representation as
-		// i32[]/u32[], so tuple_elems_lowerable now admits them: construction
+		// `(s: Stream) read_all(): (u8[], Stream)` cursor-idiom shape. u8[] (the
+		// only sub-word array type left after #4408) rides the same i32[]
+		// 4-byte-slot tuple representation as i32[]/u32[], so
+		// tuple_elems_lowerable now admits them: construction
 		// stores the buffer pointer in one slot, the destructure binds it as an
 		// array local (mark_arr), and `bytes[i]` rides the 4-byte arr_get. Builds
 		// [10,20,35], reads it back through the (u8[], St) return: 10+20+35 + pos
@@ -454,17 +458,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-three-fields", `struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }`},
 		{"struct-param", `struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }`},
 		{"struct-bool-field", `struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }`},
-		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8/u16/i8/i16)
-		// is leak-safe and lowers — these ride the same i32 slot, so only the
+		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8) is
+		// leak-safe and lowers — these ride the same i32 slot, so only the
 		// leaf-safe gate blocked them. Covers local / param / struct-returning /
-		// mixed-field / functional-update shapes; u64 / f32 stay on AST (width work).
+		// mixed-field / functional-update shapes; u64 / f32 stay on AST (width
+		// work). (i16/i8 sign-extend and u16 cases were retired (#4408); u8 is
+		// the only sub-word type left.)
 		{"struct-u32-field", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`},
 		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { var b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`},
-		{"struct-i16-field", `struct B { v: i16, n: i32 } function main(): i32 { var b = B { v: 1000 as i16, n: 2 }; return ((b.v as i32) + b.n) % 200; }`},
-		{"struct-i8-neg-field", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`},
 		{"struct-u32-ret", `struct B { hi: u32, n: i32 } function mk(): B { return B { hi: 100 as u32, n: 4 }; } function main(): i32 { var b = mk(); return (b.hi as i32) + b.n; }`},
 		{"struct-u32-param", `struct B { hi: u32, n: i32 } function sz(b: B): i32 { return b.n; } function main(): i32 { return sz(B { hi: 1 as u32, n: 9 }); }`},
-		{"struct-mixed-int-fields", `struct B { a: u8, b: i16, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, b: 2 as i16, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.b as i32) + (x.c as i32) + x.d; }`},
+		{"struct-mixed-int-fields", `struct B { a: u8, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.c as i32) + x.d; }`},
 		{"struct-u32-update", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 5 as u32, n: 1 }; var c = B { ...b, n: 9 }; return (c.hi as i32) + c.n; }`},
 		// A u64 struct field is a 64-bit integer field — routed through the i64 path
 		// (struct_get_i64 / lower_i64 / struct_field_width 64). The full 64 bits must
@@ -502,13 +506,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { var (b, n) = f(); if (b) { return n; } return 0; }`},
 		{"tuple-bool-both", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { var t = f(); var r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`},
 		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
-		// u8/u16/i8/i16) — these ride the same i32 slot, so only the return-type
-		// gate (tuple_elems_lowerable) blocked them. Covers the high-bit u32 case,
-		// sub-word wrap, and a signed-i8 negative.
+		// u8) — these ride the same i32 slot, so only the return-type gate
+		// (tuple_elems_lowerable) blocked them. Covers the high-bit u32 case
+		// and sub-word wrap. (i16/i8 sign-extend and u16 cases were retired
+		// (#4408); u8 is the only sub-word type left.)
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
 		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
-		{"tuple-i16", `function f(): (i16, i32) { return (1000 as i16, 2); } function main(): i32 { var t = f(); return ((t.0 as i32) + t.1) % 200; }`},
-		{"tuple-i8-neg", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`},
 		{"tuple-u32-second", `function f(): (i32, u32) { return (3, 9 as u32); } function main(): i32 { var t = f(); return t.0 + (t.1 as i32); }`},
 		// A u64 tuple element rides the i64 8-byte slot (tuple_get_w(64)); `.N`
 		// access, destructure, and the 2nd-element position all preserve the full
@@ -576,8 +579,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// narrowing on read), so the box stores / reads at the default 32-bit
 		// width and only is_leaksafe_payload (the field / tuple-element leak-
 		// safety gate) had to admit it; the bound payload is marked u32 so its
-		// arithmetic wraps. Sub-word (u8/u16/i8/i16) payloads stay on the AST
-		// path (sign-extension is a separate slice).
+		// arithmetic wraps. The sub-word (u8) payload stays on the AST
+		// path (a separate slice).
 		{"opt-u32-field-match", `struct S { o: Option[u32] } function main(): i32 { var s = S { o: Some(7) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
 		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
 		{"opt-u32-payload-shift", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`},
@@ -1541,7 +1544,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-opt-nested-arith", `struct P { x: i32 } struct Q { p: P, k: i32 } function main(): i32 { var o: Option[Q] = Some(Q { p: P { x: 5 }, k: 6 }); var y = match (o) { Some(q) => q.p.x + q.k, None => 0 }; return y; }`, 11},
 		// NARROWING CAST of an i64/f64 match-EXPRESSION payload to an i32 result
 		// (`Some(n) => (n as i32)`): iife_arm_returns_narrowed_payload admits the
-		// `name as i32/u32/u8/i8` shape — the i64/f64 payload slot is marked at width
+		// `name as i32/u32/u8` shape — the i64/f64 payload slot is marked at width
 		// by the StmtMatch path so the cast reads the wide value and narrows, but the
 		// result temp stays i32 (the old gate only admitted a BARE i64/f64 return).
 		{"matchexpr-opt-i64-cast", `function main(): i32 { var o: Option[i64] = Some(5 as i64); var y = match (o) { Some(n) => (n as i32), None => 0 }; return y; }`, 5},
@@ -1582,13 +1585,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-bool-val", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 0; }`, 7},
 		{"tuple-bool-both-val", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { var t = f(); var r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`, 1},
 		// ≤32-bit non-i32 integer tuple elements, pinned to the absolute IR value:
-		// the u32 high bits and the signed-i8 negative must survive the round-trip.
+		// the u32 high bits must survive the round-trip. (The signed-i8-negative
+		// sibling case was retired along with i8 (#4408).)
 		{"tuple-u32-val", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`, 10},
-		{"tuple-i8-neg-val", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`, 15},
 		// ≤32-bit non-i32 integer STRUCT fields, pinned to the absolute IR value:
-		// the u32 high bits and the signed-i8 negative survive the field round-trip.
+		// the u32 high bits survive the field round-trip. (The signed-i8-negative
+		// sibling case was retired along with i8 (#4408).)
 		{"struct-u32-field-val", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`, 10},
-		{"struct-i8-neg-field-val", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`, 15},
 		// A u64 struct field, pinned to the absolute IR value: 2^32 >> 32 == 1 proves
 		// the high 32 bits survive the field round-trip (a truncating read gives 5).
 		{"struct-u64-param-val", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`, 6},

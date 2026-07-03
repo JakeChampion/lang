@@ -389,7 +389,7 @@ function eval_unary(op: string, ov: Value): Value {
     // float. Without these every cast fell through to the
     // "unknown unary op" error below.
     if (op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64"
-        || op == "as_i16" || op == "as_u16" || op == "as_i8" || op == "as_u8"
+        || op == "as_u8"
         || op == "as_byte") {
         match (ov) {
             VInt(i) => { return v_int(i.v); },

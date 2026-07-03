@@ -437,8 +437,6 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__slice_idx")
 				case "__slice_idx_1":
 					needs.add("__slice_idx_1")
-				case "__slice_idx_2":
-					needs.add("__slice_idx_2")
 				case "__slice_idx_4":
 					needs.add("__slice_idx_4")
 				case "__slice_idx_8":
@@ -578,9 +576,6 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__arr_idx_1":
 					// Stride-1 byte-array indexing.
 					needs.add("__arr_idx_1")
-				case "__arr_idx_2":
-					// Stride-2 halfword-array indexing.
-					needs.add("__arr_idx_2")
 				case "__arr_idx_8":
 					// Stride-8 i64 / f64 array indexing.
 					needs.add("__arr_idx_8")
@@ -1525,12 +1520,6 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrIdx1Body,
 	},
-	"__arr_idx_2": {
-		// (base, i) → byte address. Stride 2 (halfword arrays).
-		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32},
-		body:    buildArrIdx2Body,
-	},
 	"__arr_idx_8": {
 		// (base, i) → byte address. Stride 8 (i64/f64 arrays).
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
@@ -1607,11 +1596,6 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildSliceIdxBody(1),
-	},
-	"__slice_idx_2": {
-		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32},
-		body:    buildSliceIdxBody(2),
 	},
 	"__slice_idx_4": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
@@ -3901,7 +3885,7 @@ func buildArrIdxBody(_ map[string]uint32) []byte {
 }
 
 // buildArrIdxStride is the common-shape factory used by the
-// stride-1/2/8 variants. stride=4 is __arr_idx (buildArrIdxBody).
+// stride-1/8 variants. stride=4 is __arr_idx (buildArrIdxBody).
 func buildArrIdxStride(stride int32) func(map[string]uint32) []byte {
 	return func(_ map[string]uint32) []byte {
 		var body []byte
@@ -3934,7 +3918,6 @@ func buildArrIdxStride(stride int32) func(map[string]uint32) []byte {
 }
 
 func buildArrIdx1Body(idxs map[string]uint32) []byte { return buildArrIdxStride(1)(idxs) }
-func buildArrIdx2Body(idxs map[string]uint32) []byte { return buildArrIdxStride(2)(idxs) }
 func buildArrIdx8Body(idxs map[string]uint32) []byte { return buildArrIdxStride(8)(idxs) }
 
 // buildStringFromBytesBody — (bs) → (data, len). bs is a u8[]

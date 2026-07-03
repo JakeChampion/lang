@@ -4,7 +4,7 @@ import "core/int";
 // (interp / x86-64 / arm64 / wasm). Each failing check prints "FAIL <id>"
 // and returns a distinct non-zero code; success prints "OK".
 //
-// Covers (docs/FEATURE-AUDIT.md §A): i64 arithmetic, u8/u16/u32 cast +
+// Covers (docs/FEATURE-AUDIT.md §A): i64 arithmetic, u8/u32 cast +
 // wrapping, narrowing casts, f32/f64 arithmetic + comparison.
 
 function main(): i32 {
@@ -20,9 +20,6 @@ function main(): i32 {
     var v8: i32 = 250 + 10;               // 260
     var w8: u8 = v8 as u8;                // 260 mod 256 = 4
     if (w8 as i32 != 4) { print("FAIL u8-wrap"); return 13; }
-    var v16: i32 = 65530 + 10;            // 65540
-    var w16: u16 = v16 as u16;            // 65540 mod 65536 = 4
-    if (w16 as i32 != 4) { print("FAIL u16-wrap"); return 14; }
 
     // --- narrowing cast (runtime value) ---
     var nv: i32 = 300;

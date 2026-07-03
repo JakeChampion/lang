@@ -215,16 +215,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E064 in a body `var` annotation. The init `q()` is itself undefined
 		// (E001), so there is no E003 init-mismatch cascade to diverge on.
 		{"unknown-var-type", "function main(): i32 { var x: Wibble = q(); return 0; }\n", []string{"E001", "E064"}},
-		// Sub-word integer keywords (u8/i8/u16/i16/usize) the parser accepts but
-		// the self-host name resolver doesn't model. They must NOT draw E064 in a
+		// Sub-word integer keywords (u8/usize) the parser accepts but the
+		// self-host name resolver doesn't model. They must NOT draw E064 in a
 		// body `var` annotation — the Go oracle accepts them, and the stdlib uses
 		// them (`var b: u8`, `var p: usize`), so a false E064 here would bail every
 		// importing module off the IR path (the #3813 regression).
-		{"subword-int-vars-clean", "function main(): i32 { var a: u8 = 1 as u8; var b: i8 = 1 as i8; var c: u16 = 1 as u16; var d: i16 = 1 as i16; var e: usize = 1 as usize; return 0; }\n", nil},
+		{"subword-int-vars-clean", "function main(): i32 { var a: u8 = 1 as u8; var e: usize = 1 as usize; return 0; }\n", nil},
 		// `byte` is NOT a parser keyword, so the Go checker flags it E064 too —
 		// the self-host must keep flagging it (init `q()` is E001, avoiding an
 		// E003 init-mismatch cascade, same as unknown-var-type above).
 		{"unknown-byte-var-type", "function main(): i32 { var x: byte = q(); return 0; }\n", []string{"E001", "E064"}},
+		// isize/i8/i16/u16 were retired (#4408): neither is a lexer keyword
+		// any more, so a reference to one is an unknown nominal type — both
+		// checkers must now flag E064 here, the mirror image of the
+		// subword-int-vars-clean case above.
+		{"unknown-retired-subword-var-type", "function main(): i32 { var x: i8 = q(); return 0; }\n", []string{"E001", "E064"}},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
@@ -931,15 +936,16 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"lit-match-wildcard-middle", "function main(): i32 { var x = 1; match (x) { 1 => { return 1; }, _ => { return 9; }, 2 => { return 2; } } }\n"},
 		{"str-match-wildcard-middle", "function f(s: string): i32 { match (s) { \"a\" => { return 1; }, _ => { return 0; }, \"b\" => { return 2; } } }\nfunction main(): i32 { return f(\"a\"); }\n"},
 		{"lit-match-wildcard-last-ok", "function classify(x: i32): i32 { match (x) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 99; } } }\nfunction main(): i32 { return classify(2); }\n"},
-		// Sub-word / pointer-width integer builtins (u8 / i8 / u16 / i16 / usize):
-		// the Go checker accepts them as real types (stdlib byte code uses
-		// `var b: u8` and core/int uses `var p: usize` pervasively), so the
-		// self-host E064 unknown-type rule must not flag them — on a param or a
-		// body `var` annotation (the #3813 body-var walk that imported them via
-		// the stdlib bundle). `byte` is the negative control: not a keyword, so
+		// Sub-word / pointer-width integer builtins (u8 / usize) — the only two
+		// left after i8/u16/i16/isize were retired (#4408): the Go checker
+		// accepts them as real types (stdlib byte code uses `var b: u8` and
+		// core/int uses `var p: usize` pervasively), so the self-host E064
+		// unknown-type rule must not flag them — on a param or a body `var`
+		// annotation (the #3813 body-var walk that imported them via the
+		// stdlib bundle). `byte` is the negative control: not a keyword, so
 		// the Go checker rejects it and both must report E064, proving the
 		// allowlist didn't over-broaden.
-		{"subword-int-params", "function f(a: u8, b: i8, c: u16, d: i16): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
+		{"subword-int-params", "function f(a: u8, b: usize): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 		{"subword-u8-var", "function main(): i32 { var n: u8 = 0 as u8; return 0; }\n"},
 		{"usize-var", "function main(): i32 { var p: usize = 0 as usize; return 0; }\n"},
 		{"unknown-byte-param", "function f(x: byte): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},

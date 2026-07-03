@@ -38,15 +38,14 @@ import (
 // ---- numeric type model ----
 
 type numType struct {
-	name     string // fern spelling: "i8", "u32", "f64", ...
-	bits     int    // 8/16/32/64
+	name     string // fern spelling: "u8", "u32", "f64", ...
+	bits     int    // 8/32/64
 	unsigned bool
 	isFloat  bool
 }
 
 var intTypes = []numType{
-	{"i8", 8, false, false}, {"u8", 8, true, false},
-	{"i16", 16, false, false}, {"u16", 16, true, false},
+	{"u8", 8, true, false},
 	{"i32", 32, false, false}, {"u32", 32, true, false},
 	{"i64", 64, false, false}, {"u64", 64, true, false},
 }
@@ -57,8 +56,8 @@ var floatTypes = []numType{{"f32", 32, false, true}, {"f64", 64, false, true}}
 // values (0, 1, −1, MIN, MAX, half-range) plus a couple of mid
 // values. Signed negatives and the type minimums are spelled
 // `0 - N (- 1)` because the lexer rejects a bare out-of-range
-// negative literal (e.g. `-128` for i8). The result strings are
-// valid right-hand sides for `var x: T = …`.
+// negative literal (e.g. `-2147483648` for i32). The result
+// strings are valid right-hand sides for `var x: T = …`.
 func litsFor(t numType) []string {
 	if t.isFloat {
 		return []string{
@@ -71,8 +70,6 @@ func litsFor(t numType) []string {
 		switch t.bits {
 		case 8:
 			return []string{"0", "1", "255", "128", "127", "200", "42"}
-		case 16:
-			return []string{"0", "1", "65535", "32768", "32767", "50000", "1000"}
 		case 32:
 			return []string{"0", "1", "4294967295", "2147483648", "2147483647", "3000000000", "1000000"}
 		default: // 64
@@ -80,10 +77,6 @@ func litsFor(t numType) []string {
 		}
 	}
 	switch t.bits {
-	case 8:
-		return []string{"0", "1", "0 - 1", "127", "0 - 127 - 1", "100", "0 - 100", "42"}
-	case 16:
-		return []string{"0", "1", "0 - 1", "32767", "0 - 32767 - 1", "30000", "0 - 30000", "1000"}
 	case 32:
 		return []string{"0", "1", "0 - 1", "2147483647", "0 - 2147483647 - 1", "1000000", "0 - 1000000", "65536"}
 	default: // 64
@@ -162,7 +155,7 @@ func genIntShift(r *rand.Rand) string {
 	// Shift counts include the boundary / over-width values that
 	// exercise the count-masking contract. Fern requires both shift
 	// operands to share a type, so the count is typed as the
-	// operand (every value below fits in the smallest type, i8/u8).
+	// operand (every value below fits in the smallest type, u8).
 	count := pick(r, []string{"0", "1", "7", "15", "31", "33", "63", "64", "65"})
 	body := fmt.Sprintf("    var a: %s = %s;\n    var c: %s = %s;\n    %s\n",
 		t.name, a, t.name, count, printInt(t, "a "+op+" c"))
@@ -347,20 +340,11 @@ func TestNumericProperty_Regressions(t *testing.T) {
 		// not to narrow).
 		{"u8_add_wrap", `    var a: u8 = 255;
     print(((a + a) as i64).to_string());`},
-		{"i8_add_wrap", `    var a: i8 = 127;
-    print(((a + a) as i64).to_string());`},
 		// u32 widening to i64 zero-extends (interp stored u32
 		// sign-extended, so a high-bit value widened negative).
 		{"u32_mul_widen", `    var a: u32 = 4000000000;
     var b: u32 = 1;
     print(((a * b) as i64).to_string());`},
-		// Same-width signed→unsigned reinterpret must clear the sign
-		// bits so a later widen zero-extends (was 4294967168).
-		{"i8_to_u8_to_i64", `    var a: i8 = 0 - 127 - 1;
-    print(((a as u8) as i64).to_string());`},
-		// Signed→unsigned widening reinterpret.
-		{"i8_to_u16", `    var a: i8 = 0 - 1;
-    print(((a as u16) as i64).to_string());`},
 		// float→unsigned-sub-i32 must narrow to the dest width.
 		{"f64_to_u8_wrap", `    var a: f64 = 3000000000.0;
     print(((a as u8) as i64).to_string());`},

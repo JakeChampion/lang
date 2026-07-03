@@ -873,9 +873,8 @@ func (f FloatType) NormalWidth() int {
 
 // ElemSizeBytes returns the in-memory footprint, in bytes, of a
 // single element of `t` when stored in an array / slice on
-// wasm32 (4-byte pointers). Sub-i32 integers (`u8`/`i8` use 1
-// byte, `u16`/`i16` use 2 bytes) and i64 / u64 / f64 use 8
-// bytes. Pointer-shaped types (string / Array / struct / enum
+// wasm32 (4-byte pointers). `u8` uses 1 byte, and i64 / u64 /
+// f64 use 8 bytes. Pointer-shaped types (string / Array / struct / enum
 // / tuple / slice) return 4 — they hold a heap pointer that
 // fits in i32 on wasm32. For native arm64 (where heap pointers
 // are 8 bytes), use `ElemSizeBytesFor(t, ptrW)` instead.
@@ -903,8 +902,6 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 		switch x.NormalWidth() {
 		case 8:
 			return 1
-		case 16:
-			return 2
 		case 64:
 			return 8
 		}
@@ -1426,12 +1423,11 @@ type ArrayLit struct {
 	Elems []Expr
 	// ElemType is set by the checker once each element is typed
 	// (or settled, for polymorphic numeric literals). The IR uses
-	// it to pick a stride (1 byte for `[u8]` / `[i8]`, 2 for
-	// `[u16]` / `[i16]`, 4 for `[i32]` / `[u32]` / `[f32]` /
-	// pointers, 8 for `[i64]` / `[u64]` / `[f64]`) and to choose
-	// between i32.store / i32.store8 / i32.store16 / i64.store /
-	// f32.store / f64.store. nil falls back to the historical
-	// 4-byte-per-element layout.
+	// it to pick a stride (1 byte for `[u8]`, 4 for `[i32]` /
+	// `[u32]` / `[f32]` / pointers, 8 for `[i64]` / `[u64]` /
+	// `[f64]`) and to choose between i32.store / i32.store8 /
+	// i64.store / f32.store / f64.store. nil falls back to the
+	// historical 4-byte-per-element layout.
 	ElemType Type
 }
 type Index struct {

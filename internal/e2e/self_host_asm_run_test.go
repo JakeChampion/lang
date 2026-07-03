@@ -360,7 +360,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		},
 		{
 			// Wider / unsigned integer type tags (`u32`, `u64`, `i64`,
-			// `usize`, `isize`) must route through the i32 path —
+			// `usize`) must route through the i32 path —
 			// otherwise (n as u32).to_string() falls to the struct
 			// shape-dispatch and segfaults. Same for u32[] / u64[] /
 			// i64[]. Trade-off: u64-max loses signed-vs-unsigned

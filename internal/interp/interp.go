@@ -1358,8 +1358,8 @@ func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
 // length-prefixed string buffer and memcpys; the interp
 // builds the string directly from the Number values in the
 // Array, narrowing each to a single byte (low 8 bits) so a
-// caller-side u8/u16 width mismatch doesn't leak garbage
-// into the result.
+// caller-side width mismatch doesn't leak garbage into the
+// result.
 func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("string_from_bytes: expected 1 arg (bs), got %d", len(args))
@@ -2780,7 +2780,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		if tgt, ok := x.Target.(ast.NumberType); ok {
 			// int → int: narrow (wrap) to the destination width.
-			// Sub-i32 targets must wrap too — `5000000000 as i8`
+			// Sub-i32 targets must wrap too — `5000000000 as u8`
 			// is 0 on every codegen backend; the interpreter used
 			// to leave it unnarrowed.
 			if src, ok := v.(Number); ok {
@@ -3426,9 +3426,9 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 // historical 64-bit masking.
 func shiftCount(rn Number, width int) Number {
 	// Sub-i32 and i32 values all shift in 32-bit lanes (the codegen
-	// backends widen u8/i8/u16/i16 to i32 for arithmetic), so their
-	// count masks to 0..31; only i64 masks to 0..63. Width 0 (REPL,
-	// pre-checker) keeps the historical 64-bit masking.
+	// backends widen u8 to i32 for arithmetic), so their count masks
+	// to 0..31; only i64 masks to 0..63. Width 0 (REPL, pre-checker)
+	// keeps the historical 64-bit masking.
 	if width == 64 || width == 0 {
 		return rn & 63
 	}
@@ -3491,19 +3491,12 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 // codegen backends' int→int narrowing. An unsigned narrow
 // zero-extends (storing the true magnitude so a later widening
 // cast zero-extends); a signed narrow sign-extends. Width 64 is
-// identity (u64 rides as its bit pattern).
+// identity (u64 rides as its bit pattern). Width 8 is always
+// unsigned (u8 — i8 was retired in #4408).
 func narrowInt(v int64, width int, unsigned bool) int64 {
 	switch width {
 	case 8:
-		if unsigned {
-			return int64(uint8(v))
-		}
-		return int64(int8(v))
-	case 16:
-		if unsigned {
-			return int64(uint16(v))
-		}
-		return int64(int16(v))
+		return int64(uint8(v))
 	case 32:
 		if unsigned {
 			return int64(uint32(v))
@@ -3573,8 +3566,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			switch b.IntWidth {
 			case 8:
 				return Number(uint8(int64(v)))
-			case 16:
-				return Number(uint16(int64(v)))
 			case 32:
 				return Number(uint32(int64(v)))
 			case 64:
@@ -3594,15 +3585,8 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		signExtend := func(v Number) Number {
 			switch b.IntWidth {
 			case 8:
-				if b.IsUnsigned {
-					return Number(uint8(int64(v)))
-				}
-				return Number(int8(int64(v)))
-			case 16:
-				if b.IsUnsigned {
-					return Number(uint16(int64(v)))
-				}
-				return Number(int16(int64(v)))
+				// Always unsigned (u8 — i8 was retired in #4408).
+				return Number(uint8(int64(v)))
 			case 32:
 				// Unsigned stores its true 0..2^32-1 value (positive
 				// int64) so a widening `u32 as i64` zero-extends; a

@@ -8,7 +8,7 @@ import (
 
 // i32OverflowWrapProgram pins i32 signed-overflow semantics (#3581): an i32
 // add that overflows MUST wrap at 32 bits (i32 is a true 32-bit type, like the
-// existing u32/u8/u16 wrap), so 2147483647 + 1 wraps to -2147483648 and the
+// existing u32/u8 wrap), so 2147483647 + 1 wraps to -2147483648 and the
 // `< 0` check is true → exit 1. The compiled backends always wrapped (the value
 // lives in a 32-bit register); the AST interpreter is width-driven and used to
 // keep the full 64-bit sum (2147483648 > 0 → exit 0) because an unannotated

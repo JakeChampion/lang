@@ -12,18 +12,22 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordParamSubwordCustomProvider is the P4c sub-word record-field
-// parameter gate (docs/WIT-BRING-YOUR-OWN.md): a Fern struct with s8/u16 fields
-// passed to an `@import` extern whose WIT record has `s8`/`u16` fields. A Fern
-// struct stores every sub-64-bit int in a 4-byte slot, but the canonical ABI
-// flattens an s8/u16 field to a single (sign-/zero-extended) i32 core value. So
-// the wrapper reads each sub-word field with a width+sign-aware load
-// (i32.load8_s for s8, i32.load16_u for u16) to produce the correct i32.
+// TestExternRecordParamSubwordCustomProvider is the P4c record-field parameter
+// gate (docs/WIT-BRING-YOUR-OWN.md): a Fern struct passed to an `@import`
+// extern whose WIT record has matching field types. A Fern struct stores every
+// int in a 4-byte-or-wider slot, and the canonical ABI flattens each record
+// field to its own core value, so the wrapper reads each field with the
+// natural i32/i64/f32/f64 load matching externRecordFieldValtype.
 //
-// The provider exports `sum-mix: func(p: record { a: s8, b: u16, c: s32 }) ->
-// s32` summing the flattened (a, b, c). The values are chosen to fail under the
-// wrong load: a = -5 (needs load8_s, not load8_u → would be 251) and b = 300
-// (needs load16_u, not load8_u → would be 44). Expected -5 + 300 + 1000 = 1295.
+// Historically this test exercised the sub-word (s8/u16) field path — a Fern
+// struct field narrower than 4 bytes, read with a width+sign-aware load
+// (i32.load8_s / i32.load16_u) to produce the correctly extended i32 the
+// canonical ABI flattens it to. i8/i16/u16 were removed from the language
+// (#4408) — a Fern struct can no longer declare a field narrower than u8/i32 —
+// so the sub-word load path is gone and this test now uses i32/u32 fields
+// instead, still exercising multi-field record-parameter marshalling end to
+// end. The provider exports `sum-mix: func(p: record { a: s32, b: u32, c: s32
+// }) -> s32` summing the flattened (a, b, c): -5 + 300 + 1000 = 1295.
 func TestExternRecordParamSubwordCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -45,7 +49,7 @@ func TestExternRecordParamSubwordCustomProvider(t *testing.T) {
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const iface = "interface sink { record mix { a: s8, b: u16, c: s32 } sum-mix: func(p: mix) -> s32; }"
+	const iface = "interface sink { record mix { a: s32, b: u32, c: s32 } sum-mix: func(p: mix) -> s32; }"
 	if err := os.WriteFile(filepath.Join(provWit, "sink.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
@@ -101,13 +105,13 @@ func TestExternRecordParamSubwordCustomProvider(t *testing.T) {
 	}
 
 	const want = "mix-ok"
-	src := `struct Mix { a: i8, b: u16, c: i32 }
+	src := `struct Mix { a: i32, b: u32, c: i32 }
 
 @import("local:test/sink@0.1.0", "sum-mix")
 function sum_mix(p: Mix): i32;
 
 function main(): i32 {
-	var p: Mix = Mix { a: 0 - 5 as i8, b: 300 as u16, c: 1000 };
+	var p: Mix = Mix { a: 0 - 5, b: 300, c: 1000 };
 	if (sum_mix(p) == 1295) { write("` + want + `"); } else { write("mix-bad"); }
 	return 0;
 }`

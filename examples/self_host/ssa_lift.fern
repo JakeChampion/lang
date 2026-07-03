@@ -196,7 +196,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
         } else if (k == "int_cast") {
             // `x as i32` lowers to a sign-extend of the low 32 bits (movslq) —
             // identity for an i32 value, so the SSA value flows through with no
-            // inst. The subword / unsigned casts (u8/u16/u32/i8/i16), which
+            // inst. The subword / unsigned casts (u8/u32), which
             // actually mask or re-extend, are out of the integer subset.
             if (op.str != "i32") { ok = false; }
         } else if (k == "const_str") {

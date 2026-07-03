@@ -95,8 +95,8 @@ function is_keyword(name: string): boolean {
         || name == "continue" || name == "return"
         || name == "true" || name == "false"
         || name == "boolean" || name == "void" || name == "string"
-        || name == "i8" || name == "i16" || name == "i32" || name == "i64"
-        || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+        || name == "i32" || name == "i64"
+        || name == "u8" || name == "u32" || name == "u64"
         || name == "usize" || name == "f32" || name == "f64"
         || name == "as" || name == "switch" || name == "case" || name == "default"
         || name == "struct" || name == "import" || name == "pub" || name == "const"
@@ -106,8 +106,8 @@ function is_keyword(name: string): boolean {
 }
 
 function is_valid_numeric_suffix(s: string): boolean {
-    return s == "i8" || s == "i16" || s == "i32" || s == "i64"
-        || s == "u8" || s == "u16" || s == "u32" || s == "u64"
+    return s == "i32" || s == "i64"
+        || s == "u8" || s == "u32" || s == "u64"
         || s == "f32" || s == "f64";
 }
 
@@ -371,7 +371,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         }
     }
     var text: string = l.src[begin:l.i];
-    // Optional typed suffix: i8/i16/i32/i64/u8/u16/u32/u64/f32/f64.
+    // Optional typed suffix: i32/i64/u8/u32/u64/f32/f64.
     // The suffix character set is a closed list, so misspellings
     // like `42i33` / a truncated `42i` fail here rather than
     // partially consuming. An integer suffix on a float literal

@@ -2724,15 +2724,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %xmm0\n");
                     s = s.write("    cvttsd2si %xmm0, %rax\n");
                     if (ty == "u8") { s = s.write("    andq $255, %rax\n"); }
-                    else if (ty == "u16") { s = s.write("    andq $65535, %rax\n"); }
-                    else if (ty == "i8") { s = s.write("    movsbq %al, %rax\n"); }
-                    else if (ty == "i16") { s = s.write("    movswq %ax, %rax\n"); }
                 } else {
                     if (ty == "u8") { s = s.write("    andq $255, %rax\n"); }
-                    else if (ty == "u16") { s = s.write("    andq $65535, %rax\n"); }
                     else if (ty == "u32") { s = s.write("    movl %eax, %eax\n"); }
-                    else if (ty == "i8") { s = s.write("    movsbq %al, %rax\n"); }
-                    else if (ty == "i16") { s = s.write("    movswq %ax, %rax\n"); }
                     else if (ty == "i32") { s = s.write("    movslq %eax, %rax\n"); }
                 }
                 s = s.write("    pushq %rax\n");

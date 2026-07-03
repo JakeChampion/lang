@@ -305,8 +305,8 @@ pub function op_load_ptr(): Op { return op0("load_ptr"); }
 pub function op_store_i32(): Op { return op0("store_i32"); }
 pub function op_store_ptr(): Op { return op0("store_ptr"); }
 // `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
-// `as u8` (and 255), `as u16` (and 65535), `as i8`/`as i16` (sign-extend),
-// `as i32` (sign-extend low 32 — movslq), `as u32` (zero-extend low 32 — movl).
+// `as u8` (and 255), `as i32` (sign-extend low 32 — movslq), `as u32`
+// (zero-extend low 32 — movl).
 // The target type name rides `str`. Mirrors asm.fern's `as_<ty>` int→int masking.
 pub function op_int_cast(ty: string): Op { return Op { kind: "int_cast", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
 // `u32_wrap` reduces a value on the operand stack to its u32 range (zero-extend

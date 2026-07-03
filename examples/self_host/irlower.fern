@@ -105,21 +105,21 @@ import "./astwalk";
 // `>>` lowers to a LOGICAL shift (shr_u). Native wraps every u32 op at 2^32;
 // without this the self-host kept 64-bit results, so u32-heavy code (the
 // SHA-256 schedule / __rotr `x << (32-n)`) accumulated stray high bits and
-// miscompiled. u8/u16/i8/i16 ride the parallel local_subword slot below.
+// miscompiled. u8 rides the parallel local_subword slot below.
 // local_is_u64[i] marks slot i as holding a u64 value (scalar) OR a u64[]
 // array. u64 lives in the i64 64-bit domain (alongside local_is_i64) but is
 // UNSIGNED: its `>`/`<`/… compare, `>>`, and `/`/`%` select the unsigned ops
 // (lt_u/shr_u/div_u/…) instead of the signed ones, which are wrong once bit
 // 63 is set (#2904). Unlike u32 there is no wrap step — i64-domain ops are
 // already full-width; only signedness differs.
-// local_subword[i] holds the sub-32-bit integer kind of slot i ("u8" /
-// "i8" / "u16" / "i16"), or "" if not a sub-word int. For a u8[]/i16[]/...
-// array slot it holds the ELEMENT kind (disambiguated by local_is_arr). It
-// drives the post-arithmetic WIDTH WRAP: a u8/u16 `+`/`-`/`*`/`<<` whose
-// result can exceed the width is masked back (sign-extended for i8/i16) via
-// an int_cast, matching the interpreter's per-width wrap (`255u8 + 1 == 0`).
-// Without it the IR backends kept the full 64-bit result and miscompiled
-// (the u32 sibling of this is local_is_u32 / op_u32_wrap).
+// local_subword[i] holds the sub-32-bit integer kind of slot i ("u8"),
+// or "" if not a sub-word int. For a u8[] array slot it holds the ELEMENT
+// kind (disambiguated by local_is_arr). It drives the post-arithmetic WIDTH
+// WRAP: a u8 `+`/`-`/`*`/`<<` whose result can exceed the width is masked
+// back via an int_cast, matching the interpreter's per-width wrap
+// (`255u8 + 1 == 0`). Without it the IR backends kept the full 64-bit
+// result and miscompiled (the u32 sibling of this is local_is_u32 /
+// op_u32_wrap).
 // ctrl: count of structured-control constructs (block/loop/if) currently
 // open at this point — auto-maintained in emit(). loop_blk: a stack holding,
 // per enclosing loop, the ctrl level just after that loop's exit-block opener
@@ -553,8 +553,8 @@ pub function (s: LowerState) is_u64_slot(i: i32): boolean {
 pub function (s: LowerState) mark_u64(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_u64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, n_params: s.n_params, ok: s.ok };
 }
-// subword_kind_of_slot returns slot i's sub-word int kind ("u8"/"i8"/"u16"/
-// "i16") or "". mark_subword sets it. For an array slot the kind is the ELEMENT
+// subword_kind_of_slot returns slot i's sub-word int kind ("u8")
+// or "". mark_subword sets it. For an array slot the kind is the ELEMENT
 // kind (so `a[i]` on a u8[] reads a u8); local_is_arr disambiguates.
 pub function (s: LowerState) subword_kind_of_slot(i: i32): string {
     if (i < 0) { return ""; }
@@ -1118,7 +1118,7 @@ pub function (s: LowerState) is_i64_slot(i: i32): boolean {
     return s.locals[i].is_i64;
 }
 // is_i32_scalar_slot reports whether slot i holds a 32-bit (or sub-32) INTEGER
-// scalar — a plain i32, a u32, or a subword (bool/u8/i8/u16/i16) — but NOT
+// scalar — a plain i32, a u32, or a subword (bool/u8) — but NOT
 // i64/u64, NOT a float, and NOT any heap/pointer type (string, array of any
 // kind, struct, Option/Result, tuple, map). It gates the implicit i32->i64
 // widening in lower_i64's ExprIdent leaf: such a leaf can be sign/zero-extended
@@ -1343,11 +1343,11 @@ pub function is_scalar_array_type(t: string): boolean {
 
 // is_leaksafe_array_field reports whether `t` is an array type that is leak-safe
 // AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]), the 4-byte
-// u32[], the sub-word u8[]/u16[]/i8[]/i16[] (is_subword_array_type), and the
+// u32[], the sub-word u8[] (is_subword_array_type), and the
 // 8-byte-element f64[]/i64[]. All store a pointer in the field slot, are owned
 // by the struct (a fresh array literal at construction — is_scalar_arr_field_
 // access bails the aliasing forms), and are deep-dropped on the struct's
-// reclamation. u32[] / the sub-word arrays ride the i32[] 4-byte element read
+// reclamation. u32[] / the sub-word array ride the i32[] 4-byte element read
 // unchanged (each element lives in a full 32-bit slot, pre-wrapped by the `as
 // u8` cast at the producing site); their narrowness only affects arithmetic ON
 // a read element, not the field round-trip. NOT here: u64[] (its 8-byte element
@@ -1360,18 +1360,18 @@ pub function is_leaksafe_array_field(t: string): boolean {
 }
 
 // is_subword_array_type reports whether `t` is a sub-32-bit integer-element
-// array (u8[]/u16[]/i8[]/i16[]). These ride the SAME 4-byte-slot element
+// array (u8[]). This rides the SAME 4-byte-slot element
 // representation as i32[]: the self-host IR (like the AST emitter) stores each
 // element in a full 32-bit slot — op_arr_push / op_arr_get(32) round-trip the
-// value at 32-bit width, and a sub-word value is wrapped to its range by the
+// value at 32-bit width, and the sub-word value is wrapped to its range by the
 // cast at the producing site BEFORE the push (the `b as u8` idiom), so the
 // stored slot already holds the in-range value. A read yields that same i32
 // (the consumer `data[i] as i32` is a no-op zero-extend). So as a struct field
-// they are leak-safe exactly like i32[] / u32[] — the buffer is a pointer in
+// it is leak-safe exactly like i32[] / u32[] — the buffer is a pointer in
 // the field slot, owned by the struct, deep-dropped on reclamation. This admits
 // byte-buffer structs (BytesWriter, Stream readers) onto the IR path.
 pub function is_subword_array_type(t: string): boolean {
-    return t == "u8[]" || t == "u16[]" || t == "i8[]" || t == "i16[]";
+    return t == "u8[]";
 }
 
 // is_map_type_name reports whether `t` is a Map[K, V] type. Maps are leak-only
@@ -1426,9 +1426,9 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
 // 8-byte slot: construction already tags a u64 arg "i64" (elem_type_tag's
 // infer_expr_width==64 path) so the box stores 8 bytes, and the match binding
 // reads via op_opt_payload_w(64) + marks the slot u64 (unsigned, 8-byte). The
-// sub-word ints (u8/u16/i8/i16) are NOT here: their payload-box read needs
-// sign/zero-extension that currently differs across backends (a u8 read
-// mis-extends on wasm), so an Option/Result-of-them field stays on the AST path.
+// sub-word int (u8) is NOT here: its payload-box read needs
+// zero-extension that currently differs across backends (a u8 read
+// mis-extends on wasm), so an Option/Result-of-it field stays on the AST path.
 function is_leaksafe_payload(p: string): boolean {
     return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64"
         || p == "u32" || p == "u64";
@@ -1705,13 +1705,13 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                // The ≤32-bit integer scalars (u32 + the sub-word u8/u16/i8/i16)
+                // The ≤32-bit integer scalars (u32 + the sub-word u8)
                 // are leak-only and ride one i32 slot exactly like i32, so a struct
                 // carrying them is leaf-safe and lowers (construction stores / field
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -3664,10 +3664,10 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
-// expr_subword_kind returns the sub-32-bit integer kind ("u8"/"i8"/"u16"/
-// "i16") an expression evaluates to, or "". It mirrors expr_is_u32 for the
+// expr_subword_kind returns the sub-32-bit integer kind ("u8")
+// an expression evaluates to, or "". It mirrors expr_is_u32 for the
 // sub-word domain: a sub-word-tracked local/param, a sub-word array element
-// read, an `as u8`/`as i8`/`as u16`/`as i16` cast, or an arithmetic/bitwise/
+// read, an `as u8` cast, or an arithmetic/bitwise/
 // shift combination of sub-word operands (a shift follows the LEFT operand;
 // other binaries take whichever side is sub-word). Comparisons yield a plain
 // i32 bool. Drives the post-arithmetic width wrap in the binary lowering.
@@ -3682,9 +3682,6 @@ pub function expr_subword_kind(e: parser.Expr, s: LowerState): string {
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u8") { return "u8"; }
-            if (u.op == "as_i8") { return "i8"; }
-            if (u.op == "as_u16") { return "u16"; }
-            if (u.op == "as_i16") { return "i16"; }
             return "";
         },
         parser.ExprBinary(b) => {
@@ -4864,8 +4861,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (res_u32 && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
                 res = res.emit(ir.op_u32_wrap());
             }
-            // Sub-32-bit wrap: a u8/i8/u16/i16 `+`/`-`/`*`/`<<` whose result can
-            // exceed the width is masked back (int_cast also sign-extends i8/i16),
+            // Sub-32-bit wrap: a u8 `+`/`-`/`*`/`<<` whose result can
+            // exceed the width is masked back (int_cast),
             // matching the interpreter's per-width wrap (`255u8 + 1 == 0`). The
             // operands are themselves kept in range by this same step, so each
             // op masks its own result. u32/u64 are disjoint (res_u32 is false
@@ -4933,11 +4930,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 return sf.emit(ir.op_i32_to_f64());
             }
             // Int→int width cast `x as <ty>` for a 32-bit-or-narrower target
-            // (i32 / u32 / u8 / i8 / u16 / i16). The masking/extension matches
+            // (i32 / u32 / u8). The masking/extension matches
             // asm.fern's `as_<ty>` exactly (int_cast op). The operand may be an
             // f64 (truncate toward zero via f64_to_i32, THEN mask), an i64
             // (narrow via int_wrap, THEN mask), or a 32-bit int (mask directly).
-            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8" || u.op == "as_i8" || u.op == "as_u16" || u.op == "as_i16") {
+            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8") {
                 var cty: string = u.op[3 : u.op.len()];
                 if (expr_is_f64(u.operand, s)) {
                     var fc: LowerState = lower_expr(u.operand, s);
@@ -7366,7 +7363,7 @@ function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
 
 // iife_arm_returns_narrowed_payload reports whether the arm's TAIL is
 // `return (name as <i32-width>)` — a narrowing cast of the BARE bound i64/f64
-// payload to an i32-width integer type (i32/u32/u8/i8), which yields an i32 result.
+// payload to an i32-width integer type (i32/u32/u8), which yields an i32 result.
 // The i64/f64 payload slot is marked at width by the StmtMatch path (so the cast
 // reads the wide value and narrows, exactly as a statement-position `return (n as
 // i32)` does), but the RESULT temp stays i32 — letting an i64/f64-payload match-
@@ -7375,7 +7372,7 @@ function iife_arm_returns_narrowed_payload(arm: parser.MatchArm, name: string): 
     var t: parser.Expr = iife_arm_tail_expr(arm);
     match (t) {
         parser.ExprUnary(u) => {
-            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8" || u.op == "as_i8") {
+            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8") {
                 match (u.operand) {
                     parser.ExprIdent(id) => { return id.name == name; },
                     _ => { return false; }
@@ -7404,7 +7401,7 @@ function iife_arm_returns_narrowed_payload_arith(arm: parser.MatchArm, name: str
     var t: parser.Expr = iife_arm_tail_expr(arm);
     match (t) {
         parser.ExprUnary(u) => {
-            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8" || u.op == "as_i8") {
+            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8") {
                 return iife_payload_arith_kind(u.operand, name, ft, ft, s);
             }
             return false;
@@ -8915,7 +8912,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // skipping the u32 wrap (op_const_i32_text below stores the literal's
             // 32-bit pattern, and the slot is marked u32 so `x + y` wraps at
             // 2^32). u32 is the only ≤32-bit type that can carry a (2^31, 2^32)
-            // literal — i32 / u8 / u16 reject one at E047.
+            // literal — i32 / u8 reject one at E047.
             if (comma < 0 && (v.type_name == "i64" || v.type_name == "u64" || (infer_expr_width(v.init, s) == 64 && !is_u32_type_name(v.type_name)))) {
                 var iv: LowerState = lower_i64(v.init, s);
                 if (!iv.ok) { return iv; }
@@ -10004,7 +10001,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // (visible on wasm's true-32-bit `i32.gt_s`; #3537).
             if (is_u32_type_name(v.type_name) || (v.type_name == "" && expr_is_u32(v.init, s))) { sb = sb.mark_u32(slot, true); }
             if (is_u64_type_name(v.type_name) || (v.type_name == "" && expr_is_u64(v.init, s))) { sb = sb.mark_u64(slot, true); }
-            // A u8/i8/u16/i16 (or array thereof) binding records the sub-word
+            // A u8 (or array thereof) binding records the sub-word
             // kind so the slot's arithmetic wraps back to width (mark_subword /
             // expr_subword_kind / the binary-op masking) — the sub-32-bit
             // sibling of the u32 wrap above.
@@ -13218,8 +13215,8 @@ function is_array_type_name(t: string): boolean {
 }
 
 // is_u32_type_name reports whether a declared type is u32 (scalar) or u32[]
-// (array) — the slots that drive u32 wrapping (local_is_u32). u8/u16 are
-// excluded: their values are read in-range and explicitly cast, so they need no
+// (array) — the slots that drive u32 wrapping (local_is_u32). u8 is
+// excluded: its values are read in-range and explicitly cast, so it needs no
 // post-arithmetic wrap.
 function is_u32_type_name(t: string): boolean {
     return t == "u32" || t == "u32[]";
@@ -13232,17 +13229,14 @@ function is_u64_type_name(t: string): boolean {
 }
 
 // subword_kind_of_name maps a declared type to its sub-32-bit integer kind
-// ("u8"/"i8"/"u16"/"i16") or "" (not a sub-word int). A trailing `[]` is
-// stripped first so a u8[]/i16[]/... array slot records its ELEMENT kind
-// (the element a[i] reads), exactly as is_u32_type_name treats u32[]. These
-// are the widths whose arithmetic can exceed the slot and must wrap.
+// ("u8") or "" (not a sub-word int). A trailing `[]` is
+// stripped first so a u8[] array slot records its ELEMENT kind
+// (the element a[i] reads), exactly as is_u32_type_name treats u32[]. This
+// is the only width whose arithmetic can exceed the slot and must wrap.
 function subword_kind_of_name(t: string): string {
     var b: string = t;
     if (b.len() >= 2 && b[b.len() - 2 : b.len()] == "[]") { b = b[0 : b.len() - 2]; }
     if (b == "u8") { return "u8"; }
-    if (b == "i8") { return "i8"; }
-    if (b == "u16") { return "u16"; }
-    if (b == "i16") { return "i16"; }
     return "";
 }
 
@@ -17812,7 +17806,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var isi64arr: boolean[] = [];
     var isu32: boolean[] = [];
     var isu64: boolean[] = [];
-    // local_subword kind per slot ("" / "u8" / "i8" / "u16" / "i16"); the
+    // local_subword kind per slot ("" / "u8"); the
     // sub-32-bit sibling of isu32/isu64. Drives the post-arithmetic width wrap.
     var subword: string[] = [];
     var noloop: i32[] = [];
@@ -18739,15 +18733,15 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
     while (i <= tags.len()) {
         if (i == tags.len() || (depth == 0 && tags[i] == 44)) {   // 44 = ','
             var t: string = tags[start : i];
-            // The ≤32-bit integer scalars (u32 + the sub-word u8/u16/i8/i16) ride
+            // The ≤32-bit integer scalars (u32 + the sub-word u8) ride
             // one i32 slot exactly like i32 — a sub-word cast wraps the value BEFORE
             // the tuple store, and construction/access need no width plumbing
-            // (verified round-trip on x86-64 + wasm, incl. signed-i8 negatives). u64
+            // (verified round-trip on x86-64 + wasm). u64
             // rides the i64 8-byte slot: construction already tags it "i64"
             // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
             // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
             // f32 / usize are NOT here: they need float / pointer-width handling.
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // A nominal-enum element (Color, Expr, …) is a leak-only box — one
             // pointer slot, like a string / struct / Option element — so a tuple
@@ -18772,7 +18766,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // was comma-naive.)
             if (!ok_elem && t.len() >= 8 && t[0:7] == "Result[") { ok_elem = true; }
             // A 4-byte scalar-array element (i32[] / boolean[] / u32[], plus the
-            // sub-word u8[]/u16[]/i8[]/i16[] which ride the SAME i32[] 4-byte-slot
+            // sub-word u8[] which rides the SAME i32[] 4-byte-slot
             // representation) is a leak-only heap pointer stored in one tuple slot
             // — exactly like a string / struct element — so `.N` reads it via
             // op_tuple_get and the bind marks the slot an array (mark_arr), after
@@ -19653,8 +19647,7 @@ pub function map_key_kind_of(typestr: string): i32 {
 function map_value_is_ptr(vt: string): boolean {
     if (vt == "i32" || vt == "i64" || vt == "f64" || vt == "f32") { return false; }
     if (vt == "bool" || vt == "boolean") { return false; }
-    if (vt == "u8" || vt == "u16" || vt == "u32" || vt == "u64") { return false; }
-    if (vt == "i8" || vt == "i16") { return false; }
+    if (vt == "u8" || vt == "u32" || vt == "u64") { return false; }
     return true;
 }
 
@@ -19686,8 +19679,8 @@ pub function map_key_of(typestr: string): string {
 pub function map_key_eqfn(typestr: string): string {
     var k: string = map_key_of(typestr);
     if (k == "" || k == "i32" || k == "string") { return ""; }
-    if (k == "i64" || k == "u32" || k == "u64" || k == "i8" || k == "i16") { return ""; }
-    if (k == "u8" || k == "u16" || k == "f32" || k == "f64" || k == "bool" || k == "boolean") { return ""; }
+    if (k == "i64" || k == "u32" || k == "u64") { return ""; }
+    if (k == "u8" || k == "f32" || k == "f64" || k == "bool" || k == "boolean") { return ""; }
     // Bare receiver-method label `K.eq`; the backend builds the real
     // symbol as `__fn_<sanitize(K.eq)>` (= __fn_K__eq), matching the
     // const_func / receiver-method emission idiom.
@@ -20341,19 +20334,16 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             pc = pc + 1;
         }
         else if (o.kind == "int_cast") {
-            // Narrow / sign-extend the top of stack to the target int width
+            // Narrow the top of stack to the target int width
             // (rides `o.str`), mirroring ir.op_int_cast and asm.fern's
             // `as_<ty>`. The lowering emits this after every i32 arithmetic op
             // (add/sub/mul/shl — the signed sibling of u32_wrap) and for `as`
             // casts, so the i32 evaluator must apply the same per-width wrap or
             // every arithmetic program bails. i32 / u32 are identity in this
-            // 32-bit-word model; only the sub-word widths change the value.
+            // 32-bit-word model; only the sub-word width (u8) changes the value.
             var cv: i32 = stack[sp - 1];
             var cty: string = o.str;
             if (cty == "u8") { cv = cv & 255; }
-            else if (cty == "u16") { cv = cv & 65535; }
-            else if (cty == "i8") { cv = cv & 255; if (cv >= 128) { cv = cv - 256; } }
-            else if (cty == "i16") { cv = cv & 65535; if (cv >= 32768) { cv = cv - 65536; } }
             stack = stack.with(sp - 1, cv);
             pc = pc + 1;
         }

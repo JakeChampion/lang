@@ -1813,7 +1813,7 @@ func asyncScalarCoreValtype(t ast.Type) (byte, bool) {
 		if x.NormalWidth() == 64 {
 			return 0x7e, true // i64
 		}
-		return 0x7f, true // i32 (i8/i16/i32 + usize all lower to i32)
+		return 0x7f, true // i32 (i32 + usize on wasm32 both lower to i32)
 	case ast.BoolType:
 		return 0x7f, true // i32
 	case ast.FloatType:

@@ -1087,13 +1087,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // a u32 arithmetic result needs no extra mask here (unlike the 64-bit
             // register backends). The op exists so the IR is backend-uniform.
         } else if (o.kind == "int_cast") {
-            // `x as <ty>` int→int width mask/extend. u32/i32 are identity (the
-            // i32 value's bit pattern is already the result); the narrowing /
-            // sign-extending casts use and / extend8_s / extend16_s.
+            // `x as <ty>` int→int width mask. u32/i32 are identity (the
+            // i32 value's bit pattern is already the result); the narrowing
+            // cast uses `and`.
             if (o.str == "u8") { out = out + "    i32.const 255\n    i32.and\n"; }
-            else if (o.str == "u16") { out = out + "    i32.const 65535\n    i32.and\n"; }
-            else if (o.str == "i8") { out = out + "    i32.extend8_s\n"; }
-            else if (o.str == "i16") { out = out + "    i32.extend16_s\n"; }
             // u32 / i32: no-op (value already a 32-bit i32).
         } else if (o.kind == "arr_push") {
             // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.

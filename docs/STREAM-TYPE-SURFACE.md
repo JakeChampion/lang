@@ -70,7 +70,7 @@ being added behind the `for-in` node centralization (below); until L2 lands,
 
 `for x in body()` over an async stream import iterates LAZILY — one element
 pulled off the wire (read + await) per loop turn, never materialising the whole
-sequence — for **any scalar element type** (`u8` / `i8` / `i16` / `u16` / `i32` /
+sequence — for **any scalar element type** (`u8` / `i32` /
 `u32` / `i64` / `u64` / `f32` / `f64`). The vertical:
 
 - *Parser* (`desugarForEachProgram`): builds the set of module-local async stream

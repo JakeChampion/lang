@@ -904,8 +904,6 @@ pub struct TyI64 { tag: i32 }
 
 pub struct TyUsize { tag: i32 }
 
-pub struct TyIsize { tag: i32 }
-
 pub struct TyBool { tag: i32 }
 
 pub struct TyString { tag: i32 }
@@ -953,7 +951,7 @@ pub struct TyCell { val: Ty }
 
 pub struct TyStructNamed { name: string }
 
-pub type Ty = TyI32 | TyU32 | TyU64 | TyI64 | TyUsize | TyIsize | TyBool
+pub type Ty = TyI32 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool
             | TyString | TyF64 | TyStruct | TyTuple | TyUnknown |
             TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
             | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult |
@@ -978,8 +976,6 @@ pub function ty_u64(): Ty { return TyU64 { tag: 0 }; }
 pub function ty_i64(): Ty { return TyI64 { tag: 0 }; }
 
 pub function ty_usize(): Ty { return TyUsize { tag: 0 }; }
-
-pub function ty_isize(): Ty { return TyIsize { tag: 0 }; }
 
 pub function ty_bool(): Ty { return TyBool { tag: 0 }; }
 
@@ -1050,29 +1046,28 @@ pub function ty_ord(t: Ty): i32 {
         TyU64(_) => { return 2; },
         TyI64(_) => { return 3; },
         TyUsize(_) => { return 4; },
-        TyIsize(_) => { return 5; },
-        TyBool(_) => { return 6; },
-        TyString(_) => { return 7; },
-        TyF64(_) => { return 8; },
-        TyStruct(_) => { return 9; },
-        TyTuple(_) => { return 10; },
-        TyUnknown(_) => { return 11; },
-        TyArray(_) => { return 12; },
-        TyArrayI32(_) => { return 13; },
-        TyArrayU32(_) => { return 14; },
-        TyArrayU64(_) => { return 15; },
-        TyArrayI64(_) => { return 16; },
-        TyArrayString(_) => { return 17; },
-        TyFnAny(_) => { return 18; },
-        TyMapAny(_) => { return 19; },
-        TyOption(_) => { return 20; },
-        TyResult(_) => { return 21; },
-        TyFn(_) => { return 22; },
-        TyMapStr(_) => { return 23; },
-        TyMapI32(_) => { return 24; },
-        TyMapIter(_) => { return 25; },
-        TyStructNamed(_) => { return 26; },
-        TyCell(_) => { return 27; },
+        TyBool(_) => { return 5; },
+        TyString(_) => { return 6; },
+        TyF64(_) => { return 7; },
+        TyStruct(_) => { return 8; },
+        TyTuple(_) => { return 9; },
+        TyUnknown(_) => { return 10; },
+        TyArray(_) => { return 11; },
+        TyArrayI32(_) => { return 12; },
+        TyArrayU32(_) => { return 13; },
+        TyArrayU64(_) => { return 14; },
+        TyArrayI64(_) => { return 15; },
+        TyArrayString(_) => { return 16; },
+        TyFnAny(_) => { return 17; },
+        TyMapAny(_) => { return 18; },
+        TyOption(_) => { return 19; },
+        TyResult(_) => { return 20; },
+        TyFn(_) => { return 21; },
+        TyMapStr(_) => { return 22; },
+        TyMapI32(_) => { return 23; },
+        TyMapIter(_) => { return 24; },
+        TyStructNamed(_) => { return 25; },
+        TyCell(_) => { return 26; },
         _ => { return -1; }
     }
     return -1;
@@ -1085,7 +1080,6 @@ pub function is_int_tag(t: Ty): boolean {
         TyU64(_) => { return true; },
         TyI64(_) => { return true; },
         TyUsize(_) => { return true; },
-        TyIsize(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -1277,14 +1271,6 @@ pub function ty_is_usize(t: Ty): boolean {
     return false;
 }
 
-pub function ty_is_isize(t: Ty): boolean {
-    match (t) {
-        TyIsize(_) => { return true; },
-        _ => { return false; }
-    }
-    return false;
-}
-
 pub function ty_is_bool(t: Ty): boolean {
     match (t) {
         TyBool(_) => { return true; },
@@ -1429,7 +1415,6 @@ pub function ty_tag(t: Ty): string {
         TyU64(_) => { return "u64"; },
         TyI64(_) => { return "i64"; },
         TyUsize(_) => { return "usize"; },
-        TyIsize(_) => { return "isize"; },
         TyBool(_) => { return "bool"; },
         TyString(_) => { return "string"; },
         TyF64(_) => { return "f64"; },
@@ -1503,7 +1488,6 @@ pub function ty_from_name(name: string): Ty {
     if (name == "u64") { return ty_u64(); }
     if (name == "i64") { return ty_i64(); }
     if (name == "usize") { return ty_usize(); }
-    if (name == "isize") { return ty_isize(); }
     if (name == "u32[]") { return ty_array_u32(); }
     if (name == "u64[]") { return ty_array_u64(); }
     if (name == "i64[]") { return ty_array_i64(); }

@@ -9,15 +9,22 @@ import (
 	"testing"
 )
 
-// subwordWrapIRCases guard a real correctness bug: u8 / i8 / u16 / i16 arithmetic
-// (`+` `-` `*` `<<`) was NOT masked back to its width on the self-host IR path, so
-// an overflowing result (e.g. `255u8 + 1`) kept its full value on every IR backend
-// (256) instead of wrapping (0). The interpreter and the native Go backends wrap
-// per the declared width (`signExtend` by IntWidth), so this was a silent miscompile
-// — the program routed through "ir" and computed the wrong answer. The fix records
-// each slot's sub-word kind (local_subword, the sub-32-bit sibling of local_is_u32)
-// and emits an int_cast after `+`/`-`/`*`/`<<` whose result is sub-word, masking
-// (and sign-extending i8/i16) exactly as `as u8`/`as i8` already do.
+// subwordWrapIRCases guard a real correctness bug: u8 arithmetic (`+` `-` `*`
+// `<<`) was NOT masked back to its width on the self-host IR path, so an
+// overflowing result (e.g. `255u8 + 1`) kept its full value on every IR
+// backend (256) instead of wrapping (0). The interpreter and the native Go
+// backends wrap per the declared width (`signExtend` by IntWidth), so this
+// was a silent miscompile — the program routed through "ir" and computed the
+// wrong answer. The fix records each slot's sub-word kind (local_subword, the
+// sub-32-bit sibling of local_is_u32) and emits an int_cast after
+// `+`/`-`/`*`/`<<` whose result is sub-word, masking exactly as `as u8`
+// already does.
+//
+// This originally also covered i8/u16/i16, but those types were removed from
+// the language (#4408); u8 is the only sub-word type left, so the i8
+// (sign-extend) and u16/i16 (wider sub-word) cases are gone rather than
+// force-substituted onto a type that would test something different — u8's
+// add/mul/shift/sub coverage below still exercises the same masking bug.
 //
 // Each case is oracle-checked against the interpreter, routing-pinned to "ir", and
 // returns a value in [0,126] (an equality branch reduces the wrapped result to a
@@ -34,12 +41,6 @@ var subwordWrapIRCases = []struct {
 	{"u8-shl-wrap", `function main(): i32 { var a: u8 = 1 as u8; var s: u8 = a << (8 as u8); if ((s as i32) == 0) { return 5; } return 9; }`},
 	// u8 no overflow: 60 + 40 = 100 stays exact (kept <126 for wasmtime, #2908).
 	{"u8-add-exact", `function main(): i32 { var a: u8 = 60 as u8; var b: u8 = 40 as u8; return (a + b) as i32; }`},
-	// i8 add overflow sign-extends: 127 + 1 = -128.
-	{"i8-add-wrap", `function main(): i32 { var a: i8 = 127 as i8; var b: i8 = 1 as i8; var s: i8 = a + b; if ((s as i32) == 0 - 128) { return 5; } return 9; }`},
-	// u16 add overflow: 65535 + 1 = 0.
-	{"u16-add-wrap", `function main(): i32 { var a: u16 = 65535 as u16; var b: u16 = 1 as u16; var s: u16 = a + b; if ((s as i32) == 0) { return 5; } return 9; }`},
-	// i16 add overflow sign-extends: 32767 + 1 = -32768.
-	{"i16-add-wrap", `function main(): i32 { var a: i16 = 32767 as i16; var b: i16 = 1 as i16; var s: i16 = a + b; if ((s as i32) == 0 - 32768) { return 5; } return 9; }`},
 	// u8 subtract underflow: 0 - 1 = 255.
 	{"u8-sub-wrap", `function main(): i32 { var a: u8 = 0 as u8; var b: u8 = 1 as u8; var s: u8 = a - b; if ((s as i32) == 255) { return 5; } return 9; }`},
 }

@@ -844,8 +844,6 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 		isUnsigned bool
 	}
 	cases := map[string]want{
-		"42i8":   {false, 8, false},
-		"42i16":  {false, 16, false},
 		"42i32":  {false, 32, false},
 		"42i64":  {false, 64, false},
 		"42u8":   {false, 8, true},

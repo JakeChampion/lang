@@ -463,7 +463,6 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_idx":              emitStrIdxHelper,
 	"__arr_idx":              emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":            emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
-	"__arr_idx_2":            emitArrIdxHelperN("__arr_idx_2", 1),  // stride 2 (halfword)
 	"__arr_idx_8":            emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
 	"__arr_idx_16":           emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	"__fern_arr_push_grow":   emitArrPushGrowHelper,
@@ -1606,7 +1605,6 @@ var helperReturns64 = map[string]bool{
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
-	"__arr_idx_2":            true,
 	"__arr_idx_8":            true,
 	"__arr_idx_16":           true,
 	"__abs_f64":              true,
@@ -3231,8 +3229,8 @@ func emitDropArrStrHelper(w func(string, ...any)) {
 
 // emitArrIdxHelperN returns the emitter for a bounds-checked array-index helper
 // of a given element stride (2^shift bytes): __arr_idx (stride 4), __arr_idx_1
-// (byte), __arr_idx_2 (halfword), __arr_idx_8 (i64/pointer), __arr_idx_16
-// (two-word string[]). Each compares idx against the length at [base-4] with a
+// (byte), __arr_idx_8 (i64/pointer), __arr_idx_16 (two-word string[]). Each
+// compares idx against the length at [base-4] with a
 // single unsigned compare (a negative idx is huge unsigned, so it fails too) and,
 // on out-of-range, exits 134 — matching the native array-index trap / wasm's
 // `unreachable`. Returns base + idx*stride; the caller's OpLoad reads the element.

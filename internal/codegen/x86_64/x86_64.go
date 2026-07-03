@@ -1532,18 +1532,6 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.pop()
 		g.emit("mov eax, eax")
 		g.push()
-	// Sub-i32 sign-extension. The IR emits these after a
-	// narrow store + reload so the value re-enters the i32
-	// world with the correct sign. Pairs with wasm's
-	// `i32.extend8_s` / `i32.extend16_s`.
-	case ir.OpSignExtend8:
-		g.pop()
-		g.emit("movsx eax, al")
-		g.push()
-	case ir.OpSignExtend16:
-		g.pop()
-		g.emit("movsx eax, ax")
-		g.push()
 	case ir.OpFPromoteF32:
 		// f32 → f64.
 		g.pop()
@@ -1758,22 +1746,6 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.pop()
 		g.emit("movzx eax, byte ptr [rax]")
 		g.push()
-	// Sub-i32 typed loads. Sign-extend variants use `movsx`,
-	// the unsigned 16-bit variant uses `movzx` so the high
-	// bits of rax stay clean. Pairs with wasm's
-	// `i32.load8_s` / `i32.load16_u` / `i32.load16_s`.
-	case ir.OpLoadI8S:
-		g.pop()
-		g.emit("movsx eax, byte ptr [rax]")
-		g.push()
-	case ir.OpLoadI16U:
-		g.pop()
-		g.emit("movzx eax, word ptr [rax]")
-		g.push()
-	case ir.OpLoadI16S:
-		g.pop()
-		g.emit("movsx eax, word ptr [rax]")
-		g.push()
 	case ir.OpStore:
 		// Stack: [addr, value], top = value. Pop value into
 		// rcx then addr into rax (binPop's pattern); store
@@ -1787,9 +1759,6 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpStoreI8:
 		g.binPop()
 		g.emit("mov byte ptr [rax], cl")
-	case ir.OpStoreI16:
-		g.binPop()
-		g.emit("mov word ptr [rax], cx")
 
 	case ir.OpAlloc:
 		// Single i32 arg (byte count) — translate to a call
@@ -2107,8 +2076,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_stdout"
 		case "stderr":
 			target = "__fern_stderr"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8",
-			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
+		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8",
+			"__slice_idx", "__slice_idx_1", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. Inline as a plain
 			// `lea rax, [base + idx*N]` — the element-stride
@@ -2417,7 +2386,7 @@ func (g *generator) aRegForWidth(width int) string {
 // unsigned forms clear it).
 func (g *generator) emitIntDivRem(op ir.Op, isRem bool) {
 	g.binPop()
-	// WidthPtr (usize/isize) is pointer-width: 64 bits on x86-64. Use the
+	// WidthPtr (usize) is pointer-width: 64 bits on x86-64. Use the
 	// 64-bit register form so a usize dividend isn't truncated to its low
 	// 32 bits. See docs/ADVERSARIAL-REVIEW-2026-06.md (B1).
 	w64 := op.Width == 64 || op.Width == ir.WidthPtr
@@ -3266,9 +3235,6 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// byte arrays through the same `test rax, 1` check.
 		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx]")
-	case "__arr_idx_2":
-		g.emitArrBoundsCheck()
-		g.emit("lea rax, [rax + rcx*2]")
 	case "__arr_idx":
 		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx*4]")
@@ -3283,10 +3249,6 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emitSliceBoundsCheck()
 		g.emit("mov rax, [rax]") // data_ptr (8-byte pointer)
 		g.emit("add rax, rcx")
-	case "__slice_idx_2":
-		g.emitSliceBoundsCheck()
-		g.emit("mov rax, [rax]")
-		g.emit("lea rax, [rax + rcx*2]")
 	case "__slice_idx":
 		g.emitSliceBoundsCheck()
 		g.emit("mov rax, [rax]")
