@@ -3,7 +3,10 @@ package ir_test
 import (
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/parser"
 )
 
 // A match-arm BINDING that shares its name with a `var`-declared local in
@@ -86,5 +89,101 @@ function main(): i32 {
 				t.Errorf("return sweep decs slot %d (not a param, not the entry-zeroed shared slot %d) — a same-named match binding shadowed the var's slot; that slot is uninitialized stack garbage on paths that skip its arm (heap corruption)", slot, zeroSlot)
 			}
 		}
+	}
+}
+
+// The cross-shape counterpart: when a match-arm binding shares its name
+// with a `var` whose slot has a DIFFERENT physical shape — here a
+// two-word string `var t` (any two-word ABI: wasm ptrW==4, arm64
+// TwoWordOverride) colliding with a pointer-shaped binding
+// `ST(t)` — the binding must get a FRESH slot, not reuse the var's.
+//
+// bindingSlot's shape guard used to read the existing slot's type from
+// b.scratchType, which is never stamped for `var`-declared (info.Locals)
+// slots — nil read as "single-word", the guard passed, and the binding
+// reused the string's two-word slot. The backend sizes physical slots
+// from the declared local type, so every OpLoadLocal / OpStoreLocal of
+// the binding fanned into two words while the IR balanced the operand
+// stack for one: the store popped a garbage second word and each load
+// pushed one, desynchronising every stack-machine backend. Observed in
+// the wild as the self-host interp's `parser.ExprTuple(t)` arm trapping
+// its own bounds check on arm64 (TestSelfHostInterpArm64, exit 134)
+// once a sibling arm gained `var t: string` (#4497).
+func TestMatchBindingCrossShapeVarCollisionGetsFreshSlot(t *testing.T) {
+	src := `
+struct SN { text: string }
+struct ST { elements: i32[] }
+type E = SN | ST;
+
+function eval(e: E): i32 {
+    match (e) {
+        SN(n) => {
+            var t: string = n.text;
+            return t.len();
+        },
+        ST(t) => {
+            var s: i32 = 0;
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                s = s + t.elements[i];
+                i = i + 1;
+            }
+            return s;
+        }
+    }
+    return 0 - 1;
+}
+function main(): i32 {
+    var e: E = ST { elements: [40, 2] };
+    return eval(e);
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	// ptrW==4 (the wasm shape) has two-word strings unconditionally —
+	// the same slot-shape split the arm64 backend opts into via
+	// ast.TwoWordOverride.
+	ip, err := ir.LowerWith(prog, info, 4)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	fn := funcByName(ip, "eval")
+	if fn == nil {
+		t.Fatal("eval not lowered")
+	}
+	// The string var's slot is the one the entry safety net zeroes with
+	// TWO zero-pushes (a two-word store); it's the only rc-tracked local
+	// in `eval`, so the pattern is unique.
+	strSlot := int32(-1)
+	for i := 0; i+2 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == ir.OpConstI32 && fn.Ops[i].I32 == 0 &&
+			fn.Ops[i+1].Kind == ir.OpConstI32 && fn.Ops[i+1].I32 == 0 &&
+			fn.Ops[i+2].Kind == ir.OpStoreLocal {
+			strSlot = fn.Ops[i+2].I32
+			break
+		}
+	}
+	if strSlot < 0 {
+		t.Fatal("no two-word entry zero-store found (safety-net layout changed? update the test)")
+	}
+	// Exactly two stores may target the string slot: the entry zero-init
+	// and the SN arm's `var t = n.text`. A third store is the ST arm's
+	// binding wrongly reusing the two-word slot for its one-word payload.
+	stores := 0
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpStoreLocal && op.I32 == strSlot {
+			stores++
+		}
+	}
+	if stores != 2 {
+		t.Errorf("string var slot %d has %d stores, want 2 (entry zero-init + var init); a cross-shape match binding is sharing the two-word slot", strSlot, stores)
 	}
 }
