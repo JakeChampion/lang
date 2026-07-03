@@ -3372,6 +3372,11 @@ function ir_f2i_sat(width: i32, lb: string): string {
 // compiler).
 pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
     var op: i32 = irlower.enclosing_opener(ops, i, d);
+    // No enclosing opener at depth `d` (an unbalanced op stream): resolve to the
+    // function-boundary label rather than indexing ops[-1] (an OOB read whose
+    // garbage `kind` would fabricate a bogus, possibly-dangling target). The
+    // boundary label is defined at the epilogue (see emit_function_via_ir).
+    if (op < 0) { return lp + util.i32_to_string(ops.len()); }
     if (ops[op].kind == "loop") { return lp + util.i32_to_string(op); }
     return lp + util.i32_to_string(irlower.find_matching_end(ops, op + 1));
 }
@@ -4546,6 +4551,19 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         }
         i = i + 1;
     }
+
+    // Function-boundary label. Any control-flow target that resolves to the
+    // one-past-the-last op index (`ops.len()`) lands here — the function exit.
+    // In a well-formed op stream every opener has an explicit `end` before the
+    // body ends, so no bare `.Lir_*` reference ever reaches `ops.len()` and this
+    // label is a harmless no-op. It becomes load-bearing only when a scope is
+    // left unterminated (a br/if to a block whose `end` is missing): `find_matching_end`
+    // then walks off the end and returns `ops.len()`, and WITHOUT this definition
+    // the emitted asm carries a dangling `.Lir_<fn>_<len>` reference that fails at
+    // link (`undefined reference to .Lir_main_13`, issue #4442). Defining it here
+    // turns that link error into a jump to the epilogue — the correct "exit the
+    // scope" behaviour — keeping the output linkable and deterministic.
+    s = s.write(lp + util.i32_to_string(r.ops.len()) + ":\n");
 
     // Fallback (subset functions always end in `return`).
     s = s.write("    movq $0, %rax\n");
