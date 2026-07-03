@@ -37,6 +37,11 @@ function main(): i32 {
 
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
     mod = parser.fill_default_args_module(mod);
+    // Hoist inline lambdas to top-level `<fn>$clo(__env, params…)` functions
+    // (irlower's env-FIRST closure ABI), exactly as the production asm_ir path
+    // does — otherwise a `const_func` referencing a lambda would dangle, since
+    // the per-function loop below only lowers what is in `mod.funcs`.
+    mod = irlower.lift_lambdas(mod);
 
     var empty: string[] = [];
     var funcs: ssa.SFunc[] = [];

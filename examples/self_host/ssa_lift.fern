@@ -53,6 +53,11 @@
 //     payload@1 } box (payload 8-byte so pointers round-trip). The i64 / f64
 //     payload variants (opt_make_w / opt_payload_w, width 64) bail.
 //   - slice 12: `args` -> the SSA `args` inst (the argv string[]).
+//   - slice 13: CLOSURES — `const_func` -> the `funcaddr` inst (a function
+//     value / lambda code pointer) and `call_indirect` -> the SSA
+//     call_indirect (target = the popped code pointer, env-FIRST args). The
+//     closure box is an `arr_make` [funcval, caps…] and captures read via
+//     `arr_get` (both already lifted); the lifted lambda takes env as param 0.
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -532,6 +537,35 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                     cur_insts = cur_insts.append(ssa.SInst { kind: "call", result: cv, args: cargs, imm: 0, str: op.str });
                     stack = stack.append(cv);
                 }
+            }
+        } else if (k == "const_func") {
+            // A function VALUE — the address of a top-level function or a lifted
+            // lambda `<fn>$cloN` — via the SSA `funcaddr` inst (a RIP-relative
+            // leaq of __fn_<name>). op.str is the target name. It flows through
+            // slots like any pointer and is later called via call_indirect.
+            var fav: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "funcaddr", result: fav, args: [], imm: 0, str: op.str });
+            stack = stack.append(fav);
+        } else if (k == "call_indirect") {
+            // Indirect call through a function value. The operand stack is
+            // [arg0, …, arg_{argc-1}, target] with the code pointer on TOP; the
+            // SSA call_indirect takes args[0] = target then the args in order.
+            // For a closure the first arg is the env box and the target is
+            // box[0] — irlower's env-FIRST convention, which the register
+            // backends honour positionally (they ignore takes_env), so the
+            // lifted lambda reads its captures from param 0 and it all lines up.
+            var icargc: i32 = op.i32_imm;
+            if (stack.len() < icargc + 1) { ok = false; }
+            else {
+                var itgt: i32 = stack[stack.len() - 1];
+                var icargs: i32[] = [itgt];
+                var icd: i32 = icargc - 1;
+                while (icd >= 0) { icargs = icargs.append(stack[stack.len() - 2 - icd]); icd = icd - 1; }
+                var ice: i32 = 0;
+                while (ice < icargc + 1) { stack = drop_last(stack); ice = ice + 1; }
+                var icv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "call_indirect", result: icv, args: icargs, imm: 0, str: "" });
+                stack = stack.append(icv);
             }
         } else if (k == "arr_make") {
             // An i32 array literal → a length-prefixed heap box (element 0 holds

@@ -85,6 +85,7 @@ func TestSelfHostSSALiftDifferential(t *testing.T) {
 		{"strindex", `function main(): i32 { return "ABC"[1]; }`},
 		{"optval", `function main(): i32 { match (Some(42)) { Some(v) => { return v; }, None => { return 0; } } }`},
 		{"argslen", `function main(): i32 { return args().len(); }`},
+		{"closure", `function main(): i32 { var x = 10; var f = (y: i32) => x + y; return f(5); }`},
 	}
 	for _, tc := range cases {
 		tc := tc

@@ -28,8 +28,9 @@ import (
 // concat / equality (str_concat / str_eq), the string builder
 // (strbuf_reset / _append / _take), the process / output ops
 // (print_str / eprint_str / exit), string indexing (str_index), and
-// Option / Result (opt_make / opt_none / opt_tag / opt_payload), and args()
-// (the argv string[]), with
+// Option / Result (opt_make / opt_none / opt_tag / opt_payload), args()
+// (the argv string[]), and closures (const_func -> funcaddr + call_indirect,
+// the lambda hoisted via lift_lambdas), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -187,6 +188,14 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		// as `>= 1` so it holds regardless of how the harness invokes the binary
 		// (the differential diffs the emitted binary vs the interpreter).
 		{"argslen", `function main(): i32 { if (args().len() >= 1) { return 5; } return 0; }`},
+		// Closures over real irlower output (slice 13): a capturing lambda, a
+		// non-capturing function value passed + called indirectly, and a lambda
+		// capturing two locals. The lifted `<fn>$clo` lambda is emitted as its
+		// own function; const_func -> funcaddr, the box is an arr_make, and the
+		// captures read via arr_get.
+		{"clcapture", `function main(): i32 { var x = 10; var f = (y: i32) => x + y; return f(5); }`},
+		{"clnoncap", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply(inc, 41); }`},
+		{"clmulti", `function main(): i32 { var a = 3; var b = 4; var f = (y: i32) => a + b + y; return f(5); }`},
 	}
 	for _, tc := range cases {
 		tc := tc

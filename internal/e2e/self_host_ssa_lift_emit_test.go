@@ -103,6 +103,7 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"strindex", 66},  // string index: str_index -> load_elem (slice 10)
 		{"optval", 42},    // Option: opt_make + opt_payload (slice 11)
 		{"argslen", 1},    // args: the argv string[] (slice 12)
+		{"closure", 15},   // closure: const_func + arr_make box + call_indirect (slice 13)
 	}
 	for _, tc := range cases {
 		tc := tc

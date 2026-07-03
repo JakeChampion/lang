@@ -250,6 +250,30 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "closure") {
+        // var x = 10; var f = (y) => x + y; return f(5);  => 15
+        // Exercises the slice-13 closure lift (const_func -> funcaddr, the
+        // arr_make [funcval, x] box, the arr_get capture read, call_indirect
+        // env-first) through optimise / regalloc / emit on both backends. Two
+        // functions: main builds+calls the closure, `clo(__env, y)` is the
+        // lifted lambda reading its capture from __env[1].
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 2, ops: [
+                ir.op_const_i32(10), ir.op_store_local(0),
+                ir.op_const_func(0, "clo"), ir.op_load_local(0), ir.op_arr_make(2, 32),
+                ir.op_store_local(1),
+                ir.op_load_local(1), ir.op_const_i32(5),
+                ir.op_load_local(1), ir.op_const_i32(0), ir.op_arr_get(32),
+                ir.op_call_indirect(2),
+                ir.op_return()
+            ] },
+            FnSpec { name: "clo", nparams: 2, nslots: 2, ops: [
+                ir.op_load_local(0), ir.op_const_i32(1), ir.op_arr_get(32),
+                ir.op_load_local(1), ir.op_bin("add", 0, false),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 
