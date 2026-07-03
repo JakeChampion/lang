@@ -23,7 +23,7 @@ func TestSelfHostTcpClientIRArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	port := startTcpPongServer(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -32,10 +32,10 @@ func TestSelfHostTcpClientIRArm64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	src := []byte(tcpClientIRProgram(port) + "\n")
-	asm := runCapture(t, x86gcc, x86runner, driverBin, src)
+	asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

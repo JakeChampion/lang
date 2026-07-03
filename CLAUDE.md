@@ -227,7 +227,7 @@ per-type struct-drop / field-reclaim slices already landed).
   10-min job timeout.
 - **Self-host driver builds peak at ~16–18 GB RAM — enable swap if they
   get OOM-killed.** Every `buildSelfHostBin` / `buildBin` of a self-host
-  driver (`asm_run.fern` / `asm_load_run.fern` / `asm_arm64_run.fern` /
+  driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern` /
   `wasm_ir_run.fern` / …) assembles a multi-thousand-function `.s`, and
   `as` alone spikes to ~8 GB; with the `go test` package compile plus a
   second concurrent `as`, the peak crosses ~16 GB. On the ~15 GB-RAM

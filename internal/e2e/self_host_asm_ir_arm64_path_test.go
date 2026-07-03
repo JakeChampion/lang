@@ -18,7 +18,7 @@ import (
 // match — proving the arm64 IR path is behaviour-equivalent to the production
 // arm64 AST path on the shared i32 + arrays subset (the rollout prerequisite
 // before the arm64 default can flip to the IR). asm_arm64.fern and the
-// asm_arm64_run bootstrap are UNCHANGED.
+// asm_ir_run (-target arm64) bootstrap are UNCHANGED.
 //
 // The driver itself runs on the test host (built via the x86-64 backend);
 // only the emitted program asm is arm64. CI-gated arm64 (qemu).

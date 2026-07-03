@@ -79,7 +79,7 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 }
 
 // TestSelfHostEnvArm64 is the ARM64 counterpart: the self-hosted ARM64
-// emitter's env(name). The asm_arm64_run driver (an x86 host binary)
+// emitter's env(name). The asm_ir_run (-target arm64) driver (an x86 host binary)
 // compiles the same lookup program to aarch64 asm; the assembled binary
 // runs under qemu-aarch64 (which forwards the environment to the guest),
 // expecting exit 7 when the variable is set and 1 (None) when it isn't.
@@ -87,7 +87,7 @@ func TestSelfHostEnvArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -96,7 +96,7 @@ func TestSelfHostEnvArm64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_run.fern"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestSelfHostEnvArm64(t *testing.T) {
         None => { return 1; }
     }
 }`
-	envAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(envSrc))
+	envAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(envSrc), "-target", "arm64")
 	if len(envAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the env program")
 	}

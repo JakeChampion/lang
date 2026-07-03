@@ -36,9 +36,9 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 		t.Skip("native x86-64 run required to build the self-host emitter + driver")
 	}
 
-	// Build the Linux arm64 asm emitter (asm_arm64_run.fern, emit_module(false)).
+	// Build the Linux arm64 asm emitter (asm_ir_run.fern (-target arm64), emit_module(false)).
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -47,7 +47,7 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	emitBin := buildSelfHostBin(t, gcc, dir, "asm_arm64_run.fern", "lxemit")
+	emitBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "lxemit")
 
 	// Driver: arm64_native + elf.fern + main(), concatenated (no imports).
 	// Reads the asm from "in.s" in its CWD, assembles + ELF-wraps it, writes
@@ -133,7 +133,7 @@ function main(): i32 {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rdir := t.TempDir()
-			asm := runCapture(t, gcc, runner, emitBin, []byte(c.src+"\n"))
+			asm := runCapture(t, gcc, runner, emitBin, []byte(c.src+"\n"), "-target", "arm64")
 			if len(asm) == 0 {
 				t.Fatal("emitter produced 0 bytes")
 			}

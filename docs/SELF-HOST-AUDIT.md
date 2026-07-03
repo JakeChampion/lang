@@ -344,7 +344,7 @@ appendix §6.)
   arm64 copy's own header admits it's identical).
 - [ ] **SH-056 — Retire redundant `*_run.fern` shims.** There are **31 `main()`s**;
   `fern.fern` is the intended unified driver yet ~10 single-mode stdin clones
-  (`wasm_run`, `asm_run`, `asm_arm64_run`, `interp_run`, `checker_run`, `vm_run`,
+  (`wasm_run`, `asm_run`, `interp_run`, `checker_run`, `vm_run`,
   …) remain — collapse to one-line wrappers over a shared `run_stdin(emit_fn)`,
   keeping only those a Go test pins (document which).
 

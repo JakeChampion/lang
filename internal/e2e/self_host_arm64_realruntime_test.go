@@ -17,11 +17,11 @@ import (
 // shims) that asm_arm64 emits for every program — into a valid Mach-O, with
 // zero unrecognised instructions.
 //
-// Pipeline: build the darwin-asm emitter (asm_arm64_darwin_run.fern, Go x86
-// backend) and the wasm_run driver; for each program, the emitter prints the
-// darwin assembly TEXT (the unified `fern` CLI's `-target arm64-darwin` no
+// Pipeline: build the darwin-asm emitter (asm_ir_run.fern -target arm64-darwin,
+// Go x86 backend) and the wasm_run driver; for each program, the emitter prints
+// the darwin assembly TEXT (the unified `fern` CLI's `-target arm64-darwin` no
 // longer emits text — it assembles the Mach-O in-process — so the dedicated
-// emitter is how this test gets the text). That text is fed to a driver
+// emitter driver is how this test gets the text). That text is fed to a driver
 // compiled through the self-host *wasm* emitter that runs it through
 // arm64_gas_program + arm64_gas_link + macho_static_executable and writes
 // the resulting Mach-O. This is the wasm-backend coverage of arm64_native
@@ -39,7 +39,7 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "asm_arm64_darwin_run.fern", "wasm_run.fern"} {
+	for _, name := range []string{"flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "asm.fern", "asm_ir_run.fern", "wasm_run.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -48,7 +48,7 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	darwinEmit := buildSelfHostBin(t, gcc, dir, "asm_arm64_darwin_run.fern", "darwin_emit")
+	darwinEmit := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "darwin_emit")
 	wrun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	native := arm64NativeSrc(t)
 
@@ -60,7 +60,7 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			asmText := runCapture(t, gcc, runner, darwinEmit, []byte(c.src+"\n"))
+			asmText := runCapture(t, gcc, runner, darwinEmit, []byte(c.src+"\n"), "-target", "arm64-darwin")
 			if len(asmText) == 0 {
 				t.Fatalf("darwin-asm emitter produced 0 bytes for %s", c.name)
 			}

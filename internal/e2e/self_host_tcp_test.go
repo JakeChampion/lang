@@ -58,7 +58,7 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -68,7 +68,7 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 		}
 	}
 	// Build the self-host arm64 emitter driver as an x86-64 host binary.
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_run.fern"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 
 	port := freeTCPPort(t)
 	serverSrc := fmt.Sprintf(tcpServerProgram, port)
-	serverAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(serverSrc))
+	serverAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(serverSrc), "-target", "arm64")
 	if len(serverAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the tcp server")
 	}

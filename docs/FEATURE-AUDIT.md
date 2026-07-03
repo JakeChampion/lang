@@ -14,8 +14,9 @@ Two compilers, each with its own backends, are in scope:
   across all four and checks stdout + exit code.
 - **Self-hosted** (the Fern-in-Fern compiler under `examples/self_host/`):
   driven by the `self_host_*_test.go` harnesses, which build a driver
-  binary (`asm_run.fern` / `asm_ir_run.fern` / `asm_arm64_run.fern` /
-  `wasm_ir_run.fern` / `interp_run.fern`), feed it Fern source, then
+  binary (`asm_run.fern` / `asm_ir_run.fern` (which also serves the arm64 /
+  arm64-darwin backends via `-target`) / `wasm_ir_run.fern` /
+  `interp_run.fern`), feed it Fern source, then
   assemble + run the result and check the exit code. The self-hosted
   compiler has a narrower **IR subset** than the native one (goal 1 in
   CLAUDE.md is to widen it until the legacy AST fallback is never taken),
