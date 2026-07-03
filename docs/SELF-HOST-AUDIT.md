@@ -207,10 +207,19 @@ findings. Ranked by leverage.
   top-level-comma scans. Byte-identical, locked by `tuple_tags_run.fern` +
   `TestSelfHostTupleTags` (a golden of both decoders over element / OK-type /
   index / out-of-range / non-tuple / 3+-element paths) + the fixpoints.
-  _Remaining:_ retarget the checker's six `type_from_name*` and wasm onto
-  `parse_type_ref`, then have the parser store `TypeRef` directly so the string
-  becomes render output. Unblocks #4394 lever 1 (symbol interning ripples into
-  this type system).
+  _Slice 4 landed:_ the checker's richest resolver,
+  `type_from_name_with_structs_unions`, now decodes via `parse_type_ref` +
+  pattern-match (new `type_from_ref_su`), retiring its array-suffix / tuple /
+  `Map[` first-comma scans (and the now-dead `split_top_comma` / `split_top_commas`
+  / `trim_spaces` helpers). Byte-identical, locked by `type_resolve_run.fern` +
+  `TestSelfHostTypeResolve` (a golden — via a new `type_debug` renderer — over
+  scalar / struct / union / array / tuple / Map / generic / unknown branches,
+  reasons included) + the bootstrap. _Remaining:_ retarget the four simpler
+  `type_from_name*` variants (`_with_structs` / `_with_struct_names` /
+  `_with_names_and_unions` / the scalar-only base — each only does the `[]`
+  suffix) and wasm onto `parse_type_ref`, then have the parser store `TypeRef`
+  directly so the string becomes render output. Unblocks #4394 lever 1 (symbol
+  interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress

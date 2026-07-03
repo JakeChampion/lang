@@ -19,6 +19,7 @@ import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
 import "./ssa_lift";
+import "./parser";
 
 // FnSpec is one function of a program: its name + arity + local-slot count and
 // the ir.Op[] body. The first spec of a program is the entry `main`.
@@ -299,10 +300,13 @@ function main(): i32 {
     // the existing optimiser. Every function is lifted, then the whole set is
     // emitted together so cross-function `call`s resolve.
     var empty: string[] = [];
+    // The hand-built emit specs never construct enum/struct boxes, so the tag
+    // discriminant is unused — an empty struct table (struct_id_of -> -1) suffices.
+    var no_structs: parser.StructDecl[] = [];
     var funcs: ssa.SFunc[] = [];
     var i: i32 = 0;
     while (i < specs.len()) {
-        var lr: ssa_lift.LResult = ssa_lift.lift_from_ir(specs[i].name, specs[i].nparams, specs[i].nslots, specs[i].ops);
+        var lr: ssa_lift.LResult = ssa_lift.lift_from_ir(specs[i].name, specs[i].nparams, specs[i].nslots, specs[i].ops, no_structs);
         if (!lr.ok) { return 1; }
         funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lr.func, empty), empty)));
         i = i + 1;

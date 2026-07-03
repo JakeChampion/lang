@@ -3,9 +3,10 @@
 // telemetry / syslog to a local agent):
 //
 //	create-udp-socket(ipv4) → start-bind + finish-bind(0.0.0.0:0) →
-//	stream(Some(host:port))  [connect] → wait for a send permit
-//	(check-send / subscribe / pollable.block loop) → send([{data}]) →
-//	drop the incoming + outgoing datagram streams, then the socket.
+//	stream(Some(host:port))  [connect] → { wait for a send permit
+//	(check-send / subscribe / pollable.block loop) → send([{data}]),
+//	retrying while the host accepts 0 datagrams } → drop the incoming
+//	+ outgoing datagram streams, then the socket.
 //
 // Connecting via stream(Some(remote)) puts the destination address in
 // the 15-i32 flattened param (the same ip-socket-address flattening
@@ -226,41 +227,6 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// Normalize the payload into a contiguous buffer.
 	body = emitStrNormalize(body, idxs, 3, 4, 9, 10, 11)
 
-	// Wait until the outgoing-datagram-stream permits at least one
-	// datagram. check-send returns result<u64, error-code> — the u64
-	// permit count at retptr+8. Right after connect wasmtime can report
-	// a permit of 0 until the socket is writable; sending then trips
-	// "unpermitted: argument exceeds permitted size" (wasmtime ≥45). So
-	// loop: check-send → if permit ≥1 break, else block on the stream's
-	// pollable and retry.
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // break target (br 1)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // retry target (br 0)
-	{
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstLocalGet(body, 5)
-		body = inst.InstCall(body, checkSend)
-		body = inst.InstLocalGet(body, 5)
-		body = memory.InstI32Load8U(body, 0, 0)
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = emitErrnoNegReturn(body, 5)
-		body = inst.InstEnd(body)
-		// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
-		body = inst.InstLocalGet(body, 5)
-		body = memory.InstI32Load(body, 2, 8)
-		body = inst.InstBrIf(body, 1)
-		// permit == 0: subscribe → block → drop, then retry.
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstCall(body, subscribe)
-		body = inst.InstLocalSet(body, 20)
-		body = inst.InstLocalGet(body, 20)
-		body = inst.InstCall(body, pollBlock)
-		body = inst.InstLocalGet(body, 20)
-		body = inst.InstCall(body, pollDrop)
-		body = inst.InstBr(body, 0)
-	}
-	body = inst.InstEnd(body) // loop
-	body = inst.InstEnd(body) // block
-
 	// Build the 1-element list<outgoing-datagram>. Each record is 60
 	// bytes; alloc 64. remote-address: none → only data (ptr@+0,
 	// len@+4) and the option disc (0 @ +8) are set.
@@ -277,21 +243,78 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 8) // option disc = none @ +8
 
-	// send(outStream, list_ptr=$dgram, list_len=1, retptr); bail on Err.
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstLocalGet(body, 18)
-	body = inst.InstI32Const(body, 1)
-	body = inst.InstLocalGet(body, 5)
-	body = inst.InstCall(body, send)
-	body = inst.InstLocalGet(body, 5)
-	body = memory.InstI32Load8U(body, 0, 0)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
-	body = inst.InstEnd(body)
-	// $sent = low 32 bits of the u64 datagram count at retptr+8.
-	body = inst.InstLocalGet(body, 5)
-	body = memory.InstI32Load(body, 2, 8)
-	body = inst.InstLocalSet(body, 19)
+	// Send loop: wait for a send permit, send the datagram, and retry
+	// when the host accepted 0 of it. Two distinct would-block shapes
+	// hide here:
+	//
+	//   - check-send reports a permit of 0 right after connect until
+	//     the socket is writable; sending then trips "unpermitted:
+	//     argument exceeds permitted size" (wasmtime ≥45). The inner
+	//     loop blocks on the stream's pollable until the permit is ≥1.
+	//   - send itself may accept FEWER datagrams than provided — the
+	//     permit is a point-in-time snapshot, so `Ok(0)` is a legal
+	//     transient even straight after a positive check-send (observed
+	//     under wasmtime at a few-percent rate on loopback; the flaky
+	//     TestWasmPreview2UdpSendAdapterFree). Returning 0 to the
+	//     caller there turned scheduler noise into a failed udp_send,
+	//     so re-enter the permit wait and send again until the datagram
+	//     is accepted. Genuine socket errors still bail with -errno.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // sent break target
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // send retry target
+	{
+		// check-send returns result<u64, error-code> — the u64 permit
+		// count at retptr+8. Loop: check-send → if permit ≥1 break,
+		// else block on the stream's pollable and retry.
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // break target (br 1)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // retry target (br 0)
+		{
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstCall(body, checkSend)
+			body = inst.InstLocalGet(body, 5)
+			body = memory.InstI32Load8U(body, 0, 0)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = emitErrnoNegReturn(body, 5)
+			body = inst.InstEnd(body)
+			// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
+			body = inst.InstLocalGet(body, 5)
+			body = memory.InstI32Load(body, 2, 8)
+			body = inst.InstBrIf(body, 1)
+			// permit == 0: subscribe → block → drop, then retry.
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstCall(body, subscribe)
+			body = inst.InstLocalSet(body, 20)
+			body = inst.InstLocalGet(body, 20)
+			body = inst.InstCall(body, pollBlock)
+			body = inst.InstLocalGet(body, 20)
+			body = inst.InstCall(body, pollDrop)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+
+		// send(outStream, list_ptr=$dgram, list_len=1, retptr); bail on Err.
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 18)
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstCall(body, send)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = emitErrnoNegReturn(body, 5)
+		body = inst.InstEnd(body)
+		// $sent = low 32 bits of the u64 datagram count at retptr+8.
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstLocalSet(body, 19)
+		// Accepted ≥1 → done; accepted 0 → wait for a permit and resend.
+		body = inst.InstLocalGet(body, 19)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
 
 	// Drop the datagram streams (children) before the udp-socket.
 	body = inst.InstLocalGet(body, 8)
@@ -301,13 +324,10 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstCall(body, sockDrop)
 
-	// Return the data length when ≥1 datagram was accepted, else 0.
-	body = inst.InstLocalGet(body, 19)
-	body = inst.InstIfStart(body, encode.ValtypeI32)
+	// The send loop only exits with ≥1 datagram accepted (Ok(0)
+	// re-enters the permit wait; errors returned -errno above), so the
+	// whole payload went out — return its byte length.
 	body = inst.InstLocalGet(body, 10)
-	body = inst.InstElse(body)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstEnd(body)
 
 	locals := inst.PutLocalsOneGroup(nil, 16, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

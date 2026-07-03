@@ -867,21 +867,30 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
 	}
 
-	// Run the client (synchronous: sends one datagram, exits 0).
-	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
-	if out, err := run.CombinedOutput(); err != nil {
-		t.Fatalf("wasmtime run (udp client): %v\n%s", err, out)
-	}
+	// Run the client (synchronous: sends one datagram, exits 0) several
+	// times against the one compiled component. The repeat is the
+	// regression guard for the send-retry in __fern_udp_send: wasmtime's
+	// `send` legitimately accepts 0 of the 1 datagram at a few-percent
+	// rate on loopback (the send permit is a snapshot), and before the
+	// runtime re-entered the permit wait and resent, that surfaced here
+	// as a rare exit-1 flake — one send per CI run almost never caught
+	// it, ten make a regression fail fast.
+	for i := 0; i < 10; i++ {
+		run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("wasmtime run (udp client, iteration %d): %v\n%s", i, err, out)
+		}
 
-	// The datagram is buffered on the socket; read it back.
-	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
-	buf := make([]byte, 2048)
-	n, _, err := pc.ReadFrom(buf)
-	if err != nil {
-		t.Fatalf("read datagram: %v", err)
-	}
-	if got := string(buf[:n]); got != "ping-from-fern" {
-		t.Fatalf("datagram = %q; want %q", got, "ping-from-fern")
+		// The datagram is buffered on the socket; read it back.
+		pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+		buf := make([]byte, 2048)
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			t.Fatalf("read datagram (iteration %d): %v", i, err)
+		}
+		if got := string(buf[:n]); got != "ping-from-fern" {
+			t.Fatalf("datagram (iteration %d) = %q; want %q", i, got, "ping-from-fern")
+		}
 	}
 }
 
