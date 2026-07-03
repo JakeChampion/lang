@@ -943,6 +943,17 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"subword-u8-var", "function main(): i32 { var n: u8 = 0 as u8; return 0; }\n"},
 		{"usize-var", "function main(): i32 { var p: usize = 0 as usize; return 0; }\n"},
 		{"unknown-byte-param", "function f(x: byte): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
+		// Multi-binding variant payload patterns (#4345): the self-host checker
+		// only bound the FIRST payload name (pv.binding) and rejected the rest as
+		// undefined (a false E001), so `Rect(w, h)` reading `h` in an arm body /
+		// guard / assignment tripped a diagnostic the Go checker never emits.
+		// These exercise every arm-scope binding site: expr-arm body, when-guard
+		// scope, assignment-in-arm, and a `_`-first position that binds only the
+		// second name. All well-typed → the self-host must stay silent.
+		{"match-multi-binding-body", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { return match (s) { Circle(r) => r, Rect(w, h) => w * h }; }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
+		{"match-multi-binding-guard", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { match (s) { Rect(w, h) when h > 0 => { return w * h; }, _ => { return 0; } } }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
+		{"match-multi-binding-assign", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { match (s) { Rect(w, h) => { h = h + 1; return w * h; }, Circle(r) => { return r; } } }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
+		{"match-multi-binding-wild-first", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { return match (s) { Circle(r) => r, Rect(_, h) => h }; }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
 	}
 
 	for _, tc := range progs {
