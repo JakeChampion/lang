@@ -426,12 +426,21 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
 			} else {
-				// Storing into an existing element / field / capture
-				// (`grid[i] = row`, `p.items = arr`, `cap = arr`)
+				// Storing into an existing capture cell (`cap = v`)
 				// retains the value without an inc, so the source
 				// local escapes into the container.
-				switch s.Target.(type) {
-				case *ast.Index, *ast.FieldAccess, *ast.CaptureRef:
+				//
+				// Index / FieldAccess targets are NOT sinks anymore:
+				// the immutability migration banned both at the
+				// checker (`a[i] = v` is E056, `p.f = v` is E048 —
+				// unconditionally, and every internal desugar builds
+				// Ident-target assigns only), so no program that
+				// reaches lowering contains them. Their taint arms
+				// were dead case-law and are deleted (#4399 sink 3);
+				// the mutation idioms that replaced them are the
+				// counted `.with` / functional-update stores handled
+				// above and at StructLit.
+				if _, isCap := s.Target.(*ast.CaptureRef); isCap {
 					escape(s.Value)
 				}
 			}
