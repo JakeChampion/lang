@@ -1310,6 +1310,24 @@ pub function decl_is_struct(structs: parser.StructDecl[], name: string): boolean
     return false;
 }
 
+// decl_is_enum reports whether `name` is a declared enum — i.e. some decl records
+// it as its enum_owner (the variants of `name` are stored in `structs` with
+// enum_owner == name). Precise (unlike the loose syntactic is_enum_like_name): it
+// cannot misfire on a primitive / struct / generic, and a bracketed Option[T] /
+// Result[T] field spelling never equals a bare enum_owner. False in the standalone
+// bootstrap where imported enums aren't loaded → the field is treated leak-only
+// (no construction inc, no drop) → balanced/sound. #4297 A2: drives the direct
+// enum-field exit-reclaim (gate + construction inc + the k_enum struct-drop arm).
+pub function decl_is_enum(structs: parser.StructDecl[], name: string): boolean {
+    if (name.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function decl_field_index(structs: parser.StructDecl[], struct_name: string, field: string): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
@@ -4486,6 +4504,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                         if (!nfv_fresh) { fav_alias_inc = true; }
                     }
+                    // A DIRECT enum field (`e: MyEnum`, decl_is_enum): now SHALLOW
+                    // box-dropped on the struct's reclamation (the k_enum arm of
+                    // __struct_drop → arr_dec of the enum box, one level). To balance
+                    // that dec, retain UNLESS the value is a FRESH variant ctor
+                    // (`V(args)` / bare `V`, variant_ctor_enum_owner != ""), which is
+                    // sole-owned rc=1 and freed with no inc; every other source (a bare
+                    // enum local/param, a field copy, an enum-returning call) is inc'd —
+                    // conservative and SOUND: a genuinely-fresh non-ctor source then just
+                    // LEAKS (rc never 0), never double-frees. Enum boxes are rc-headered
+                    // (op_struct_make), so the inc is sound (unlike a header-less string).
+                    if (!fav_alias_inc && decl_is_enum(s.structs, cfft)) {
+                        if (variant_ctor_enum_owner(slit.field_values[found], s.structs).len() == 0) {
+                            fav_alias_inc = true;
+                        }
+                    }
                     // A `string` field is rc-headered and deep-dropped on the
                     // struct's reclamation (emit_struct_field_drops). The values safe
                     // to FREE are exactly the fresh, sole-owned HEAP strings whose data
@@ -4569,6 +4602,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // only the newly-reclaimed nested-struct kind needs the retain.
                     var cpft: string = decl_field_type_at(s.structs, slit.type_name, di);
                     if (decl_is_struct(s.structs, cpft)) {
+                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
+                    // A DIRECT enum field COPIED from the base (`R { ...base, other: v }`,
+                    // enum field un-overridden) ALIASES base.<enum> — both boxes point at
+                    // the same enum box, and BOTH shallow-drop it. Retain it (#4297 A2) so
+                    // the new struct's k_enum drop only decs the dup, exactly like the
+                    // nested-struct copy above. No slit_reclaim gate: a struct with a direct
+                    // enum field is always reclaimable (struct_has_reclaim_array_field), so
+                    // the __struct_drop and this inc always pair.
+                    if (decl_is_enum(s.structs, cpft)) {
                         sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
                     // A `string` field COPIED from the base (`R { ...base, other: v }`,
@@ -11856,9 +11899,11 @@ function emit_snapshot_store(se: LowerState, slot: i32, snap_slot: i32): LowerSt
 // array-of-struct, or an array-of-enum field. These are exactly the fields whose
 // BUFFER the per-type field-reclaim helper shallow-frees on a consume-rebind, so
 // this is the gate that picks `__field_reclaim_<T>` over the scalar-only
-// `__fern_snapshot_dec` / the plain box `__fern_rc_dec`. Mirrors the `any`
-// detection loop of emit_struct_field_drops (string / map / option / tuple /
-// nested-struct fields are NOT reclaimed — they leak with the struct, sound).
+// `__fern_snapshot_dec` / the plain box `__fern_rc_dec`. Also admits a struct
+// carrying a DIRECT nested-struct field or (since #4297 A2) a DIRECT enum field,
+// each SHALLOW-reclaimed one level by __struct_drop's k_struct / k_enum arm.
+// (string / map / option / tuple fields are still NOT reclaimed — they leak with
+// the struct, sound.)
 pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var n: i32 = decl_field_count(structs, sty);
@@ -11873,6 +11918,12 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
         // exit drop emitted too — admit it to the reclaim set (the construction
         // alias-inc in the ExprStructLit lowering keeps it balanced).
         if (decl_is_struct(structs, fdt)) { return true; }
+        // A DIRECT enum field (`e: MyEnum`) is now SHALLOW-reclaimed too
+        // (emit_ir_struct_drop_one's k_enum → arr_dec of the enum box, one level —
+        // the variant payload leaks, matching the k_struct gap). Admit it so the
+        // struct's __struct_drop is emitted; the construction alias-inc balances the
+        // dec. #4297 A2.
+        if (decl_is_enum(structs, fdt)) { return true; }
         fi = fi + 1;
     }
     return false;

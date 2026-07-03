@@ -4719,8 +4719,9 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // arr_dec, so an aliased (rc>1) inner just decs; only the sole owner frees.
         // The inner's OWN rc fields leak (the one-level gap, a deep-drop follow-up),
         // matching the struct-array-element model. Construction alias-incs the field
-        // (lower_expr's ExprStructLit arm) so this dec is balanced. Enums are NOT
-        // here (decl_is_struct excludes them — variant-payload drop is deferred).
+        // (lower_expr's ExprStructLit arm) so this dec is balanced. A DIRECT enum
+        // field is handled by the parallel k_enum arm below (same shallow box dec);
+        // its variant-payload deep-drop is the deferred follow-up.
         var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
         // A `string` field is rc-headered on the asm IR path (#4294), reclaimed via
         // the rc-aware __fern_str_free — frees a fresh (rc=1) field, decs a shared
@@ -4730,6 +4731,16 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // sole-owned (this drop only fires for a reclaimable, non-escaping struct
         // local) → freed here, the #4297 A2 heap-leak win.
         var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
+        // A DIRECT enum field (`e: MyEnum`, decl_is_enum, not an array): the slot
+        // holds the enum's box pointer, freed SHALLOW via __fern_arr_dec (the same
+        // rc-guarded generic box free the shallow k_struct / scalar-array arms use —
+        // it frees struct AND enum boxes identically). One level: the variant payload
+        // (an array/string/nested box) leaks, matching the shallow k_struct gap (the
+        // variant-payload deep-drop needs a register-backend enum drop helper that does
+        // not exist yet — a follow-up). Construction alias-incs a non-fresh enum field
+        // (irlower ExprStructLit) so this dec is balanced; a fresh variant ctor is
+        // sole-owned (rc 1) → freed here. #4297 A2.
+        var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -4819,8 +4830,8 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_str_free\n");             // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    addq $8, %rsp\n");
-        } else if (k_scalar || k_struct) {
-            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box (shallow)
+        } else if (k_scalar || k_struct || k_enum) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box / enum box (shallow)
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");
             s = s.write("    addq $8, %rsp\n");

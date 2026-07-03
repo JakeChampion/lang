@@ -4006,6 +4006,12 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         // by the shared-irlower construction alias-inc. Mirrors the x86 k_str arm
         // (#4297 A2). Fires only for reclaimable, non-escaping struct locals.
         var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
+        // A DIRECT enum field (`e: MyEnum`, decl_is_enum): freed SHALLOW via the same
+        // __fern_arr_dec as the scalar-array / nested-struct box (arr_dec frees enum
+        // boxes too) — one level, the variant payload leaks (deferred deep-drop).
+        // Construction alias-incs a non-fresh enum field (shared irlower) so this dec
+        // is balanced. Mirrors the x86 emit_ir_struct_drop_one k_enum arm. #4297 A2.
+        var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -4091,8 +4097,8 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_str_free\n");           // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    add sp, sp, #16\n");
-        } else if (k_scalar || k_struct) {
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box
+        } else if (k_scalar || k_struct || k_enum) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");
             s = s.write("    add sp, sp, #16\n");
