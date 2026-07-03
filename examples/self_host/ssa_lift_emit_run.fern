@@ -206,6 +206,17 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "exitprog") {
+        // exit(42); return 0;  => process exits 42 (the return is dead)
+        // Exercises the slice-9 `exit` lift: a diverging inst emitted mid-block,
+        // with the following return still lowered as dead code.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_i32(42), ir.op_exit(),
+                ir.op_const_i32(0), ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

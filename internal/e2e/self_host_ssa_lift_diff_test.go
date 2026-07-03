@@ -81,6 +81,7 @@ func TestSelfHostSSALiftDifferential(t *testing.T) {
 		{"castrt", `function main(): i32 { var n: i32 = 10; var x: f64 = (n as f64) * 1.5; return x as i32; }`},
 		{"strcat", `function main(): i32 { return ("foo" + "bar").len(); }`},
 		{"strbuf", `function main(): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append("cde"); return strbuf_take().len(); }`},
+		{"exitprog", `function main(): i32 { exit(42); return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

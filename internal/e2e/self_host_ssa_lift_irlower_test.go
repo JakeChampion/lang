@@ -25,8 +25,9 @@ import (
 // (struct_make / struct_get, incl. nested), tuples (tuple_make /
 // tuple_get, incl. nested), f64 scalars (const_f64 + fadd / fmul /
 // fgt / … + fneg), i32<->f64 casts (i32_to_f64 / f64_to_i32), string
-// concat / equality (str_concat / str_eq), and the string builder
-// (strbuf_reset / _append / _take), with
+// concat / equality (str_concat / str_eq), the string builder
+// (strbuf_reset / _append / _take), and the process / output ops
+// (print_str / eprint_str / exit), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -160,6 +161,14 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		// take, checked by the built string's length and its content.
 		{"strbuf", `function main(): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append("cde"); var s = strbuf_take(); return s.len(); }`},
 		{"strbufeq", `function main(): i32 { strbuf_reset(); strbuf_append("x"); strbuf_append("yz"); var s = strbuf_take(); if (s == "xyz") { return 7; } return 0; }`},
+		// Process / output ops over real irlower output (slice 9): exit (fully
+		// exit-code-observable), a conditional exit, and print / write / eprint
+		// (side effects; the following return's exit code checks stack balance).
+		{"exit", `function main(): i32 { exit(42); return 0; }`},
+		{"exitcond", `function main(): i32 { var x = 5; if (x > 3) { exit(9); } return 1; }`},
+		{"print", `function main(): i32 { print("hello"); return 5; }`},
+		{"write", `function main(): i32 { write("hi"); return 3; }`},
+		{"eprint", `function main(): i32 { eprint("err"); return 7; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
