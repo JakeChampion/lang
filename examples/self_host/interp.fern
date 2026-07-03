@@ -749,7 +749,28 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             // The parser stores both shapes as a bare string;
             // we disambiguate on the receiver's runtime type.
             var ov: Value = eval_expr(fa.obj, env);
-            if (is_err(ov)) { return ov; }
+            if (is_err(ov)) {
+                // `E.Red` — a field access whose object is a bare
+                // identifier that resolves to no runtime value is a
+                // nullary enum-variant construction. The parser
+                // desugars enum variants into payload-less variant
+                // structs named for the variant, so the value is a
+                // zero-field VStruct tagged with the variant name; a
+                // qualified variant pattern `E.Red` matches it by its
+                // final path segment (see StmtMatch / variant_simple_
+                // name). Payload variants `E.Some(x)` are constructed
+                // on the ExprCall path. On a valid (checker-passed)
+                // program a bare undefined-identifier object only
+                // arises for an enum type name.
+                match (fa.obj) {
+                    parser.ExprIdent(_) => {
+                        var no_names: string[] = [];
+                        var no_vals: Value[] = [];
+                        return v_struct(fa.field, no_names, no_vals);
+                    },
+                    _ => { return ov; }
+                }
+            }
             match (ov) {
                 VStruct(sv) => {
                     var i: i32 = 0;
@@ -820,6 +841,22 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
         i = i + 1;
     }
     return false;
+}
+
+// variant_simple_name returns the final `.`-separated segment of a
+// (possibly qualified) variant name — `E.Red` → `Red`,
+// `lexer.TokIdent` → `TokIdent`, `Red` → `Red`. Used to match a
+// qualified variant pattern against a runtime enum value, whose
+// type_name is the bare variant name.
+function variant_simple_name(name: string): string {
+    var last_dot: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 46) { last_dot = i; }
+        i = i + 1;
+    }
+    if (last_dot >= 0) { return name[last_dot + 1 : name.len()]; }
+    return name;
 }
 
 // call_closure runs a VFunc with the given args. The closure's
@@ -1285,7 +1322,13 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                         }
                         match (sv) {
                             VStruct(vs) => {
-                                if (vs.type_name == pv.type_name) {
+                                // A runtime enum/variant value carries the
+                                // bare variant name as its type_name, so a
+                                // qualified pattern `E.Red` matches by its
+                                // final path segment as well as by exact
+                                // name (a bare `Red` pattern still matches
+                                // exactly).
+                                if (vs.type_name == pv.type_name || vs.type_name == variant_simple_name(pv.type_name)) {
                                     matched = true;
                                     // Bare `Foo` and explicit
                                     // `Foo(_)` both leave binding
