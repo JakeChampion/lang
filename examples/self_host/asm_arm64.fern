@@ -2538,15 +2538,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    fmov d0, x0\n");
                     s = s.write("    fcvtzs x0, d0\n");
                     if (ty == "u8") { s = s.write("    uxtb w0, w0\n"); }
-                    else if (ty == "u16") { s = s.write("    uxth w0, w0\n"); }
-                    else if (ty == "i8") { s = s.write("    sxtb x0, w0\n"); }
-                    else if (ty == "i16") { s = s.write("    sxth x0, w0\n"); }
                 } else {
                     if (ty == "u8") { s = s.write("    uxtb w0, w0\n"); }
-                    else if (ty == "u16") { s = s.write("    uxth w0, w0\n"); }
                     else if (ty == "u32") { s = s.write("    mov w0, w0\n"); }
-                    else if (ty == "i8") { s = s.write("    sxtb x0, w0\n"); }
-                    else if (ty == "i16") { s = s.write("    sxth x0, w0\n"); }
                     else if (ty == "i32") { s = s.write("    sxtw x0, w0\n"); }
                 }
                 s = s.write("    str x0, [sp, #-16]!\n");

@@ -35,8 +35,6 @@ func TestInterpNegativeExitCodeMatchesNative(t *testing.T) {
 		// -256 wraps to 0; -257 to 255 (low byte of the two's complement).
 		{"ret-neg-256", `function main(): i32 { return -256; }`, 0},
 		{"ret-neg-257", `function main(): i32 { return -257; }`, 255},
-		// i8 overflow: 100 + 50 = 150 wraps to -106; -106 as i32 then -6 below 0.
-		{"i8-wrap-neg", `function main(): i32 { var x: i8 = 100; var y: i8 = x + 50; return (y as i32) + 100; }`, 250},
 		// A positive return is unchanged (regression guard for the > 255 mask).
 		{"ret-257", `function main(): i32 { return 257; }`, 1},
 	}

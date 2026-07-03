@@ -1077,11 +1077,11 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	//
 	// Per-stride offset accumulator: 4-byte slots for most types,
 	// 8-byte slots for i64 / u64 / f64 (so the capture's full
-	// bit-pattern survives). Sub-i32 (u8 / i8 / u16 / i16) round
-	// up to a 4-byte slot to keep alignment trivial — the env
-	// block is written sequentially and aligned-i64 reads after
-	// a sub-i32 capture would otherwise straddle a 4-byte
-	// boundary in the unhelpful direction.
+	// bit-pattern survives). Sub-i32 (u8) rounds up to a 4-byte
+	// slot to keep alignment trivial — the env block is written
+	// sequentially and aligned-i64 reads after a sub-i32 capture
+	// would otherwise straddle a 4-byte boundary in the unhelpful
+	// direction.
 	ctx := &captureCtx{
 		byName:          map[string]capInfo{},
 		envName:         "$__env",

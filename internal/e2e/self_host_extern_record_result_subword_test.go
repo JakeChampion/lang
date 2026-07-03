@@ -12,17 +12,26 @@ import (
 )
 
 // TestSelfHostExternRecordResultSubwordCustomProvider is the self-host port of
-// the sub-word record-field *result* dual layout (docs/WIT-BRING-YOUR-OWN.md,
-// Go-side TestExternRecordResultSubwordCustomProvider). The canonical
-// return-area packs s8/u16 at their natural 1-/2-byte size + offset (a@0, b@2,
-// c@4), which differs from the self-host struct's 4-byte slots. So the wrapper
-// reads each field at its canonical offset (extern_canon_top_off) with a
-// width+sign-aware load (extern_field_load_op) and stores it into the wider
-// self-host slot; the return area is sized by extern_canon_record_size_nested.
+// the record-field *result* test (docs/WIT-BRING-YOUR-OWN.md, Go-side
+// TestExternRecordResultSubwordCustomProvider). The canonical return-area lays
+// fields out at their natural offsets, which the wrapper reads and stores into
+// the self-host struct's own (matching) slots via extern_canon_top_off /
+// extern_field_load_op; the return area is sized by
+// extern_canon_record_size_nested.
 //
-// The provider exports `make-mix: func() -> record { a: s8, b: u16, c: s32 }`
-// returning fixed {-5, 300, 1000} at canonical offsets. The self-host program
-// checks (p.a as i32)+(p.b as i32)+p.c == 1295 (fails under the wrong load).
+// Historically this test exercised the sub-word (s8/u16) result path — the
+// canonical return-area packed sub-word fields tightly (a@0, b@2, c@4, 1-/2-
+// byte natural size), which differed from the self-host struct's uniform
+// 4-byte slots (a@0, b@4, c@8), so the wrapper needed a width+sign-aware load
+// (i32.load8_s / i32.load16_u) to bridge the two layouts. i8/i16/u16 were
+// removed from the language (#4408) — a self-host struct can no longer
+// declare a field narrower than u8/i32 — so that dual-layout bridging is gone
+// and this test now uses i32/u32 fields (offsets a@0, b@4, c@8 on both
+// sides), still exercising multi-field record-result marshalling end to end.
+//
+// The provider exports `make-mix: func() -> record { a: s32, b: u32, c: s32
+// }` returning fixed {a: -5, b: 300, c: 1000} at canonical offsets. The
+// self-host program checks p.a + (p.b as i32) + p.c == 1295.
 func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -45,14 +54,14 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const iface = "interface src { record mix { a: s8, b: u16, c: s32 } make-mix: func() -> mix; }"
+	const iface = "interface src { record mix { a: s32, b: u32, c: s32 } make-mix: func() -> mix; }"
 	if err := os.WriteFile(filepath.Join(provWit, "src.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-mix returns the record indirectly: alloc an 8-byte area via
-	// cabi_realloc, write the fields at the canonical layout (a:s8@0, b:u16@2,
-	// c:s32@4), return the pointer.
+	// make-mix returns the record indirectly: alloc a 12-byte area via
+	// cabi_realloc, write the fields at the canonical layout (a:s32@0,
+	// b:u32@4, c:s32@8), return the pointer.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
@@ -63,10 +72,10 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
     (local.get $p))
   (func (export "local:test/src@0.1.0#make-mix") (result i32)
     (local $r i32)
-    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 8)))
-    (i32.store8 (local.get $r) (i32.const -5))
-    (i32.store16 offset=2 (local.get $r) (i32.const 300))
-    (i32.store offset=4 (local.get $r) (i32.const 1000))
+    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 12)))
+    (i32.store (local.get $r) (i32.const -5))
+    (i32.store offset=4 (local.get $r) (i32.const 300))
+    (i32.store offset=8 (local.get $r) (i32.const 1000))
     (local.get $r)))`), 0o644); err != nil {
 		t.Fatalf("write provider core: %v", err)
 	}
@@ -131,12 +140,12 @@ function main(): i32 {
 	driverBin := buildSelfHostBin(t, gcc, dir, "swr_run.fern", "swr_run")
 
 	const want = "mr-ok"
-	prog := `struct Mix { a: i8, b: u16, c: i32 }
+	prog := `struct Mix { a: i32, b: u32, c: i32 }
 @import("local:test/src@0.1.0", "make-mix")
 function make_mix(): Mix;
 function main(): i32 {
     var p: Mix = make_mix();
-    if ((p.a as i32) + (p.b as i32) + p.c == 1295) { write("` + want + `"); } else { write("mr-bad"); }
+    if (p.a + (p.b as i32) + p.c == 1295) { write("` + want + `"); } else { write("mr-bad"); }
     return 0;
 }`
 	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))

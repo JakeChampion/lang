@@ -329,10 +329,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // `x as <ty>` int→int width mask/extend — matches asm_arm64's as_<ty>.
             s = s.write("    ldr x0, [sp], #16\n");
             if (o.str == "u8") { s = s.write("    and x0, x0, #255\n"); }
-            else if (o.str == "u16") { s = s.write("    and x0, x0, #65535\n"); }
             else if (o.str == "u32") { s = s.write("    mov w0, w0\n"); }
-            else if (o.str == "i8") { s = s.write("    sxtb x0, w0\n"); }
-            else if (o.str == "i16") { s = s.write("    sxth x0, w0\n"); }
             else if (o.str == "i32") { s = s.write("    sxtw x0, w0\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {

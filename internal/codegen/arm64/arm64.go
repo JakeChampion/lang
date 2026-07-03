@@ -2473,9 +2473,6 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// byte arrays through the same `tbnz` check.
 		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0")
-	case "__arr_idx_2":
-		g.emitArrBoundsCheck()
-		g.emit("add x0, x1, x0, lsl #1")
 	case "__arr_idx":
 		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0, lsl #2")
@@ -2494,10 +2491,6 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emitSliceBoundsCheck()
 		g.emit("ldr x1, [x1]") // data_ptr (8-byte pointer)
 		g.emit("add x0, x1, x0")
-	case "__slice_idx_2":
-		g.emitSliceBoundsCheck()
-		g.emit("ldr x1, [x1]")
-		g.emit("add x0, x1, x0, lsl #1")
 	case "__slice_idx":
 		g.emitSliceBoundsCheck()
 		g.emit("ldr x1, [x1]")
@@ -8293,7 +8286,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpLtS:
 		g.binPop()
 		g.cmpForWidth(op.Width)
-		// Unsigned operands (u8/u16/u32/u64/usize) need the
+		// Unsigned operands (u8/u32/u64/usize) need the
 		// unsigned condition code `lo` (lower); signed uses `lt`.
 		// Without this, a u32 like 4294967295 — which has bit 31
 		// set and so reads as negative under signed compare —
@@ -8497,23 +8490,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.pop()
 		g.emit("ldrb w0, [x0]")
 		g.push()
-	// Sub-i32 typed loads. `ldrsb` / `ldrsh` sign-extend into
-	// the destination 32-bit register (`w0`); the 64-bit reg
-	// (`x0`) gets the upper half zeroed implicitly. `ldrh` is
-	// the unsigned 16-bit half-word load. Pairs with wasm's
-	// `i32.load8_s` / `i32.load16_u` / `i32.load16_s`.
-	case ir.OpLoadI8S:
-		g.pop()
-		g.emit("ldrsb w0, [x0]")
-		g.push()
-	case ir.OpLoadI16U:
-		g.pop()
-		g.emit("ldrh w0, [x0]")
-		g.push()
-	case ir.OpLoadI16S:
-		g.pop()
-		g.emit("ldrsh w0, [x0]")
-		g.push()
 	case ir.OpStore:
 		// Stack: [addr, value], top = value. WidthString
 		// consumes a two-word `(data, len)` value (stack:
@@ -8542,10 +8518,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("ldr x0, [sp], #16") // value
 		g.emit("ldr x1, [sp], #16") // addr
 		g.emit("strb w0, [x1]")
-	case ir.OpStoreI16:
-		g.emit("ldr x0, [sp], #16") // value
-		g.emit("ldr x1, [sp], #16") // addr
-		g.emit("strh w0, [x1]")
 
 	case ir.OpAlloc:
 		g.usesAlloc = true
@@ -8742,20 +8714,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// zero-extending mov-into-w0.
 		g.pop()
 		g.emit("mov w0, w0")
-		g.push()
-
-	// Sub-i32 sign-extension. AArch64 has dedicated forms
-	// (`sxtb` for byte → 32-bit, `sxth` for halfword → 32-bit);
-	// the 32-bit dest reg `w0` implicitly zero-extends into
-	// x0 so the operand-stack 64-bit slot stays well-formed.
-	// Pairs with wasm's `i32.extend8_s` / `i32.extend16_s`.
-	case ir.OpSignExtend8:
-		g.pop()
-		g.emit("sxtb w0, w0")
-		g.push()
-	case ir.OpSignExtend16:
-		g.pop()
-		g.emit("sxth w0, w0")
 		g.push()
 
 	case ir.OpFConvertI32:
@@ -9276,8 +9234,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8", "__arr_idx_16",
-			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8", "__slice_idx_16":
+		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8", "__arr_idx_16",
+			"__slice_idx", "__slice_idx_1", "__slice_idx_8", "__slice_idx_16":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. arm64 doesn't yet
 			// ship the helpers, so inline an unchecked

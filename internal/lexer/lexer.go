@@ -106,12 +106,12 @@ var keywords = map[string]bool{
 	// Sized numeric type names. Pre-i64/usize codebases shipped
 	// `number` / `float` as aliases for `i32` / `f32`; those were
 	// removed in the legacy-cleanup pass — use the sized names.
-	"i8":  true,
-	"i16": true,
+	// isize/i8/i16/u16 were retired (issue #4408): isize had zero
+	// uses, and i8/i16/u16 carried a full per-stride backend cost
+	// for a handful of call sites — i32/u32 cover them now.
 	"i32": true,
 	"i64": true,
 	"u8":  true,
-	"u16": true,
 	"u32": true,
 	"u64": true,
 	// usize is the target-aware native-pointer-width unsigned
@@ -196,8 +196,8 @@ func (e *Error) setFile(p string)       { e.Path = p }
 // parser when stamping the AST node's concrete type.
 func validNumericSuffix(s string) bool {
 	switch s {
-	case "i8", "i16", "i32", "i64",
-		"u8", "u16", "u32", "u64",
+	case "i32", "i64",
+		"u8", "u32", "u64",
 		"f32", "f64":
 		return true
 	}
@@ -414,7 +414,7 @@ func (l *lexer) next() (Token, error) {
 			}
 		}
 		text := l.src[begin:l.i]
-		// Optional typed suffix: i8/i16/i32/i64/u8/u16/u32/u64/f32/f64.
+		// Optional typed suffix: i32/i64/u8/u32/u64/f32/f64.
 		// Recognised greedily — the suffix character set is a
 		// closed list so misspellings like `42i33` fail later
 		// rather than partially consuming. A float-literal text

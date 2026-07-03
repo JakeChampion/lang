@@ -122,8 +122,6 @@ import (
 //	    OpExtendI32S → OpExtendS
 //	    OpExtendI32U → OpExtendU
 //	    OpWrapI64    → OpTrunc
-//	    OpSignExtend8  → OpExtend8S
-//	    OpSignExtend16 → OpExtend16S
 //
 //	Phase 14:
 //	- Float width + int↔float conversions:
@@ -180,12 +178,8 @@ import (
 //
 //	Phase 22:
 //	- Sub-i32 load/store variants:
-//	    OpLoadI8S  → OpLoad8S
 //	    OpLoadByte → OpLoad8U
-//	    OpLoadI16S → OpLoad16S
-//	    OpLoadI16U → OpLoad16U
 //	    OpStoreI8  → OpStore8
-//	    OpStoreI16 → OpStore16
 //	  Load variants take (addr); push result. Stores take
 //	  (addr, val); no result.
 //
@@ -539,7 +533,6 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		v := l.out.AddOp(l.cur, OpFNeg, arg)
 		l.stack = append(l.stack, v)
 	case ir.OpExtendI32S, ir.OpExtendI32U, ir.OpWrapI64,
-		ir.OpSignExtend8, ir.OpSignExtend16,
 		ir.OpFPromoteF32, ir.OpFDemoteF64,
 		ir.OpFConvertI32, ir.OpFConvertI64,
 		ir.OpITruncF32, ir.OpITruncF64,
@@ -558,10 +551,6 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpExtendU
 		case ir.OpWrapI64:
 			kind = OpTrunc
-		case ir.OpSignExtend8:
-			kind = OpExtend8S
-		case ir.OpSignExtend16:
-			kind = OpExtend16S
 		case ir.OpFPromoteF32:
 			kind = OpFPromote
 		case ir.OpFDemoteF64:
@@ -630,40 +619,22 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpStore
 		}
 		l.out.AddOpNoResult(l.cur, kind, addr, val)
-	case ir.OpLoadI8S, ir.OpLoadByte, ir.OpLoadI16S, ir.OpLoadI16U:
+	case ir.OpLoadByte:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs addr operand", op.Kind, i)
 		}
 		addr := l.stack[len(l.stack)-1]
 		l.stack = l.stack[:len(l.stack)-1]
-		var kind OpKind
-		switch op.Kind {
-		case ir.OpLoadI8S:
-			kind = OpLoad8S
-		case ir.OpLoadByte:
-			kind = OpLoad8U
-		case ir.OpLoadI16S:
-			kind = OpLoad16S
-		case ir.OpLoadI16U:
-			kind = OpLoad16U
-		}
-		v := l.out.AddOp(l.cur, kind, addr)
+		v := l.out.AddOp(l.cur, OpLoad8U, addr)
 		l.stack = append(l.stack, v)
-	case ir.OpStoreI8, ir.OpStoreI16:
+	case ir.OpStoreI8:
 		if len(l.stack) < 2 {
 			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs (addr, value) operands", op.Kind, i)
 		}
 		val := l.stack[len(l.stack)-1]
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
-		var kind OpKind
-		switch op.Kind {
-		case ir.OpStoreI8:
-			kind = OpStore8
-		case ir.OpStoreI16:
-			kind = OpStore16
-		}
-		l.out.AddOpNoResult(l.cur, kind, addr, val)
+		l.out.AddOpNoResult(l.cur, OpStore8, addr, val)
 	case ir.OpFLoad:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpFLoad at op[%d] needs addr operand", i)

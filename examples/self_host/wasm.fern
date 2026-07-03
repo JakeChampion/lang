@@ -3069,8 +3069,8 @@ function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
 // i64/u64/f64 slot 8). The wrapper copies the elements into a freshly 8-aligned
 // buffer and passes (buf, len): the self-host heap isn't aligned, but the
 // canonical list<T> (T wider than a byte) requires an aligned data pointer.
-// u8/i16 (slot 4 != canonical 1/2) would also need repacking and aren't
-// supported yet.
+// u8 (slot 4 != canonical 1) would also need repacking — see
+// extern_byte_array_param for that path.
 function extern_array_param_supported(t: string): boolean {
     if (t.len() <= 2 || t[t.len() - 2:t.len()] != "[]") { return false; }
     var k: string = t[0:t.len() - 2];
@@ -3091,14 +3091,14 @@ function extern_byte_array_param(t: string): boolean {
 // extern_record_param_supported is true for an `@import` record (struct)
 // parameter the wrapper can flatten to its fields. A self-host struct value is
 // [type-id@0][field@+4 each in a 4-byte slot]. The canonical record flattens to
-// one i32 per field, including the sub-word integers (s8/s16/u8/u16), which the
+// one i32 per field, including the sub-word integer (u8), which the
 // wrapper reads with a width+sign-aware load (extern_field_load_op) so the
-// pushed i32 is correctly sign-/zero-extended. Scoped to 1..16 fields, each an
-// 8-/16-/32-bit integer.
+// pushed i32 is correctly zero-extended. Scoped to 1..16 fields, each an
+// 8-/32-bit integer.
 // extern_field_is_scalar reports whether a record field type is a flattenable
-// scalar (a 8-/16-/32-bit integer — every self-host slot is i32-class).
+// scalar (an 8-/32-bit integer — every self-host slot is i32-class).
 function extern_field_is_scalar(ft: string): boolean {
-    return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16" || ft == "boolean";
+    return ft == "i32" || ft == "u32" || ft == "u8" || ft == "boolean";
 }
 
 // extern_record_leaf_count is the total number of flattened scalar leaves of a
@@ -3197,13 +3197,13 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
 }
 
 // extern_record_result_supported is the result-side gate: 1..16 fields, each a
-// scalar (8-/16-/32-bit integer) OR a nested record (flattened inline by the
-// canonical ABI, to **arbitrary depth** via extern_record_nestable). Sub-word
-// fields (s8/s16/u8/u16) are supported via a dual layout — the canonical
-// return-area packs them at their natural 1-/2-byte size + alignment
+// scalar (8-/32-bit integer) OR a nested record (flattened inline by the
+// canonical ABI, to **arbitrary depth** via extern_record_nestable). The
+// sub-word field (u8) is supported via a dual layout — the canonical
+// return-area packs it at its natural 1-byte size + alignment
 // (extern_canon_top_off / extern_canon_record_size_nested), which differs from
-// the self-host struct's 4-byte slots; the wrapper reads each with a
-// width+sign-aware load and stores it into the wider slot, allocating a separate
+// the self-host struct's 4-byte slots; the wrapper reads it with a
+// width-aware load and stores it into the wider slot, allocating a separate
 // inner struct per nested node (one scratch local per nesting level).
 //
 // Single-leaf-via-nested is rejected: a 1-leaf record returns by value (Direct),
@@ -3544,22 +3544,18 @@ function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): str
     return "(i32.const 0)";
 }
 // field of type `ft` from its 4-byte slot, leaving its canonical i32 on the
-// stack. Sub-word integers use a width+sign-aware load so the value is correctly
-// sign-/zero-extended (the self-host stores them in a 4-byte little-endian slot,
-// so the low byte(s) at the field offset are the meaningful ones).
+// stack. The sub-word integer uses a width-aware load so the value is correctly
+// zero-extended (the self-host stores it in a 4-byte little-endian slot,
+// so the low byte at the field offset is the meaningful one).
 function extern_field_load_op(ft: string): string {
-    if (ft == "i8") { return "i32.load8_s"; }
     if (ft == "u8" || ft == "boolean") { return "i32.load8_u"; }
-    if (ft == "i16") { return "i32.load16_s"; }
-    if (ft == "u16") { return "i32.load16_u"; }
     return "i32.load";
 }
 
 // extern_canon_field_size returns the canonical-ABI memory size (== alignment)
-// of a record field type: i8/u8 → 1, i16/u16 → 2, else 4.
+// of a record field type: u8 → 1, else 4.
 function extern_canon_field_size(ft: string): i32 {
-    if (ft == "i8" || ft == "u8" || ft == "boolean") { return 1; }
-    if (ft == "i16" || ft == "u16") { return 2; }
+    if (ft == "u8" || ft == "boolean") { return 1; }
     return 4;
 }
 
@@ -5583,8 +5579,8 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 // `x as <ty>` to an i32-width target (f64 / i64 / f32 /
                 // u64 targets are intercepted by the emit_expr-top
                 // dispatch). Source: f64 → truncate, i64 → wrap, else the
-                // i32 value itself; then mask / sign-extend for sub-word
-                // targets (u8 / i8 / u16 / i16).
+                // i32 value itself; then mask for the sub-word
+                // target (u8).
                 var ty: string = cast_target(u.op);
                 var inner: string = "";
                 if (is_f64_expr(u.operand, cx)) {
@@ -5595,9 +5591,6 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     inner = emit_expr(u.operand, cx, depth);
                 }
                 if (ty == "u8") { return "(i32.and " + inner + " (i32.const 255))"; }
-                if (ty == "i8") { return "(i32.extend8_s " + inner + ")"; }
-                if (ty == "u16") { return "(i32.and " + inner + " (i32.const 65535))"; }
-                if (ty == "i16") { return "(i32.extend16_s " + inner + ")"; }
                 return inner;
             }
             return emit_expr(u.operand, cx, depth);

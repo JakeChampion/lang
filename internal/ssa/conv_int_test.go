@@ -115,8 +115,6 @@ func TestLiftConvAllShapes(t *testing.T) {
 		{ir.OpExtendI32S, OpExtendS},
 		{ir.OpExtendI32U, OpExtendU},
 		{ir.OpWrapI64, OpTrunc},
-		{ir.OpSignExtend8, OpExtend8S},
-		{ir.OpSignExtend16, OpExtend16S},
 	}
 	for _, c := range cases {
 		t.Run(c.want.String(), func(t *testing.T) {

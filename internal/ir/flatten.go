@@ -218,7 +218,6 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		return 0, 1, true
 	// One-in, one-out conversions / unary.
 	case OpExtendI32S, OpExtendI32U, OpWrapI64, OpFPromoteF32, OpFDemoteF64,
-		OpSignExtend8, OpSignExtend16,
 		OpFConvertI32, OpFConvertI64, OpITruncF32, OpITruncF64,
 		OpReinterpretI32F32, OpReinterpretF32I32,
 		OpReinterpretI64F64, OpReinterpretF64I64,
@@ -250,7 +249,7 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe:
 		return 2, 1, true
 	// Memory.
-	case OpLoad, OpLoadByte, OpLoadI8S, OpLoadI16U, OpLoadI16S, OpFLoad:
+	case OpLoad, OpLoadByte, OpFLoad:
 		// String / two-word loads expand to (data, len); the
 		// IR records that via Width=WidthString. Plain pointer
 		// loads stay 1→1 even when Width=WidthPtr because both
@@ -259,7 +258,7 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 			return 1, 2, true
 		}
 		return 1, 1, true
-	case OpStore, OpFStore, OpStoreI8, OpStoreI16:
+	case OpStore, OpFStore, OpStoreI8:
 		if op.Width == WidthString {
 			return 3, 0, true
 		}

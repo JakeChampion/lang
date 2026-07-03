@@ -1781,12 +1781,6 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "i64":
 		p.advance()
 		base = ast.NumberType{Width: 64, Signed: true, Spelling: t.Text}
-	case t.Kind == lexer.Keyword && t.Text == "i8":
-		p.advance()
-		base = ast.NumberType{Width: 8, Signed: true, Spelling: t.Text}
-	case t.Kind == lexer.Keyword && t.Text == "i16":
-		p.advance()
-		base = ast.NumberType{Width: 16, Signed: true, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "u32":
 		p.advance()
 		base = ast.NumberType{Width: 32, Signed: false, Spelling: t.Text}
@@ -1796,9 +1790,6 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "u8":
 		p.advance()
 		base = ast.NumberType{Width: 8, Signed: false, Spelling: t.Text}
-	case t.Kind == lexer.Keyword && t.Text == "u16":
-		p.advance()
-		base = ast.NumberType{Width: 16, Signed: false, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "usize":
 		// usize is target-aware native-pointer-width unsigned.
 		// `ast.WidthPtr` (-1) is the sentinel; backends resolve
@@ -3139,8 +3130,8 @@ func (p *parser) peekTypeArgs() bool {
 		return false
 	}
 	switch next.Text {
-	case "i8", "i16", "i32", "i64",
-		"u8", "u16", "u32", "u64",
+	case "i32", "i64",
+		"u8", "u32", "u64",
 		"usize", "f32", "f64",
 		"string", "boolean", "void":
 		// fallthrough — keep walking to find `]` followed by `(`
@@ -4684,19 +4675,12 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		switch t.Suffix {
 		case "":
 			// no suffix — polymorphic
-		case "i8":
-			lit.Width = 8
-		case "i16":
-			lit.Width = 16
 		case "i32":
 			lit.Width = 32
 		case "i64":
 			lit.Width = 64
 		case "u8":
 			lit.Width = 8
-			lit.IsUnsigned = true
-		case "u16":
-			lit.Width = 16
 			lit.IsUnsigned = true
 		case "u32":
 			lit.Width = 32

@@ -3702,10 +3702,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // `x as <ty>` int→int width mask/extend — byte-identical to asm.fern.
             s = s.write("    popq %rax\n");
             if (o.str == "u8") { s = s.write("    andq $255, %rax\n"); }
-            else if (o.str == "u16") { s = s.write("    andq $65535, %rax\n"); }
             else if (o.str == "u32") { s = s.write("    movl %eax, %eax\n"); }
-            else if (o.str == "i8") { s = s.write("    movsbq %al, %rax\n"); }
-            else if (o.str == "i16") { s = s.write("    movswq %ax, %rax\n"); }
             else if (o.str == "i32") { s = s.write("    movslq %eax, %rax\n"); }
             s = s.write("    pushq %rax\n");
         } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {

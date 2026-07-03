@@ -513,11 +513,11 @@ func TestEmitBlocktypeStringPair(t *testing.T) {
 }
 
 // TestEmitConversions — width conversions (extend / wrap),
-// float↔int (convert / trunc), float demote/promote, sign-extend
-// of sub-i32 widths, and reinterpret. One sub-test per family;
-// the inner computation builds a value of the source type, runs
-// the conversion, and returns the result in a way that lets
-// wasmtime print it verifiably.
+// float↔int (convert / trunc), float demote/promote, and
+// reinterpret. One sub-test per family; the inner computation
+// builds a value of the source type, runs the conversion, and
+// returns the result in a way that lets wasmtime print it
+// verifiably.
 func TestEmitConversions(t *testing.T) {
 	cases := []struct {
 		name string
@@ -537,14 +537,6 @@ func TestEmitConversions(t *testing.T) {
 			{Kind: ir.OpConstI64, I64: 0x1_0000_0000 + 42}, // high bits dropped
 			{Kind: ir.OpWrapI64},
 		}, "42"},
-		{"sign_extend_8_negative", i32(), []ir.Op{
-			{Kind: ir.OpConstI32, I32: 0xff}, // 0xff → -1 when sign-extended from i8
-			{Kind: ir.OpSignExtend8},
-		}, "-1"},
-		{"sign_extend_16_negative", i32(), []ir.Op{
-			{Kind: ir.OpConstI32, I32: 0xffff}, // 0xffff → -1 when sign-extended from i16
-			{Kind: ir.OpSignExtend16},
-		}, "-1"},
 		{"trunc_f32_to_i32", i32(), []ir.Op{
 			{Kind: ir.OpConstF32, F32: 3.7},
 			{Kind: ir.OpITruncF32, Width: 32}, // → i32
@@ -668,34 +660,13 @@ func TestEmitMemoryRoundTrip(t *testing.T) {
 			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpFLoad, Width: 64},
 		}, []string{"1.25"}, "1.25"},
-		{"i8_store_load_u", i32(), i32(), []ir.Op{
+		{"u8_store_load", i32(), i32(), []ir.Op{
 			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpLoadLocal, I32: 0},
 			{Kind: ir.OpStoreI8},
 			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpLoadByte}, // load8_u
 		}, []string{"200"}, "200"}, // 200 fits unsigned byte
-		{"i8_store_load_s_negative", i32(), i32(), []ir.Op{
-			{Kind: ir.OpConstI32, I32: 0},
-			{Kind: ir.OpLoadLocal, I32: 0},
-			{Kind: ir.OpStoreI8},
-			{Kind: ir.OpConstI32, I32: 0},
-			{Kind: ir.OpLoadI8S}, // sign-extending load
-		}, []string{"-3"}, "-3"},
-		{"i16_store_load_s_negative", i32(), i32(), []ir.Op{
-			{Kind: ir.OpConstI32, I32: 0},
-			{Kind: ir.OpLoadLocal, I32: 0},
-			{Kind: ir.OpStoreI16},
-			{Kind: ir.OpConstI32, I32: 0},
-			{Kind: ir.OpLoadI16S}, // sign-extending load
-		}, []string{"-100"}, "-100"},
-		{"i16_store_load_u", i32(), i32(), []ir.Op{
-			{Kind: ir.OpConstI32, I32: 0},
-			{Kind: ir.OpLoadLocal, I32: 0},
-			{Kind: ir.OpStoreI16},
-			{Kind: ir.OpConstI32, I32: 0},
-			{Kind: ir.OpLoadI16U},
-		}, []string{"50000"}, "50000"},
 	}
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")

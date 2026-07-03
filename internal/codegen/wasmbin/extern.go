@@ -29,29 +29,21 @@ import (
 // appendExternFieldLoad emits the load that reads a flattened record/tuple field
 // of type t at byte offset off from a struct value, leaving its canonical core
 // value on the stack. A Fern struct stores every sub-64-bit integer in a 4-byte
-// (little-endian) slot, so a sub-word field (s8/s16/u8/u16) is read with a
-// width+sign-aware load — i32.load8_s/u, i32.load16_s/u — to produce the
-// correctly sign-/zero-extended i32 the canonical ABI flattens it to. Wider
-// fields use the natural i64/f32/f64/i32 load matching externRecordFieldValtype.
+// (little-endian) slot, so the only remaining sub-word field type (u8 — i8,
+// i16, and u16 were removed from the language, #4408) is read with a
+// zero-extending byte load — i32.load8_u — to produce the correctly
+// zero-extended i32 the canonical ABI flattens it to. Wider fields use the
+// natural i64/f32/f64/i32 load matching externRecordFieldValtype.
 func appendExternFieldLoad(body []byte, t ast.Type, off uint32) []byte {
 	if _, ok := t.(ast.BoolType); ok {
 		// bool is one byte (0/1) — read it zero-extended, both from the Fern
 		// 4-byte slot (param) and the canonical 1-byte field (result).
 		return memory.InstI32Load8U(body, 0, off)
 	}
-	if n, ok := t.(ast.NumberType); ok {
-		switch n.NormalWidth() {
-		case 8:
-			if n.Signed {
-				return memory.InstI32Load8S(body, 0, off)
-			}
-			return memory.InstI32Load8U(body, 0, off)
-		case 16:
-			if n.Signed {
-				return memory.InstI32Load16S(body, 1, off)
-			}
-			return memory.InstI32Load16U(body, 1, off)
-		}
+	if n, ok := t.(ast.NumberType); ok && n.NormalWidth() == 8 {
+		// u8 is the only remaining sub-word integer type — always
+		// unsigned, so always a zero-extending load.
+		return memory.InstI32Load8U(body, 0, off)
 	}
 	switch externRecordFieldValtype(t) {
 	case encode.ValtypeI64:

@@ -2,8 +2,8 @@
 
 Status: policy doc.
 
-Fern's integer types (`i8`/`u8`, `i16`/`u16`, `i32`/`u32`, `i64`/`u64`,
-and the target-width `usize`) have **fully portable, never-trapping**
+Fern's integer types (`u8`, `i32`/`u32`, `i64`/`u64`, and the
+target-width `usize`) have **fully portable, never-trapping**
 semantics: every integer operation produces the same result on every
 backend (`interp`, `arm64`, `arm64-darwin`, `x86_64`, `wasm`) for the
 same inputs, and none of them can crash or trap the process.

@@ -845,11 +845,9 @@ func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 	}
 }
 
-// Sub-i32 widths (u8 / i8 / u16 / i16). Storage lives in i32
-// locals (wasm has no narrower locals); the bookkeeping is in
-// the casts: narrowing masks to dw bits, signed widening emits
-// `i32.extend8_s` / `i32.extend16_s`. Arithmetic is at i32
-// precision.
+// Sub-i32 width (u8). Storage lives in i32 locals (wasm has no
+// narrower locals); the bookkeeping is in the casts: narrowing
+// masks to 8 bits. Arithmetic is at i32 precision.
 // On wasm32 `usize` collapses to i32 (ptrW=4), so the
 // target-aware behaviour shouldn't observably differ from i32.
 // Pin that the type compiles, casts work, and arithmetic
@@ -871,12 +869,9 @@ func TestWASMSubI32Widths(t *testing.T) {
     var b: u8 = 50;
     var sum: u8 = (a + b) as u8;
     if (sum != 250) { return 1; }
-    var s: i8 = -7;
-    var widened: i32 = s as i32;
-    if (widened != -7) { return 2; }
-    var u: u16 = 65000;
-    var u32_form: u32 = u as u32;
-    if (u32_form != 65000) { return 3; }
+    var u: u8 = 250;
+    var widened: u32 = u as u32;
+    if (widened != 250) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -916,34 +911,6 @@ func TestWASMU8Array(t *testing.T) {
 	}
 }
 
-// Owned i8 arrays. Same shape as the u8 test but the load is
-// sign-extending (`i32.load8_s`), so -1 reads back as -1.
-func TestWASMI8Array(t *testing.T) {
-	src := `function main(): i32 {
-    var v: i8[] = [-1, 1, 127];
-    if ((v[0] as i32) != -1) { return 1; }
-    if ((v[1] as i32) != 1) { return 2; }
-    if ((v[2] as i32) != 127) { return 3; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (i8 array)", got)
-	}
-}
-
-// Owned u16 arrays. 2-byte stride, zero-extending load.
-func TestWASMU16Array(t *testing.T) {
-	src := `function main(): i32 {
-    var v: u16[] = [65000, 1, 32768];
-    if (v[0] != 65000) { return 1; }
-    if (v[1] != 1) { return 2; }
-    if (v[2] != 32768) { return 3; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (u16 array)", got)
-	}
-}
 
 // Methods on user-defined enums. The receiver clause `(self:
 // Color)` makes `c.is_red()` resolve to a hoisted top-level
@@ -1468,10 +1435,10 @@ function main(): i32 {
 	}
 }
 
-// Sub-i32 array writes: `arr[i] = v` for byte / halfword
-// arrays. Stride-aware bounds-check helper + width-aware
-// store (i32.store8 for u8/i8, i32.store16 for u16/i16). Read
-// path was already wired in PR 134; this completes the symmetry.
+// Sub-i32 array writes: `arr[i] = v` for byte arrays.
+// Stride-aware bounds-check helper + width-aware store
+// (i32.store8 for u8). Read path was already wired in PR 134;
+// this completes the symmetry.
 func TestWASMSubI32ArrayWrites(t *testing.T) {
 	src := `function main(): i32 {
     var bytes: u8[] = [1, 2, 3, 4];
@@ -1481,18 +1448,6 @@ func TestWASMSubI32ArrayWrites(t *testing.T) {
     if (bytes[1] != 2) { return 2; }
     if (bytes[2] != 99) { return 3; }
     if (bytes[3] != 4) { return 4; }
-
-    var halves: u16[] = [10, 20, 30];
-    halves = halves.with(1, 65000);
-    if (halves[0] != 10) { return 5; }
-    if (halves[1] != 65000) { return 6; }
-    if (halves[2] != 30) { return 7; }
-
-    var sgn: i8[] = [0, 0, 0];
-    sgn = sgn.with(1, -42);
-    if ((sgn[0] as i32) != 0) { return 8; }
-    if ((sgn[1] as i32) != -42) { return 9; }
-    if ((sgn[2] as i32) != 0) { return 10; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -1548,7 +1503,7 @@ func TestWASMF64Array(t *testing.T) {
 	}
 }
 
-// Slice views over sub-i32 / wide arrays. Verifies that
+// Slice views over byte / word / wide arrays. Verifies that
 // `arr[a:b]` produces a slice with the right element stride —
 // indexing into the slice should match the underlying array.
 func TestWASMSubI32Slices(t *testing.T) {
@@ -1560,11 +1515,11 @@ func TestWASMSubI32Slices(t *testing.T) {
     if (view[1] != 30) { return 3; }
     if (view[2] != 40) { return 4; }
 
-    var halves: u16[] = [1, 2, 3, 4];
-    var hview: [u16] = halves[2:];
-    if (hview.len() != 2) { return 5; }
-    if (hview[0] != 3) { return 6; }
-    if (hview[1] != 4) { return 7; }
+    var words: i32[] = [1, 2, 3, 4];
+    var wordview: [i32] = words[2:];
+    if (wordview.len() != 2) { return 5; }
+    if (wordview[0] != 3) { return 6; }
+    if (wordview[1] != 4) { return 7; }
 
     var wide: i64[] = [(1 << 40), (1 << 41), (1 << 42)];
     var wview: [i64] = wide[1:3];
@@ -1574,7 +1529,7 @@ func TestWASMSubI32Slices(t *testing.T) {
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (sub-i32 / wide slices)", got)
+		t.Errorf("got %d, want 0 (byte / word / wide slices)", got)
 	}
 }
 
@@ -4461,23 +4416,6 @@ func TestWASMArrayPushU8(t *testing.T) {
 }`
 	if got := runWasm(t, src); got != 3 {
 		t.Errorf("got %d, want 3 (3 u8 pushes)", got)
-	}
-}
-
-// 2-byte stride: u16[].append(v) routes to __array_append_u16.
-// Tests a value that requires more than 8 bits (300) to confirm
-// the 16-bit store path actually preserves the high bits.
-func TestWASMArrayPushU16(t *testing.T) {
-	src := `function main(): i32 {
-    var xs: u16[] = [];
-    xs = xs.append(300u16);
-    xs = xs.append(65535u16);
-    if (xs[0] != 300u16) { return 1; }
-    if (xs[1] != 65535u16) { return 2; }
-    return xs.len();
-}`
-	if got := runWasm(t, src); got != 2 {
-		t.Errorf("got %d, want 2 (2 u16 pushes)", got)
 	}
 }
 
@@ -17485,16 +17423,12 @@ func TestWASMUnaryMinusWideTypes(t *testing.T) {
     if (!(b < 0.0)) { return 2; }
     var c: f64 = -b;
     if (c != 5.0) { return 3; }
-    var d: i8 = -5i8;
-    if ((d as i32) != -5) { return 4; }
-    var e: i16 = -1000i16;
-    if ((e as i32) != -1000) { return 5; }
     var f: f32 = -2.5f32;
-    if (!(f < 0.0f32)) { return 6; }
+    if (!(f < 0.0f32)) { return 4; }
     var z: f64 = -0.0;
-    if (f64_bits(z) == 0i64) { return 7; }
+    if (f64_bits(z) == 0i64) { return 5; }
     var g: i64 = 10i64 + -3i64;
-    if (g != 7i64) { return 8; }
+    if (g != 7i64) { return 6; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -17539,24 +17473,12 @@ function main(): i32 {
     var c: u8 = 16u8;
     c = c * 16u8;
     if ((c as i32) != 0) { return 3; }
-    var d: u16 = 65535u16;
-    d = d + 1u16;
-    if ((d as i32) != 0) { return 4; }
-    var e: i8 = 127i8;
-    e = e + 1i8;
-    if ((e as i32) != -128) { return 5; }
-    var f: i16 = 32767i16;
-    f = f + 1i16;
-    if ((f as i32) != -32768) { return 6; }
-    var g: u16 = 1u16;
-    g = g << 16u16;
-    if ((g as i32) != 0) { return 7; }
     var s: S = S { v: 200u8 };
     var h: u8 = s.v + 100u8;
-    if ((h as i32) != 44) { return 8; }
+    if ((h as i32) != 44) { return 4; }
     var k: u8 = 100u8;
     k = k + 50u8;
-    if ((k as i32) != 150) { return 9; }
+    if ((k as i32) != 150) { return 5; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {

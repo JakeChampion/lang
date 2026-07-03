@@ -5150,9 +5150,9 @@ func unknownTypeHint(name string) string {
 	switch name {
 	case "bool":
 		return " (did you mean `boolean`?)"
-	case "int", "i8", "i16", "long":
+	case "int", "long":
 		return " (did you mean `i32`?)"
-	case "uint", "u8", "u16":
+	case "uint", "u8":
 		return " (did you mean `u32`?)"
 	case "float", "double":
 		return " (did you mean `f64`?)"
@@ -10380,13 +10380,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return t
 			}
 			// Unary minus applies to any integer width, not just
-			// i32 — `-5i64`, `-x` on an i8, etc. requireNumber
+			// i32 — `-5i64`, `-x` on an i64, etc. requireNumber
 			// only accepted the bare i32 NumberType, so negating
 			// any wider/narrower integer was wrongly rejected.
 			c.requireInteger(n.P, t, n.Op)
 			// Propagate the operand's NumberType (including its
 			// Polymorphic flag) so unary minus on a polymorphic
-			// literal stays polymorphic; otherwise `var s: i8 =
+			// literal stays polymorphic; otherwise `var s: i64 =
 			// -7` couldn't settle the literal.
 			if nt, ok := t.(ast.NumberType); ok {
 				return nt
@@ -11990,10 +11990,6 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 	if t.IsSigned() {
 		var min, max int64
 		switch w {
-		case 8:
-			min, max = -1<<7, 1<<7-1
-		case 16:
-			min, max = -1<<15, 1<<15-1
 		case 32:
 			min, max = -1<<31, 1<<31-1
 		case 64:
@@ -12009,8 +12005,6 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 		switch w {
 		case 8:
 			max = 1<<8 - 1
-		case 16:
-			max = 1<<16 - 1
 		case 32:
 			max = 1<<32 - 1
 		case 64:

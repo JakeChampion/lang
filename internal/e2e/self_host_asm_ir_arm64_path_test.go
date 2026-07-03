@@ -113,9 +113,11 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
 		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
 		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
-		// Int→int casts (op_int_cast) — and/sxtb/sxth/sxtw matching asm_arm64.
+		// Int→int casts (op_int_cast) — and/sxtb matching asm_arm64. (i8/i16/u16
+		// were retired (#4408); u8 is the only sub-word type left, so the
+		// sign-extend (sxth/sxtw) cast case that used to live here is gone
+		// rather than force-substituted onto a width that no longer exists.)
 		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
-		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"},
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return (x as u8) as i32; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"if-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }"},

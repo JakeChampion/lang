@@ -135,10 +135,7 @@ function emit_op(o: ir.Op, exitlabel: string): string {
         // sub / mul / shl (e.g. `2 + 3 * 4` -> 5 instead of 14).
         var c: string = "    popq %rax\n";
         if (o.str == "u8") { c = c + "    andq $255, %rax\n"; }
-        else if (o.str == "u16") { c = c + "    andq $65535, %rax\n"; }
         else if (o.str == "u32") { c = c + "    movl %eax, %eax\n"; }
-        else if (o.str == "i8") { c = c + "    movsbq %al, %rax\n"; }
-        else if (o.str == "i16") { c = c + "    movswq %ax, %rax\n"; }
         else if (o.str == "i32") { c = c + "    movslq %eax, %rax\n"; }
         return c + "    pushq %rax\n";
     }

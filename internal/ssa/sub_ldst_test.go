@@ -14,10 +14,7 @@ func TestLiftSubLoadVariants(t *testing.T) {
 		from ir.OpKind
 		want OpKind
 	}{
-		{ir.OpLoadI8S, OpLoad8S},
 		{ir.OpLoadByte, OpLoad8U},
-		{ir.OpLoadI16S, OpLoad16S},
-		{ir.OpLoadI16U, OpLoad16U},
 	}
 	for _, c := range cases {
 		t.Run(c.want.String(), func(t *testing.T) {
@@ -41,14 +38,13 @@ func TestLiftSubLoadVariants(t *testing.T) {
 	}
 }
 
-// TestLiftSubStoreVariants — store8/16.
+// TestLiftSubStoreVariants — store8.
 func TestLiftSubStoreVariants(t *testing.T) {
 	cases := []struct {
 		from ir.OpKind
 		want OpKind
 	}{
 		{ir.OpStoreI8, OpStore8},
-		{ir.OpStoreI16, OpStore16},
 	}
 	for _, c := range cases {
 		t.Run(c.want.String(), func(t *testing.T) {

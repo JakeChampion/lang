@@ -119,10 +119,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
 		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
 		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
-		// Int→int casts (op_int_cast) — i32.and / extend8_s / extend16_s; u32/i32
-		// are identity (the i32 bit pattern is the result).
+		// Int→int casts (op_int_cast) — i32.and; u32/i32 are identity (the i32
+		// bit pattern is the result). (i8/i16/u16 were retired (#4408); u8 is
+		// the only sub-word type left, so the extend8_s/extend16_s
+		// sign-extend cast case that used to live here is gone rather than
+		// force-substituted onto a width that no longer exists.)
 		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
-		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"},
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return (x as u8) as i32; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
@@ -224,12 +226,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-three-fields", `struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }`},
 		{"struct-param", `struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }`},
 		{"struct-bool-field", `struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }`},
-		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8/i16/i8) —
-		// same i32 slot; verifies the wasm side agrees.
+		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8) —
+		// same i32 slot; verifies the wasm side agrees. (i16/i8 were retired
+		// (#4408); u8 is the only sub-word type left.)
 		{"struct-u32-field", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`},
 		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { var b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`},
-		{"struct-i8-neg-field", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`},
-		{"struct-mixed-int-fields", `struct B { a: u8, b: i16, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, b: 2 as i16, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.b as i32) + (x.c as i32) + x.d; }`},
+		{"struct-mixed-int-fields", `struct B { a: u8, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.c as i32) + x.d; }`},
 		// A u64 struct field routes through the 64-bit integer path (struct_get_i64);
 		// the high half must survive (4294967296 >> 32 == 1), verified on wasm.
 		{"struct-u64-field", `struct B { hi: u64, n: i32 } function main(): i32 { var b = B { hi: 5000000000 as u64, n: 3 }; var q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
@@ -272,11 +274,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-f32-arith", `function f(): (f32, i32) { return (2.5 as f32, 1); } function main(): i32 { var t = f(); var d: f32 = t.0 * 2.0; return (d as i32) + t.1; }`},
 		{"struct-f32-field", `struct B { v: f32, n: i32 } function main(): i32 { var b = B { v: 2.5 as f32, n: 3 }; return (b.v as i32) + b.n; }`},
 		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
-		// u8/i16/i8) — same i32 slot; verifies the wasm width handling agrees.
+		// u8) — same i32 slot; verifies the wasm width handling agrees. (i16/i8
+		// were retired (#4408); u8 is the only sub-word type left.)
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
 		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
-		{"tuple-i16", `function f(): (i16, i32) { return (1000 as i16, 2); } function main(): i32 { var t = f(); return ((t.0 as i32) + t.1) % 200; }`},
-		{"tuple-i8-neg", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`},
 		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},

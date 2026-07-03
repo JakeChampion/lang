@@ -1544,8 +1544,8 @@ function parse_primary(p: Par): ExprResult {
             // (the native parser already accepts this form). Guarded by the
             // following `.` so a type keyword in any other position is unaffected.
             var is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
-                || x.name == "i8" || x.name == "i16" || x.name == "i32" || x.name == "i64"
-                || x.name == "u8" || x.name == "u16" || x.name == "u32" || x.name == "u64"
+                || x.name == "i32" || x.name == "i64"
+                || x.name == "u8" || x.name == "u32" || x.name == "u64"
                 || x.name == "usize" || x.name == "f32" || x.name == "f64";
             if (is_tykw) {
                 var kwline: i32 = p.peek_line();
@@ -3163,7 +3163,7 @@ function is_struct_ret_name(n: string): boolean {
         if (c == 91 || c == 93 || c == 40 || c == 41 || c == 44 || c == 46 || c == 32) { return false; }
         i = i + 1;
     }
-    if (n == "i32" || n == "i64" || n == "u8" || n == "u16" || n == "u32" || n == "u64"
+    if (n == "i32" || n == "i64" || n == "u8" || n == "u32" || n == "u64"
         || n == "f32" || n == "f64" || n == "string" || n == "boolean" || n == "void"
         || n == "fn" || n == "unknown" || n == "any") { return false; }
     return true;

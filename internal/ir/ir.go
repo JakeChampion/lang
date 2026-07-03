@@ -59,16 +59,12 @@ const (
 	// Width-conversion ops between integer types. ExtendI32S
 	// sign-extends an i32 to i64; WrapI64 truncates the low 32
 	// bits. ExtendI32U zero-extends — used by `u32 as u64` /
-	// any cast whose source is unsigned. More widths (8/16)
-	// land in a follow-up alongside their underlying mask /
-	// sign-extend story.
-	OpExtendI32S   // (i32) → i64 (sign-extend)
-	OpExtendI32U   // (i32) → i64 (zero-extend, for unsigned)
-	OpWrapI64      // (i64) → i32
-	OpFPromoteF32  // (f32) → f64
-	OpFDemoteF64   // (f64) → f32
-	OpSignExtend8  // (i32) → i32 (sign-extend low byte; lowers to i32.extend8_s)
-	OpSignExtend16 // (i32) → i32 (sign-extend low halfword; lowers to i32.extend16_s)
+	// any cast whose source is unsigned.
+	OpExtendI32S  // (i32) → i64 (sign-extend)
+	OpExtendI32U  // (i32) → i64 (zero-extend, for unsigned)
+	OpWrapI64     // (i64) → i32
+	OpFPromoteF32 // (f32) → f64
+	OpFDemoteF64  // (f64) → f32
 	// Int ↔ float conversions. Width is the SOURCE width
 	// for I→F (32 or 64) and the DESTINATION width for F→I.
 	// `Unsigned` flags signed vs unsigned reading of the
@@ -135,11 +131,7 @@ const (
 	OpStore    // (addr, value)      → ()
 	OpFLoad    // (addr)             → f32
 	OpFStore   // (addr, value)      → ()
-	OpStoreI8  // (addr, value)      → ()  (writes the low byte)
-	OpLoadI8S  // (addr)             → i32 (sign-extended low byte)
-	OpLoadI16U // (addr)             → i32 (zero-extended halfword)
-	OpLoadI16S // (addr)             → i32 (sign-extended halfword)
-	OpStoreI16 // (addr, value)      → ()  (writes the low halfword)
+	OpStoreI8 // (addr, value)      → ()  (writes the low byte)
 
 	// Heap allocation: pop a size in bytes and push the base pointer
 	// the bump allocator returns.
@@ -361,10 +353,6 @@ func (k OpKind) String() string {
 		return "promote.f32"
 	case OpFDemoteF64:
 		return "demote.f64"
-	case OpSignExtend8:
-		return "extend8_s"
-	case OpSignExtend16:
-		return "extend16_s"
 	case OpFConvertI32:
 		return "convert.i32"
 	case OpFConvertI64:
@@ -459,14 +447,6 @@ func (k OpKind) String() string {
 		return "f.store"
 	case OpStoreI8:
 		return "store_i8"
-	case OpStoreI16:
-		return "store_i16"
-	case OpLoadI8S:
-		return "load_i8_s"
-	case OpLoadI16U:
-		return "load_i16_u"
-	case OpLoadI16S:
-		return "load_i16_s"
 	case OpAlloc:
 		return "alloc"
 	case OpStrEq:
@@ -1430,16 +1410,14 @@ func alignUpI32(n, a int32) int32 {
 }
 
 // externCanonicalFieldSizeAlign returns the canonical-ABI memory size + alignment
-// (in bytes) of a flattenable record field type: s8/u8 → 1, s16/u16 → 2,
-// s32/u32/f32 → 4, s64/u64/f64 → 8. Size == alignment for these scalars.
+// (in bytes) of a flattenable record field type: u8 → 1, s32/u32/f32 → 4,
+// s64/u64/f64 → 8. Size == alignment for these scalars.
 func externCanonicalFieldSizeAlign(t ast.Type) int32 {
 	switch x := t.(type) {
 	case ast.NumberType:
 		switch x.NormalWidth() {
 		case 8:
 			return 1
-		case 16:
-			return 2
 		case 64:
 			return 8
 		}
@@ -10984,31 +10962,20 @@ func (b *builder) expr(e ast.Expr) error {
 				// and re-signs from the width for signed, so every
 				// producer stores canonically.)
 				switch {
-				case dw == 8 && dstInt.IsSigned():
-					b.emit(Op{Kind: OpSignExtend8})
 				case dw == 8:
+					// dw==8 is always u8 now (i8 was removed) —
+					// zero-extend/mask.
 					b.emit(Op{Kind: OpConstI32, I32: 0xFF})
-					b.emit(Op{Kind: OpAnd})
-				case dw == 16 && dstInt.IsSigned():
-					b.emit(Op{Kind: OpSignExtend16})
-				case dw == 16:
-					b.emit(Op{Kind: OpConstI32, I32: 0xFFFF})
 					b.emit(Op{Kind: OpAnd})
 					// dw == 32: the 32-bit pattern is the value.
 				}
 			case sw <= 32 && dw == 64:
-				// Sub-i32 → i64 first widens to i32 (with sign-
-				// extend if the source was signed), then extends
-				// to i64. The first step's mask was already
-				// applied at the producing store, so for unsigned
-				// sources nothing intermediate is needed.
+				// Sub-i32 (u8) → i64 first widens to i32, then
+				// extends to i64. u8 is always unsigned, so no
+				// sign-extend step is needed for a sub-i32 source;
+				// the mask was already applied at the producing
+				// store.
 				if srcInt.IsSigned() {
-					switch sw {
-					case 8:
-						b.emit(Op{Kind: OpSignExtend8})
-					case 16:
-						b.emit(Op{Kind: OpSignExtend16})
-					}
 					b.emit(Op{Kind: OpExtendI32S})
 				} else {
 					b.emit(Op{Kind: OpExtendI32U})
@@ -11057,7 +11024,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// signed-ness.
 			realW := dstInt.NormalWidth()
 			if dstInt.IsPointerWidth() {
-				realW = b.ptrW * 8 // resolve usize/isize to target's ptr width
+				realW = b.ptrW * 8 // resolve usize to target's ptr width
 			}
 			dw := realW
 			if dw < 32 {
@@ -11076,16 +11043,10 @@ func (b *builder) expr(e ast.Expr) error {
 			// 3000000000 instead of 64 (the trunc's high bits leaked
 			// through the widening zero-extend).
 			switch {
-			case realW == 8 && !dstInt.IsSigned():
+			case realW == 8:
+				// Always u8 now (i8 was removed) — zero-extend/mask.
 				b.emit(Op{Kind: OpConstI32, I32: 0xFF})
 				b.emit(Op{Kind: OpAnd})
-			case realW == 8:
-				b.emit(Op{Kind: OpSignExtend8})
-			case realW == 16 && !dstInt.IsSigned():
-				b.emit(Op{Kind: OpConstI32, I32: 0xFFFF})
-				b.emit(Op{Kind: OpAnd})
-			case realW == 16:
-				b.emit(Op{Kind: OpSignExtend16})
 			}
 		default:
 			// Any owned array / slice / string / struct → i32:
@@ -11706,17 +11667,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if nt, ok := elemType.(ast.NumberType); ok {
 				switch nt.NormalWidth() {
 				case 8:
-					if nt.IsSigned() {
-						loadOp = OpLoadI8S
-					} else {
-						loadOp = OpLoadByte
-					}
-				case 16:
-					if nt.IsSigned() {
-						loadOp = OpLoadI16S
-					} else {
-						loadOp = OpLoadI16U
-					}
+					loadOp = OpLoadByte
 				case 64:
 					loadWidth = 64
 				}
@@ -11755,15 +11706,12 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpLoadByte})
 		} else if n.IsSlice {
 			// Slice-index variants per stride: __slice_idx_1
-			// for byte slices, __slice_idx_2 for halfwords,
-			// __slice_idx (= 4) for the historical layout,
-			// __slice_idx_8 for i64/f64.
+			// for byte slices, __slice_idx (= 4) for the
+			// historical layout, __slice_idx_8 for i64/f64.
 			sliceHelper := "__slice_idx"
 			switch stride {
 			case 1:
 				sliceHelper = "__slice_idx_1"
-			case 2:
-				sliceHelper = "__slice_idx_2"
 			case 8:
 				sliceHelper = "__slice_idx_8"
 			case 16:
@@ -11776,15 +11724,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// (stride=1, address arithmetic identical to
 			// __arr_idx but without the *4 multiplier),
 			// __arr_idx for the historical i32-stride layout,
-			// __arr_idx_2 for u16/i16, __arr_idx_8 for i64/f64.
-			// String indexing routes through __str_idx (above);
-			// the byte-array case is plain `base + i`.
+			// __arr_idx_8 for i64/f64. String indexing routes
+			// through __str_idx (above); the byte-array case
+			// is plain `base + i`.
 			helper := "__arr_idx"
 			switch stride {
 			case 1:
 				helper = "__arr_idx_1"
-			case 2:
-				helper = "__arr_idx_2"
 			case 8:
 				helper = "__arr_idx_8"
 			case 16:
@@ -13222,13 +13168,13 @@ func (b *builder) binary(n *ast.Binary) error {
 	// handling we don't want to bake in here, and string +
 	// has its own handling below.
 	//
-	// Skipped for sub-i32 results (width 8 / 16): the fold paths
+	// Skipped for sub-i32 (u8, width 8) results: the fold paths
 	// emit + return early, bypassing the wrap-narrowing the main
 	// path applies below. e.g. `a * 16u8` strength-reduces to a
 	// shift and would escape the `& 0xff` mask. Sub-i32 arithmetic
 	// is rare, so forgoing the fold there costs nothing measurable
 	// and keeps the wrap semantics correct.
-	subI32 := n.IntWidth == 8 || n.IntWidth == 16
+	subI32 := n.IntWidth == 8
 	if !n.IsStringConcat && !n.IsStringCmp && !n.IsFloat && !subI32 {
 		if folded, ok := b.maybeFoldArithIdentity(n); ok {
 			return folded
@@ -13364,27 +13310,21 @@ func (b *builder) binary(n *ast.Binary) error {
 		w = 32
 	}
 	b.emit(Op{Kind: op, Width: w, Unsigned: n.IsUnsigned})
-	// Sub-i32 arithmetic wraps to its declared width. `+`, `-`,
-	// `*`, `<<` can push the result past 8 / 16 bits (e.g.
-	// `255u8 + 1u8` → 256), but scalar locals + struct fields are
-	// stored full-width (only array elements narrow via the
-	// store8 / store16 op), so without an explicit narrow the
-	// out-of-range value leaks — a `u16` var would hold 65536 and
-	// a later widening cast / comparison (which assumes "every
-	// store narrows", see the cast lowering) reads garbage. Mask
-	// (unsigned) or sign-extend (signed) back to width. The other
-	// ops (`/ % & | ^ >>`) can't exceed the operands' width.
-	if w == 8 || w == 16 {
+	// Sub-i32 (u8) arithmetic wraps to its declared width. `+`, `-`,
+	// `*`, `<<` can push the result past 8 bits (e.g. `255u8 + 1u8`
+	// → 256), but scalar locals + struct fields are stored
+	// full-width (only array elements narrow via the store8 op),
+	// so without an explicit narrow the out-of-range value leaks —
+	// a `u8` var would hold 256 and a later widening cast /
+	// comparison (which assumes "every store narrows", see the
+	// cast lowering) reads garbage. u8 is always unsigned, so mask
+	// back to width. The other ops (`/ % & | ^ >>`) can't exceed
+	// the operands' width.
+	if w == 8 {
 		switch op {
 		case OpAdd, OpSub, OpMul, OpShl:
-			if n.IsUnsigned {
-				b.emit(Op{Kind: OpConstI32, I32: int32((1 << w) - 1)})
-				b.emit(Op{Kind: OpAnd})
-			} else if w == 8 {
-				b.emit(Op{Kind: OpSignExtend8})
-			} else {
-				b.emit(Op{Kind: OpSignExtend16})
-			}
+			b.emit(Op{Kind: OpConstI32, I32: int32((1 << w) - 1)})
+			b.emit(Op{Kind: OpAnd})
 		}
 	}
 	return nil
@@ -17353,9 +17293,9 @@ func (b *builder) assign(n *ast.Assign) error {
 		// Doesn't leave a value on the stack — exprLeavesValue
 		// special-cases this shape so no drop is emitted by the
 		// surrounding ExprStmt. Element-width choice mirrors the
-		// read path: stride 1 / 2 / 4 / 8 picks helper +
-		// `i32.store8` / `i32.store16` / `i32.store` /
-		// `f32.store`. Float arrays use OpFStore.
+		// read path: stride 1 / 4 / 8 picks helper +
+		// `i32.store8` / `i32.store` / `f32.store`. Float arrays
+		// use OpFStore.
 		stride := int32(4)
 		storeOp := OpStore
 		storeWidth := 0
@@ -17365,8 +17305,6 @@ func (b *builder) assign(n *ast.Assign) error {
 				switch nt.NormalWidth() {
 				case 8:
 					storeOp = OpStoreI8
-				case 16:
-					storeOp = OpStoreI16
 				case 64:
 					storeWidth = 64
 				}
@@ -17395,8 +17333,6 @@ func (b *builder) assign(n *ast.Assign) error {
 			switch stride {
 			case 1:
 				helper = "__slice_idx_1"
-			case 2:
-				helper = "__slice_idx_2"
 			case 8:
 				helper = "__slice_idx_8"
 			case 16:
@@ -17408,8 +17344,6 @@ func (b *builder) assign(n *ast.Assign) error {
 			switch stride {
 			case 1:
 				helper = "__arr_idx_1"
-			case 2:
-				helper = "__arr_idx_2"
 			case 8:
 				helper = "__arr_idx_8"
 			case 16:
@@ -18507,8 +18441,6 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 	switch ast.ElemSizeBytes(t) {
 	case 1:
 		return Op{Kind: OpStoreI8}
-	case 2:
-		return Op{Kind: OpStoreI16}
 	case 8:
 		return Op{Kind: OpStore, Width: 64}
 	}
@@ -19091,8 +19023,6 @@ func outerArrIdxHelper(stride int32) string {
 	switch stride {
 	case 1:
 		return "__arr_idx_1"
-	case 2:
-		return "__arr_idx_2"
 	case 8:
 		return "__arr_idx_8"
 	case 16:
@@ -19131,8 +19061,6 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	switch stride {
 	case 1:
 		idxHelper = "__arr_idx_1"
-	case 2:
-		idxHelper = "__arr_idx_2"
 	case 8:
 		idxHelper = "__arr_idx_8"
 	case 16:
@@ -19231,8 +19159,6 @@ func arraySetStoreOp(t ast.Type, ptrW int) (OpKind, int) {
 		switch nt.NormalWidth() {
 		case 8:
 			storeOp = OpStoreI8
-		case 16:
-			storeOp = OpStoreI16
 		case 64:
 			storeWidth = 64
 		}

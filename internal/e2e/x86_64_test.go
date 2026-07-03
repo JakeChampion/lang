@@ -2043,16 +2043,6 @@ function main(): i32 {
 	}
 }
 
-// Sub-i32 array reads + casts. Exercises:
-//
-//   - OpLoadI8S  (i8[] read; x86-64 `movsx eax, byte ptr [rax]`)
-//   - OpLoadI16U (u16[] read; x86-64 `movzx eax, word ptr [rax]`)
-//   - OpLoadI16S (i16[] read; x86-64 `movsx eax, word ptr [rax]`)
-//   - OpSignExtend8  (i32 → i8 narrowing cast; x86-64 `movsx eax, al`)
-//   - OpSignExtend16 (i32 → i16 narrowing cast; x86-64 `movsx eax, ax`)
-//
-// Pairs with wasm's TestWASMI8Array / TestWASMU16Array /
-// TestWASMSubI32Widths.
 // Test families that previously had wasm-only coverage but
 // were also codegen-supported on the native backends. Adding
 // e2e tests pins backend parity per BACKEND-PARITY.md's
@@ -2464,53 +2454,6 @@ function main(): i32 {
 	}
 }
 
-func TestX86_64SubI32(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"i8_array_signed_sum", `function main(): i32 {
-    var xs: i8[] = [1 as i8, 2 as i8, 3 as i8, 0 - 1 as i8];
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        sum = sum + (xs[i] as i32);
-        i = i + 1;
-    }
-    return sum;
-}`, 5},
-		{"i16_array_signed_sum", `function main(): i32 {
-    var xs: i16[] = [100 as i16, 200 as i16, 0 - 300 as i16];
-    return (xs[0] as i32) + (xs[1] as i32) + (xs[2] as i32);
-}`, 0},
-		{"u16_array_zero_extends", `function main(): i32 {
-    var xs: u16[] = [40000 as u16, 1 as u16];
-    if ((xs[0] as i32) != 40000) { return 1; }
-    if ((xs[1] as i32) != 1) { return 2; }
-    return 7;
-}`, 7},
-		{"i32_to_i8_sign_preserved", `function main(): i32 {
-    var v: i32 = 200;
-    var b: i8 = v as i8;
-    if ((b as i32) < 0) { return 7; }
-    return 1;
-}`, 7},
-		{"i32_to_i16_sign_preserved", `function main(): i32 {
-    var v: i32 = 40000;
-    var s: i16 = v as i16;
-    if ((s as i32) < 0) { return 7; }
-    return 1;
-}`, 7},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
-				t.Errorf("got %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
 // compileX86_64InDir builds `src` and runs the resulting binary
 // in a fresh temp dir seeded with `seed` files (path → content).
 // Returns stdout, exit code, AND the dir so callers can read
@@ -2665,8 +2608,8 @@ function main(): i32 {
 // `__slice_idx_N` helper was wrong on top of that — it
 // computed `header_ptr + i*N` instead of dereferencing the
 // header's data_ptr field first. This PR adds the runtime
-// helper and fixes the inline so all four strides (u8 / u16 /
-// i32 / i64-shape) work for both reads and writes.
+// helper and fixes the inline so all strides (u8 / i32 /
+// i64-shape) work for both reads and writes.
 func TestX86_64SliceMake(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -3976,16 +3919,12 @@ func TestX86_64UnaryMinusWideTypes(t *testing.T) {
     if (!(b < 0.0)) { return 2; }
     var c: f64 = -b;
     if (c != 5.0) { return 3; }
-    var d: i8 = -5i8;
-    if ((d as i32) != -5) { return 4; }
-    var e: i16 = -1000i16;
-    if ((e as i32) != -1000) { return 5; }
     var f: f32 = -2.5f32;
-    if (!(f < 0.0f32)) { return 6; }
+    if (!(f < 0.0f32)) { return 4; }
     var z: f64 = -0.0;
-    if (f64_bits(z) == 0i64) { return 7; }
+    if (f64_bits(z) == 0i64) { return 5; }
     var g: i64 = 10i64 + -3i64;
-    if (g != 7i64) { return 8; }
+    if (g != 7i64) { return 6; }
     return 0;
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 0 {
@@ -4030,24 +3969,12 @@ function main(): i32 {
     var c: u8 = 16u8;
     c = c * 16u8;
     if ((c as i32) != 0) { return 3; }
-    var d: u16 = 65535u16;
-    d = d + 1u16;
-    if ((d as i32) != 0) { return 4; }
-    var e: i8 = 127i8;
-    e = e + 1i8;
-    if ((e as i32) != -128) { return 5; }
-    var f: i16 = 32767i16;
-    f = f + 1i16;
-    if ((f as i32) != -32768) { return 6; }
-    var g: u16 = 1u16;
-    g = g << 16u16;
-    if ((g as i32) != 0) { return 7; }
     var s: S = S { v: 200u8 };
     var h: u8 = s.v + 100u8;
-    if ((h as i32) != 44) { return 8; }
+    if ((h as i32) != 44) { return 4; }
     var k: u8 = 100u8;
     k = k + 50u8;
-    if ((k as i32) != 150) { return 9; }
+    if ((k as i32) != 150) { return 5; }
     return 0;
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 0 {

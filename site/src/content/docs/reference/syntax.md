@@ -16,7 +16,7 @@ Reserved across all syntactic positions:
 function var let use as
 if else while for loop break continue return
 true false boolean void string
-i8 i16 i32 i64 u8 u16 u32 u64 usize f32 f64
+i32 i64 u8 u32 u64 usize f32 f64
 switch case default
 struct enum type
 import pub const

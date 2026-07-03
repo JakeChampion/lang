@@ -112,8 +112,6 @@ func TestLexNumericHexWithIntSuffix(t *testing.T) {
 	}{
 		{"0x10i64", "0x10", "i64"},
 		{"0xffu8", "0xff", "u8"},
-		{"0x1u16", "0x1", "u16"},
-		{"0x20i8", "0x20", "i8"},
 	}
 	for _, c := range cases {
 		assertTokens(t, c.src, []tokSpec{{Number, c.text, c.suffix}})
@@ -172,23 +170,11 @@ func TestLexNumericZeroFloatSuffix(t *testing.T) {
 	assertTokens(t, "0f32", []tokSpec{{Float, "0", "f32"}})
 }
 
-// The remaining int-suffix widths not already exercised by
-// TestNumericLiteralSuffixes (i8/i16/u16/u64), to pin the full
+// The remaining int-suffix width not already exercised by
+// TestNumericLiteralSuffixes (u64), to pin the full
 // validNumericSuffix accept set on the integer path.
 func TestLexNumericRemainingIntSuffixWidths(t *testing.T) {
-	cases := []struct {
-		src    string
-		text   string
-		suffix string
-	}{
-		{"7i8", "7", "i8"},
-		{"42i16", "42", "i16"},
-		{"9u16", "9", "u16"},
-		{"100u64", "100", "u64"},
-	}
-	for _, c := range cases {
-		assertTokens(t, c.src, []tokSpec{{Number, c.text, c.suffix}})
-	}
+	assertTokens(t, "100u64", []tokSpec{{Number, "100", "u64"}})
 }
 
 // Underscore digit separators and a binary `0b` prefix are NOT

@@ -1437,9 +1437,9 @@ func externRecordFieldValtype(t ast.Type) byte {
 }
 
 // scalarArrayElemStride returns the element size in bytes of a scalar array
-// type accepted by isScalarArrayParamType (1 for u8/i8, 2 for i16/u16, 4 for
-// i32/u32/f32, 8 for i64/u64/f64). Used to size the materialized Fern array and
-// the host-byte copy for a `list<T>` result.
+// type accepted by isScalarArrayParamType (1 for u8, 4 for i32/u32/f32, 8 for
+// i64/u64/f64). Used to size the materialized Fern array and the host-byte
+// copy for a `list<T>` result.
 func scalarArrayElemStride(t ast.Type) uint32 {
 	at, ok := t.(ast.ArrayType)
 	if !ok {
@@ -2106,10 +2106,6 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return convert.InstF64PromoteF32(body), nil
 	case ir.OpFDemoteF64:
 		return convert.InstF32DemoteF64(body), nil
-	case ir.OpSignExtend8:
-		return convert.InstI32Extend8S(body), nil
-	case ir.OpSignExtend16:
-		return convert.InstI32Extend16S(body), nil
 	case ir.OpReinterpretI32F32:
 		return convert.InstI32ReinterpretF32(body), nil
 	case ir.OpReinterpretF32I32:
@@ -2232,16 +2228,8 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return memory.InstF32Store(body, 2, 0), nil
 	case ir.OpLoadByte:
 		return memory.InstI32Load8U(body, 0, 0), nil
-	case ir.OpLoadI8S:
-		return memory.InstI32Load8S(body, 0, 0), nil
 	case ir.OpStoreI8:
 		return memory.InstI32Store8(body, 0, 0), nil
-	case ir.OpLoadI16U:
-		return memory.InstI32Load16U(body, 1, 0), nil
-	case ir.OpLoadI16S:
-		return memory.InstI32Load16S(body, 1, 0), nil
-	case ir.OpStoreI16:
-		return memory.InstI32Store16(body, 1, 0), nil
 
 	// ---- Calls (slice 5) ----
 	case ir.OpCallDirect:
@@ -2915,8 +2903,7 @@ func anyMemoryOp(prog *ir.Program) bool {
 			switch op.Kind {
 			case ir.OpLoad, ir.OpStore,
 				ir.OpFLoad, ir.OpFStore,
-				ir.OpLoadByte, ir.OpStoreI8, ir.OpLoadI8S,
-				ir.OpLoadI16U, ir.OpLoadI16S, ir.OpStoreI16:
+				ir.OpLoadByte, ir.OpStoreI8:
 				return true
 			}
 		}

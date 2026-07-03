@@ -21,7 +21,6 @@ var auditNumGenCases = []struct {
 	{"i64-add", `function main(): i32 { var big: i64 = 5000000000; var big1: i64 = big + 1; return (big1 - big) as i32; }`, 1},
 	{"i64-mul", `function main(): i32 { var prod: i64 = 1000000 * 3; return (prod / 1000000) as i32; }`, 3},
 	{"u8-wrap", `function main(): i32 { var v: i32 = 250 + 10; var w: u8 = v as u8; return w as i32; }`, 4},
-	{"u16-wrap", `function main(): i32 { var v: i32 = 65530 + 10; var w: u16 = v as u16; return w as i32; }`, 4},
 	{"cast-narrow", `function main(): i32 { var v: i32 = 300; var w: u8 = v as u8; return w as i32; }`, 44},
 	{"f64-mul", `function main(): i32 { var fx: f64 = 3.5; return (fx * 2.0) as i32; }`, 7},
 	{"f64-cmp", `function main(): i32 { var a: f64 = 1.5; var b: f64 = 2.5; if (!(a < b) || !(b > a) || (a >= b)) { return 1; } return 9; }`, 9},

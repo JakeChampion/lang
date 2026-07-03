@@ -146,6 +146,12 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - Replace `number` with sized integer types: `i8`, `i16`, `i32`,
   `i64`, `u8`, `u16`, `u32`, `u64`. `isize` / `usize` are aliases
   (`i32` / `u32` on wasm32, `i64` / `u64` on arm64).
+  **Update (#4408):** `isize` (zero uses) and `i8`/`i16`/`u16`
+  (38 uses total, full per-stride backend cost) were retired —
+  the surviving set is `i32`/`i64`/`u8`/`u32`/`u64`/`f32`/`f64`/`usize`.
+  The status notes below describe the shipped-then-retired
+  sub-i32 machinery as historical record; see
+  `docs/BACKEND-PARITY.md` for the current opcode set.
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
 - Explicit conversion only (`x as i64`); no implicit widening.
@@ -1286,8 +1292,9 @@ the Fern's abstraction layers.
   matches what the codegen lays out.
 
 - **~~Default int~~ — settled `i32`.** Wasm-native and existing
-  programs assume it. `i64`, `u64`, `i16`, `u16`, `i8`, `u8`,
-  `usize`, `f32`, `f64` are all available explicitly.
+  programs assume it. `i64`, `u64`, `u8`, `usize`, `f32`, `f64`
+  are all available explicitly (`i16`/`u16`/`i8`/`isize` were
+  retired in #4408).
 
 - **~~Map literal syntax~~ — settled `Map { k: v, k: v }`.** Same
   shape as struct literal syntax. Heterogeneous-typed literals

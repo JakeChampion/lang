@@ -22,8 +22,6 @@ var castCases = []struct {
 	exit int
 }{
 	{"u8-truncate", "function main(): i32 { var x: i32 = 300; var y: u8 = x as u8; return y as i32; }", 44},
-	{"u16-truncate", "function main(): i32 { var x: i32 = 70000; var y: u16 = x as u16; return y as i32; }", 112},
-	{"i8-sign-extend", "function main(): i32 { var x: i32 = 0 - 5; var y: i8 = x as i8; return (y as i32) + 256; }", 251},
 	{"u8-in-range", "function main(): i32 { return (15 as u8) as i32; }", 15},
 	{"u32-passthrough", "function main(): i32 { var x: i32 = 42; return (x as u32) as i32; }", 42},
 	{"cast-with-bitwise", "function main(): i32 { var b: i32 = 171; return ((b >> 4) & 15) as u8 as i32; }", 10},
