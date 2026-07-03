@@ -177,99 +177,99 @@ pub function module_uses_str_slice(mod: parser.Module): boolean {
 
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
 // values never appear in the i32 subset, so every op is the i32.* form.
-function wasm_binop(kind: string): string {
-    if (kind == "add") { return "i32.add"; }
-    if (kind == "sub") { return "i32.sub"; }
-    if (kind == "mul") { return "i32.mul"; }
+function wasm_binop(tag: i32): string {
+    if (tag == 21) { return "i32.add"; }
+    if (tag == 22) { return "i32.sub"; }
+    if (tag == 23) { return "i32.mul"; }
     // Non-trapping div/rem, matching wasm.fern's AST path: x/0 = 0, x%0 = x,
     // INT_MIN/-1 = INT_MIN (wasm's native i32.div_s / i32.rem_s TRAP on those).
     // The helpers ($__fern_idiv / $__fern_irem) are emitted when the module
     // uses div/rem (module_uses_divrem). As a flat instruction the operands are
     // prior on the stack, so `call` consumes them exactly like the op would.
-    if (kind == "div_s") { return "call $__fern_idiv"; }
-    if (kind == "rem_s") { return "call $__fern_irem"; }
-    if (kind == "and") { return "i32.and"; }
-    if (kind == "or") { return "i32.or"; }
-    if (kind == "xor") { return "i32.xor"; }
-    if (kind == "shl") { return "i32.shl"; }
-    if (kind == "shr_s") { return "i32.shr_s"; }
-    if (kind == "shr_u") { return "i32.shr_u"; }
+    if (tag == 24) { return "call $__fern_idiv"; }
+    if (tag == 26) { return "call $__fern_irem"; }
+    if (tag == 28) { return "i32.and"; }
+    if (tag == 29) { return "i32.or"; }
+    if (tag == 30) { return "i32.xor"; }
+    if (tag == 31) { return "i32.shl"; }
+    if (tag == 32) { return "i32.shr_s"; }
+    if (tag == 33) { return "i32.shr_u"; }
     // Unsigned u32 div/rem (#3204+): wasm's native i32.div_u/rem_u — irlower
     // remaps div_s/rem_s -> div_u/rem_u when an operand is u32, so a u32
     // numerator >= 2^31 divides as unsigned (signed div gave the wrong answer).
-    if (kind == "div_u") { return "i32.div_u"; }
-    if (kind == "rem_u") { return "i32.rem_u"; }
-    if (kind == "eq") { return "i32.eq"; }
-    if (kind == "ne") { return "i32.ne"; }
-    if (kind == "lt_s") { return "i32.lt_s"; }
-    if (kind == "le_s") { return "i32.le_s"; }
-    if (kind == "gt_s") { return "i32.gt_s"; }
-    if (kind == "ge_s") { return "i32.ge_s"; }
+    if (tag == 25) { return "i32.div_u"; }
+    if (tag == 27) { return "i32.rem_u"; }
+    if (tag == 35) { return "i32.eq"; }
+    if (tag == 36) { return "i32.ne"; }
+    if (tag == 37) { return "i32.lt_s"; }
+    if (tag == 38) { return "i32.le_s"; }
+    if (tag == 39) { return "i32.gt_s"; }
+    if (tag == 40) { return "i32.ge_s"; }
     // Unsigned u32 compares (#2917): a u32 >= 2^31 is a signed-negative i32, so
     // lt_s/gt_s give wrong answers — irlower remaps the kind via to_unsigned_kind
     // (the same mechanism u64 uses). Mirrors the i64.*_u forms in wasm_binop_w.
-    if (kind == "lt_u") { return "i32.lt_u"; }
-    if (kind == "le_u") { return "i32.le_u"; }
-    if (kind == "gt_u") { return "i32.gt_u"; }
-    if (kind == "ge_u") { return "i32.ge_u"; }
-    return ";; ir: unsupported bin " + kind + "\n";
+    if (tag == 41) { return "i32.lt_u"; }
+    if (tag == 42) { return "i32.le_u"; }
+    if (tag == 43) { return "i32.gt_u"; }
+    if (tag == 44) { return "i32.ge_u"; }
+    return ";; ir: unsupported bin " + ir.kind_name(tag) + "\n";
 }
 
 // wasm_binop_w selects the i64 instruction variant when the operand width is 64
 // (i64 div/rem is bailed in irlower, so no i64 div/rem helper is needed). A
 // comparison still pushes an i32 result — only the operands are i64.
-function wasm_binop_w(kind: string, width: i32): string {
-    if (width != 64) { return wasm_binop(kind); }
-    if (kind == "add") { return "i64.add"; }
-    if (kind == "sub") { return "i64.sub"; }
-    if (kind == "mul") { return "i64.mul"; }
+function wasm_binop_w(tag: i32, width: i32): string {
+    if (width != 64) { return wasm_binop(tag); }
+    if (tag == 21) { return "i64.add"; }
+    if (tag == 22) { return "i64.sub"; }
+    if (tag == 23) { return "i64.mul"; }
     // Non-trapping i64 div/rem (x/0=0, x%0=x, INT64_MIN/-1=INT64_MIN), matching
     // wasm.fern's AST path; emitted by divrem_helpers (module_uses_divrem).
-    if (kind == "div_s") { return "call $__fern_idiv64"; }
-    if (kind == "rem_s") { return "call $__fern_irem64"; }
+    if (tag == 24) { return "call $__fern_idiv64"; }
+    if (tag == 26) { return "call $__fern_irem64"; }
     // Unsigned 64-bit div/rem (u64, #2904): wasm's native i64.div_u/rem_u (they
     // trap only on divide-by-zero — the signed INT64_MIN/-1 overflow that the
     // $__fern_*64 helpers neutralise can't arise unsigned).
-    if (kind == "div_u") { return "i64.div_u"; }
-    if (kind == "rem_u") { return "i64.rem_u"; }
-    if (kind == "and") { return "i64.and"; }
-    if (kind == "or") { return "i64.or"; }
-    if (kind == "xor") { return "i64.xor"; }
-    if (kind == "shl") { return "i64.shl"; }
-    if (kind == "shr_s") { return "i64.shr_s"; }
-    if (kind == "shr_u") { return "i64.shr_u"; }
-    if (kind == "eq") { return "i64.eq"; }
-    if (kind == "ne") { return "i64.ne"; }
-    if (kind == "lt_s") { return "i64.lt_s"; }
-    if (kind == "le_s") { return "i64.le_s"; }
-    if (kind == "gt_s") { return "i64.gt_s"; }
-    if (kind == "ge_s") { return "i64.ge_s"; }
+    if (tag == 25) { return "i64.div_u"; }
+    if (tag == 27) { return "i64.rem_u"; }
+    if (tag == 28) { return "i64.and"; }
+    if (tag == 29) { return "i64.or"; }
+    if (tag == 30) { return "i64.xor"; }
+    if (tag == 31) { return "i64.shl"; }
+    if (tag == 32) { return "i64.shr_s"; }
+    if (tag == 33) { return "i64.shr_u"; }
+    if (tag == 35) { return "i64.eq"; }
+    if (tag == 36) { return "i64.ne"; }
+    if (tag == 37) { return "i64.lt_s"; }
+    if (tag == 38) { return "i64.le_s"; }
+    if (tag == 39) { return "i64.gt_s"; }
+    if (tag == 40) { return "i64.ge_s"; }
     // Unsigned 64-bit compares (u64, #2904) — push an i32 bool like the signed
     // forms, but read the value as unsigned.
-    if (kind == "lt_u") { return "i64.lt_u"; }
-    if (kind == "le_u") { return "i64.le_u"; }
-    if (kind == "gt_u") { return "i64.gt_u"; }
-    if (kind == "ge_u") { return "i64.ge_u"; }
+    if (tag == 41) { return "i64.lt_u"; }
+    if (tag == 42) { return "i64.le_u"; }
+    if (tag == 43) { return "i64.gt_u"; }
+    if (tag == 44) { return "i64.ge_u"; }
     // f64 arithmetic / comparison (op_fbin carries width 64). wasm's f64
     // compares are natively NaN-correct (return 0 for unordered) and yield i32.
-    if (kind == "fadd") { return "f64.add"; }
-    if (kind == "fsub") { return "f64.sub"; }
-    if (kind == "fmul") { return "f64.mul"; }
-    if (kind == "fdiv") { return "f64.div"; }
+    if (tag == 45) { return "f64.add"; }
+    if (tag == 46) { return "f64.sub"; }
+    if (tag == 47) { return "f64.mul"; }
+    if (tag == 48) { return "f64.div"; }
     // f64 unary math intrinsics (op_funary) — single wasm instructions.
-    if (kind == "fsqrt") { return "f64.sqrt"; }
-    if (kind == "ffloor") { return "f64.floor"; }
-    if (kind == "fceil") { return "f64.ceil"; }
-    if (kind == "ftrunc") { return "f64.trunc"; }
-    if (kind == "fabs") { return "f64.abs"; }
-    if (kind == "fneg") { return "f64.neg"; }
-    if (kind == "feq") { return "f64.eq"; }
-    if (kind == "fne") { return "f64.ne"; }
-    if (kind == "flt") { return "f64.lt"; }
-    if (kind == "fle") { return "f64.le"; }
-    if (kind == "fgt") { return "f64.gt"; }
-    if (kind == "fge") { return "f64.ge"; }
-    return ";; ir: unsupported i64 bin " + kind + "\n";
+    if (tag == 57) { return "f64.sqrt"; }
+    if (tag == 59) { return "f64.floor"; }
+    if (tag == 58) { return "f64.ceil"; }
+    if (tag == 60) { return "f64.trunc"; }
+    if (tag == 56) { return "f64.abs"; }
+    if (tag == 55) { return "f64.neg"; }
+    if (tag == 49) { return "f64.eq"; }
+    if (tag == 50) { return "f64.ne"; }
+    if (tag == 51) { return "f64.lt"; }
+    if (tag == 52) { return "f64.le"; }
+    if (tag == 53) { return "f64.gt"; }
+    if (tag == 54) { return "f64.ge"; }
+    return ";; ir: unsupported i64 bin " + ir.kind_name(tag) + "\n";
 }
 
 // slot_in_list reports membership of slot x in an i32 list (the LowerResult's
@@ -324,7 +324,7 @@ pub function module_allocates(mod: parser.Module): boolean {
         while (i < r.ops.len()) {
             // Any allocating op needs the heap + RC runtime. ir.op_allocates is
             // the shared list (see ir.fern), identical to asm_ir's heap gate.
-            if (ir.op_allocates(ir.kind_name(r.ops[i].kind_tag))) { return true; }
+            if (ir.op_allocates(r.ops[i].kind_tag)) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -1761,7 +1761,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // same way (bl __fern_pow_f64).
             out = out + "    call $__fern_pow_f64\n";
         } else {
-            out = out + "    " + wasm_binop_w(ir.kind_name(o.kind_tag), o.width) + "\n";
+            out = out + "    " + wasm_binop_w(o.kind_tag, o.width) + "\n";
         }
         i = i + 1;
     }
