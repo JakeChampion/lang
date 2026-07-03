@@ -170,6 +170,19 @@ var interpProgs = []struct {
 	// `(255 + 1) as u8 == 0` (256 & 255) and an in-range value is unchanged.
 	{"cast-u8-wrap", "function main(): i32 { var x = 255; return ((x + 1) as u8) as i32; }", 0},
 	{"cast-u8-inrange", "function main(): i32 { var x = 200; return (x as u8) as i32; }", 200},
+
+	// Builtin `.len()` / `.append()` methods: the interp special-cased the
+	// bare `len(x)` function but not the method forms the native compiler
+	// recognises without imports — `string.len()`, `array.len()`, and the
+	// immutable `array.append(x)`. `.len()` on both string and array, and
+	// append leaves the original array untouched (copy-loop, so the fresh
+	// buffer can't alias the shared receiver binding).
+	{"str-len-method", "function main(): i32 { return \"hello\".len() as i32; }", 5},
+	{"arr-len-method", "function main(): i32 { var a: i32[] = [1, 2, 3]; return a.len() as i32; }", 3},
+	{"arr-len-empty", "function main(): i32 { var a: i32[] = []; return a.len() as i32; }", 0},
+	{"arr-append-len", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(9); return b.len() as i32; }", 3},
+	{"arr-append-value", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(9); return b[2]; }", 9},
+	{"arr-append-immutable", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(9); return a.len() as i32 * 10 + b.len() as i32; }", 23},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
