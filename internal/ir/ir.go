@@ -4676,6 +4676,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			out.ScratchTypes[i] = ast.NumberType{}
 		}
 	}
+	// Differential-harness probe (#4482): hand the finished per-function
+	// rcPlan to the hook, if armed — nil (and free) outside tests / the
+	// differential gate. After everything above, so preciseDrops is filled
+	// and every table is final.
+	if RcPlanHook != nil {
+		RcPlanHook(fn.Name, b.dumpRcPlan())
+	}
 	return out, nil
 }
 
