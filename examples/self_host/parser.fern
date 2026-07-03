@@ -2182,13 +2182,64 @@ function parse_pipe(p: Par): ExprResult {
 pub struct BlockResult { par: Par, body: Stmt[] }
 
 function parse_block(p: Par): BlockResult {
-    var body: Stmt[] = [];
     if (p.peek_punct() != "{") {
-        body = body.append(s_unknown("missing { in block"));
-        return BlockResult { par: p, body: body };
+        var miss: Stmt[] = [s_unknown("missing { in block")];
+        return BlockResult { par: p, body: miss };
     }
     p = p.advance();
+    var r: BlockResult = parse_block_body(p);
+    p = r.par;
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return BlockResult { par: p, body: r.body };
+}
+
+// parse_block_body parses statements up to (but not consuming) the block's
+// closing `}`. Split from parse_block so the callback-passing `use` bind can
+// recurse on the rest of the block.
+function parse_block_body(p: Par): BlockResult {
+    var body: Stmt[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
+        // `use NAME [: TYPE] <- CALL;` — monadic-bind / callback-passing sugar
+        // (native parseUse). The rest of the enclosing block becomes the body
+        // of a callback lambda appended as CALL's last argument, and the block
+        // returns CALL's result. `use n <- apply(41); <rest>` desugars to
+        // `return apply(41, (n) => { <rest> });`. A nested `use` in <rest>
+        // recurses. Without this the line shredded (#4335).
+        if (p.peek_keyword() == "use") {
+            p = p.advance(); // consume `use`
+            var uname: string = p.peek_ident();
+            if (uname.len() > 0) { p = p.advance(); }
+            var utype: string = "";
+            if (p.peek_punct() == ":") {
+                p = p.advance();
+                var utn: TypeNameResult = parse_type_name(p);
+                p = utn.par;
+                utype = utn.name;
+            }
+            // `<-` lexes as `<` then `-`.
+            if (p.peek_punct() == "<") { p = p.advance(); }
+            if (p.peek_punct() == "-") { p = p.advance(); }
+            var usrc: ExprResult = parse_expr(p);
+            p = usrc.par;
+            if (p.peek_punct() == ";") { p = p.advance(); }
+            // The rest of the block is the callback body (recurse so a further
+            // `use` chains).
+            var rest: BlockResult = parse_block_body(p);
+            p = rest.par;
+            var cbparam: ParamDecl = ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
+            var cbparams: ParamDecl[] = [cbparam];
+            var cb: Expr = e_lambda(cbparams, "", rest.body);
+            match (usrc.expr) {
+                ExprCall(c) => {
+                    var newargs: Expr[] = c.args.append(cb);
+                    body = body.append(s_return(e_call(c.callee, newargs)));
+                },
+                _ => {
+                    body = body.append(s_unknown("use source must be a function call"));
+                },
+            }
+            return BlockResult { par: p, body: body };
+        }
         var r: StmtResult = parse_stmt(p);
         // Guarantee progress: a malformed statement that doesn't consume a
         // token would otherwise spin forever — skip it instead.
@@ -2199,7 +2250,6 @@ function parse_block(p: Par): BlockResult {
         p = r.par;
         body = body.append(r.stmt);
     }
-    if (p.peek_punct() == "}") { p = p.advance(); }
     return BlockResult { par: p, body: body };
 }
 
