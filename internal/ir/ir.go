@@ -12824,13 +12824,210 @@ func (b *builder) assign(n *ast.Assign) error {
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		return nil
-		// *ast.Index and *ast.FieldAccess targets are NOT lowered: the
-		// immutability migration bans element assignment (`a[i] = v`, E056)
-		// and field assignment (`p.f = v`, E048) unconditionally, and every
-		// internal desugar builds Ident-target assigns — no checked program
-		// reaches here. The former CoW / in-place index-store routes
-		// (emitArrayIndexAssignCoW / CoWField / Nested) retired with the
-		// #4399 sink-3 audit; they fall through to the error below.
+	case *ast.Index:
+		// `a[i] = v` lowers to a bounds-checked address compute via
+		// the right per-stride helper, then a width-aware store.
+		// Doesn't leave a value on the stack — exprLeavesValue
+		// special-cases this shape so no drop is emitted by the
+		// surrounding ExprStmt. Element-width choice mirrors the
+		// read path: stride 1 / 4 / 8 picks helper +
+		// `i32.store8` / `i32.store` / `f32.store`. Float arrays
+		// use OpFStore.
+		stride := int32(4)
+		storeOp := OpStore
+		storeWidth := 0
+		if t.ElemType != nil {
+			stride = int32(ast.ElemSizeBytesFor(t.ElemType, b.ptrW))
+			if nt, ok := t.ElemType.(ast.NumberType); ok {
+				switch nt.NormalWidth() {
+				case 8:
+					storeOp = OpStoreI8
+				case 64:
+					storeWidth = 64
+				}
+			}
+			if ast.IsPointerType(t.ElemType) {
+				storeWidth = WidthPtr
+			}
+			if ft, ok := t.ElemType.(ast.FloatType); ok {
+				storeOp = OpFStore
+				if ft.NormalWidth() == 64 {
+					storeWidth = 64
+				}
+			}
+			// String elements: fan store out to two i32.store
+			// calls on wasm via WidthString. Natives stay on
+			// WidthPtr (single ptr-slot store).
+			if _, isString := t.ElemType.(ast.StringType); isString && b.twoWordStrings() {
+				storeWidth = WidthString
+			}
+		}
+		var helper string
+		if t.IsSlice {
+			// Writing through a slice — bounds-check + offset
+			// against the parent's storage. Per-stride
+			// __slice_idx_N variants mirror the read path.
+			switch stride {
+			case 1:
+				helper = "__slice_idx_1"
+			case 8:
+				helper = "__slice_idx_8"
+			case 16:
+				helper = "__slice_idx_16"
+			default:
+				helper = "__slice_idx"
+			}
+		} else {
+			switch stride {
+			case 1:
+				helper = "__arr_idx_1"
+			case 8:
+				helper = "__arr_idx_8"
+			case 16:
+				helper = "__arr_idx_16"
+			default:
+				helper = "__arr_idx"
+			}
+		}
+		// Phase 2b: `arr[i] = v` for a writable local-ident
+		// array routes through `__fern_arr_cow_inplace(arr,
+		// stride) → buf`. The helper returns the same arr on
+		// rc==1 (mutate in place) and a memcpy'd copy on rc>1
+		// (decrementing arr's rc as it takes over the
+		// caller-side reference). Caller writes the element
+		// into the returned buffer and stores it back into the
+		// slot. Slices (which write through to the parent
+		// storage) and complex Index targets (`obj.field[i] =
+		// v`, `m[k][i] = v`, etc.) keep the legacy in-place
+		// emit for now; follow-up PRs widen CoW to cover them.
+		// See docs/RC-PERCEUS-PLAN.md "Phase 2".
+		if !t.IsSlice {
+			if arrIdent, ok := t.Array.(*ast.Ident); ok {
+				if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
+					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
+				}
+			}
+			if fa, ok := t.Array.(*ast.FieldAccess); ok {
+				if rootName, found := rootIdentOfFieldChain(fa); found {
+					if _, isLocal := b.locals[rootName]; isLocal && !isParamName(rootName, b) {
+						st := b.fieldOwner(fa.Target)
+						if sd, sdOk := b.info.Structs[st]; sdOk {
+							offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+							off := int32(-1)
+							var ft ast.Type
+							for _, f := range sd.Fields {
+								if f.Name == fa.Field {
+									off = offs[f.Name]
+									ft = f.Type
+									break
+								}
+							}
+							if _, isArr := ft.(ast.ArrayType); isArr && off >= 0 {
+								return b.emitArrayIndexAssignCoWField(fa, off, ft, t, n, stride, storeOp, storeWidth, helper)
+							}
+						}
+					}
+				}
+			}
+			// Phase 2b extension: `mat[i][j] = v` where mat is a
+			// writable local-ident array-of-arrays. The outer
+			// store flips the inner-array pointer at mat[i] to a
+			// fresh buffer (via CoW); the outer `mat` slot itself
+			// is mutated in place, so callers that alias mat
+			// still see the new mat[i] pointer (acceptable —
+			// Phase 2c is what gates copy-on-write at the mat
+			// level too).
+			if outer, ok := t.Array.(*ast.Index); ok && !outer.IsSlice {
+				if outerRoot, found := outerRootIdent(outer.Array); found {
+					if _, isLocal := b.locals[outerRoot]; isLocal && !isParamName(outerRoot, b) {
+						// outer.ElemType is the inner-array type
+						// (e.g. i32[] for mat: i32[][]). Use it
+						// to pick the right pointer-shaped
+						// load/store width.
+						if outerElemT := outer.ElemType; outerElemT != nil {
+							if _, isInnerArr := outerElemT.(ast.ArrayType); isInnerArr {
+								return b.emitArrayIndexAssignCoWNested(outer, t, n, stride, storeOp, storeWidth, helper)
+							}
+						}
+					}
+				}
+			}
+		}
+		if err := b.expr(t.Array); err != nil {
+			return err
+		}
+		if err := b.expr(t.Idx); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: storeOp, Width: storeWidth})
+		return nil
+	case *ast.FieldAccess:
+		// `p.field = v` lowers to base + offset; value; store.
+		// Same no-result discipline as index assignment. Field
+		// offsets + store widths come from the ptrW-aware
+		// struct layout so pointer-typed fields land in
+		// pointer-width slots on arm64.
+		st := b.fieldOwner(t.Target)
+		sd, ok := b.info.Structs[st]
+		if !ok {
+			return fmt.Errorf("ir: field assignment on unresolved struct %q", st)
+		}
+		offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+		off := int32(-1)
+		var ft ast.Type
+		for _, f := range sd.Fields {
+			if f.Name == t.Field {
+				off = offs[f.Name]
+				ft = f.Type
+				break
+			}
+		}
+		if off < 0 {
+			return fmt.Errorf("ir: struct %s has no field %q", st, t.Field)
+		}
+		if err := b.expr(t.Target); err != nil {
+			return err
+		}
+		if off > 0 {
+			b.emit(Op{Kind: OpConstI32, I32: off})
+			b.emit(Op{Kind: OpAdd})
+		}
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(payloadStoreOpFor(ft, b.ptrW))
+		return nil
+	}
+	if cr, ok := n.Target.(*ast.CaptureRef); ok {
+		// `cap = v` inside a closure body, where `cap` is a
+		// captured outer-scope variable. closureconv rewrote the
+		// target ident to a CaptureRef during the body walk. The
+		// env block is heap-allocated and shared by all calls to
+		// this closure — mutation persists across re-invocations,
+		// matching the user-expected "captures live in the closure's
+		// environment" semantics. Outer-scope reads of the same
+		// name AFTER closure construction see the original
+		// (pre-capture) value — captures are by value at make-
+		// time. No tee: assignment is statement-shaped; the
+		// exprLeavesValue dispatch's default (false for non-Ident
+		// targets) already suppresses the surrounding ExprStmt's
+		// drop.
+		envIdx, ok := b.locals["__env"]
+		if !ok {
+			return fmt.Errorf("ir: capture assignment %q in function without __env param (compiler bug)", cr.Name)
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: envIdx})
+		b.emit(Op{Kind: OpConstI32, I32: int32(cr.Offset)})
+		b.emit(Op{Kind: OpAdd})
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(payloadStoreOpFor(cr.Type, b.ptrW))
+		return nil
 	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
 }
@@ -13250,6 +13447,61 @@ func localArrayType(name string, b *builder) (ast.ArrayType, bool) {
 		}
 	}
 	return ast.ArrayType{}, false
+}
+
+// outerRootIdent resolves the root local-ident of an outer
+// expression for the nested `mat[i][j] = v` CoW path. Handles
+// `mat` (bare ident) and `obj.mat`, `a.b.mat`, ... (field
+// chains). Anything else — call results, slices, deeper
+// indexing — bottoms out unresolved and the caller falls
+// through to the legacy in-place emit.
+func outerRootIdent(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name, true
+	case *ast.FieldAccess:
+		return rootIdentOfFieldChain(x)
+	}
+	return "", false
+}
+
+// rootIdentOfFieldChain walks a chain of nested FieldAccess
+// back to the root Ident (if any). `a.b.c.d` resolves to "a";
+// returns ("", false) when the chain bottoms out on a non-
+// ident shape (a call result, an index, etc.) — those cases
+// don't have a single writable "owner" slot the Phase 2b CoW
+// path can update, so they fall through to the legacy in-
+// place emit.
+func rootIdentOfFieldChain(fa *ast.FieldAccess) (string, bool) {
+	cur := fa.Target
+	for {
+		switch t := cur.(type) {
+		case *ast.Ident:
+			return t.Name, true
+		case *ast.FieldAccess:
+			cur = t.Target
+		default:
+			return "", false
+		}
+	}
+}
+
+// isParamName reports whether `name` resolves to a function
+// parameter (as opposed to a declared local). Phase 2b's
+// `arr[i] = v` copy-on-write desugar skips params for now —
+// existing callers rely on the "mutate the caller's array
+// through the parameter" idiom (e.g. `function update(arr,
+// idx) { arr[idx] = ...; }`), which the CoW path would break
+// once the param's rc bumps to ≥ 2 from the call-arg inc.
+// Phase 2c will widen the desugar after migrating the in-tree
+// callers off the shared-mutation pattern.
+func isParamName(name string, b *builder) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // exprContainsCall reports whether e contains a function/method Call
@@ -13975,6 +14227,179 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // The element type is `n.TypeArgs[0]`, stamped by the checker's
 // array.push dispatch — used by `arrayElemStoreOpFor` to pick
 // the right store width.
+// emitArrayIndexAssignCoW lowers `arr[i] = v` for a writable
+// local-ident array. The helper `__fern_arr_cow_inplace`
+// internalises all rc bookkeeping for this site:
+//
+//   - rc == 1 → return arr unchanged; caller writes into the
+//     existing buffer.
+//   - rc >  1 → allocate a fresh buffer with the same cap+len,
+//     memcpy the payload, decrement arr's rc (skipping when
+//     arr is a static sentinel), return the new ptr.
+//
+// The IR emit therefore does NOT need a separate dec-on-
+// overwrite step — keeping that step would either double-dec,
+// or skip-dec on raw wasm where heap addresses sit below
+// 0x10000 (the `__fern_rc_dec` low-address guard short-
+// circuits there). The helper is the sole rc-management point
+// for this site.
+func (b *builder) emitArrayIndexAssignCoW(arrIdent *ast.Ident, arrSlot int32, t *ast.Index, n *ast.Assign, stride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+	// buf = __fern_arr_cow_inplace(arr, stride)
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address via the per-stride bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Write the (possibly new) buffer pointer back into the
+	// ident's slot. The helper already dec'd the old buffer
+	// when it had to copy; in the in-place case buf == arr and
+	// the store is a no-op semantically.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
+	return nil
+}
+
+// emitArrayIndexAssignCoWField lowers `obj.field[i] = v` for a
+// writable local-ident-target struct field whose type is an
+// array. Same CoW shape as emitArrayIndexAssignCoW but the
+// "slot" the new buffer flows back into is the struct field's
+// memory location rather than a local-variable slot. The
+// helper still internalises rc bookkeeping; the caller stashes
+// the field's byte address up-front so both the field load
+// (read OLD arr) and the field store (write NEW buf) hit the
+// same address.
+func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset int32, fieldType ast.Type, t *ast.Index, n *ast.Assign, stride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+	// fieldAddr = &obj.field
+	fieldAddrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_fld_%d", fieldAddrSlot)] = fieldAddrSlot
+	if err := b.expr(fa.Target); err != nil {
+		return err
+	}
+	if fieldOffset > 0 {
+		b.emit(Op{Kind: OpConstI32, I32: fieldOffset})
+		b.emit(Op{Kind: OpAdd})
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: fieldAddrSlot})
+	// arr = *fieldAddr (load the array pointer from the field).
+	b.emit(Op{Kind: OpLoadLocal, I32: fieldAddrSlot})
+	b.emit(payloadLoadOpFor(fieldType, b.ptrW))
+	// buf = __fern_arr_cow_inplace(arr, stride)
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address via the per-stride bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Write buf back into obj.field. In the in-place case buf
+	// == OLD arr (no change). In the copy case buf is the new
+	// buffer and the field's pointer flips to it.
+	b.emit(Op{Kind: OpLoadLocal, I32: fieldAddrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(payloadStoreOpFor(fieldType, b.ptrW))
+	return nil
+}
+
+// emitArrayIndexAssignCoWNested lowers `mat[i][j] = v` for a
+// writable local-ident array-of-arrays. The outer slot — the
+// address `&mat[i]` — flows through the per-stride bounds-
+// check helper just like a regular `arr[i] = v` write. The
+// inner-array pointer at that slot is fed through
+// `__fern_arr_cow_inplace`, which mutates it in place on rc==1
+// or returns a fresh copy on rc>1. The new buffer pointer is
+// stored back into `&mat[i]`.
+//
+// Limitation: the outer `mat` slot is mutated in place. If
+// some other local also aliases `mat`, the alias's view of
+// `mat[i]` follows along (since they share the outer buffer).
+// Phase 2c will gate the outer slot's write through
+// `__fern_arr_cow_inplace` too, so aliases of mat see the
+// pre-write inner-array pointer.
+func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, t *ast.Index, n *ast.Assign, innerStride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+	// Outer stride + outer __arr_idx_<N> helper for resolving
+	// `&mat[i]`. Outer elements are pointer-shaped (each holds
+	// the inner array's data pointer), so stride = ptrW on
+	// natives or wasm.
+	outerStride := int32(b.ptrW)
+	outerHelper := outerArrIdxHelper(outerStride)
+	// outerSlotAddr = &mat[i] via the bounds-check helper.
+	outerSlotSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_outer_%d", outerSlotSlot)] = outerSlotSlot
+	if err := b.expr(outer.Array); err != nil {
+		return err
+	}
+	if err := b.expr(outer.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: outerHelper, I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: outerSlotSlot})
+	// inner = *outerSlotAddr (pointer-width load).
+	b.emit(Op{Kind: OpLoadLocal, I32: outerSlotSlot})
+	b.emit(payloadLoadOpFor(outer.ElemType, b.ptrW))
+	// buf = __fern_arr_cow_inplace(inner, innerStride)
+	b.emit(Op{Kind: OpConstI32, I32: innerStride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address: buf + j*innerStride via the inner per-
+	// stride bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Write buf back into *outerSlotAddr. In-place case is a
+	// no-op semantically (buf == inner); copy case updates
+	// mat[i] to point at the new buffer.
+	b.emit(Op{Kind: OpLoadLocal, I32: outerSlotSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(payloadStoreOpFor(outer.ElemType, b.ptrW))
+	return nil
+}
+
+// outerArrIdxHelper picks the per-stride bounds-check helper
+// name for an outer-array indexing of pointer-width elements.
+// Centralises the stride → helper-name mapping so the nested
+// CoW path stays in sync with the regular `arr[i] = v` path.
+func outerArrIdxHelper(stride int32) string {
+	switch stride {
+	case 1:
+		return "__arr_idx_1"
+	case 8:
+		return "__arr_idx_8"
+	case 16:
+		return "__arr_idx_16"
+	default:
+		return "__arr_idx"
+	}
+}
 
 // emitArraySet lowers `arr.set(i, v)` inline — Phase 2b's
 // explicit value-returning sister to `arr[i] = v`. Same shape
