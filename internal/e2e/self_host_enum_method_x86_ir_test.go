@@ -50,13 +50,7 @@ func TestSelfHostEnumMethodX86IR(t *testing.T) {
 	}
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
-	runSrc, err := os.ReadFile("../../examples/self_host/asm_ir_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_ir_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_ir_run.fern"), runSrc, 0o644); err != nil {
-		t.Fatalf("write asm_ir_run.fern: %v", err)
-	}
+	copySelfHostFiles(t, dir, "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	emit := func(t *testing.T, src string) string {

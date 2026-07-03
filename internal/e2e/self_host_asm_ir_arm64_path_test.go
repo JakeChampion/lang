@@ -10,8 +10,8 @@ import (
 
 // TestSelfHostAsmIRArm64Path is the arm64 sibling of TestSelfHostAsmIRPath:
 // the differential gate for the arm64 stack-IR emitter (asm_arm64_ir.fern).
-// The asm_arm64_ir_run driver's `-ir` flag, when the module is fully
-// i32-eligible, emits via the IR path (asm_arm64_ir.emit_module_ir: AST ->
+// The asm_ir_run driver's `-target arm64 -ir` mode, when the module is fully
+// i32-eligible, emits via the IR path (asm_arm64_ir.emit_body: AST ->
 // stack IR -> arm64); otherwise it uses the unchanged AST backend
 // (asm_arm64.emit_module). Each program is compiled BOTH ways, assembled with
 // the aarch64 toolchain, run under qemu-aarch64, and the two exit codes must
@@ -29,7 +29,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
 		"ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64.fern", "asm_arm64_ir.fern",
-		"asm_arm64_ir_run.fern",
+		"asm.fern", "asm_ir_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -40,13 +40,13 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		}
 	}
 	// Build the driver once via the x86-64 backend (it runs on the host).
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	// emitAndRun pipes src to the driver (optionally with `-ir`), assembles the
 	// emitted arm64 asm, runs it under qemu, returns the inner exit code.
 	emitAndRun := func(t *testing.T, src string, ir bool) int {
 		t.Helper()
-		driverArgs := []string{}
+		driverArgs := []string{"-target", "arm64"}
 		if ir {
 			driverArgs = append(driverArgs, "-ir")
 		}

@@ -120,7 +120,7 @@ func TestSelfHostReadIntIRArm64(t *testing.T) {
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
 		"ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64.fern", "asm_arm64_ir.fern",
-		"asm_arm64_ir_run.fern",
+		"asm.fern", "asm_ir_run.fern",
 	} {
 		s, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -130,14 +130,14 @@ func TestSelfHostReadIntIRArm64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 	for _, tc := range readIntIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(x86runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
+				cmd = exec.Command(driverBin, "-target", "arm64", "-ir")
 			} else {
-				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-ir")...)
+				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64", "-ir")...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
