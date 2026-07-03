@@ -414,9 +414,20 @@ function eval_unary(op: string, ov: Value): Value {
     // float; a float-target cast widens an int and is identity on a
     // float. Without these every cast fell through to the
     // "unknown unary op" error below.
-    if (op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64"
-        || op == "as_u8"
-        || op == "as_byte") {
+    // `as u8` / `as byte` truncate to the low 8 bits at runtime (native masks
+    // the value, e.g. `(255 + 1) as u8 == 0`) — the interp previously returned
+    // the operand unchanged, so a u8 cast was a no-op (#4348 item 3, cast
+    // slice). u8 is the only sub-i32 integer type in the language, so this is
+    // the whole runtime-truncation surface. (An out-of-range u8 *literal* is a
+    // separate compile-time E047, not a runtime concern here.)
+    if (op == "as_u8" || op == "as_byte") {
+        match (ov) {
+            VInt(i) => { return v_int(i.v & 255); },
+            VFloat(f) => { return v_int((f.v as i32) & 255); },
+            _ => { return v_err("`as` integer cast operand not numeric"); }
+        }
+    }
+    if (op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64") {
         match (ov) {
             VInt(i) => { return v_int(i.v); },
             VFloat(f) => { return v_int(f.v as i32); },
