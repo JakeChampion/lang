@@ -6,24 +6,51 @@
 // eval preserves the program's value, now including multi-function programs
 // and recursion. With `-dump`, prints `main`'s lowered op stream instead.
 // A `main` outside the lowered subset makes lowering bail -> exit 200.
+//
+// `-rc-plan` (#4482): print each function's Perceus decision-table dump
+// (irlower.rc_plan_dump — the self-host half of the rcPlan differential
+// harness, pinned to native's internal/ir/rc_dump.go format) instead of
+// evaluating. One `== <name>` header per function (receiver methods keyed
+// `<Type>.<name>` like native's fn.Name), then the function's non-empty
+// table lines. The Go-side gate diffs this against ir.RcPlanHook's output
+// for the same source.
 
 import "std/io";
 import "./lexer";
 import "./parser";
 import "./ir";
 import "./irlower";
+import "./util";
 
 function main(): i32 {
     var av: string[] = args();
     var want_dump: boolean = false;
+    var want_rc_plan: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-dump") { want_dump = true; }
+        if (av[ai] == "-rc-plan") { want_rc_plan = true; }
         ai = ai + 1;
     }
 
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+
+    if (want_rc_plan) {
+        var out: string = "";
+        var fi: i32 = 0;
+        while (fi < mod.funcs.len()) {
+            var key: string = mod.funcs[fi].name;
+            if (mod.funcs[fi].receiver_type.len() > 0) {
+                key = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
+            }
+            out = out + "== " + key + "\n";
+            out = out + irlower.rc_plan_dump(mod.funcs[fi], mod.structs, mod.funcs);
+            fi = fi + 1;
+        }
+        write(out);
+        return 0;
+    }
     var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
 
     var mi: i32 = irlower.find_fn(fns, "main");
