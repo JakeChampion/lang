@@ -2587,6 +2587,65 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
 		}
+		// Tuple scrutinee: tuple-pattern arms `(p0, p1, …)`. A tuple
+		// value is an Array; a literal element dispatches by equality,
+		// a binder element always matches and binds, `_` is ignored.
+		// The checker (E035/E030) guarantees the arm shapes and that
+		// an irrefutable arm exists.
+		if arr, isArr := tag.(Array); isArr && matchArmsHaveTuple(x.Arms) {
+			for _, arm := range x.Arms {
+				armEnv := newEnv(e)
+				if !arm.IsWildcard {
+					if len(arm.TupleElems) != len(arr) {
+						continue
+					}
+					matched := true
+					for k, el := range arm.TupleElems {
+						if el.Literal == nil {
+							continue
+						}
+						lv, err := i.evalExpr(el.Literal, e)
+						if err != nil {
+							return result{}, err
+						}
+						if !valuesEqual(arr[k], lv) {
+							matched = false
+							break
+						}
+					}
+					if !matched {
+						continue
+					}
+					for k, el := range arm.TupleElems {
+						if el.Name != "" {
+							armEnv.declare(el.Name, arr[k])
+						}
+					}
+				}
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return result{}, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
+				r, err := i.execBlock(arm.Body, armEnv)
+				if err != nil {
+					return result{}, err
+				}
+				if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+					return r, nil
+				}
+				return result{flow: flowNormal}, nil
+			}
+			return result{flow: flowNormal}, nil
+		}
 		// Non-enum scrutinee (i32 / string / bool): literal-pattern
 		// match, mirroring the compiled backend's emitLiteralMatch.
 		// Each arm is a literal (dispatched by `==`) or the `_`
@@ -2648,6 +2707,28 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		return result{flow: flowNormal}, nil
 	}
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
+}
+
+// matchArmsHaveTuple reports whether any arm carries a tuple pattern —
+// the dispatch cue for a tuple-typed match scrutinee (whose runtime
+// value is an Array, which a plain literal match never produces).
+func matchArmsHaveTuple(arms []*ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.TupleElems != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// matchExprArmsHaveTuple is the MatchExpr-side counterpart.
+func matchExprArmsHaveTuple(arms []*ast.MatchExprArm) bool {
+	for _, arm := range arms {
+		if arm.TupleElems != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // valuesEqual is a value-equality check used for match-tag / map-key
@@ -3117,6 +3198,56 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				return i.evalExpr(arm.Body, armEnv)
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
+		}
+		// Tuple scrutinee: tuple-pattern arms — same element rules as
+		// the statement form (literal by equality, binder binds, `_`
+		// ignored), but each arm body is an Expr.
+		if arr, isArr := tag.(Array); isArr && matchExprArmsHaveTuple(x.Arms) {
+			for _, arm := range x.Arms {
+				armEnv := newEnv(env)
+				if !arm.IsWildcard {
+					if len(arm.TupleElems) != len(arr) {
+						continue
+					}
+					matched := true
+					for k, el := range arm.TupleElems {
+						if el.Literal == nil {
+							continue
+						}
+						lv, err := i.evalExpr(el.Literal, env)
+						if err != nil {
+							return nil, err
+						}
+						if !valuesEqual(arr[k], lv) {
+							matched = false
+							break
+						}
+					}
+					if !matched {
+						continue
+					}
+					for k, el := range arm.TupleElems {
+						if el.Name != "" {
+							armEnv.declare(el.Name, arr[k])
+						}
+					}
+				}
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return nil, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return nil, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
+				return i.evalExpr(arm.Body, armEnv)
+			}
+			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no tuple arm matched)")
 		}
 		// Non-enum scrutinee (i32 / string / bool): literal-pattern
 		// match expression, mirroring emitLiteralMatchExpr. Each arm

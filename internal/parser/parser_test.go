@@ -1690,6 +1690,73 @@ func TestTupleParamDestructureErrors(t *testing.T) {
 	}
 }
 
+// TestTupleMatchPatternParses pins the tuple-pattern arm shape
+// `(p0, p1, …) => …`: each element is a binder, `_`, or a literal,
+// carried on MatchArm.TupleElems for the checker/IR.
+func TestTupleMatchPatternParses(t *testing.T) {
+	prog, err := Parse(`function f(p: (i32, i32)): i32 {
+		match (p) {
+			(0, y) => { return y; },
+			(x, _) when x > 3 => { return x; },
+			(a, b) => { return a + b; }
+		}
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Match; got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+	if len(m.Arms) != 3 {
+		t.Fatalf("arms = %d, want 3", len(m.Arms))
+	}
+	a0 := m.Arms[0]
+	if len(a0.TupleElems) != 2 || a0.TupleElems[0].Literal == nil || a0.TupleElems[1].Name != "y" {
+		t.Errorf("arm 0 elems = %#v, want (literal, binder y)", a0.TupleElems)
+	}
+	a1 := m.Arms[1]
+	if len(a1.TupleElems) != 2 || a1.TupleElems[0].Name != "x" || !a1.TupleElems[1].IsWildcard || a1.Guard == nil {
+		t.Errorf("arm 1 elems = %#v (guard %v), want (binder x, _) with guard", a1.TupleElems, a1.Guard)
+	}
+	a2 := m.Arms[2]
+	if len(a2.TupleElems) != 2 || a2.TupleElems[0].Name != "a" || a2.TupleElems[1].Name != "b" {
+		t.Errorf("arm 2 elems = %#v, want (binder a, binder b)", a2.TupleElems)
+	}
+}
+
+// Tuple patterns parse in expression-form match arms too, and the
+// error shapes hold: or-patterns with tuple patterns, singleton
+// tuple patterns, and nested tuple patterns are parse errors.
+func TestTupleMatchPatternErrors(t *testing.T) {
+	if _, err := Parse(`function f(p: (i32, i32)): i32 {
+		var v = match (p) { (0, y) => y, (a, b) => a };
+		return v;
+	}`); err != nil {
+		t.Fatalf("expr-form tuple pattern should parse: %v", err)
+	}
+	cases := map[string]string{
+		"or-pattern": `function f(p: (i32, i32)): i32 {
+			match (p) { (0, y) | (x, 0) => { return 1; }, (a, b) => { return a; } }
+			return 0;
+		}`,
+		"singleton": `function f(p: (i32, i32)): i32 {
+			match (p) { (a) => { return 1; } }
+			return 0;
+		}`,
+		"nested": `function f(p: (i32, i32)): i32 {
+			match (p) { ((a, b), c) => { return 1; } }
+			return 0;
+		}`,
+	}
+	for name, src := range cases {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected parse error", name)
+		}
+	}
+}
+
 // `let Variant(b) = …` continues to route to LetElse — the
 // tuple-destructure branch must not steal it. Smoke test.
 func TestLetVariantStillParses(t *testing.T) {

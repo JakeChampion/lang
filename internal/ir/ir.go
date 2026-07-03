@@ -5572,6 +5572,270 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 	return nil
 }
 
+// isTupleMatch / isTupleMatchExprArms report whether any arm carries a
+// tuple pattern — the dispatch cue for a tuple-typed scrutinee (the
+// checker guarantees the remaining arms are tuple patterns or `_`).
+func isTupleMatch(arms []*ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.TupleElems != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isTupleMatchExprArms(arms []*ast.MatchExprArm) bool {
+	for _, arm := range arms {
+		if arm.TupleElems != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// tupleMatchPrep caches the scrutinee tuple pointer in a scratch slot.
+// The pointer is BORROWED (no inc, no free), mirroring the enum-match
+// heap-form scrutinee; bindings extracted on the matched path are
+// borrows of the box's elements the same way enum payload bindings are.
+func (b *builder) tupleMatchPrep(tag ast.Expr, elems []ast.Type) (ptrSlot int32, offs []int32, elemName []string, err error) {
+	ptrSlot = b.allocSlot()
+	b.locals[fmt.Sprintf("__tup_match_p_%d", ptrSlot)] = ptrSlot
+	if err := b.expr(tag); err != nil {
+		return 0, nil, nil, err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+	offs, _ = tupleElemLayout(elems, b.ptrW)
+	elemName = make([]string, len(elems))
+	return ptrSlot, offs, elemName, nil
+}
+
+// tupleMatchElemIdent returns (lazily creating) a synthetic typed
+// scratch local holding element k of the scrutinee, for use as the left
+// side of a literal-comparison Binary — the exact emitLiteralMatch
+// scrutinee-slot shape, which settles string (OpStrEq) / float compares
+// uniformly, including the two-word string ABI.
+func (b *builder) tupleMatchElemIdent(ptrSlot int32, offs []int32, elems []ast.Type, elemName []string, k int) string {
+	if elemName[k] != "" {
+		return elemName[k]
+	}
+	s := b.allocSlot()
+	name := fmt.Sprintf("__tup_match_e_%d", s)
+	b.locals[name] = s
+	b.scratchType[s] = elems[k]
+	elemName[k] = name
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: offs[k]})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(payloadLoadOpFor(elems[k], b.ptrW))
+	b.emit(Op{Kind: OpStoreLocal, I32: s})
+	return name
+}
+
+// tupleMatchArmCond builds the arm's literal-element condition as an
+// AST expression (nil when the arm is irrefutable — all binders / `_`).
+func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatElem, ptrSlot int32, offs []int32, elems []ast.Type, elemName []string) ast.Expr {
+	var cond ast.Expr
+	for k, el := range tupleElems {
+		if el.Literal == nil || k >= len(elems) {
+			continue
+		}
+		name := b.tupleMatchElemIdent(ptrSlot, offs, elems, elemName, k)
+		eq := &ast.Binary{
+			P:           arm,
+			Op:          "==",
+			Left:        &ast.Ident{P: arm, Name: name},
+			Right:       el.Literal,
+			IsStringCmp: isStringType(elems[k]),
+			IsFloat:     isFloatType(elems[k]),
+		}
+		if cond == nil {
+			cond = eq
+		} else {
+			cond = &ast.Binary{P: arm, Op: "&&", Left: cond, Right: eq}
+		}
+	}
+	return cond
+}
+
+// tupleMatchBindArm extracts the arm's binder elements from the tuple
+// box into their binding slots (same load shape as the enum-match
+// heap-form payload binds — borrowed, no inc).
+func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, ptrSlot int32, offs []int32) {
+	for k, el := range tupleElems {
+		if el.Name == "" || k >= len(offs) {
+			continue
+		}
+		bt := ast.Type(ast.NumberType{})
+		if k < len(bindingTypes) && bindingTypes[k] != nil {
+			bt = bindingTypes[k]
+		}
+		slot := b.bindingSlot(el.Name, bt)
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(payloadLoadOpFor(bt, b.ptrW))
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
+}
+
+// emitTupleMatch lowers a `match` on a tuple-typed scrutinee: cache the
+// tuple pointer, then per arm test the literal elements (an if-else-if
+// chain like emitLiteralMatch), bind the binder elements on the matched
+// path, run the optional guard with bindings in scope, and branch out
+// of the exit block.
+func (b *builder) emitTupleMatch(n *ast.Match) error {
+	tup, ok := b.exprType(n.Tag).(ast.TupleType)
+	if !ok {
+		return fmt.Errorf("ir: tuple-pattern match scrutinee is not tuple-typed (compiler bug)")
+	}
+	ptrSlot, offs, elemName, err := b.tupleMatchPrep(n.Tag, tup.Elems)
+	if err != nil {
+		return err
+	}
+	b.openBlock(BlockTypeVoid)
+	exitDepth := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.openIf(BlockTypeVoid)
+				if err := b.stmt(arm.Body); err != nil {
+					return err
+				}
+				b.brTo(exitDepth, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			b.brTo(exitDepth, false)
+			continue
+		}
+		cond := b.tupleMatchArmCond(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		if cond != nil {
+			if err := b.expr(cond); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		// Bind BEFORE the guard so the guard sees the arm's names.
+		b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		if err := b.stmt(arm.Body); err != nil {
+			return err
+		}
+		b.brTo(exitDepth, false)
+		if arm.Guard != nil {
+			b.closeScope()
+		}
+		if cond != nil {
+			b.closeScope()
+		}
+	}
+	b.closeScope() // exit block
+	return nil
+}
+
+// emitTupleMatchExpr is the expression-form counterpart of
+// emitTupleMatch: same per-arm test/bind/guard shape, but each arm body
+// is an Expr stored into a result slot before branching out (mirroring
+// emitLiteralMatchExpr's result handling).
+func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
+	tup, ok := b.exprType(n.Tag).(ast.TupleType)
+	if !ok {
+		return fmt.Errorf("ir: tuple-pattern match scrutinee is not tuple-typed (compiler bug)")
+	}
+	ptrSlot, offs, elemName, err := b.tupleMatchPrep(n.Tag, tup.Elems)
+	if err != nil {
+		return err
+	}
+	// Result slot — typed from the first non-polymorphic arm body,
+	// mirroring emitLiteralMatchExpr.
+	resultType := ast.Type(ast.NumberType{})
+	for _, arm := range n.Arms {
+		if arm == nil || arm.Body == nil {
+			continue
+		}
+		t := b.exprType(arm.Body)
+		if t == nil {
+			continue
+		}
+		if nt, isNum := t.(ast.NumberType); isNum && nt.Polymorphic {
+			continue
+		}
+		if ft, isFloat := t.(ast.FloatType); isFloat && ft.Polymorphic {
+			continue
+		}
+		resultType = t
+		break
+	}
+	resultSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
+	b.scratchType[resultSlot] = resultType
+
+	b.openBlock(BlockTypeVoid)
+	exitDepth := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.openIf(BlockTypeVoid)
+				if err := b.expr(arm.Body); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+				b.brTo(exitDepth, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.expr(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(exitDepth, false)
+			continue
+		}
+		cond := b.tupleMatchArmCond(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		if cond != nil {
+			if err := b.expr(cond); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		if err := b.expr(arm.Body); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+		b.brTo(exitDepth, false)
+		if arm.Guard != nil {
+			b.closeScope()
+		}
+		if cond != nil {
+			b.closeScope()
+		}
+	}
+	b.closeScope()
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
 func isStringType(t ast.Type) bool {
 	_, ok := t.(ast.StringType)
 	return ok
@@ -6315,6 +6579,15 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpDrop, Width: w})
 		}
 	case *ast.Match:
+		// Tuple-pattern match: the scrutinee is a tuple (the checker
+		// dispatched to `checkTupleMatch`). Lower via emitTupleMatch —
+		// per-arm element eq-tests + binder extraction.
+		if isTupleMatch(n.Arms) {
+			if err := b.emitTupleMatch(n); err != nil {
+				return err
+			}
+			break
+		}
 		// Literal-pattern match: when the scrutinee isn't an enum
 		// the arms are all literal-or-wildcard (the checker
 		// dispatched to `checkLiteralMatch`). Lower as if-else-if
@@ -6990,6 +7263,14 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.closeScope()
 	case *ast.MatchExpr:
+		// Tuple-pattern match-expr: scrutinee is a tuple — see
+		// emitTupleMatchExpr.
+		if isTupleMatchExprArms(n.Arms) {
+			if err := b.emitTupleMatchExpr(n); err != nil {
+				return err
+			}
+			return nil
+		}
 		// Literal-pattern match-expr: arms are literal/wildcard,
 		// scrutinee is number/string/bool. Lower as an if-chain
 		// over the result slot — same shape as the stmt-form
