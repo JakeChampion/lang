@@ -11,7 +11,7 @@ import (
 // TestSelfHostStage2FixedPointArm64 is the arm64 mirror of the x86
 // fixed-point gate. It proves the arm64 self-host emit is a fixed
 // point of itself: a mmc-arm64-stage2 binary (built by feeding
-// asm_arm64_load_run.fern back through the stage-1 cross-compiler-
+// asm_load_run.fern (-target arm64) back through the stage-1 cross-compiler-
 // on-host mmc-arm64) and the stage-1 mmc-arm64 emit byte-identical
 // aarch64 assembly for the same input.
 //
@@ -36,7 +36,7 @@ func TestSelfHostStage2FixedPointArm64(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "treeshake.fern", "asm_arm64_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "treeshake.fern", "asm.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -46,17 +46,17 @@ func TestSelfHostStage2FixedPointArm64(t *testing.T) {
 		}
 	}
 	// stage 1: Go-built mmc-arm64 (x86 host binary emitting arm64 asm).
-	mmc1 := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_load_run.fern", "mmc_arm64_s1")
+	mmc1 := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64_s1")
 
-	// stage 2: mmc1 compiles asm_arm64_load_run.fern → arm64 asm,
+	// stage 2: mmc1 compiles asm_load_run.fern → arm64 asm,
 	// aarch64-gcc links → aarch64 binary running under qemu-aarch64.
-	selfSrc := filepath.Join(dir, "asm_arm64_load_run.fern")
-	stage2Asm, err := exec.Command(mmc1, selfSrc).Output()
+	selfSrc := filepath.Join(dir, "asm_load_run.fern")
+	stage2Asm, err := exec.Command(mmc1, selfSrc, "-target", "arm64").Output()
 	if err != nil {
 		t.Fatalf("mmc1 compile self failed: %v", err)
 	}
 	if len(stage2Asm) == 0 {
-		t.Fatal("mmc1 emitted 0 bytes for asm_arm64_load_run.fern")
+		t.Fatal("mmc1 emitted 0 bytes for asm_load_run.fern")
 	}
 	t.Logf("stage 2 arm64 self-asm = %d bytes", len(stage2Asm))
 	mmc2Bin := buildBinArm64(t, arm64gcc, dir, "mmc_arm64_s2", string(stage2Asm))
@@ -85,13 +85,13 @@ func TestSelfHostStage2FixedPointArm64(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// stage 1: native x86 mmc1 emits arm64 asm.
-			asm1, err := exec.Command(mmc1, tc.args...).Output()
+			asm1, err := exec.Command(mmc1, append(append([]string{}, tc.args...), "-target", "arm64")...).Output()
 			if err != nil {
 				t.Fatalf("mmc1: %v", err)
 			}
 			// stage 2: aarch64 mmc2 (under qemu or native arm64)
 			// emits arm64 asm.
-			asm2, err := runArm64Bin(qemu, mmc2Bin, tc.args...).Output()
+			asm2, err := runArm64Bin(qemu, mmc2Bin, append(append([]string{}, tc.args...), "-target", "arm64")...).Output()
 			if err != nil {
 				t.Fatalf("mmc2: %v", err)
 			}

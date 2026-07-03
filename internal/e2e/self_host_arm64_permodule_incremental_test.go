@@ -8,11 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostPerModuleObjectCacheArm64 is the arm64 twin of
@@ -36,22 +31,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload arm64 driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit driver: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "arm64cachedriver", asm)
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64cachedriver")
 
 	proj := t.TempDir()
 	cacheDir := filepath.Join(proj, "cache")
@@ -82,7 +62,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	// The driver is an x86 host binary — run it directly.
 	drive := func(args ...string) (string, string) {
 		t.Helper()
-		cmd := exec.Command(driverBin, append([]string{entry}, args...)...)
+		cmd := exec.Command(driverBin, append([]string{entry, "-target", "arm64"}, args...)...)
 		var errb strings.Builder
 		cmd.Stderr = &errb
 		out, err := cmd.Output()

@@ -18,6 +18,7 @@ import "./parser";
 import "./flatten";
 import "./checker";
 import "./asm";
+import "./asm_arm64";
 import "./asm_ir";
 import "./treeshake";
 
@@ -137,12 +138,19 @@ function main(): i32 {
     // the un-pruned baseline (e.g. a budget-busting program routing AST).
     var no_treeshake: boolean = false;
     var do_decide: boolean = false;
+    // `-target x86_64|arm64` selects the emit backend (#4398 part 1: the fold
+    // that retired the asm_arm64_load_run mirror). Default x86_64 keeps every
+    // pre-fold caller byte-identical. Loading, treeshake, -decide, -ir-probe
+    // and the immutability gate are target-agnostic; the per-module modes
+    // remain x86-64-only (the mirror never had them).
+    var target: string = "x86_64";
     var ag: i32 = 2;
     while (ag < av.len()) {
         if (av[ag] == "-ir-probe") { probe = true; }
         else if (av[ag] == "-treeshake") { do_treeshake = true; }
         else if (av[ag] == "-no-treeshake") { no_treeshake = true; }
         else if (av[ag] == "-decide") { do_decide = true; }
+        else if (av[ag] == "-target" && ag + 1 < av.len()) { target = av[ag + 1]; ag = ag + 1; }
         else if (av[ag] == "-per-module-count") { pm_mode = "count"; }
         else if (av[ag] == "-per-module-needs") { pm_mode = "needs"; }
         else if (av[ag] == "-per-module-emit" && ag + 1 < av.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(av[ag + 1]); ag = ag + 1; }
@@ -341,6 +349,10 @@ function main(): i32 {
         return 1;
     }
 
+    if (target == "arm64") {
+        write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
+        return 0;
+    }
     write(asm.emit_module(parser.module_with_builtins(merged)));
     return 0;
 }

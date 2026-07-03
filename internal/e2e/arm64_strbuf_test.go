@@ -20,7 +20,7 @@ import (
 // EFAULTs, then the trailing newline from `print`.
 //
 // The most visible symptom was the arm64 self-host
-// (`asm_arm64_load_run.fern`) compiling cleanly through the Go
+// (`asm_load_run.fern`, whose -target flag also covers arm64) compiling cleanly through the Go
 // arm64 backend but emitting 0 bytes of asm at runtime — the
 // strbuf-take-then-print chain at the end of `emit_module`
 // silently dropped its payload.
