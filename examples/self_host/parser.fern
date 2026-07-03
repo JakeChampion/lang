@@ -7701,6 +7701,47 @@ pub function desugar_ranges_module(mod: Module): Module {
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
+// desugar_prepass_module fuses the three leading whole-module DESUGAR passes —
+// resolve_labels_module, fill_default_args_module, desugar_ranges_module — into a
+// single traversal that rebuilds the module ONCE instead of three times (#4394
+// lever 3: the front-end composes ~14 allocating module rebuilds before the
+// checker, and under partially-freeing RC each rebuild is resident cost). All
+// three are pre-analysis LOCAL body rewrites — each maps func→func by rewriting
+// only the statement body, never the signature list — so applying them in order
+// per function is byte-identical to running them as three separate module passes:
+//
+//   * resolve_labels_block is purely local (labeled break/continue within a body).
+//   * fda_stmts reads the funcs list only for callee SIGNATURES (fda_lookup_params
+//     touches name / receiver_type / params, never bodies), and none of the three
+//     passes alters a signature, so the ORIGINAL mod.funcs is the same signature
+//     view the sequential fill_default_args pass saw post-resolve_labels.
+//   * desugar_ranges_block is purely local (for-range → while), and the unlabeled
+//     breaks it introduces run AFTER resolve_labels here exactly as in the
+//     sequential order, so they are (correctly) never label-resolved.
+//
+// The fill-default-args guard (module_has_default_params / module_has_named_args)
+// is likewise unaffected by resolve_labels (which adds/removes no default params
+// or named args), so it is evaluated once on the incoming module and gates the
+// per-body fda step — reproducing fill_default_args_module's early-return.
+pub function desugar_prepass_module(mod: Module): Module {
+    var need_fda: boolean = module_has_default_params(mod) || module_has_named_args(mod);
+    var none: string[] = [];
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        var body: Stmt[] = resolve_labels_block(fd.body, none);
+        if (need_fda) { body = fda_stmts(body, mod.funcs); }
+        body = desugar_ranges_block(body);
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: body, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    var tops: Stmt[] = resolve_labels_block(mod.top_stmts, none);
+    if (need_fda) { tops = fda_stmts(tops, mod.funcs); }
+    tops = desugar_ranges_block(tops);
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tops, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
 // ---------------------------------------------------------------------------
 // Default-argument filling.
 //
@@ -8794,7 +8835,10 @@ pub function module_with_builtins(mod: Module): Module {
     // `[resource-drop]` import functions — BEFORE lower_defers_module so the
     // inserted defers expand to drops on every exit path
     // (docs/WIT-BRING-YOUR-OWN.md).
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))))));
+    // #4394 lever 3: the three leading desugar passes (resolve_labels →
+    // fill_default_args → desugar_ranges) are fused into desugar_prepass_module,
+    // one module rebuild instead of three (byte-identical — see its doc comment).
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
