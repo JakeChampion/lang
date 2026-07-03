@@ -103,6 +103,23 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "arrsum") {
+        // var a = [5, 10, 15]; return a[0] + a[1] + a[2];  => 30
+        // Exercises the slice-2 i32-array lift (arr_make / arr_get) all the way
+        // through optimise / regalloc / emit on both backends. One slot holds
+        // the array pointer; arr_make pops the three elements (element 0
+        // deepest) and pushes the length-prefixed heap box.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 1, ops: [
+                ir.op_const_i32(5), ir.op_const_i32(10), ir.op_const_i32(15),
+                ir.op_arr_make(3, 32), ir.op_store_local(0),
+                ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get(32),
+                ir.op_load_local(0), ir.op_const_i32(1), ir.op_arr_get(32), ir.op_bin("add", 0, false),
+                ir.op_load_local(0), ir.op_const_i32(2), ir.op_arr_get(32), ir.op_bin("add", 0, false),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

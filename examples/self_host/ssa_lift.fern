@@ -17,8 +17,14 @@
 //     native's lift does, and a `block` exit merges all its `br`/`brif`-out
 //     edges. `if`, `block` and `loop` share ONE scope stack so `br`/`brif`
 //     relative depths resolve uniformly.
-// Everything else (value-producing ifs, memory / struct / map / float ops,
-// the i64 width) sets `ok=false` so a caller falls back, mirroring how
+//   - slice 2: i32 ARRAYS — `arr_make` / `arr_get` / `arr_set` / `arr_len`
+//     (width 32) lowered to build_func's length-prefixed heap layout
+//     (element 0 = length, data at 1..n), plus stripping of irlower's RC
+//     runtime-helper calls (`__fern_rc_inc` / `__fern_rc_dec` /
+//     `__fern_str_free`) to no-ops — SSA's bump heap never frees, so it
+//     inherits build_func's leak-only memory model.
+// Everything else (value-producing ifs, i64 / f64 arrays, struct / map / float
+// ops, the i64 width) sets `ok=false` so a caller falls back, mirroring how
 // native's lift errors. Validated without a backend by running the lifted
 // SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
 //
@@ -70,6 +76,17 @@ function drop_n(a: i32[], n: i32): i32[] {
 }
 
 // ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
+
+// is_rc_noop reports whether a call target is an irlower RC runtime helper the
+// lift strips (SSA has no free — see the arr_make note). All of them take the
+// box and return it (or void), and irlower always drops the result, so replacing
+// the call with a const 0 is sound on the leak-only SSA heap.
+function is_rc_noop(name: string): boolean {
+    if (name == "__fern_rc_inc") { return true; }
+    if (name == "__fern_rc_dec") { return true; }
+    if (name == "__fern_str_free") { return true; }
+    return false;
+}
 
 function bin_sym(k: string): string {
     if (k == "add") { return "+"; }
@@ -260,9 +277,100 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
                 var e: i32 = 0;
                 while (e < argc) { stack = drop_last(stack); e = e + 1; }
-                var cv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind: "call", result: cv, args: cargs, imm: 0, str: op.str });
-                stack = stack.append(cv);
+                if (is_rc_noop(op.str)) {
+                    // SSA lowers onto a leak-only bump heap (no free), so the RC
+                    // runtime helpers irlower threads through are inert here —
+                    // build_func emits no RC at all, and the lift strips the same
+                    // calls to keep one memory model. Each such call's result is
+                    // always immediately drop'd, so a const 0 stands in for it.
+                    var rz: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: rz, args: [], imm: 0, str: "" });
+                    stack = stack.append(rz);
+                } else {
+                    var cv: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "call", result: cv, args: cargs, imm: 0, str: op.str });
+                    stack = stack.append(cv);
+                }
+            }
+        } else if (k == "arr_make") {
+            // An i32 array literal → a length-prefixed heap box (element 0 holds
+            // the length, the n elements at 1..n), matching build_func's
+            // ExprArray layout exactly so the lifted SSA runs on the same
+            // ssa_x86 / ssa_arm64 / eval_func memory model. The n element values
+            // are on the operand stack (element 0 deepest). Width-64 (i64 / f64)
+            // arrays carry 8-byte elements and are a later slice.
+            if (op.width != 32) { ok = false; }
+            else if (stack.len() < op.i32_imm) { ok = false; }
+            else {
+                var an: i32 = op.i32_imm;
+                var aelems: i32[] = [];
+                var ad: i32 = an - 1;
+                while (ad >= 0) { aelems = aelems.append(stack[stack.len() - 1 - ad]); ad = ad - 1; }
+                var ae: i32 = 0;
+                while (ae < an) { stack = drop_last(stack); ae = ae + 1; }
+                var handle: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "alloc", result: handle, args: [], imm: an + 1, str: "" });
+                var lidx: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: lidx, args: [], imm: 0, str: "" });
+                var lval: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: lval, args: [], imm: an, str: "" });
+                var lsv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: lsv, args: [handle, lidx, lval], imm: 0, str: "" });
+                var am: i32 = 0;
+                while (am < an) {
+                    var eidx: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: eidx, args: [], imm: am + 1, str: "" });
+                    var esv: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: esv, args: [handle, eidx, aelems[am]], imm: 0, str: "" });
+                    am = am + 1;
+                }
+                stack = stack.append(handle);
+            }
+        } else if (k == "arr_get") {
+            // a[i] on an i32 array: element data lives at index+1 (index 0 is the
+            // length prefix), exactly as build_func's ExprIndex loads it.
+            if (op.width != 32) { ok = false; }
+            else if (stack.len() < 2) { ok = false; }
+            else {
+                var gidx: i32 = stack[stack.len() - 1];
+                var gbase: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var gone: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: gone, args: [], imm: 1, str: "" });
+                var goff: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: goff, args: [gidx, gone], imm: 0, str: "+" });
+                var glv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: glv, args: [gbase, goff], imm: 0, str: "" });
+                stack = stack.append(glv);
+            }
+        } else if (k == "arr_set") {
+            // a[i] = v on an i32 array: store at index+1, in place. Stack order
+            // is [base, idx, val] with val on top.
+            if (op.width != 32) { ok = false; }
+            else if (stack.len() < 3) { ok = false; }
+            else {
+                var sval: i32 = stack[stack.len() - 1];
+                var sidx: i32 = stack[stack.len() - 2];
+                var sbase: i32 = stack[stack.len() - 3];
+                stack = drop_last(stack); stack = drop_last(stack); stack = drop_last(stack);
+                var sone: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: sone, args: [], imm: 1, str: "" });
+                var soff: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: soff, args: [sidx, sone], imm: 0, str: "+" });
+                var ssv2: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: ssv2, args: [sbase, soff, sval], imm: 0, str: "" });
+            }
+        } else if (k == "arr_len") {
+            // a.len() → the length stored at index 0, mirroring str_len.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var lbase: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var lzero: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: lzero, args: [], imm: 0, str: "" });
+                var llv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: llv, args: [lbase, lzero], imm: 0, str: "" });
+                stack = stack.append(llv);
             }
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }
