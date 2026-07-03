@@ -66,6 +66,7 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 // The type+table section was gated on `lam_ctr > 0` (closures only), so:
 //   - a map program with NO closures declared no table and no $fn types; and
 //   - even a map program WITH closures declared only $clos<N>, never $fn1/$fn2.
+//
 // Both cases now emit $fn1/$fn2 and a (>=1-slot) table whenever the module uses
 // maps — the AST-path mirror of wasm_ir.fn_support_section (the IR path). Each
 // case is success-coded (return 0 iff every map op is correct), so a non-zero

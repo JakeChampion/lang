@@ -18,6 +18,7 @@ import (
 //   - EVERY reassignment being a fresh consume-rebind of s (str_accum_reassign_ok),
 //   - s never escaping (str_accum_unsafe_for — which forbids `return s` for now, so
 //     a NON-escaping accumulator only; the move-out builder is a follow-up).
+//
 // __fern_str_free's heap-base guard makes freeing the initial "" literal a no-op on
 // its .rodata data (its 16-byte box is still reclaimed).
 var strAccumIRCases = []struct {
