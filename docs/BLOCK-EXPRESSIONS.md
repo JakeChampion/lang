@@ -40,13 +40,13 @@ shape:
 So the block-expression is its own AST node (`ast.BlockExpr{Stmts, Tail}`),
 not sugar over a function call or a desugar to anything else.
 
-## Slice 1 scope (this document)
+## Scope
 
-Slice 1 is deliberately narrow:
+Where block-expressions may appear (unchanged since slice 1):
 
 - **Only `if` / `match` *expression* branches** parse a block-with-tail.
   Concretely: the `{ … }` after `if (cond)`, after `else`, and after a
-  `match`-arm `=>` may now be a `{ stmts; tail }` block.
+  `match`-arm `=>` may be a `{ stmts; tail }` block.
 - A branch that is a **single expression with no leading statements**
   stays a bare expression (`{ 1 }` is the value `1`, not a `BlockExpr`),
   so existing single-expression `if`/`match` expressions are unchanged.
@@ -55,13 +55,29 @@ Slice 1 is deliberately narrow:
   *expression*-branch parse path changed.
 - **General value-position `{ … }`** elsewhere is NOT a block-expression
   yet (it collides with struct-literal syntax — a later slice).
-- **Interpreter only.** The native interpreter (`fern -interp`)
-  evaluates block-expressions; the compiled backends (wasm, arm64,
-  x86-64) **reject `BlockExpr` cleanly** with an unsupported-feature
-  error (no panic). This mirrors how `dyn` dispatch and the `as?`
-  downcast shipped interp-first.
-- The **self-hosted compiler** does not handle block-expressions yet —
-  also a later slice.
+
+Backend support:
+
+- **Interpreter** (slice 1). The native interpreter (`fern -interp`)
+  evaluates block-expressions: child env, exec statements, eval tail.
+- **Compiled backends** (slice 2, `#4405`). wasm / arm64 / x86-64 all
+  **lower `BlockExpr`** through the target-agnostic IR — no new IR op:
+  the leading statements lower through the normal statement path, then
+  `Tail` lowers as the block's result value on the operand stack (see
+  the `*ast.BlockExpr` arm in `(*ir.builder).expr`). Block-locals get
+  their own zero-init'd slots (shadowrename gives the block its own
+  frame) and are dropped by the ordinary function-exit dec sweep, so a
+  heap-valued tail flows out correctly under RC. Differential coverage
+  across all three backends: `internal/e2e/block_expr_test.go`
+  (`TestBlockExprCompiled*`).
+- **Self-hosted compiler** (slice 2, `#4405`). The self-host parser
+  parses each if/match value branch as a block-with-tail
+  (`parse_branch_body` → leading `;`-terminated statements then a
+  trailing tail written WITHOUT a `;`), producing a `Stmt[]` ending in
+  `s_return(tail)` that irlower's `lower_value_tail` lowers. A lone
+  trailing expression with no leading statements stays `[s_return(expr)]`,
+  byte-identical to the single-expr branch. Coverage:
+  `internal/e2e/self_host_block_expr_ir_test.go` (x86-64 + wasm IR).
 
 ## Semantics
 
@@ -98,15 +114,24 @@ Slice 1 is deliberately narrow:
 | Parser | `parser.parseBranchBody` + `branchStmtStart`, wired into `parseIfExpr` and the `match`-expr arm body (`internal/parser/parser.go`) |
 | Checker | `checker.checkBlockExpr` (child scope → statements → tail type); error **E061**; numeric settle / `postSettleType` recurse into `Tail` (`internal/checker/checker.go`) |
 | Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail (`internal/interp/interp.go`) |
-| Compiled reject | `ir.rejectBlockExpr` (clean `WalkProgram` scan) + a defensive lowering-switch guard arm (`internal/ir/ir.go`) |
+| Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result (`internal/ir/ir.go`) |
+| Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`examples/self_host/parser.fern`) |
+| Self-host lower | `lower_value_tail` — leading statements then the value-producing terminal (`examples/self_host/irlower.fern`) |
 | Other passes | `monomorph`, `closureconv`, `boxcapture`, `modload`, `shadowrename`, `treeshake`, `printer`, `format` each recurse into `Stmts` + `Tail` |
+
+## Landed (`#4405`)
+
+- Compiled-backend lowering (wasm / arm64 / x86-64) via the IR.
+- Self-hosted-compiler support.
+- Workaround deletion in the self-host tree: the "declare a temp, then a
+  statement-`match`/`if` to assign it" contortion is now written directly
+  as an `if`/`match` *expression* (e.g. `parse_map_lit`'s `map_new` /
+  `map_new_i32` ctor selection in `parser.fern`).
 
 ## Later slices
 
 - General value-position `{ … }` blocks (needs struct-literal
   disambiguation).
-- Compiled-backend lowering (wasm / arm64 / x86-64).
-- Self-hosted-compiler support.
 - Control-flow (`return` / `break` / `continue`) inside a value-position
-  block-expression — currently rejected by the interpreter, since slice
-  1 doesn't thread control flow through expression evaluation.
+  block-expression — currently rejected by the interpreter, since it
+  doesn't thread control flow through expression evaluation.
