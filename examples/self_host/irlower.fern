@@ -10530,6 +10530,34 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // An enum-array field still bails: aliasing it out needs deep-drop
             // recursion (a later slice).
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
+            // Returning a bare PARAM array (`return a`, a a borrowed param) —
+            // the native return-transfer inc, ported (#4357 probe). The CALLER
+            // binds the result as an owned move (its slot is exit-swept), but
+            // the param's buffer belongs to the caller's caller: without a
+            // retain the callee hands out an UNCOUNTED alias, and the two
+            // sweeps over-release it (rc 1 -> 0 while the owner still holds
+            // it — a use-after-free surfaced by the underflow detector on the
+            // identity-return probe). Mirror the struct-field Perceus dup
+            // above: retain the buffer so the escaping return is a counted
+            // reference (owner's later dec frees it exactly once). Params are
+            // never exit-swept, so no move-out bookkeeping is needed; a bare
+            // LOCAL return stays on the move-on-return path below (its slot
+            // is kept from the sweep instead).
+            var rpid: string = "";
+            match (r.value) {
+                parser.ExprIdent(rid2) => { rpid = rid2.name; },
+                _ => {}
+            }
+            if (rpid.len() > 0) {
+                var rps: i32 = s.slot_of(rpid);
+                if (rps >= 0 && rps < s.n_params && s.is_arr_slot(rps)) {
+                    var rpl: LowerState = lower_expr(r.value, s);
+                    if (!rpl.ok) { return rpl; }
+                    rpl = rpl.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+                    rpl = emit_dec_sweep_except(rpl, 0 - 1);
+                    return rpl.emit(ir.op_return());
+                }
+            }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
             // Perceus move-on-return: any array local the returned value MOVES out
