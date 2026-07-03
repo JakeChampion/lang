@@ -1,6 +1,6 @@
 # Extracting native Perceus RC into a discrete pass — rollout tracker
 
-Status: **slice 1 landed** (2026-07-03). Tracking issue: **#4393**.
+Status: **slices 1–3 landed** (2026-07-03). Tracking issue: **#4393**.
 Convergence-debt tracker: #4451 (this is a refactor of existing
 native surface, not new native-only surface, but it reshapes the
 exact layer goal 2 ports — keep it visible there).
@@ -66,18 +66,28 @@ two separable moves:
   `preciseDroppableType` → `dropFnNameFor` *records* into the
   shared `genEnumDrops`/`genTupleDrops` registries, so its call
   position is observable in generated-drop-fn order.)
-- **Slice 2: group the plan.** Move the analysis results off the
-  builder into an explicit per-function `rcPlan` struct (the
-  side-tables: consumedParams / freeEligible / movedLocals /
-  moveSites / arraySetInc / reuseSources / reuseConsumed / precise
-  drops), constructed by `computeRcAnalyses` and threaded to
-  lowering read-only. This is the struct goal 2 mirrors as
-  parallel arrays.
-- **Slice 3: carve the insertion helpers.** Move the Op-emitting
-  RC half (`emitRcDecLocalsAtExit*`, `emitPreciseDrop`,
-  `emitOwnedTempStackDrop`, the drop-fn name routing + generated
-  drop-body worklist) into `rc_insert.go` behind a named
-  `rcInserter` surface, still called from the same lowering sites.
+- **Slice 2 (landed): group the plan.** The per-function decision
+  tables (consumedParams / freeEligible / movedLocals / moveSites /
+  arraySetInc / reuseSources / reuseConsumed / preciseDrops) moved
+  off the builder into an explicit `rcPlan` struct (`b.rc`),
+  constructed by `computeRcAnalyses`. This is the struct goal 2
+  mirrors as parallel arrays. Two documented wrinkles:
+  `preciseDrops` is filled at its later `lowerFunc` call site (the
+  drop-fn registry-order constraint), and the C2 consuming-match
+  reuse still registers its scrutinee pairing in `reuseSources`
+  mid-lowering — an insertion-time decision a later slice should
+  fold into the plan.
+- **Slice 3 (landed): carve the insertion helpers.** The
+  Op-emitting RC half moved verbatim to `rc_insert.go` (~2.7k
+  lines, 44 functions): the exit dec sweep
+  (`emitRcDecLocalsAtExit*`), precise drops, owned-temp stack
+  drops, alias incs, reinit-overwrite / reuse-site old-field
+  drops, the owned-temp classifiers (`freshOwnedRcTempType` /
+  `ownedCallResultType` / `reclaimableMatchScrutinee`), and the
+  whole drop-specialisation subsystem (`dropFnNameFor` routing +
+  the `gen*DropFn` bodies the LowerWith worklist materialises).
+  Still called from the same lowering sites in ir.go (in-build
+  insertion); `ir.go` is down from 20.1k to 15.2k lines.
 - **Slice 4+: true post-lowering insertion.** Where the plan
   allows, replace in-lowering emission with insertion on the
   lowered `[]Op` (entry prologue and exit sweep first — they sit
