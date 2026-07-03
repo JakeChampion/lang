@@ -1,6 +1,10 @@
 package ir
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // A tee whose slot is never read elsewhere is just `pop ; push`
 // from the operand stack's POV — the propagation pass drops it.
@@ -144,4 +148,38 @@ func TestPropagateCopiesIsIdempotent(t *testing.T) {
 	if before != after {
 		t.Errorf("PropagateCopies not idempotent:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
+}
+
+// A dead store to a `dyn Trait` slot must be rewritten to a WIDE drop
+// (Width: WidthString — the wasm codegen fans it out to two `drop`s),
+// exactly like a dead two-word string store: the store consumed two
+// operand values on wasm32, so a one-value drop would leave the stack
+// imbalanced. Pinned at the pass layer; see slotIsTwoWord's dyn arm.
+func TestPropagateCopiesDeadDynStoreDropsBothWords(t *testing.T) {
+	fn := &Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "d", Type: ast.DynTraitType{Traits: []string{"Show"}}}},
+		Ops: []Op{
+			{Kind: OpConstI32, I32: 0},
+			{Kind: OpConstI32, I32: 0},
+			{Kind: OpStoreLocal, I32: 0}, // dead: slot 0 is never read
+			{Kind: OpReturnVoid},
+		},
+	}
+	p := &Program{Funcs: []*Func{fn}, PtrW: 4}
+	PropagateCopies(p)
+	for _, op := range fn.Ops {
+		if op.Kind == OpStoreLocal {
+			return // store kept: also fine (no imbalance introduced)
+		}
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpDrop {
+			if op.Width != WidthString {
+				t.Errorf("dead dyn-slot store rewrote to a one-word drop (Width=%d) — wasm32 stack imbalance:\n%s", op.Width, p)
+			}
+			return
+		}
+	}
+	t.Errorf("expected either the store or a wide drop to remain:\n%s", p)
 }
