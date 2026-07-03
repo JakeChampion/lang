@@ -1817,15 +1817,15 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 // The native checker validated arity / exhaustiveness / types before
 // any of this runs on the self-host path, so no diagnostics are
 // re-implemented here. Element kinds: 0 = binder, 1 = `_`, 2 = literal.
-struct TupArm { is_wild: boolean, kinds: i32[], binds: string[], lits: Expr[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // parse_tuple_arm_pattern consumes `(p0, p1, …)` with the cursor on the
 // opening `(`, returning the element encoding. A parse problem yields
-// kinds.len() == 0 (the callers emit a degenerate stmt).
-struct TupArmPatResult { par: Par, kinds: i32[], binds: string[], lits: Expr[] }
+// elem_kinds.len() == 0 (the callers emit a degenerate stmt).
+struct TupArmPatResult { par: Par, elem_kinds: i32[], binds: string[], lits: Expr[] }
 
 function parse_tuple_arm_pattern(p: Par): TupArmPatResult {
-    var kinds: i32[] = [];
+    var elem_kinds: i32[] = [];
     var binds: string[] = [];
     var lits: Expr[] = [];
     var none: i32[] = [];
@@ -1834,31 +1834,31 @@ function parse_tuple_arm_pattern(p: Par): TupArmPatResult {
         var n: string = p.peek_ident();
         if (n == "_") {
             p = p.advance();
-            kinds = kinds.append(1);
+            elem_kinds = elem_kinds.append(1);
             binds = binds.append("");
             lits = lits.append(e_bool(true));
         } else if (n.len() > 0) {
             p = p.advance();
-            kinds = kinds.append(0);
+            elem_kinds = elem_kinds.append(0);
             binds = binds.append(n);
             lits = lits.append(e_bool(true));
         } else if (p.peek_is_literal()) {
             var le: ExprResult = parse_expr(p);
             p = le.par;
-            kinds = kinds.append(2);
+            elem_kinds = elem_kinds.append(2);
             binds = binds.append("");
             lits = lits.append(le.expr);
         } else {
-            return TupArmPatResult { par: p, kinds: none, binds: [], lits: [] };
+            return TupArmPatResult { par: p, elem_kinds: none, binds: [], lits: [] };
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
-    if (kinds.len() < 2) {
-        return TupArmPatResult { par: p, kinds: none, binds: [], lits: [] };
+    if (elem_kinds.len() < 2) {
+        return TupArmPatResult { par: p, elem_kinds: none, binds: [], lits: [] };
     }
-    return TupArmPatResult { par: p, kinds: kinds, binds: binds, lits: lits };
+    return TupArmPatResult { par: p, elem_kinds: elem_kinds, binds: binds, lits: lits };
 }
 
 // build_tuple_match assembles the desugared statement described above.
@@ -1869,7 +1869,7 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
     var n_elems: i32 = 0;
     var ai: i32 = 0;
     while (ai < arms.len()) {
-        if (!arms[ai].is_wild) { n_elems = arms[ai].kinds.len(); break; }
+        if (!arms[ai].is_wild) { n_elems = arms[ai].elem_kinds.len(); break; }
         ai = ai + 1;
     }
     if (n_elems < 2) { return s_unknown("tuple match with no tuple arm"); }
@@ -1902,8 +1902,8 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
             continue;
         }
         var ek: i32 = 0;
-        while (ek < a.kinds.len()) {
-            if (a.kinds[ek] == 2) {
+        while (ek < a.elem_kinds.len()) {
+            if (a.elem_kinds[ek] == 2) {
                 cond = e_binary("&&", cond, e_binary("==", e_ident(base + "_e" + util.i32_to_string(ek)), a.lits[ek]));
             }
             ek = ek + 1;
@@ -1911,8 +1911,8 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
         // Binder decls run on the matched path, before the guard.
         var binds: Stmt[] = [];
         ek = 0;
-        while (ek < a.kinds.len()) {
-            if (a.kinds[ek] == 0) {
+        while (ek < a.elem_kinds.len()) {
+            if (a.elem_kinds[ek] == 0) {
                 binds = binds.append(s_var_at(a.binds[ek], "", e_ident_at(base + "_e" + util.i32_to_string(ek), a.line, a.col), a.line, a.col));
             }
             ek = ek + 1;
@@ -2101,10 +2101,10 @@ function parse_match_expr(p: Par): IfChain {
             if (p.peek_punct() == "(") {
                 var etpr: TupArmPatResult = parse_tuple_arm_pattern(p);
                 p = etpr.par;
-                if (etpr.kinds.len() == 0) {
+                if (etpr.elem_kinds.len() == 0) {
                     return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt };
                 }
-                et_kinds = etpr.kinds;
+                et_kinds = etpr.elem_kinds;
                 et_binds = etpr.binds;
                 et_lits = etpr.lits;
             } else {
@@ -2136,7 +2136,7 @@ function parse_match_expr(p: Par): IfChain {
                 etrt = if_expr_rt(eter.expr);
             }
             if (etfirst) { rt = etrt; etfirst = false; }
-            etarms = etarms.append(TupArm { is_wild: et_wild, kinds: et_kinds, binds: et_binds, lits: et_lits, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
+            etarms = etarms.append(TupArm { is_wild: et_wild, elem_kinds: et_kinds, binds: et_binds, lits: et_lits, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -2541,10 +2541,10 @@ function parse_match_stmt(p: Par): MatchStmtResult {
             if (p.peek_punct() == "(") {
                 var tpr: TupArmPatResult = parse_tuple_arm_pattern(p);
                 p = tpr.par;
-                if (tpr.kinds.len() == 0) {
+                if (tpr.elem_kinds.len() == 0) {
                     return MatchStmtResult { par: p, stmt: s_unknown("bad tuple pattern") };
                 }
-                t_kinds = tpr.kinds;
+                t_kinds = tpr.elem_kinds;
                 t_binds = tpr.binds;
                 t_lits = tpr.lits;
             } else {
@@ -2564,7 +2564,7 @@ function parse_match_stmt(p: Par): MatchStmtResult {
             if (p.peek_punct() == "=>") { p = p.advance(); }
             var tbb: BlockResult = parse_block(p);
             p = tbb.par;
-            tarms = tarms.append(TupArm { is_wild: t_wild, kinds: t_kinds, binds: t_binds, lits: t_lits, guard: t_guard, has_guard: t_has_guard, body: tbb.body, line: taline, col: tacol });
+            tarms = tarms.append(TupArm { is_wild: t_wild, elem_kinds: t_kinds, binds: t_binds, lits: t_lits, guard: t_guard, has_guard: t_has_guard, body: tbb.body, line: taline, col: tacol });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
