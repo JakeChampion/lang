@@ -3067,6 +3067,53 @@ function parse_stmt(p: Par): StmtResult {
         p = p.advance(); // consume the assign-op token
         var av = parse_expr(p);
         p = av.par;
+        // Chained assignment `x = y = e` (plain `=`, bare-ident targets):
+        // native assignment is a right-recursive expression, so the value
+        // flows to every target. parse_expr stopped at the inner `=`, so
+        // av.expr is the next target. Collect the ident chain + final value
+        // and emit the equivalent right-to-left assigns (`y = e; x = y;` —
+        // e is evaluated exactly once) in a scoped block. Without this the
+        // trailing `= e` was left as junk and only the first link ran, a
+        // silent wrong result (#4339 item 1). Index / field middle targets
+        // fall through to the single-assign path unchanged (as before).
+        if (is_assign && p.peek_punct() == "=") {
+            match (e.expr) {
+                ExprIdent(id0) => {
+                    var chain: string[] = [];
+                    var okchain: boolean = true;
+                    var moretgt: boolean = true;
+                    while (moretgt && okchain) {
+                        match (av.expr) {
+                            ExprIdent(idn) => {
+                                chain = chain.append(idn.name);
+                                p = p.advance();          // consume the `=`
+                                var nx = parse_expr(p);
+                                p = nx.par;
+                                av = nx;
+                                moretgt = (p.peek_punct() == "=");
+                            },
+                            _ => { okchain = false; },
+                        }
+                    }
+                    if (okchain && chain.len() > 0) {
+                        if (p.peek_punct() == ";") { p = p.advance(); }
+                        var noelse: Stmt[] = [];
+                        var stmts: Stmt[] = [];
+                        // innermost target gets the final value, then each
+                        // earlier target copies from the one to its right.
+                        stmts = stmts.append(s_assign(chain[chain.len() - 1], av.expr));
+                        var ci: i32 = chain.len() - 1;
+                        while (ci > 0) {
+                            stmts = stmts.append(s_assign(chain[ci - 1], e_ident(chain[ci])));
+                            ci = ci - 1;
+                        }
+                        stmts = stmts.append(s_assign(id0.name, e_ident(chain[0])));
+                        return StmtResult { par: p, stmt: s_if(e_bool(true), stmts, noelse) };
+                    }
+                },
+                _ => { },
+            }
+        }
         if (p.peek_punct() == ";") { p = p.advance(); }
         var rhs: Expr = av.expr;
         // Dispatch on the lvalue shape: bare ident → StmtAssign;
