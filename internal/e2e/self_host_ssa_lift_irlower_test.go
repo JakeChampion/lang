@@ -24,8 +24,9 @@ import (
 // (arr_make / arr_get / arr_set / arr_len), scalar-field structs
 // (struct_make / struct_get, incl. nested), tuples (tuple_make /
 // tuple_get, incl. nested), f64 scalars (const_f64 + fadd / fmul /
-// fgt / … + fneg), i32<->f64 casts (i32_to_f64 / f64_to_i32), and string
-// concat / equality (str_concat / str_eq), with
+// fgt / … + fneg), i32<->f64 casts (i32_to_f64 / f64_to_i32), string
+// concat / equality (str_concat / str_eq), and the string builder
+// (strbuf_reset / _append / _take), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -155,6 +156,10 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"streq", `function main(): i32 { var a: string = "abc"; var b: string = "abc"; if (a == b) { return 1; } return 0; }`},
 		{"strne", `function main(): i32 { var a: string = "abc"; var b: string = "xyz"; if (a != b) { return 2; } return 0; }`},
 		{"concateq", `function main(): i32 { var a: string = "foo"; var b = a + "bar"; if (b == "foobar") { return 7; } return 0; }`},
+		// String builder over real irlower output (slice 8): reset + appends +
+		// take, checked by the built string's length and its content.
+		{"strbuf", `function main(): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append("cde"); var s = strbuf_take(); return s.len(); }`},
+		{"strbufeq", `function main(): i32 { strbuf_reset(); strbuf_append("x"); strbuf_append("yz"); var s = strbuf_take(); if (s == "xyz") { return 7; } return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

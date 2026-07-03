@@ -40,6 +40,9 @@
 //   - slice 7: STRING ops — `str_concat` -> the `concat` inst (fresh heap
 //     string), `str_eq` -> the `streq` inst (content compare; `!=` is str_eq
 //     + not). Both mirror build_func's string `+` / `==` lowering.
+//   - slice 8: STRING BUILDER — `strbuf_reset` / `strbuf_append` (void) /
+//     `strbuf_take` (pushes the built string) -> the matching SSA strbuf
+//     insts, the global amortised-O(1) builder build_func also emits.
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -326,6 +329,31 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 cur_insts = cur_insts.append(ssa.SInst { kind: "streq", result: eqv, args: [ea, eb], imm: 0, str: "" });
                 stack = stack.append(eqv);
             }
+        } else if (k == "strbuf_reset") {
+            // Reset the global amortised-O(1) string builder. The op PUSHES a
+            // (dummy) result in the IR stack model — as a statement it is
+            // followed by a `drop` — so the lift pushes the inst's result to
+            // keep the stack balanced. Mirrors build_func's strbuf_reset().
+            var sbr: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "strbuf_reset", result: sbr, args: [], imm: 0, str: "" });
+            stack = stack.append(sbr);
+        } else if (k == "strbuf_append") {
+            // Append a string's bytes to the builder. Consumes the string and
+            // pushes a (dummy) result the statement `drop` discards.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var sba: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var sbav: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "strbuf_append", result: sbav, args: [sba], imm: 0, str: "" });
+                stack = stack.append(sbav);
+            }
+        } else if (k == "strbuf_take") {
+            // Materialise a fresh [len, bytes…] string from the builder and reset
+            // it. Pushes the string. build_func's strbuf_take().
+            var sbt: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "strbuf_take", result: sbt, args: [], imm: 0, str: "" });
+            stack = stack.append(sbt);
         } else if (k == "load_local") {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
             else { stack = stack.append(slots[op.i32_imm]); }
