@@ -76,6 +76,7 @@ func TestSelfHostSSALiftDifferential(t *testing.T) {
 		{"factrec", `function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }`},
 		{"arrsum", `function main(): i32 { var a = [5, 10, 15]; return a[0] + a[1] + a[2]; }`},
 		{"structsum", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 10, y: 32 }; return p.x + p.y; }`},
+		{"tuplesum", `function main(): i32 { var t = (10, 32); return t.0 + t.1; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
