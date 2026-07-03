@@ -1083,6 +1083,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
         parser.StmtDefer(d) => { return eval_stmt(d.action, env); },
         parser.StmtVar(v) => {
             var val: Value = eval_expr(v.init, env);
+            // A runtime error in the initializer aborts the function rather
+            // than being bound and silently swallowed (#4348 item 4). eval_expr
+            // never yields the __noreturn__ sentinel (that's statement-level),
+            // so any VErr here is a real error to propagate.
+            if (is_err(val)) { return StepResult { env: env, ret: val }; }
             var env2: Env = env.bind(v.name, val);
             return StepResult { env: env2, ret: v_err("__noreturn__") };
         },
@@ -1092,9 +1097,10 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
         },
         parser.StmtExpr(x) => {
             var val: Value = eval_expr(x.value, env);
-            // Drop the value — expression-statements have side
-            // effects only (none in this scope; placeholder for
-            // when we grow call statements).
+            // A runtime error in an expression-statement aborts rather than
+            // being dropped and swallowed (#4348 item 4). Otherwise the value
+            // is discarded (expression-statements are side-effect only here).
+            if (is_err(val)) { return StepResult { env: env, ret: val }; }
             return StepResult { env: env, ret: v_err("__noreturn__") };
         },
         parser.StmtIf(ifs) => {
