@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -28,18 +27,6 @@ import (
 // `filepath.Abs` so the test still works under
 // `go test ./internal/e2e/...` (where Go sets cwd to the
 // package dir, three deep from the project root).
-
-// langSrcAbs joins the project root with the given relative
-// path. The project root is two directories up from this
-// test file (internal/e2e/ → internal/ → repo root).
-func langSrcAbs(t *testing.T, rel string) string {
-	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "..", rel))
-	if err != nil {
-		t.Fatalf("filepath.Abs(%q): %v", rel, err)
-	}
-	return abs
-}
 
 // runLangInterp runs `fern -interp <src>` and returns the
 // exit code + stdout + stderr. Shared by every runner-
