@@ -5621,12 +5621,12 @@ func bindingSlotTwoWord(t ast.Type, ptrW int) bool {
 //
 // Slot-shape guard: a two-word logical slot (wasm strings / inline dyn)
 // cannot share an index with a single-word one — the backend sizes
-// physical slots from the final scratchType stamp. Mixed shapes fall
-// back to a fresh slot (the pre-fix behavior) — the shadowing hazard
-// remains only for that rare cross-shape collision.
+// physical slots from the declared param / local / scratch type. Mixed
+// shapes fall back to a fresh slot (the pre-fix behavior) — the
+// shadowing hazard remains only for that rare cross-shape collision.
 func (b *builder) bindingSlot(name string, bt ast.Type) int32 {
 	if slot, ok := b.locals[name]; ok {
-		if bindingSlotTwoWord(b.scratchType[slot], b.ptrW) == bindingSlotTwoWord(bt, b.ptrW) {
+		if bindingSlotTwoWord(b.slotShapeType(slot), b.ptrW) == bindingSlotTwoWord(bt, b.ptrW) {
 			b.scratchType[slot] = bt
 			return slot
 		}
@@ -5635,6 +5635,30 @@ func (b *builder) bindingSlot(name string, bt ast.Type) int32 {
 	b.locals[name] = slot
 	b.scratchType[slot] = bt
 	return slot
+}
+
+// slotShapeType returns the type that sizes `slot`'s physical storage in
+// the backend: the declared param / info.Locals type for slots in those
+// ranges, the scratchType stamp for scratch-range slots. bindingSlot's
+// two-word shape guard MUST compare against this — lowerFunc's entry
+// loops never stamp scratchType for param / var slots, so reading
+// b.scratchType directly returns nil there, which reads as single-word
+// and let a pointer-shaped match binding reuse a same-named `var`'s
+// TWO-WORD string slot (wasm ptrW==4 + arm64 TwoWordOverride). The
+// backend then fanned every OpLoadLocal / OpStoreLocal of the binding
+// into two words while the IR balanced for one — an operand-stack
+// underflow that read garbage into the binding (observed as the
+// self-host interp's `parser.ExprTuple(t)` arm trapping its own bounds
+// check on arm64 once a sibling arm gained `var t: string`, #4497).
+func (b *builder) slotShapeType(slot int32) ast.Type {
+	if int(slot) < len(b.fn.Params) {
+		return b.fn.Params[slot].Type
+	}
+	locals := b.info.Locals[b.fn]
+	if idx := int(slot) - len(b.fn.Params); idx < len(locals) {
+		return locals[idx].Type
+	}
+	return b.scratchType[slot]
 }
 
 func (b *builder) stmt(s ast.Stmt) error {
