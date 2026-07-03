@@ -131,6 +131,30 @@ pub function digits_to_i32(s: string): i32 {
     return acc;
 }
 
+// digits_to_i64 is the i64-accumulating sibling of digits_to_i32: leading
+// optional `-` then a run of decimal digits, accumulating in 64 bits so a
+// decimal literal beyond i32 range (`5000000000`) survives instead of
+// wrapping. The interpreter uses it for i64 values that don't fit a VInt.
+pub function digits_to_i64(s: string): i64 {
+    if (s.len() == 0) { return 0; }
+    var neg: boolean = false;
+    var start: i32 = 0;
+    if (s[0] == 45) { neg = true; start = 1; }
+    var acc: i64 = 0;
+    var i: i32 = start;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) {
+            if (neg) { return 0 - acc; }
+            return acc;
+        }
+        acc = acc * 10 + ((b - 48) as i64);
+        i = i + 1;
+    }
+    if (neg) { return 0 - acc; }
+    return acc;
+}
+
 // is_all_digits reports whether `s` is a non-empty run of ASCII
 // decimal digits (no sign, no separators).
 pub function is_all_digits(s: string): boolean {
