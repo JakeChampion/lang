@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,7 +138,7 @@ func TestSelfHostStrReclaimIRX86_64(t *testing.T) {
 			// A `call __fn___fern_str_free` is the fresh-string box + buffer release.
 			// The bare label `__fn___fern_str_free:` (the helper definition, always
 			// emitted) is not a call, so counting the call form isolates the reclaim.
-			reclaims := bytes.Count(asm, []byte("call __fn___fern_str_free"))
+			reclaims := countUserStrFreeReclaims(asm)
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-string reclaim (call __fn___fern_str_free), found none — the string leaks", tc.name)
 			}
