@@ -116,7 +116,7 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	// asm_load_run pulls in flatten + checker on top of the core emitter set.
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
