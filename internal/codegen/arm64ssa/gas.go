@@ -449,79 +449,81 @@ func splitDynPair(key string) (string, string) {
 // (referencedRuntimeHelpers); its `bl fn_<name>` site links the label
 // fnLabel(name) writes. Leaf functions under the AArch64 PCS (arg/result x0).
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique":    emitRcIsUniqueHelper,
-	"__fern_rc_inc":          emitRcIncHelper,
-	"__fern_rc_dec":          emitRcDecHelper,
-	"__fern_box_free":        emitBoxFreeHelper,
-	"__fern_closure_drop":    emitClosureDropHelper,
-	"__str_len":              emitStrLenHelper,
-	"__str_eq":               emitStrEqHelper,
-	"__str_concat":           emitStrConcatHelper,
-	"__fern_str_dec":         emitStrDecHelper,
-	"__fern_arr_dec":         emitArrDecHelper,
-	"__fern_drop_arr_str":    emitDropArrStrHelper,
-	"__str_idx":              emitStrIdxHelper,
-	"__arr_idx":              emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
-	"__arr_idx_1":            emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
-	"__arr_idx_8":            emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
-	"__arr_idx_16":           emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
-	"__fern_arr_push_grow":   emitArrPushGrowHelper,
-	"__alloc_u8":             emitAllocU8Helper,
-	"__fern_arr_cow_inplace": emitArrCowInplaceHelper,
-	"string_from_bytes":      emitStringFromBytesHelper,
-	"__str_slice":            emitStrSliceHelper,
-	"args":                   emitArgsHelper,
-	"env":                    emitEnvHelper,
-	"write_file":             emitWriteFileHelper,
-	"read_file":              emitReadFileHelper,
-	"remove_file":            emitRemoveFileHelper,
-	"remove_dir_all":         emitRemoveDirAllHelper,
-	"temp_dir":               emitTempDirHelper,
-	"read_dir":               emitReadDirHelper,
-	"__fern_io_error":        emitIoErrorHelper,
-	"tcp_listen":              emitTcpListenHelper,
-	"tcp_accept":              emitTcpAcceptHelper,
-	"tcp_recv":                emitTcpRecvHelper,
-	"tcp_send":                emitTcpSendHelper,
-	"tcp_close":               emitTcpCloseHelper,
-	"tcp_pollable":            emitTcpPollableHelper,
-	"poll":                    emitPollHelper,
-	"wasm_timer_pollable":     emitWasmTimerPollableHelper,
-	"wasm_poll":               emitWasmPollHelper,
-	"wasm_pollable_drop":      emitWasmPollableDropHelper,
-	"wasm_block":              emitWasmBlockHelper,
-	"open_writer":             emitOpenWriterHelper,
-	"__method_Writer_write":   emitWriterWriteHelper,
-	"__method_Writer_close":   emitWriterCloseHelper,
-	"open_reader":             emitOpenReaderHelper,
+	"__fern_rc_is_unique":        emitRcIsUniqueHelper,
+	"__fern_rc_inc":              emitRcIncHelper,
+	"__fern_rc_dec":              emitRcDecHelper,
+	"__fern_box_free":            emitBoxFreeHelper,
+	"__fern_closure_drop":        emitClosureDropHelper,
+	"__str_len":                  emitStrLenHelper,
+	"__str_eq":                   emitStrEqHelper,
+	"__str_concat":               emitStrConcatHelper,
+	"__fern_str_dec":             emitStrDecHelper,
+	"__fern_arr_dec":             emitArrDecHelper,
+	"__fern_drop_arr_str":        emitDropArrStrHelper,
+	"__str_idx":                  emitStrIdxHelper,
+	"__arr_idx":                  emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
+	"__arr_idx_1":                emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
+	"__arr_idx_8":                emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
+	"__arr_idx_16":               emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
+	"__fern_arr_push_grow":       emitArrPushGrowHelper,
+	"__fern_arr_push_grow_ptr":   emitArrPushGrowAliasHelper("__fern_arr_push_grow_ptr"),
+	"__fern_arr_push_grow_str":   emitArrPushGrowAliasHelper("__fern_arr_push_grow_str"),
+	"__alloc_u8":                 emitAllocU8Helper,
+	"__fern_arr_cow_inplace":     emitArrCowInplaceHelper,
+	"string_from_bytes":          emitStringFromBytesHelper,
+	"__str_slice":                emitStrSliceHelper,
+	"args":                       emitArgsHelper,
+	"env":                        emitEnvHelper,
+	"write_file":                 emitWriteFileHelper,
+	"read_file":                  emitReadFileHelper,
+	"remove_file":                emitRemoveFileHelper,
+	"remove_dir_all":             emitRemoveDirAllHelper,
+	"temp_dir":                   emitTempDirHelper,
+	"read_dir":                   emitReadDirHelper,
+	"__fern_io_error":            emitIoErrorHelper,
+	"tcp_listen":                 emitTcpListenHelper,
+	"tcp_accept":                 emitTcpAcceptHelper,
+	"tcp_recv":                   emitTcpRecvHelper,
+	"tcp_send":                   emitTcpSendHelper,
+	"tcp_close":                  emitTcpCloseHelper,
+	"tcp_pollable":               emitTcpPollableHelper,
+	"poll":                       emitPollHelper,
+	"wasm_timer_pollable":        emitWasmTimerPollableHelper,
+	"wasm_poll":                  emitWasmPollHelper,
+	"wasm_pollable_drop":         emitWasmPollableDropHelper,
+	"wasm_block":                 emitWasmBlockHelper,
+	"open_writer":                emitOpenWriterHelper,
+	"__method_Writer_write":      emitWriterWriteHelper,
+	"__method_Writer_close":      emitWriterCloseHelper,
+	"open_reader":                emitOpenReaderHelper,
 	"__method_Reader_read_chunk": emitReaderReadChunkHelper,
-	"__method_Reader_read_line": emitReaderReadLineHelper,
-	"__method_Reader_close":   emitReaderCloseHelper,
-	"open_appender":           emitOpenAppenderHelper,
-	"stdin":                   emitStdHandleHelper("stdin", 0),
-	"stdout":                  emitStdHandleHelper("stdout", 1),
-	"stderr":                  emitStdHandleHelper("stderr", 2),
-	"print":                  emitPrintHelper,
-	"write":                  emitWriteHelper,
-	"eprint":                 emitEprintHelper,
-	"putchar":                emitPutcharHelper,
-	"exit":                   emitExitHelper,
-	"strbuf_reset":           emitStrbufResetHelper,
-	"strbuf_append":          emitStrbufAppendHelper,
-	"strbuf_take":            emitStrbufTakeHelper,
-	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
-	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
-	"__floor_f64":            emitFloatUnaryHelper("__floor_f64", "frintm"),
-	"__ceil_f64":             emitFloatUnaryHelper("__ceil_f64", "frintp"),
-	"__trunc_f64":            emitFloatUnaryHelper("__trunc_f64", "frintz"),
-	"__round_f64":            emitFloatUnaryHelper("__round_f64", "frinta"),
-	"__exp_f64":              emitExpF64Helper,
-	"__log_f64":              emitLogF64Helper,
-	"__pow_f64":              emitPowF64Helper,
-	"__sin_f64":              emitSinF64Helper,
-	"__cos_f64":              emitCosF64Helper,
-	"random_i32":             emitRandomI32Helper,
-	"random_bytes":           emitRandomBytesHelper,
+	"__method_Reader_read_line":  emitReaderReadLineHelper,
+	"__method_Reader_close":      emitReaderCloseHelper,
+	"open_appender":              emitOpenAppenderHelper,
+	"stdin":                      emitStdHandleHelper("stdin", 0),
+	"stdout":                     emitStdHandleHelper("stdout", 1),
+	"stderr":                     emitStdHandleHelper("stderr", 2),
+	"print":                      emitPrintHelper,
+	"write":                      emitWriteHelper,
+	"eprint":                     emitEprintHelper,
+	"putchar":                    emitPutcharHelper,
+	"exit":                       emitExitHelper,
+	"strbuf_reset":               emitStrbufResetHelper,
+	"strbuf_append":              emitStrbufAppendHelper,
+	"strbuf_take":                emitStrbufTakeHelper,
+	"__abs_f64":                  emitFloatUnaryHelper("__abs_f64", "fabs"),
+	"__sqrt_f64":                 emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
+	"__floor_f64":                emitFloatUnaryHelper("__floor_f64", "frintm"),
+	"__ceil_f64":                 emitFloatUnaryHelper("__ceil_f64", "frintp"),
+	"__trunc_f64":                emitFloatUnaryHelper("__trunc_f64", "frintz"),
+	"__round_f64":                emitFloatUnaryHelper("__round_f64", "frinta"),
+	"__exp_f64":                  emitExpF64Helper,
+	"__log_f64":                  emitLogF64Helper,
+	"__pow_f64":                  emitPowF64Helper,
+	"__sin_f64":                  emitSinF64Helper,
+	"__cos_f64":                  emitCosF64Helper,
+	"random_i32":                 emitRandomI32Helper,
+	"random_bytes":               emitRandomBytesHelper,
 }
 
 // emitFloatUnaryHelper returns the emitter for a single-instruction f64 unary
@@ -721,7 +723,7 @@ func emitPowF64Helper(w func(string, ...any)) {
 	w("\tstp x29, x30, [sp, #-32]!")
 	w("\tmov x29, sp")
 	w("\tstr x19, [sp, #16]")
-	w("\tmov x19, x1")               // y bits (x0 already = x bits)
+	w("\tmov x19, x1")                 // y bits (x0 already = x bits)
 	w("\tbl %s", fnLabel("__log_f64")) // x0 = ln(x) bits
 	w("\tfmov d0, x0")
 	w("\tfmov d1, x19") // y
@@ -906,8 +908,8 @@ func emitTcpListenHelper(w func(string, ...any)) {
 	// Build sockaddr_in { family=AF_INET, port=htons(port), addr=0 } on the stack.
 	w("\tsub sp, sp, #16")
 	w("\tmov w0, #2")
-	w("\tstrh w0, [sp]")   // sin_family
-	w("\trev16 w0, w19")   // htons(port)
+	w("\tstrh w0, [sp]") // sin_family
+	w("\trev16 w0, w19") // htons(port)
 	w("\tstrh w0, [sp, #2]")
 	w("\tstr wzr, [sp, #4]") // sin_addr = 0.0.0.0
 	w("\tstr xzr, [sp, #8]") // sin_zero
@@ -941,8 +943,8 @@ func emitTcpListenHelper(w func(string, ...any)) {
 func emitTcpAcceptHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("tcp_accept"))
-	w("\tmov x1, #0") // addr = NULL
-	w("\tmov x2, #0") // addrlen = NULL
+	w("\tmov x1, #0")   // addr = NULL
+	w("\tmov x2, #0")   // addrlen = NULL
 	w("\tmov x8, #202") // accept
 	w("\tsvc #0")
 	w("\tret")
@@ -1076,11 +1078,11 @@ func emitWriterHandleAlloc(w func(string, ...any), dst, fdReg string) {
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
 	w("\tmov w6, #1")
-	w("\tlsl w6, w6, #31")     // 0x80000000 immortal-rc sentinel
-	w("\tstr w6, [x4]")        // rc @ base (= ptr-8)
-	w("\tstr xzr, [x4, #8]")   // struct-type-id slot @ ptr+0 (unused)
+	w("\tlsl w6, w6, #31")          // 0x80000000 immortal-rc sentinel
+	w("\tstr w6, [x4]")             // rc @ base (= ptr-8)
+	w("\tstr xzr, [x4, #8]")        // struct-type-id slot @ ptr+0 (unused)
 	w("\tstr %s, [x4, #16]", fdReg) // fd @ ptr+8
-	w("\tadd %s, x4, #8", dst) // value pointer = base + 8
+	w("\tadd %s, x4, #8", dst)      // value pointer = base + 8
 }
 
 // emitOptionBox writes an Option[IoError] heap box and leaves its value pointer
@@ -1107,7 +1109,7 @@ func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
 		w("\tmov w6, #1")
 		w("\tstr w6, [x0]") // tag = 1 (None)
 	} else {
-		w("\tstr wzr, [x0]")          // tag = 0 (Some)
+		w("\tstr wzr, [x0]")                // tag = 0 (Some)
 		w("\tstr %s, [x0, #8]", payloadReg) // IoError payload
 	}
 }
@@ -1124,7 +1126,7 @@ func emitEmptyString(w func(string, ...any), dst string) {
 	w("\tadd x6, x4, #9")
 	w("\tstr x6, [x3]")
 	w("\tmov w7, #1")
-	w("\tstr w7, [x4]")     // rc = 1
+	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr wzr, [x4, #4]") // len = 0
 	w("\tadd %s, x4, #8", dst)
 	w("\tstrb wzr, [%s]", dst) // NUL
@@ -1191,7 +1193,7 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tstr x19, [x0, #8]")
 	w("\tb .Lssa_%s_ret", lbl)
 	w(".Lssa_%s_err:", lbl)
-	w("\tneg x0, x0") // errno
+	w("\tneg x0, x0")  // errno
 	w("\tmov x1, x19") // path
 	w("\tbl %s", fnLabel("__fern_io_error"))
 	w("\tmov x19, x0") // IoError box
@@ -1239,10 +1241,10 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
-	w("\tldr w19, [x0, #8]")   // fd @ ptr+8
-	w("\tmov x20, x1")         // data ptr
+	w("\tldr w19, [x0, #8]")    // fd @ ptr+8
+	w("\tmov x20, x1")          // data ptr
 	w("\tldur w22, [x20, #-4]") // byte length
-	w("\tmov x21, #0")         // bytes written
+	w("\tmov x21, #0")          // bytes written
 	w(".Lssa_wrw_loop:")
 	w("\tcmp x21, x22")
 	w("\tb.ge .Lssa_wrw_done")
@@ -1346,7 +1348,7 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\tmov x8, #63") // read
 	w("\tsvc #0")
 	w("\tcmp x0, #0")
-	w("\tble .Lssa_rrc_none") // EOF or error → None
+	w("\tble .Lssa_rrc_none")  // EOF or error → None
 	w("\tstur w0, [x11, #-4]") // len = bytes read
 	w("\tadd x1, x11, x0")
 	w("\tstrb wzr, [x1]") // trailing NUL
@@ -1473,8 +1475,8 @@ func emitPollHelper(w func(string, ...any)) {
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstr x23, [sp, #48]")
-	w("\tmov x20, x0")        // fds ptr
-	w("\tmov x23, x1")        // timeout_ms
+	w("\tmov x20, x0")          // fds ptr
+	w("\tmov x23, x1")          // timeout_ms
 	w("\tldur w19, [x20, #-4]") // nfds
 	w("\tcmp w19, #0")
 	w("\tb.le .Lssa_poll_none")
@@ -1550,21 +1552,23 @@ func emitPollHelper(w func(string, ...any)) {
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
-	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
-	"__fern_drop_arr_str": {"__fern_str_dec", "__fern_arr_dec"},
-	"write_file":          {"__fern_io_error"},
-	"read_file":           {"__fern_io_error"},
-	"remove_file":         {"__fern_io_error"},
-	"remove_dir_all":       {"__fern_io_error"},
-	"temp_dir":            {"__fern_io_error"},
-	"read_dir":            {"__fern_io_error"},
-	"open_writer":          {"__fern_io_error"},
-	"__method_Writer_write": {"__fern_io_error"},
-	"__method_Writer_close": {"__fern_io_error"},
-	"open_reader":           {"__fern_io_error"},
-	"__method_Reader_close": {"__fern_io_error"},
-	"open_appender":         {"__fern_io_error"},
-	"__pow_f64":           {"__log_f64", "__exp_f64"},
+	"__fern_closure_drop":      {"__fern_box_free", "__fern_rc_dec"},
+	"__fern_drop_arr_str":      {"__fern_str_dec", "__fern_arr_dec"},
+	"__fern_arr_push_grow_ptr": {"__fern_arr_push_grow"},
+	"__fern_arr_push_grow_str": {"__fern_arr_push_grow"},
+	"write_file":               {"__fern_io_error"},
+	"read_file":                {"__fern_io_error"},
+	"remove_file":              {"__fern_io_error"},
+	"remove_dir_all":           {"__fern_io_error"},
+	"temp_dir":                 {"__fern_io_error"},
+	"read_dir":                 {"__fern_io_error"},
+	"open_writer":              {"__fern_io_error"},
+	"__method_Writer_write":    {"__fern_io_error"},
+	"__method_Writer_close":    {"__fern_io_error"},
+	"open_reader":              {"__fern_io_error"},
+	"__method_Reader_close":    {"__fern_io_error"},
+	"open_appender":            {"__fern_io_error"},
+	"__pow_f64":                {"__log_f64", "__exp_f64"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -1573,87 +1577,91 @@ var runtimeHelperDeps = map[string][]string{
 // or, for a high heap address, the pointer). i32/void-returning helpers are
 // absent (the mask is correct or harmless for them).
 var helperReturns64 = map[string]bool{
-	"__str_concat":           true,
-	"__fern_box_free":        true,
-	"__fern_arr_push_grow":   true,
-	"__alloc_u8":             true,
-	"__fern_arr_cow_inplace": true,
-	"string_from_bytes":      true,
-	"__str_slice":            true,
-	"args":                   true,
-	"strbuf_take":            true,
-	"env":                    true,
-	"write_file":             true,
-	"read_file":              true,
-	"remove_file":            true,
-	"remove_dir_all":         true,
-	"temp_dir":               true,
-	"read_dir":               true,
-	"random_bytes":           true,
-	"tcp_recv":                true,
-	"open_writer":             true,
-	"__method_Writer_write":   true,
-	"__method_Writer_close":   true,
-	"open_reader":             true,
+	"__str_concat":               true,
+	"__fern_box_free":            true,
+	"__fern_arr_push_grow":       true,
+	"__fern_arr_push_grow_ptr":   true,
+	"__fern_arr_push_grow_str":   true,
+	"__alloc_u8":                 true,
+	"__fern_arr_cow_inplace":     true,
+	"string_from_bytes":          true,
+	"__str_slice":                true,
+	"args":                       true,
+	"strbuf_take":                true,
+	"env":                        true,
+	"write_file":                 true,
+	"read_file":                  true,
+	"remove_file":                true,
+	"remove_dir_all":             true,
+	"temp_dir":                   true,
+	"read_dir":                   true,
+	"random_bytes":               true,
+	"tcp_recv":                   true,
+	"open_writer":                true,
+	"__method_Writer_write":      true,
+	"__method_Writer_close":      true,
+	"open_reader":                true,
 	"__method_Reader_read_chunk": true,
-	"__method_Reader_read_line": true,
-	"__method_Reader_close":   true,
-	"open_appender":           true,
-	"stdin":                   true,
-	"stdout":                  true,
-	"stderr":                  true,
-	"__str_idx":              true,
-	"__arr_idx":              true,
-	"__arr_idx_1":            true,
-	"__arr_idx_8":            true,
-	"__arr_idx_16":           true,
-	"__abs_f64":              true,
-	"__sqrt_f64":             true,
-	"__floor_f64":            true,
-	"__ceil_f64":             true,
-	"__trunc_f64":            true,
-	"__round_f64":            true,
-	"__exp_f64":              true,
-	"__log_f64":              true,
-	"__pow_f64":              true,
-	"__sin_f64":              true,
-	"__cos_f64":              true,
+	"__method_Reader_read_line":  true,
+	"__method_Reader_close":      true,
+	"open_appender":              true,
+	"stdin":                      true,
+	"stdout":                     true,
+	"stderr":                     true,
+	"__str_idx":                  true,
+	"__arr_idx":                  true,
+	"__arr_idx_1":                true,
+	"__arr_idx_8":                true,
+	"__arr_idx_16":               true,
+	"__abs_f64":                  true,
+	"__sqrt_f64":                 true,
+	"__floor_f64":                true,
+	"__ceil_f64":                 true,
+	"__trunc_f64":                true,
+	"__round_f64":                true,
+	"__exp_f64":                  true,
+	"__log_f64":                  true,
+	"__pow_f64":                  true,
+	"__sin_f64":                  true,
+	"__cos_f64":                  true,
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
 // .bss heap section + cursor must exist whenever one is referenced even if no
 // program body has a direct heap op.
 var heapUsingHelpers = map[string]bool{
-	"__str_concat":           true,
-	"__fern_arr_push_grow":   true,
-	"__alloc_u8":             true,
-	"__fern_arr_cow_inplace": true,
-	"string_from_bytes":      true,
-	"__str_slice":            true,
-	"args":                   true,
-	"strbuf_take":            true,
-	"env":                    true,
-	"write_file":             true,
-	"read_file":              true,
-	"remove_file":            true,
-	"remove_dir_all":         true,
-	"temp_dir":               true,
-	"read_dir":               true,
-	"random_bytes":           true,
-	"tcp_recv":                true,
-	"poll":                    true,
-	"open_writer":             true,
-	"__method_Writer_write":   true,
-	"__method_Writer_close":   true,
-	"open_reader":             true,
+	"__str_concat":               true,
+	"__fern_arr_push_grow":       true,
+	"__fern_arr_push_grow_ptr":   true,
+	"__fern_arr_push_grow_str":   true,
+	"__alloc_u8":                 true,
+	"__fern_arr_cow_inplace":     true,
+	"string_from_bytes":          true,
+	"__str_slice":                true,
+	"args":                       true,
+	"strbuf_take":                true,
+	"env":                        true,
+	"write_file":                 true,
+	"read_file":                  true,
+	"remove_file":                true,
+	"remove_dir_all":             true,
+	"temp_dir":                   true,
+	"read_dir":                   true,
+	"random_bytes":               true,
+	"tcp_recv":                   true,
+	"poll":                       true,
+	"open_writer":                true,
+	"__method_Writer_write":      true,
+	"__method_Writer_close":      true,
+	"open_reader":                true,
 	"__method_Reader_read_chunk": true,
-	"__method_Reader_read_line": true,
-	"__method_Reader_close":   true,
-	"open_appender":           true,
-	"stdin":                   true,
-	"stdout":                  true,
-	"stderr":                  true,
-	"__fern_io_error":        true,
+	"__method_Reader_read_line":  true,
+	"__method_Reader_close":      true,
+	"open_appender":              true,
+	"stdin":                      true,
+	"stdout":                     true,
+	"stderr":                     true,
+	"__fern_io_error":            true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -2516,7 +2524,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tmov x0, #100")
 	w("\tneg x0, x0") // AT_FDCWD = -100
 	w("\tmov x1, x20")
-	w("\tmov x2, #0") // flags
+	w("\tmov x2, #0")  // flags
 	w("\tmov x8, #35") // unlinkat
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_rmf_err") // < 0 → error
@@ -2709,7 +2717,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tadd x15, x15, #1")
 	w("\tb .Lssa_rda_c1")
 	w(".Lssa_rda_c1d:")
-	w("\tmov w11, #47")        // '/'
+	w("\tmov w11, #47") // '/'
 	w("\tstrb w11, [x12, x9]")
 	// copy name at plen+1
 	w("\tmov x15, #0")
@@ -3047,7 +3055,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tadd x6, x5, #16")
 	w("\tadd x7, x4, x6")
 	w("\tstr x7, [x3]")
-	w("\tadd x27, x4, #16")     // container data
+	w("\tadd x27, x4, #16")      // container data
 	w("\tstur w23, [x27, #-12]") // cap = count
 	w("\tmov w9, #1")
 	w("\tstur w9, [x27, #-8]")  // rc = 1
@@ -3321,6 +3329,22 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w(".Lssa_apg_done:")
 	w("\tmov x0, x11") // return new_data
 	w("\tret")
+}
+
+// emitArrPushGrowAliasHelper writes __fern_arr_push_grow_ptr / _str as a
+// tail-branch alias of __fern_arr_push_grow. The shared IR routes rc-tracked-
+// element appends to these element-retaining variants (#3425) so backends
+// whose drop walks FREE elements stay balanced; the SSA runtime's dec helpers
+// never free (leak-world bump heap, docs/SSA-RC-RUNTIME.md), so the retain is
+// unnecessary here and the plain grow body is behaviour-identical. If the SSA
+// runtime ever gains freeing decs, these must become real element-retaining
+// bodies like the native/wasm ones.
+func emitArrPushGrowAliasHelper(name string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tb %s", fnLabel("__fern_arr_push_grow"))
+	}
 }
 
 // emitAllocU8Helper writes __alloc_u8(n) -> data: allocate a fresh
@@ -4125,7 +4149,7 @@ func boxDynLines(in x86.Inst, numAlloc int) []string {
 		fmt.Sprintf("mov %s, #1", wreg(s1)),
 		fmt.Sprintf("str %s, [%s]", wreg(s1), xreg(s2)), // rc = 1
 		fmt.Sprintf("add %s, %s, #24", xreg(s1), xreg(s2)),
-		fmt.Sprintf("str %s, [%s]", xreg(s1), xreg(s0)), // cursor = base + 16 + 8
+		fmt.Sprintf("str %s, [%s]", xreg(s1), xreg(s0)),   // cursor = base + 16 + 8
 		fmt.Sprintf("add %s, %s, #8", xreg(s2), xreg(s2)), // payload = base + 8
 	}
 	// Store data @+0 and vtable @+8. The allocatable-file / slot homes the

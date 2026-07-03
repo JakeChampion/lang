@@ -19418,10 +19418,41 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpStoreLocal, I32: oldLenSlot})
 
 	// buf = __fern_arr_push_grow(arr, oldLen, stride)
+	//
+	// Element-retain on the grow COPY (#3425): when the elements are
+	// rc-tracked pointers (string / struct / enum / array / tuple /
+	// closure), the plain helper's raw memcpy would leave the fresh
+	// buffer sharing the old buffer's element pointers at unchanged rc.
+	// The old buffer is still owned by its holder (e.g. the struct whose
+	// field was appended FROM in the `S{f: s.f.append(v)}` functional-
+	// update threading); when that holder's walk-drop later ran at the
+	// old buffer's rc==1 it dec'd/freed elements the grown copy still
+	// referenced — a use-after-free once the element drops actually free
+	// (string elements via __fern_drop_arr_str, struct elements via the
+	// deep __drop_arr_struct_<E> walks). Route those element types
+	// through __fern_arr_push_grow_ptr / _str, which retain each copied
+	// element exactly like __fern_arr_cow_inplace_ptr does for `.with`.
+	// Gated on RcFreeEnabled: free-off never walk-frees elements, so the
+	// plain helper keeps that baseline byte-identical.
+	growHelper := "__fern_arr_push_grow"
+	if ast.RcFreeEnabled {
+		if _, isStr := elemType.(ast.StringType); isStr {
+			if b.twoWordStrings() {
+				// Two-word (data, len) elements: pair-walking retain.
+				growHelper = "__fern_arr_push_grow_str"
+			} else if b.ptrW == 8 {
+				// Native single-word string elements: plain pointer
+				// retain (rc_inc guards SSO / literal / sentinel).
+				growHelper = "__fern_arr_push_grow_ptr"
+			}
+		} else if arrElemIsRcTracked(elemType) {
+			growHelper = "__fern_arr_push_grow_ptr"
+		}
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_push_grow", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Str: growHelper, I32: 3})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})

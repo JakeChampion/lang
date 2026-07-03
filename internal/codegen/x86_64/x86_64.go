@@ -304,6 +304,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
+	if g.usesArrPushGrowPtr {
+		g.emitArrPushGrowPtrRuntime()
+	}
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
 	}
@@ -619,6 +622,19 @@ type generator struct {
 	// buffer (rc>1 OR cap exhausted). See
 	// docs/RC-PERCEUS-PLAN.md "Phase 2".
 	usesArrPushGrow bool
+	// usesArrPushGrowPtr gates `__fern_arr_push_grow_ptr` — the
+	// rc-tracked-element variant of __fern_arr_push_grow, used by the
+	// IR's `.append` lowering when the element is a single-word
+	// rc-tracked pointer (string / struct / enum / array / tuple /
+	// closure). On the COPY path (rc>1 or capacity exhausted) it inc's
+	// each copied element so the fresh buffer independently owns them.
+	// The plain helper's raw memcpy left the copy sharing the old
+	// buffer's element pointers at unchanged rc; when the old buffer's
+	// walk-drop (__fern_drop_arr_str / __drop_arr_struct_<E>) later ran
+	// at rc==1 it freed elements the grown copy still referenced — the
+	// #3425 self-host-driver heap corruption (poison-mode-confirmed
+	// use-after-free on EmitState.needed's "struct_drop:<T>" keys).
+	usesArrPushGrowPtr bool
 	// usesArrCowInPlace gates `__fern_arr_cow_inplace` — the
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. See arm64's mirror.
@@ -756,6 +772,11 @@ func (g *generator) recordUse(target string) {
 		g.usesArrPushGrow = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "__fern_arr_push_grow_ptr":
+		g.usesArrPushGrowPtr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesRcInc = true
 	case "__fern_arr_cow_inplace":
 		g.usesArrCowInPlace = true
 		g.usesAlloc = true
@@ -4506,6 +4527,122 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_arr_push_grow, .-__fern_arr_push_grow")
+}
+
+// emitArrPushGrowPtrRuntime emits `__fern_arr_push_grow_ptr(arr,
+// oldLen, stride) -> new_data` — the rc-tracked-pointer-element
+// variant of __fern_arr_push_grow. Identical fast path (rc==1 +
+// capacity → in-place, no element traffic: the buffer lives on with
+// its counts intact). On the COPY path, after the memcpy it walks the
+// oldLen copied elements and __fern_rc_inc's each so the fresh buffer
+// independently OWNS its references — __fern_rc_inc's null / SSO
+// low-bit / below-heap / static-sentinel guards make the walk safe
+// for every element category this is routed for (single-word strings
+// included). Without the retain the copy shared the old buffer's
+// element pointers at unchanged rc; the old buffer's later walk-drop
+// at rc==1 (__fern_drop_arr_str / __drop_arr_struct_<E> / deep struct
+// drops) freed elements the grown copy still referenced — the #3425
+// heap corruption. Mirrors __fern_arr_cow_inplace_ptr's element-retain
+// loop (#4187), which fixed the same gap for `.with`.
+//
+// System V inputs: rdi=arr, esi=oldLen, edx=stride. Returns new data
+// pointer in rax.
+func (g *generator) emitArrPushGrowPtrRuntime() {
+	g.line("")
+	g.line(".globl __fern_arr_push_grow_ptr")
+	g.line(".type __fern_arr_push_grow_ptr, @function")
+	g.label("__fern_arr_push_grow_ptr")
+	// Fast path: rc == 1 AND oldLen < cap → in place (rc = 2, len++).
+	g.emit("mov eax, dword ptr [rdi - 8]") // rc
+	g.emit("cmp eax, 1")
+	g.emit("jne .Lpushp_copy")
+	g.emit("mov eax, dword ptr [rdi - 12]") // cap
+	g.emit("cmp esi, eax")
+	g.emit("jge .Lpushp_copy")
+	g.emit("mov dword ptr [rdi - 8], 2")
+	g.emit("lea eax, [rsi + 1]")
+	g.emit("mov dword ptr [rdi - 4], eax")
+	g.emit("mov rax, rdi")
+	g.emit("ret")
+	g.label(".Lpushp_copy")
+	// Copy path — same register plan as __fern_arr_push_grow.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("push r15")
+	g.emit("sub rsp, 8")    // pad to 16-byte alignment
+	g.emit("mov rbx, rdi")  // rbx = arr
+	g.emit("mov r12d, esi") // r12d = oldLen
+	g.emit("mov r13d, edx") // r13d = stride
+	g.emit("mov r14d, esi")
+	g.emit("add r14d, 1") // r14d = newLen = oldLen + 1
+	// newCap = max(2 * newLen, 4)
+	g.emit("mov r15d, r14d")
+	g.emit("shl r15d, 1")
+	g.emit("cmp r15d, 4")
+	g.emit("jge .Lpushp_cap_ok")
+	g.emit("mov r15d, 4")
+	g.label(".Lpushp_cap_ok")
+	// headerBytes = max(16, stride).
+	g.emit("mov ecx, 16")
+	g.emit("cmp r13d, 16")
+	g.emit("jle .Lpushp_hdr_set")
+	g.emit("mov ecx, r13d")
+	g.label(".Lpushp_hdr_set")
+	g.emit("push rcx")   // stash headerBytes
+	g.emit("sub rsp, 8") // re-pad to 16 alignment
+	// allocSize = headerBytes + newCap * stride.
+	g.emit("mov eax, r15d")
+	g.emit("imul eax, r13d")
+	g.emit("add eax, ecx")
+	g.emit("mov edi, eax")
+	g.emit("call __fern_alloc")
+	g.emit("mov rcx, qword ptr [rsp + 8]") // reload headerBytes
+	g.emit("lea r11, [rax + rcx]")         // r11 = new_data
+	g.emit("lea rdx, [rax + rcx - 12]")
+	g.emit("mov dword ptr [rdx], r15d") // cap
+	g.emit("lea rdx, [rax + rcx - 8]")
+	g.emit("mov dword ptr [rdx], 1") // rc = 1
+	g.emit("lea rdx, [rax + rcx - 4]")
+	g.emit("mov dword ptr [rdx], r14d") // len = newLen
+	// memcpy(new_data, arr, oldLen * stride)
+	g.emit("mov rdi, r11")
+	g.emit("mov rsi, rbx")
+	g.emit("mov eax, r12d")
+	g.emit("imul eax, r13d")
+	g.emit("mov edx, eax")
+	g.emit("mov qword ptr [rsp], r11") // stash new_data across the call
+	g.emit("call __fern_memcpy")
+	g.emit("mov rbx, qword ptr [rsp]") // rbx = new_data (survives rc_inc)
+	// Element-retain loop: inc each copied pointer element so the fresh
+	// buffer owns its own reference. r12 = oldLen, r13 = stride survive
+	// __fern_rc_inc (callee-saved). r15 = i.
+	g.emit("xor r15, r15")
+	g.label(".Lpushp_inc_loop")
+	g.emit("cmp r15d, r12d")
+	g.emit("jge .Lpushp_inc_done")
+	g.emit("mov rax, r15")
+	g.emit("imul rax, r13")
+	g.emit("mov rdi, qword ptr [rbx + rax]") // element pointer (8-byte)
+	g.emit("call __fern_rc_inc")             // guards null / SSO / low / sentinel
+	g.emit("inc r15")
+	g.emit("jmp .Lpushp_inc_loop")
+	g.label(".Lpushp_inc_done")
+	g.emit("mov rax, rbx") // return new_data
+	// Tear down: three 8-byte slots above the callee-saves (prolog pad
+	// + pushed headerBytes + inner pad).
+	g.emit("add rsp, 24")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_arr_push_grow_ptr, .-__fern_arr_push_grow_ptr")
 }
 
 // emitArrCowInPlaceRuntime emits `__fern_arr_cow_inplace(arr,
