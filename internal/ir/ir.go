@@ -7257,9 +7257,24 @@ func (b *builder) expr(e ast.Expr) error {
 		if err := b.expr(n.Then); err != nil {
 			return err
 		}
+		// Counted yield (#4399 sink 4a): an arm that yields an ALIASED
+		// pointer-shaped value (bare ident / field / index — the
+		// needsRcIncOnAlias shapes) incs it, so the if-expression's
+		// result is an OWNED reference no matter which arm ran (a fresh
+		// arm value — call result / literal / constructor — reads false
+		// and moves out as-is). This is what lets computeFreeEligible
+		// drop the escape taint for those yield shapes: the source local
+		// stays reclaimable, and the consumer's own drop balances the
+		// inc. Slice yields stay uncounted views and keep their taint.
+		if needsRcIncOnAlias(n.Then, b) {
+			b.emitAliasInc(n.Then)
+		}
 		b.elseBranch()
 		if err := b.expr(n.Else); err != nil {
 			return err
+		}
+		if needsRcIncOnAlias(n.Else, b) {
+			b.emitAliasInc(n.Else)
 		}
 		b.closeScope()
 	case *ast.MatchExpr:
