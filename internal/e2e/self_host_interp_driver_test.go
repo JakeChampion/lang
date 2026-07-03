@@ -46,6 +46,13 @@ var interpProgs = []struct {
 	{"sci-float-exp", "function main(): i32 { if (1e3 == 1000.0) { return 7; } return 0; }", 7},
 	{"sci-float-frac", "function main(): i32 { if (1.5e2 == 150.0) { return 7; } return 0; }", 7},
 	{"sci-float-neg-exp", "function main(): i32 { var b: f64 = 1e-2; if (b > 0.009 && b < 0.011) { return 7; } return 0; }", 7},
+	// Postfix chains on a bool literal (#4338): parse_primary's true/false
+	// arms returned the bare bool ExprResult without threading it through
+	// parse_postfix (unlike the number / string arms), so `true.to_i()` was
+	// parsed as just `true` and the `.to_i() + 41` suffix was silently
+	// dropped — the interp returned 1 (the bool) instead of 42. Now both
+	// bool arms route through parse_postfix, so the method call + add apply.
+	{"bool-literal-postfix", "function (b: boolean) to_i(): i32 { if (b) { return 1; } return 0; } function main(): i32 { return true.to_i() + 41; }", 42},
 	{"locals", "function main(): i32 { var x: i32 = 10; var y: i32 = 32; return x + y; }", 42},
 	{"if", "function main(): i32 { if (5 > 3) { return 1; } return 0; }", 1},
 	{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(19, 23); }", 42},
