@@ -1699,8 +1699,8 @@ func TestLowerStringReclaimOnNative(t *testing.T) {
 // native single-word STRING local passed as an argument to a USER function may
 // be RETAINED by the callee (stored into a container it returns — the
 // intraprocedural escape analysis can't see it), so it must NOT be reclaimed
-// caller-side (freeing it would dangle the retained copy — the nested
-// control-flow miscompile in ir_x86.fern's push_scope). `keep(s)` is a user
+// caller-side (freeing it would dangle the retained copy — a nested
+// control-flow miscompile observed in a self-host codegen helper). `keep(s)` is a user
 // call, so `s` is tainted and no __fern_str_dec fires for it. (A builtin borrow
 // like `s.len()` — TestLowerStringReclaimOnNative — still reclaims: the method
 // receiver Args[0] is skipped.)
