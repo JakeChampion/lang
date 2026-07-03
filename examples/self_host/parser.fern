@@ -1444,11 +1444,14 @@ function parse_primary(p: Par): ExprResult {
         lexer.TokKeyword(x) => {
             if (x.name == "true") {
                 p = p.advance();
-                return ExprResult { par: p, expr: e_bool(true) };
+                // Route through parse_postfix like the number / string literal
+                // arms so a postfix chain on a bool literal (`true.to_i()`) is
+                // parsed, not silently dropped (#4338).
+                return parse_postfix(p, e_bool(true));
             }
             if (x.name == "false") {
                 p = p.advance();
-                return ExprResult { par: p, expr: e_bool(false) };
+                return parse_postfix(p, e_bool(false));
             }
             if (x.name == "function") {
                 // Anonymous function expression: `function (a:
