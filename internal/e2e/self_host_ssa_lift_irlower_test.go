@@ -24,7 +24,8 @@ import (
 // (arr_make / arr_get / arr_set / arr_len), scalar-field structs
 // (struct_make / struct_get, incl. nested), tuples (tuple_make /
 // tuple_get, incl. nested), f64 scalars (const_f64 + fadd / fmul /
-// fgt / … + fneg), and i32<->f64 casts (i32_to_f64 / f64_to_i32), with
+// fgt / … + fneg), i32<->f64 casts (i32_to_f64 / f64_to_i32), and string
+// concat / equality (str_concat / str_eq), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -147,6 +148,13 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"f2i", `function main(): i32 { var x: f64 = 3.7; return x as i32; }`},
 		{"i2f", `function main(): i32 { var n: i32 = 5; var x: f64 = n as f64; if (x > 4.5) { return 8; } return 0; }`},
 		{"castroundtrip", `function main(): i32 { var n: i32 = 10; var x: f64 = (n as f64) * 1.5; return x as i32; }`},
+		// String ops over real irlower output (slice 7): concatenation (fresh
+		// heap string) + length, content equality, inequality (str_eq + not),
+		// and a concat feeding an equality.
+		{"strconcat", `function main(): i32 { var a: string = "hel"; var b: string = "lo"; var c = a + b; return c.len(); }`},
+		{"streq", `function main(): i32 { var a: string = "abc"; var b: string = "abc"; if (a == b) { return 1; } return 0; }`},
+		{"strne", `function main(): i32 { var a: string = "abc"; var b: string = "xyz"; if (a != b) { return 2; } return 0; }`},
+		{"concateq", `function main(): i32 { var a: string = "foo"; var b = a + "bar"; if (b == "foobar") { return 7; } return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

@@ -179,6 +179,18 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "strcat") {
+        // return ("foo" + "bar").len();  => 6
+        // Exercises the slice-7 string lift (const_str + str_concat + str_len)
+        // through optimise / regalloc / emit on both backends.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_str("foo"), ir.op_const_str("bar"), ir.op_str_concat(),
+                ir.op_str_len(),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

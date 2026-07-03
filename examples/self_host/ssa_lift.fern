@@ -37,6 +37,9 @@
 //   - slice 6: i32<->f64 CASTS — `i32_to_f64` -> unary "as_f64" (cvtsi2sd),
 //     `f64_to_i32` -> unary "as_i32" (cvttsd2si, truncating). f64->i64 stays
 //     out (i64 territory).
+//   - slice 7: STRING ops — `str_concat` -> the `concat` inst (fresh heap
+//     string), `str_eq` -> the `streq` inst (content compare; `!=` is str_eq
+//     + not). Both mirror build_func's string `+` / `==` lowering.
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -295,6 +298,33 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var slv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: slv, args: [sp, zc], imm: 0, str: "" });
                 stack = stack.append(slv);
+            }
+        } else if (k == "str_concat") {
+            // `a + b` on strings → the SSA `concat` inst (a fresh heap string),
+            // args [left, right], exactly as build_func lowers string `+`. The
+            // fresh string is owned; irlower's RC around it is stripped like the
+            // rest (SSA leaks).
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var cb: i32 = stack[stack.len() - 1];
+                var ca: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var ccv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "concat", result: ccv, args: [ca, cb], imm: 0, str: "" });
+                stack = stack.append(ccv);
+            }
+        } else if (k == "str_eq") {
+            // `a == b` on strings → the SSA `streq` inst (content comparison),
+            // args [left, right], result an i32 bool. irlower lowers `!=` as
+            // str_eq followed by `not`, which the lift already handles.
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var eb: i32 = stack[stack.len() - 1];
+                var ea: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var eqv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "streq", result: eqv, args: [ea, eb], imm: 0, str: "" });
+                stack = stack.append(eqv);
             }
         } else if (k == "load_local") {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
