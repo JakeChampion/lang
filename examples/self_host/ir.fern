@@ -875,6 +875,540 @@ pub function op_brif(depth: i32): Op {
 pub function op_drop(): Op { return op0("drop"); }
 pub function op_return(): Op { return op0("return"); }
 
+// ---- integer op-kind registry (issue #4394 lever 2) --------------------
+//
+// The canonical string<->int op-kind mapping, mirroring native's `ir.OpKind`
+// enum + its `String()` / `intOp` (internal/ir/ir.go:44, :344, :13652). Native
+// dispatches every backend op on an INT `OpKind` (an O(1) compare); the
+// self-host still tags each `Op.kind` with a STRING, so every backend dispatch
+// (asm_ir / asm_arm64_ir / wasm_ir / irlower / ir_x86) runs an O(len) string
+// compare inside its triple-nested emit loop, and each string tag fattens the
+// persistent Op box (the residual pinned on `Op.str` in
+// docs/IR-SELFCOMPILE-OOM-FINDINGS.md).
+//
+// This is slice 1 of that conversion: the canonical id<->name bijection + the
+// int-keyed classifier predicates, landed additively (nothing consumes them
+// yet, exactly like ir.fern slice 0). A later slice stamps `kind_id(op.kind)`
+// into an int field on `Op` at construction and rewrites the backend dispatch
+// ladders to compare ints, at which point the string `kind` becomes debug-only
+// (rendered via `kind_name`). Ids are stable and 1-based; 0 is KIND_INVALID (an
+// unknown / not-yet-registered tag), mirroring native's `OpInvalid = iota`.
+//
+// kind_id and kind_name are generated from ONE ordered vocabulary, so they are
+// mutual inverses by construction; ir_kind_run.fern asserts the round-trip over
+// the whole table as a regression backstop (a new op kind must be added here).
+//
+// Both directions are split into ~40-branch chunks: a single ~197-branch
+// dispatch is an oversized function the self-host backend miscompiles (#2720),
+// and ir.fern is compiled by that backend under the arm64 fixpoint self-compile
+// (asm_arm64.fern imports ./ir). Each chunk stays near render_op's proven-safe
+// size.
+
+// kind_count is the number of registered op kinds (ids 1..kind_count()).
+pub function kind_count(): i32 { return 197; }
+
+function kind_id_0(name: string): i32 {
+    if (name == "const_i32") { return 1; }
+    if (name == "const_i32_text") { return 2; }
+    if (name == "const_i64") { return 3; }
+    if (name == "const_f64") { return 4; }
+    if (name == "const_str") { return 5; }
+    if (name == "const_func") { return 6; }
+    if (name == "int_extend") { return 7; }
+    if (name == "int_wrap") { return 8; }
+    if (name == "int_cast") { return 9; }
+    if (name == "u32_wrap") { return 10; }
+    if (name == "i32_to_f64") { return 11; }
+    if (name == "f64_to_i32") { return 12; }
+    if (name == "f64_to_i64") { return 13; }
+    if (name == "f32_bits") { return 14; }
+    if (name == "f32_from_bits") { return 15; }
+    if (name == "f64_bits") { return 16; }
+    if (name == "f64_from_bits") { return 17; }
+    if (name == "load_local") { return 18; }
+    if (name == "store_local") { return 19; }
+    if (name == "tee_local") { return 20; }
+    if (name == "add") { return 21; }
+    if (name == "sub") { return 22; }
+    if (name == "mul") { return 23; }
+    if (name == "div_s") { return 24; }
+    if (name == "div_u") { return 25; }
+    if (name == "rem_s") { return 26; }
+    if (name == "rem_u") { return 27; }
+    if (name == "and") { return 28; }
+    if (name == "or") { return 29; }
+    if (name == "xor") { return 30; }
+    if (name == "shl") { return 31; }
+    if (name == "shr_s") { return 32; }
+    if (name == "shr_u") { return 33; }
+    if (name == "not") { return 34; }
+    if (name == "eq") { return 35; }
+    if (name == "ne") { return 36; }
+    if (name == "lt_s") { return 37; }
+    if (name == "le_s") { return 38; }
+    if (name == "gt_s") { return 39; }
+    if (name == "ge_s") { return 40; }
+    return 0;
+}
+function kind_id_1(name: string): i32 {
+    if (name == "lt_u") { return 41; }
+    if (name == "le_u") { return 42; }
+    if (name == "gt_u") { return 43; }
+    if (name == "ge_u") { return 44; }
+    if (name == "fadd") { return 45; }
+    if (name == "fsub") { return 46; }
+    if (name == "fmul") { return 47; }
+    if (name == "fdiv") { return 48; }
+    if (name == "feq") { return 49; }
+    if (name == "fne") { return 50; }
+    if (name == "flt") { return 51; }
+    if (name == "fle") { return 52; }
+    if (name == "fgt") { return 53; }
+    if (name == "fge") { return 54; }
+    if (name == "fneg") { return 55; }
+    if (name == "fabs") { return 56; }
+    if (name == "fsqrt") { return 57; }
+    if (name == "fceil") { return 58; }
+    if (name == "ffloor") { return 59; }
+    if (name == "ftrunc") { return 60; }
+    if (name == "fround") { return 61; }
+    if (name == "fexp") { return 62; }
+    if (name == "flog") { return 63; }
+    if (name == "fsin") { return 64; }
+    if (name == "fcos") { return 65; }
+    if (name == "fpow") { return 66; }
+    if (name == "load") { return 67; }
+    if (name == "store") { return 68; }
+    if (name == "load_i32") { return 69; }
+    if (name == "load_i64") { return 70; }
+    if (name == "load_ptr") { return 71; }
+    if (name == "store_i32") { return 72; }
+    if (name == "store_ptr") { return 73; }
+    if (name == "memcpy") { return 74; }
+    if (name == "memset") { return 75; }
+    if (name == "alloc") { return 76; }
+    if (name == "alloc_u8") { return 77; }
+    if (name == "free") { return 78; }
+    if (name == "ptr_width") { return 79; }
+    if (name == "heap_bump_bytes") { return 80; }
+    return 0;
+}
+function kind_id_2(name: string): i32 {
+    if (name == "raw_alloc") { return 81; }
+    if (name == "raw_store8") { return 82; }
+    if (name == "raw_load8") { return 83; }
+    if (name == "raw_store_ptr") { return 84; }
+    if (name == "raw_load_ptr") { return 85; }
+    if (name == "raw_string") { return 86; }
+    if (name == "arr_make") { return 87; }
+    if (name == "arr_get") { return 88; }
+    if (name == "arr_set") { return 89; }
+    if (name == "arr_len") { return 90; }
+    if (name == "arr_rc") { return 91; }
+    if (name == "arr_push") { return 92; }
+    if (name == "arr_push_owned") { return 93; }
+    if (name == "arr_push_i64") { return 94; }
+    if (name == "arr_push_f64") { return 95; }
+    if (name == "arr_slice") { return 96; }
+    if (name == "str_len") { return 97; }
+    if (name == "str_concat") { return 98; }
+    if (name == "str_eq") { return 99; }
+    if (name == "str_cmp") { return 100; }
+    if (name == "str_index") { return 101; }
+    if (name == "str_slice") { return 102; }
+    if (name == "str_from_bytes") { return 103; }
+    if (name == "str_bytes") { return 104; }
+    if (name == "str_split") { return 105; }
+    if (name == "str_to_upper") { return 106; }
+    if (name == "str_to_lower") { return 107; }
+    if (name == "str_repeat") { return 108; }
+    if (name == "str_trim") { return 109; }
+    if (name == "str_reverse") { return 110; }
+    if (name == "str_replace") { return 111; }
+    if (name == "str_chars") { return 112; }
+    if (name == "str_lines") { return 113; }
+    if (name == "str_starts_with") { return 114; }
+    if (name == "str_ends_with") { return 115; }
+    if (name == "str_index_of") { return 116; }
+    if (name == "strbuf_reset") { return 117; }
+    if (name == "strbuf_append") { return 118; }
+    if (name == "strbuf_take") { return 119; }
+    if (name == "opt_make") { return 120; }
+    return 0;
+}
+function kind_id_3(name: string): i32 {
+    if (name == "opt_none") { return 121; }
+    if (name == "opt_tag") { return 122; }
+    if (name == "opt_payload") { return 123; }
+    if (name == "map_new") { return 124; }
+    if (name == "map_set") { return 125; }
+    if (name == "map_len") { return 126; }
+    if (name == "map_get") { return 127; }
+    if (name == "map_has") { return 128; }
+    if (name == "map_get_or") { return 129; }
+    if (name == "map_delete") { return 130; }
+    if (name == "map_keys") { return 131; }
+    if (name == "map_values") { return 132; }
+    if (name == "map_iter") { return 133; }
+    if (name == "mapiter_has_next") { return 134; }
+    if (name == "mapiter_key") { return 135; }
+    if (name == "mapiter_value") { return 136; }
+    if (name == "mapiter_advance") { return 137; }
+    if (name == "struct_make") { return 138; }
+    if (name == "struct_get") { return 139; }
+    if (name == "struct_set") { return 140; }
+    if (name == "struct_set_shape") { return 141; }
+    if (name == "tuple_make") { return 142; }
+    if (name == "tuple_get") { return 143; }
+    if (name == "tuple_set") { return 144; }
+    if (name == "variant_is") { return 145; }
+    if (name == "dyn_box") { return 146; }
+    if (name == "dyn_dispatch") { return 147; }
+    if (name == "dyn_downcast") { return 148; }
+    if (name == "call_direct") { return 149; }
+    if (name == "call_indirect") { return 150; }
+    if (name == "call_closure_direct") { return 151; }
+    if (name == "block") { return 152; }
+    if (name == "loop") { return 153; }
+    if (name == "if") { return 154; }
+    if (name == "else") { return 155; }
+    if (name == "end") { return 156; }
+    if (name == "br") { return 157; }
+    if (name == "brif") { return 158; }
+    if (name == "drop") { return 159; }
+    if (name == "return") { return 160; }
+    return 0;
+}
+function kind_id_4(name: string): i32 {
+    if (name == "print_int") { return 161; }
+    if (name == "print_i64") { return 162; }
+    if (name == "print_str") { return 163; }
+    if (name == "eprint_str") { return 164; }
+    if (name == "putchar") { return 165; }
+    if (name == "exit") { return 166; }
+    if (name == "read_int") { return 167; }
+    if (name == "read_line") { return 168; }
+    if (name == "read_file") { return 169; }
+    if (name == "write_file") { return 170; }
+    if (name == "read_dir") { return 171; }
+    if (name == "remove_dir_all") { return 172; }
+    if (name == "remove_file") { return 173; }
+    if (name == "temp_dir") { return 174; }
+    if (name == "stat") { return 175; }
+    if (name == "env") { return 176; }
+    if (name == "subprocess") { return 177; }
+    if (name == "read_chunk") { return 178; }
+    if (name == "reader_close") { return 179; }
+    if (name == "args") { return 180; }
+    if (name == "sleep_ms") { return 181; }
+    if (name == "monotonic_ns") { return 182; }
+    if (name == "now_ns") { return 183; }
+    if (name == "now_unix_ms") { return 184; }
+    if (name == "random_bytes") { return 185; }
+    if (name == "random_i32") { return 186; }
+    if (name == "poll") { return 187; }
+    if (name == "timer_fd") { return 188; }
+    if (name == "wasm_timer_pollable") { return 189; }
+    if (name == "wasm_pollable_drop") { return 190; }
+    if (name == "wasm_block") { return 191; }
+    if (name == "wasm_poll") { return 192; }
+    if (name == "tcp_connect") { return 193; }
+    if (name == "tcp_send") { return 194; }
+    if (name == "tcp_recv") { return 195; }
+    if (name == "tcp_close") { return 196; }
+    if (name == "tcp_pollable") { return 197; }
+    return 0;
+}
+
+// kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
+// an unknown tag). The inverse of kind_name. Each chunk returns 0 for "not
+// mine", so the first non-zero wins and an unknown tag falls through to 0.
+pub function kind_id(name: string): i32 {
+    var r: i32 = 0;
+    r = kind_id_0(name); if (r != 0) { return r; }
+    r = kind_id_1(name); if (r != 0) { return r; }
+    r = kind_id_2(name); if (r != 0) { return r; }
+    r = kind_id_3(name); if (r != 0) { return r; }
+    r = kind_id_4(name); if (r != 0) { return r; }
+    return 0;
+}
+
+function kind_name_0(id: i32): string {
+    if (id == 1) { return "const_i32"; }
+    if (id == 2) { return "const_i32_text"; }
+    if (id == 3) { return "const_i64"; }
+    if (id == 4) { return "const_f64"; }
+    if (id == 5) { return "const_str"; }
+    if (id == 6) { return "const_func"; }
+    if (id == 7) { return "int_extend"; }
+    if (id == 8) { return "int_wrap"; }
+    if (id == 9) { return "int_cast"; }
+    if (id == 10) { return "u32_wrap"; }
+    if (id == 11) { return "i32_to_f64"; }
+    if (id == 12) { return "f64_to_i32"; }
+    if (id == 13) { return "f64_to_i64"; }
+    if (id == 14) { return "f32_bits"; }
+    if (id == 15) { return "f32_from_bits"; }
+    if (id == 16) { return "f64_bits"; }
+    if (id == 17) { return "f64_from_bits"; }
+    if (id == 18) { return "load_local"; }
+    if (id == 19) { return "store_local"; }
+    if (id == 20) { return "tee_local"; }
+    if (id == 21) { return "add"; }
+    if (id == 22) { return "sub"; }
+    if (id == 23) { return "mul"; }
+    if (id == 24) { return "div_s"; }
+    if (id == 25) { return "div_u"; }
+    if (id == 26) { return "rem_s"; }
+    if (id == 27) { return "rem_u"; }
+    if (id == 28) { return "and"; }
+    if (id == 29) { return "or"; }
+    if (id == 30) { return "xor"; }
+    if (id == 31) { return "shl"; }
+    if (id == 32) { return "shr_s"; }
+    if (id == 33) { return "shr_u"; }
+    if (id == 34) { return "not"; }
+    if (id == 35) { return "eq"; }
+    if (id == 36) { return "ne"; }
+    if (id == 37) { return "lt_s"; }
+    if (id == 38) { return "le_s"; }
+    if (id == 39) { return "gt_s"; }
+    if (id == 40) { return "ge_s"; }
+    return "invalid";
+}
+function kind_name_1(id: i32): string {
+    if (id == 41) { return "lt_u"; }
+    if (id == 42) { return "le_u"; }
+    if (id == 43) { return "gt_u"; }
+    if (id == 44) { return "ge_u"; }
+    if (id == 45) { return "fadd"; }
+    if (id == 46) { return "fsub"; }
+    if (id == 47) { return "fmul"; }
+    if (id == 48) { return "fdiv"; }
+    if (id == 49) { return "feq"; }
+    if (id == 50) { return "fne"; }
+    if (id == 51) { return "flt"; }
+    if (id == 52) { return "fle"; }
+    if (id == 53) { return "fgt"; }
+    if (id == 54) { return "fge"; }
+    if (id == 55) { return "fneg"; }
+    if (id == 56) { return "fabs"; }
+    if (id == 57) { return "fsqrt"; }
+    if (id == 58) { return "fceil"; }
+    if (id == 59) { return "ffloor"; }
+    if (id == 60) { return "ftrunc"; }
+    if (id == 61) { return "fround"; }
+    if (id == 62) { return "fexp"; }
+    if (id == 63) { return "flog"; }
+    if (id == 64) { return "fsin"; }
+    if (id == 65) { return "fcos"; }
+    if (id == 66) { return "fpow"; }
+    if (id == 67) { return "load"; }
+    if (id == 68) { return "store"; }
+    if (id == 69) { return "load_i32"; }
+    if (id == 70) { return "load_i64"; }
+    if (id == 71) { return "load_ptr"; }
+    if (id == 72) { return "store_i32"; }
+    if (id == 73) { return "store_ptr"; }
+    if (id == 74) { return "memcpy"; }
+    if (id == 75) { return "memset"; }
+    if (id == 76) { return "alloc"; }
+    if (id == 77) { return "alloc_u8"; }
+    if (id == 78) { return "free"; }
+    if (id == 79) { return "ptr_width"; }
+    if (id == 80) { return "heap_bump_bytes"; }
+    return "invalid";
+}
+function kind_name_2(id: i32): string {
+    if (id == 81) { return "raw_alloc"; }
+    if (id == 82) { return "raw_store8"; }
+    if (id == 83) { return "raw_load8"; }
+    if (id == 84) { return "raw_store_ptr"; }
+    if (id == 85) { return "raw_load_ptr"; }
+    if (id == 86) { return "raw_string"; }
+    if (id == 87) { return "arr_make"; }
+    if (id == 88) { return "arr_get"; }
+    if (id == 89) { return "arr_set"; }
+    if (id == 90) { return "arr_len"; }
+    if (id == 91) { return "arr_rc"; }
+    if (id == 92) { return "arr_push"; }
+    if (id == 93) { return "arr_push_owned"; }
+    if (id == 94) { return "arr_push_i64"; }
+    if (id == 95) { return "arr_push_f64"; }
+    if (id == 96) { return "arr_slice"; }
+    if (id == 97) { return "str_len"; }
+    if (id == 98) { return "str_concat"; }
+    if (id == 99) { return "str_eq"; }
+    if (id == 100) { return "str_cmp"; }
+    if (id == 101) { return "str_index"; }
+    if (id == 102) { return "str_slice"; }
+    if (id == 103) { return "str_from_bytes"; }
+    if (id == 104) { return "str_bytes"; }
+    if (id == 105) { return "str_split"; }
+    if (id == 106) { return "str_to_upper"; }
+    if (id == 107) { return "str_to_lower"; }
+    if (id == 108) { return "str_repeat"; }
+    if (id == 109) { return "str_trim"; }
+    if (id == 110) { return "str_reverse"; }
+    if (id == 111) { return "str_replace"; }
+    if (id == 112) { return "str_chars"; }
+    if (id == 113) { return "str_lines"; }
+    if (id == 114) { return "str_starts_with"; }
+    if (id == 115) { return "str_ends_with"; }
+    if (id == 116) { return "str_index_of"; }
+    if (id == 117) { return "strbuf_reset"; }
+    if (id == 118) { return "strbuf_append"; }
+    if (id == 119) { return "strbuf_take"; }
+    if (id == 120) { return "opt_make"; }
+    return "invalid";
+}
+function kind_name_3(id: i32): string {
+    if (id == 121) { return "opt_none"; }
+    if (id == 122) { return "opt_tag"; }
+    if (id == 123) { return "opt_payload"; }
+    if (id == 124) { return "map_new"; }
+    if (id == 125) { return "map_set"; }
+    if (id == 126) { return "map_len"; }
+    if (id == 127) { return "map_get"; }
+    if (id == 128) { return "map_has"; }
+    if (id == 129) { return "map_get_or"; }
+    if (id == 130) { return "map_delete"; }
+    if (id == 131) { return "map_keys"; }
+    if (id == 132) { return "map_values"; }
+    if (id == 133) { return "map_iter"; }
+    if (id == 134) { return "mapiter_has_next"; }
+    if (id == 135) { return "mapiter_key"; }
+    if (id == 136) { return "mapiter_value"; }
+    if (id == 137) { return "mapiter_advance"; }
+    if (id == 138) { return "struct_make"; }
+    if (id == 139) { return "struct_get"; }
+    if (id == 140) { return "struct_set"; }
+    if (id == 141) { return "struct_set_shape"; }
+    if (id == 142) { return "tuple_make"; }
+    if (id == 143) { return "tuple_get"; }
+    if (id == 144) { return "tuple_set"; }
+    if (id == 145) { return "variant_is"; }
+    if (id == 146) { return "dyn_box"; }
+    if (id == 147) { return "dyn_dispatch"; }
+    if (id == 148) { return "dyn_downcast"; }
+    if (id == 149) { return "call_direct"; }
+    if (id == 150) { return "call_indirect"; }
+    if (id == 151) { return "call_closure_direct"; }
+    if (id == 152) { return "block"; }
+    if (id == 153) { return "loop"; }
+    if (id == 154) { return "if"; }
+    if (id == 155) { return "else"; }
+    if (id == 156) { return "end"; }
+    if (id == 157) { return "br"; }
+    if (id == 158) { return "brif"; }
+    if (id == 159) { return "drop"; }
+    if (id == 160) { return "return"; }
+    return "invalid";
+}
+function kind_name_4(id: i32): string {
+    if (id == 161) { return "print_int"; }
+    if (id == 162) { return "print_i64"; }
+    if (id == 163) { return "print_str"; }
+    if (id == 164) { return "eprint_str"; }
+    if (id == 165) { return "putchar"; }
+    if (id == 166) { return "exit"; }
+    if (id == 167) { return "read_int"; }
+    if (id == 168) { return "read_line"; }
+    if (id == 169) { return "read_file"; }
+    if (id == 170) { return "write_file"; }
+    if (id == 171) { return "read_dir"; }
+    if (id == 172) { return "remove_dir_all"; }
+    if (id == 173) { return "remove_file"; }
+    if (id == 174) { return "temp_dir"; }
+    if (id == 175) { return "stat"; }
+    if (id == 176) { return "env"; }
+    if (id == 177) { return "subprocess"; }
+    if (id == 178) { return "read_chunk"; }
+    if (id == 179) { return "reader_close"; }
+    if (id == 180) { return "args"; }
+    if (id == 181) { return "sleep_ms"; }
+    if (id == 182) { return "monotonic_ns"; }
+    if (id == 183) { return "now_ns"; }
+    if (id == 184) { return "now_unix_ms"; }
+    if (id == 185) { return "random_bytes"; }
+    if (id == 186) { return "random_i32"; }
+    if (id == 187) { return "poll"; }
+    if (id == 188) { return "timer_fd"; }
+    if (id == 189) { return "wasm_timer_pollable"; }
+    if (id == 190) { return "wasm_pollable_drop"; }
+    if (id == 191) { return "wasm_block"; }
+    if (id == 192) { return "wasm_poll"; }
+    if (id == 193) { return "tcp_connect"; }
+    if (id == 194) { return "tcp_send"; }
+    if (id == 195) { return "tcp_recv"; }
+    if (id == 196) { return "tcp_close"; }
+    if (id == 197) { return "tcp_pollable"; }
+    return "invalid";
+}
+
+// kind_name maps an integer id back to its op-kind tag ("invalid" for an
+// out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
+// check routes to the owning chunk.
+pub function kind_name(id: i32): string {
+    if (id <= 40) { return kind_name_0(id); }
+    if (id <= 80) { return kind_name_1(id); }
+    if (id <= 120) { return kind_name_2(id); }
+    if (id <= 160) { return kind_name_3(id); }
+    if (id <= 197) { return kind_name_4(id); }
+    return "invalid";
+}
+
+// ---- int-keyed classifier predicates -----------------------------------
+//
+// The forward-looking, int-keyed twins of native's `isConstOp` /
+// `isTerminator` / `isFoldableBinary` (internal/ir/constprop.go:313,
+// dce.go:110, fold.go:281). They take a `kind_id` so that once `Op` carries
+// its int tag the backend passes / optimisation gates become int compares with
+// no string traffic. Written against `kind_id("...")` rather than raw literal
+// ids so they stay correct if the vocabulary is reordered — the ids are an
+// implementation detail, the tags are the contract.
+
+// is_const_kind reports whether `id` is one of the constant-producing ops
+// (the arm a constant-propagation / fold pass keys its value table on).
+pub function is_const_kind(id: i32): boolean {
+    return id == kind_id("const_i32") || id == kind_id("const_i32_text")
+        || id == kind_id("const_i64") || id == kind_id("const_f64")
+        || id == kind_id("const_str") || id == kind_id("const_func");
+}
+
+// is_terminator_kind reports whether `id` ends a basic block with no
+// fall-through: `return` (leaves the function), unconditional `br`, and `exit`
+// (terminates the process, never returns). `brif` is conditional, so it is NOT
+// a terminator. Mirrors native's isTerminator (OpReturn / OpBr / …).
+pub function is_terminator_kind(id: i32): boolean {
+    return id == kind_id("return") || id == kind_id("br") || id == kind_id("exit");
+}
+
+// is_foldable_binary_kind reports whether `id` is an i32 binary op a constant
+// folder can evaluate at compile time (pop r, pop l, push apply) — the int-id
+// twin of irlower.is_bin_kind and native's isFoldableBinary. Division /
+// remainder are included (the folder models the total, never-trapping
+// x/0 = 0 semantics).
+pub function is_foldable_binary_kind(id: i32): boolean {
+    return id == kind_id("add") || id == kind_id("sub") || id == kind_id("mul")
+        || id == kind_id("div_s") || id == kind_id("rem_s")
+        || id == kind_id("and") || id == kind_id("or") || id == kind_id("xor")
+        || id == kind_id("shl") || id == kind_id("shr_s")
+        || id == kind_id("eq") || id == kind_id("ne")
+        || id == kind_id("lt_s") || id == kind_id("le_s")
+        || id == kind_id("gt_s") || id == kind_id("ge_s");
+}
+
+// is_commutative_kind reports whether `id` is an integer binary op whose
+// operands can be swapped without changing the result (so a peephole may
+// canonicalise operand order / fold a constant to either side). Subtraction,
+// shifts, division, and the ordered compares are NOT commutative.
+pub function is_commutative_kind(id: i32): boolean {
+    return id == kind_id("add") || id == kind_id("mul")
+        || id == kind_id("and") || id == kind_id("or") || id == kind_id("xor")
+        || id == kind_id("eq") || id == kind_id("ne");
+}
+
 // ---- printing ----------------------------------------------------------
 //
 // render_op gives a stable one-line textual form (the basis for a future
