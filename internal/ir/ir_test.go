@@ -2177,6 +2177,36 @@ function build(): i32 {
 	}
 }
 
+// TestLowerMapInEnumDeadDropCulled pins the dead map-reclamation cull: an enum
+// with a Map-typed variant, dropped WITHOUT the program ever constructing a Map
+// (so core/map's __map_drop_values is never loaded), must not leave a dangling
+// __map_drop_values call in the generated __drop_enum_ body. That call site is
+// dead — no Map value can exist — but the static reference would otherwise fail
+// as "unknown callee __map_drop_values" at wasm build / an undefined symbol on
+// the register backends. Regression for the array-element / accumulator reclaim
+// path (#4420) generating the enum drop fn regardless of the Map-in-enum
+// "documented safe leak" gate (enumRcPayloadsEligible).
+func TestLowerMapInEnumDeadDropCulled(t *testing.T) {
+	p := lowerSourceWith(t, `enum E { Obj(Map[i32, i32]), Num(i32) }
+function main(): i32 {
+    var xs: E[] = [];
+    xs = xs.append(Num(7));
+    return 0;
+}`, 8)
+	// No map is ever constructed, so __map_drop_values must be neither loaded nor
+	// referenced by any (generated) function.
+	if funcExists(p, "__map_drop_values") {
+		t.Fatalf("__map_drop_values should not be loaded when no map is constructed:\n%s", p)
+	}
+	for _, f := range p.Funcs {
+		for _, op := range f.Ops {
+			if op.Kind == OpCallDirect && op.Str == "__map_drop_values" {
+				t.Fatalf("dead __map_drop_values call left in %q (should be culled):\n%s", f.Name, p)
+			}
+		}
+	}
+}
+
 // TestLowerMapArrayOfStructValueReclaim verifies a Map[K, Item[]] deep-
 // drops each value array's element boxes + buffer via __drop_arr_struct_<Elem>
 // (through __drop_map_via_<drop>), rather than the shallow drop_arr_ptr

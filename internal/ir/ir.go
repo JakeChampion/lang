@@ -2964,6 +2964,43 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		})
 		out.Funcs = append(out.Funcs, fn)
 	}
+	// Dead map-reclamation cull. `__map_drop_values` (the core/map value-drop
+	// helper) is loaded only when a real Map value is created — `map_new` / a map
+	// literal pull core/map in. A program that uses a Map-typed struct field or
+	// enum payload only as a TYPE (e.g. a `JsonValue[]` holding only scalar
+	// `JString` variants — `JObject(Map[…])` is never constructed) never loads it,
+	// yet the generated `__drop_enum_`/`__drop_struct_` body still emits the
+	// map-reclamation call for that payload (genEnumDropFn / appendMapDrop). Since
+	// no Map value can exist, that call site is DEAD, but the static reference
+	// would fail as `unknown callee "__map_drop_values"` at wasm build (undefined
+	// symbol on the register backends). Drop the dead calls: `__map_drop_values`
+	// is `ptr -> ptr` (self-guards on rc==1), so removing the op is stack-neutral —
+	// the still-present `__fern_map_drop` (a backend runtime helper, always
+	// available) runs on the same unreachable pointer and is itself dead. When any
+	// live map exists `__map_drop_values` is loaded, so this pass is a no-op and no
+	// reachable reclamation is ever removed. This restores the "Map-in-enum deep
+	// drop is a documented safe leak" invariant (see enumRcPayloadsEligible) for
+	// the array-element / accumulator reclaim path that generates the drop fn
+	// regardless of that eligibility gate.
+	mapDropLoaded := false
+	for _, f := range out.Funcs {
+		if f.Name == "__map_drop_values" {
+			mapDropLoaded = true
+			break
+		}
+	}
+	if !mapDropLoaded {
+		for _, f := range out.Funcs {
+			filtered := f.Ops[:0]
+			for _, op := range f.Ops {
+				if op.Kind == OpCallDirect && op.Str == "__map_drop_values" {
+					continue
+				}
+				filtered = append(filtered, op)
+			}
+			f.Ops = filtered
+		}
+	}
 	return out, nil
 }
 
