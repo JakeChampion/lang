@@ -763,7 +763,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		// Struct-array field ALIASED from a borrowed param ident: construction
 		// incs the buffer, the struct's reclamation field-drop decs it, the
 		// borrowed param is not swept — balanced, detector clean across 2000 calls.
-		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function use(src: E[]): i32 { var h = H { es: src }; return h.es[0].v; } function main(): i32 { var shared: E[] = [E { v: 3 }, E { v: 4 }]; var s = 0; var i = 0; while (i < 2000) { s = s + use(shared); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
+		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function wrapH(src: E[]): i32 { var h = H { es: src }; return h.es[0].v; } function main(): i32 { var shared: E[] = [E { v: 3 }, E { v: 4 }]; var s = 0; var i = 0; while (i < 2000) { s = s + wrapH(shared); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
 		// Struct-array field from a fresh CALL value (sole owner, no inc): the
 		// field-drop frees it; a non-fresh callee would over-free here.
 		{"struct-arr-field-callvalue-no-underflow", "struct E { v: i32 } struct H { es: E[] } function mk(n: i32): E[] { return [E { v: n }, E { v: n * 2 }]; } function step(n: i32): i32 { var h = H { es: mk(n) }; return h.es[1].v; } function main(): i32 { var s = 0; var i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
