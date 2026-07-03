@@ -195,6 +195,19 @@ var interpProgs = []struct {
 	{"const-two", "const A: i32 = 3; const B: i32 = 4; function main(): i32 { return A * B; }", 12},
 	{"const-in-callee", "const K: i32 = 5; function helper(): i32 { return K * 2; } function main(): i32 { return helper(); }", 10},
 	{"const-string", "const S: string = \"hello\"; function main(): i32 { var s = S; return s.len() as i32; }", 5},
+
+	// Nullary enum variants: `E.Red` constructs a payload-less variant
+	// value (a zero-field struct tagged with the variant name), and a
+	// qualified variant pattern `E.Red` matches it by its final path
+	// segment. The interp previously errored on the `E.Red` field-access
+	// (bare enum-type object resolved to no value) and never constructed
+	// the value. Payload variants (`E.Some(x)`) are a separate follow-up.
+	{"enum-nullary-match", "enum E { A, B } function main(): i32 { var e = E.B; match (e) { E.A => { return 1; }, E.B => { return 2; } } }", 2},
+	{"enum-nullary-first", "enum E { A, B } function main(): i32 { var e = E.A; match (e) { E.A => { return 1; }, E.B => { return 2; } } }", 1},
+	{"enum-three-way", "enum Color { Red, Green, Blue } function main(): i32 { var c = Color.Green; match (c) { Color.Red => { return 1; }, Color.Green => { return 2; }, Color.Blue => { return 3; } } }", 2},
+	{"enum-wildcard-arm", "enum E { A, B, C } function main(): i32 { var e = E.C; match (e) { E.A => { return 1; }, _ => { return 9; } } }", 9},
+	{"enum-return-from-fn", "enum St { On, Off } function flip(s: St): St { match (s) { St.On => { return St.Off; }, St.Off => { return St.On; } } } function main(): i32 { var r = flip(St.On); match (r) { St.On => { return 1; }, St.Off => { return 0; } } }", 0},
+	{"enum-in-array", "enum E { A, B } function main(): i32 { var a: E[] = [E.A, E.B, E.A]; var n = 0; for x in a { match (x) { E.A => { n = n + 1; }, E.B => { n = n + 10; } } } return n; }", 12},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
