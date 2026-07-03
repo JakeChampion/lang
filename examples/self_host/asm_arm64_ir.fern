@@ -68,34 +68,34 @@ function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState 
 // ir_bin_asm renders the arm64 for one IR binary op: lhs in x0, rhs in x1,
 // result in x0 — mirroring asm_arm64's own ExprBinary sequences (64-bit ops,
 // signed i32 div/rem via sdiv/msub) so the IR and AST paths agree.
-function ir_bin_asm(kind: string): string {
-    if (kind == "add") { return "    add x0, x0, x1\n"; }
-    if (kind == "sub") { return "    sub x0, x0, x1\n"; }
-    if (kind == "mul") { return "    mul x0, x0, x1\n"; }
-    if (kind == "div_s") { return "    sdiv x0, x0, x1\n"; }
-    if (kind == "rem_s") { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
+function ir_bin_asm(tag: i32): string {
+    if (tag == 21) { return "    add x0, x0, x1\n"; }
+    if (tag == 22) { return "    sub x0, x0, x1\n"; }
+    if (tag == 23) { return "    mul x0, x0, x1\n"; }
+    if (tag == 24) { return "    sdiv x0, x0, x1\n"; }
+    if (tag == 26) { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
     // Unsigned 64-bit div/rem (u64, #2904): udiv instead of sdiv.
-    if (kind == "div_u") { return "    udiv x0, x0, x1\n"; }
-    if (kind == "rem_u") { return "    udiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
-    if (kind == "and") { return "    and x0, x0, x1\n"; }
-    if (kind == "or") { return "    orr x0, x0, x1\n"; }
-    if (kind == "xor") { return "    eor x0, x0, x1\n"; }
-    if (kind == "shl") { return "    lsl x0, x0, x1\n"; }
-    if (kind == "shr_s") { return "    asr x0, x0, x1\n"; }
-    if (kind == "shr_u") { return "    lsr x0, x0, x1\n"; }
-    if (kind == "eq") { return "    cmp x0, x1\n    cset x0, eq\n"; }
-    if (kind == "ne") { return "    cmp x0, x1\n    cset x0, ne\n"; }
-    if (kind == "lt_s") { return "    cmp x0, x1\n    cset x0, lt\n"; }
-    if (kind == "le_s") { return "    cmp x0, x1\n    cset x0, le\n"; }
-    if (kind == "gt_s") { return "    cmp x0, x1\n    cset x0, gt\n"; }
-    if (kind == "ge_s") { return "    cmp x0, x1\n    cset x0, ge\n"; }
+    if (tag == 25) { return "    udiv x0, x0, x1\n"; }
+    if (tag == 27) { return "    udiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
+    if (tag == 28) { return "    and x0, x0, x1\n"; }
+    if (tag == 29) { return "    orr x0, x0, x1\n"; }
+    if (tag == 30) { return "    eor x0, x0, x1\n"; }
+    if (tag == 31) { return "    lsl x0, x0, x1\n"; }
+    if (tag == 32) { return "    asr x0, x0, x1\n"; }
+    if (tag == 33) { return "    lsr x0, x0, x1\n"; }
+    if (tag == 35) { return "    cmp x0, x1\n    cset x0, eq\n"; }
+    if (tag == 36) { return "    cmp x0, x1\n    cset x0, ne\n"; }
+    if (tag == 37) { return "    cmp x0, x1\n    cset x0, lt\n"; }
+    if (tag == 38) { return "    cmp x0, x1\n    cset x0, le\n"; }
+    if (tag == 39) { return "    cmp x0, x1\n    cset x0, gt\n"; }
+    if (tag == 40) { return "    cmp x0, x1\n    cset x0, ge\n"; }
     // Unsigned 64-bit compares (u64, #2904): the lo/ls/hi/hs condition codes
     // read CF instead of the signed N/V flags — correct once bit 63 is set.
-    if (kind == "lt_u") { return "    cmp x0, x1\n    cset x0, lo\n"; }
-    if (kind == "le_u") { return "    cmp x0, x1\n    cset x0, ls\n"; }
-    if (kind == "gt_u") { return "    cmp x0, x1\n    cset x0, hi\n"; }
-    if (kind == "ge_u") { return "    cmp x0, x1\n    cset x0, hs\n"; }
-    return "    // ir: unsupported bin " + kind + "\n";
+    if (tag == 41) { return "    cmp x0, x1\n    cset x0, lo\n"; }
+    if (tag == 42) { return "    cmp x0, x1\n    cset x0, ls\n"; }
+    if (tag == 43) { return "    cmp x0, x1\n    cset x0, hi\n"; }
+    if (tag == 44) { return "    cmp x0, x1\n    cset x0, hs\n"; }
+    return "    // ir: unsupported bin " + ir.kind_name(tag) + "\n";
 }
 
 // emit_str_op emits one string operand-stack op (the bodies factored out of
@@ -490,7 +490,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
             s = s.write("    bl __fern_str_box\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-        } else if (ir.is_str_op_kind(ir.kind_name(o.kind_tag))) {
+        } else if (ir.is_str_op_kind(o.kind_tag)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
@@ -1159,7 +1159,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else {
             // binary op: pop rhs (x1), lhs (x0), combine, push.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = s.write(ir_bin_asm(ir.kind_name(o.kind_tag)));
+            s = s.write(ir_bin_asm(o.kind_tag));
             s = s.write("    str x0, [sp, #-16]!\n");
         }
         i = i + 1;

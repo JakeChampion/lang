@@ -1475,57 +1475,57 @@ pub function render_op(o: Op): string {
 // pull the heap in via $__fern_strcat; the const_str/str_concat/str_slice
 // members below are a subset of that, so listing them here does not change its
 // result.)
-pub function op_allocates(kind: string): boolean {
+pub function op_allocates(tag: i32): boolean {
     // Low-level + literal allocations.
-    if (kind == "alloc" || kind == "alloc_u8" || kind == "arr_make" || kind == "arr_push" || kind == "arr_push_i64" || kind == "arr_push_f64") { return true; }
-    if (kind == "const_str" || kind == "str_concat" || kind == "str_slice" || kind == "str_from_bytes") { return true; }
+    if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 94 || tag == 95) { return true; }
+    if (tag == 5 || tag == 98 || tag == 102 || tag == 103) { return true; }
     // Composite boxes.
-    if (kind == "struct_make" || kind == "tuple_make") { return true; }
-    if (kind == "opt_make" || kind == "opt_none") { return true; }
-    if (kind == "map_new" || kind == "map_set") { return true; }
+    if (tag == 138 || tag == 142) { return true; }
+    if (tag == 120 || tag == 121) { return true; }
+    if (tag == 124 || tag == 125) { return true; }
     // map_iter allocates the 16-byte iterator box via __fern_alloc; the other
     // mapiter ops are pure loads / a cursor store (no allocation).
-    if (kind == "map_iter") { return true; }
+    if (tag == 133) { return true; }
     // Byte/string builders that materialise a fresh box.
-    if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
+    if (tag == 185 || tag == 104 || tag == 105) { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per
     // argv entry), so it needs the heap runtime like any other allocator.
-    if (kind == "args") { return true; }
+    if (tag == 180) { return true; }
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
     // Option[IoError] result — both via __fern_str_box, so they need the heap.
-    if (kind == "read_file" || kind == "write_file") { return true; }
+    if (tag == 169 || tag == 170) { return true; }
     // remove_dir_all boxes its Option[IoError] result and heap-builds child path
     // strings while recursing, so it needs the heap runtime.
-    if (kind == "remove_dir_all") { return true; }
+    if (tag == 172) { return true; }
     // remove_file boxes its Option[IoError] result, so it needs the heap runtime.
-    if (kind == "remove_file") { return true; }
+    if (tag == 173) { return true; }
     // temp_dir boxes the path string + a Result wrapper, so it needs the heap.
-    if (kind == "temp_dir") { return true; }
+    if (tag == 174) { return true; }
     // read_dir boxes a fresh string[] (the arr box + a string block per entry),
     // so it needs the heap runtime.
-    if (kind == "read_dir") { return true; }
+    if (tag == 171) { return true; }
     // env boxes the looked-up value into a fresh string block (+ the Option
     // wrapper), so it needs the heap runtime.
-    if (kind == "env") { return true; }
+    if (tag == 176) { return true; }
     // stat boxes a fresh FileStat struct + a Result wrapper, so it needs the heap.
-    if (kind == "stat") { return true; }
+    if (tag == 175) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
-    if (kind == "subprocess") { return true; }
+    if (tag == 177) { return true; }
     // read_line boxes the line into a fresh string block, so it needs the heap.
     // (read_int is NOT here: it parses into scratch + returns a bare i32, like
     // the register backends, so a read_int-only module needs no heap runtime.)
-    if (kind == "read_line") { return true; }
-    if (kind == "str_to_upper" || kind == "str_to_lower") { return true; }
-    if (kind == "str_repeat" || kind == "str_trim" || kind == "str_reverse") { return true; }
-    if (kind == "str_replace" || kind == "str_chars" || kind == "str_lines") { return true; }
+    if (tag == 168) { return true; }
+    if (tag == 106 || tag == 107) { return true; }
+    if (tag == 108 || tag == 109 || tag == 110) { return true; }
+    if (tag == 111 || tag == 112 || tag == 113) { return true; }
     // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
     // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
-    if (kind == "dyn_box" || kind == "dyn_downcast") { return true; }
+    if (tag == 146 || tag == 148) { return true; }
     // heap_bump_bytes does NOT allocate, but it reads the heap runtime's cursor
     // + base, so it needs that runtime emitted — fold it into the same gate
     // (the predicate's contract per the doc above is "needs the heap runtime").
-    if (kind == "heap_bump_bytes") { return true; }
+    if (tag == 80) { return true; }
     return false;
 }
 
@@ -1537,12 +1537,12 @@ pub function op_allocates(kind: string): boolean {
 // oversized-function miscompile threshold, #2720). The membership is a property
 // of the IR op set — not of any one target — so it lives here and both backends
 // share it; a new string op is taught to every backend's dispatch at once.
-pub function is_str_op_kind(k: string): boolean {
-    return k == "str_len" || k == "str_index" || k == "str_slice"
-        || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
-        || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
-        || k == "str_reverse" || k == "str_replace" || k == "str_chars" || k == "str_lines"
-        || k == "str_starts_with"
-        || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
-        || k == "str_eq" || k == "str_cmp";
+pub function is_str_op_kind(tag: i32): boolean {
+    return tag == 97 || tag == 101 || tag == 102
+        || tag == 104 || tag == 105 || tag == 106
+        || tag == 107 || tag == 108 || tag == 109
+        || tag == 110 || tag == 111 || tag == 112 || tag == 113
+        || tag == 114
+        || tag == 115 || tag == 116 || tag == 98
+        || tag == 99 || tag == 100;
 }
