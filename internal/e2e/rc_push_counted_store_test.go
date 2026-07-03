@@ -170,3 +170,39 @@ func TestWasmIfExprYieldNoUnderflow(t *testing.T) {
 		}
 	}
 }
+
+// #4399 sink 4b — match-expr yields are counted in all lowering routes.
+// The general (enum) route and the literal route both yield aliased
+// locals from arms; balance must stay exact whichever arm runs.
+const matchYieldBalanceSrc = `enum Tag { A, B }
+function pick(t: Tag, k: i32): i32 {
+    var a: i32[][] = [[k, k + 1]];
+    var b2: i32[][] = [[k + 2]];
+    var v: i32[][] = match (t) { A => a, _ => b2 };
+    var w: i32[][] = match (k % 2) { 0 => a, _ => v };
+    return w[0][0];
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 200) {
+        var t: Tag = A;
+        if (i % 3 == 0) { t = B; }
+        s = s + pick(t, i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64MatchExprYieldNoUnderflow(t *testing.T) {
+	if got := mustRunX86_64FreeOn(t, matchYieldBalanceSrc); got != 0 {
+		t.Errorf("match-yield release must stay balanced: want exit 0, got %d", got)
+	}
+}
+
+func TestWasmMatchExprYieldNoUnderflow(t *testing.T) {
+	if got := runWasm(t, matchYieldBalanceSrc); got != 0 {
+		t.Errorf("match-yield release must stay balanced: want exit 0, got %d", got)
+	}
+}
