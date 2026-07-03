@@ -488,9 +488,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					}
 				case id.Name == "__method_Array_push":
 					// Args[0] is the receiver array (threaded /
-					// reassigned), not retained — taint the element.
+					// reassigned), not retained. The element is a COUNTED
+					// store (#4399 sink 1): emitArrayPush emits the
+					// needsRcIncOnAlias element inc (the same Ident /
+					// FieldAccess / Index shapes `escape` walks), and the
+					// buffer's deep drop decs elements — so a PROJECTION
+					// source (`out.push(rows[i])`) is co-owned by the
+					// buffer and its container stays reclaimable; only a
+					// direct-Ident element keeps the taint (the moveSites
+					// shapes transfer instead of inc'ing — same rule as
+					// StructLit / TupleLit / rc-eligible enum payloads,
+					// escapeOwned).
 					if len(s.Args) == 2 {
-						escape(s.Args[1])
+						escapeOwned(s.Args[1])
 					}
 				case id.Name == "__method_Array_set":
 					// `arr.with(i, v)` — Args[0] is the receiver array
