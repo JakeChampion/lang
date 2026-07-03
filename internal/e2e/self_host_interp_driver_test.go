@@ -151,6 +151,13 @@ var interpProgs = []struct {
 	{"braceless-if-else", "function main(): i32 { var x = 0; if (x == 0) x = 40; else x = 1; return x; }", 40},
 	{"braceless-while", "function main(): i32 { var x = 0; while (x < 42) x = x + 1; return x; }", 42},
 	{"braceless-for", "function main(): i32 { var s = 0; for i in 0..5 s = s + i; return s; }", 10},
+	// Chained assignment `x = y = e` (#4339 item 1): assignment is statement-
+	// only in the self-host, so the RHS parse_expr couldn't consume the inner
+	// `=` and `= e` was left as junk — only the first link ran (silent wrong
+	// result). Now a bare-ident chain desugars to right-to-left assigns
+	// (`y = e; x = y;`), so every target receives the value.
+	{"chained-assign-2", "function main(): i32 { var x = 0; var y = 0; x = y = 20; return x + y; }", 40},
+	{"chained-assign-3", "function main(): i32 { var x = 0; var y = 0; var z = 0; x = y = z = 14; return x + y + z; }", 42},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
