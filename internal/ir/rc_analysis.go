@@ -891,6 +891,23 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				return true
 			}
 		}
+		// #4357: a call to a user function whose RETURN provably aliases no
+		// param (findReturnsNoParamEscape — every return expression is built
+		// from scalars and FRESH constructions whose pointer-typed slots are
+		// themselves qualifying, transitively) hands back a fresh owned value
+		// regardless of receiver/arg taint: the tainted inputs are only READ
+		// to build it. This is the same oracle the nested-call temp reclaim
+		// (rc_insert.go stage-b) already trusts to free a call result.
+		// Without it, `var t = f(x)` over any param-derived x stays
+		// permanently ineligible, and the dead intermediate in
+		// `var t = f(x); var u = g(t); return u;` leaks once per call — the
+		// self-compile RSS driver (docs/SELFHOST-BSTATE-RECLAIM-PLAN.md
+		// "The real leak").
+		if id, ok := x.Callee.(*ast.Ident); ok && b.returnsNoParamEscape[id.Name] {
+			if _, isLocal := b.locals[id.Name]; !isLocal {
+				return false
+			}
+		}
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.rhsTainted(fa.Target, tainted) {
 			return true // method receiver is tainted
 		}
