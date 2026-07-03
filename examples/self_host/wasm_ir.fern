@@ -61,7 +61,7 @@ pub function str_values(mod: parser.Module): string[] {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "const_str") {
+            if (r.ops[i].kind_tag == 5) {  // const_str
                 var v: string = r.ops[i].str;
                 var seen: boolean = false;
                 var k: i32 = 0;
@@ -117,7 +117,7 @@ pub function module_uses_strings(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            var k: string = r.ops[i].kind;
+            var k: string = ir.kind_name(r.ops[i].kind_tag);
             if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq" || k == "str_cmp") { return true; }
             if (k == "str_index" || k == "str_slice") { return true; }
             i = i + 1;
@@ -136,7 +136,7 @@ pub function module_uses_str_cmp(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "str_cmp") { return true; }
+            if (r.ops[i].kind_tag == 100) { return true; }  // str_cmp
             i = i + 1;
         }
         fi = fi + 1;
@@ -152,7 +152,7 @@ pub function module_uses_maps(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            var k: string = r.ops[i].kind;
+            var k: string = ir.kind_name(r.ops[i].kind_tag);
             if (k == "map_new" || k == "map_set" || k == "map_len") { return true; }
             i = i + 1;
         }
@@ -167,7 +167,7 @@ pub function module_uses_str_slice(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "str_slice") { return true; }
+            if (r.ops[i].kind_tag == 102) { return true; }  // str_slice
             i = i + 1;
         }
         fi = fi + 1;
@@ -324,7 +324,7 @@ pub function module_allocates(mod: parser.Module): boolean {
         while (i < r.ops.len()) {
             // Any allocating op needs the heap + RC runtime. ir.op_allocates is
             // the shared list (see ir.fern), identical to asm_ir's heap gate.
-            if (ir.op_allocates(r.ops[i].kind)) { return true; }
+            if (ir.op_allocates(ir.kind_name(r.ops[i].kind_tag))) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -349,7 +349,7 @@ pub function field_reclaim_types(mod: parser.Module): string[] {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "call_direct" && asm_ir.is_field_reclaim_name(r.ops[i].str)) {
+            if (r.ops[i].kind_tag == 149 && asm_ir.is_field_reclaim_name(r.ops[i].str)) {  // call_direct
                 var t: string = asm_ir.field_reclaim_type(r.ops[i].str);
                 if (util.index_of_str(out, t) < 0) { out = out.append(t); }
             }
@@ -374,7 +374,7 @@ pub function struct_drop_types(mod: parser.Module): string[] {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "call_direct" && asm_ir.is_struct_drop_name(r.ops[i].str)) {
+            if (r.ops[i].kind_tag == 149 && asm_ir.is_struct_drop_name(r.ops[i].str)) {  // call_direct
                 var t: string = asm_ir.struct_drop_type(r.ops[i].str);
                 if (util.index_of_str(out, t) < 0) { out = out.append(t); }
             }
@@ -448,12 +448,16 @@ pub function struct_arr_elems_drop_types(mod: parser.Module): string[] {
 // module_emits_op reports whether any lowered function emits an op of `kind` —
 // the shared scanner the random/byte-source helper gates use (issue #2747).
 pub function module_emits_op(mod: parser.Module, kind: string): boolean {
+    // The public API still takes the op-kind by string; resolve it to the
+    // integer tag once so the inner scan is an int compare (Op no longer
+    // carries the string kind).
+    var ktag: i32 = ir.kind_id(kind);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == kind) { return true; }
+            if (r.ops[i].kind_tag == ktag) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -524,7 +528,7 @@ pub function module_uses_i32_to_string(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_i32_to_string") { return true; }
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_i32_to_string") { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
@@ -542,7 +546,7 @@ pub function module_uses_str_to_i32(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_str_to_i32") { return true; }
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_str_to_i32") { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
@@ -569,7 +573,7 @@ pub function module_uses_chr(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_chr") { return true; }
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_chr") { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
@@ -591,7 +595,7 @@ pub function module_uses_divrem(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") { return true; }
+            if (r.ops[i].kind_tag == 24 || r.ops[i].kind_tag == 26) { return true; }  // div_s, rem_s
             i = i + 1;
         }
         fi = fi + 1;
@@ -609,7 +613,7 @@ pub function module_uses_arr_slice(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "arr_slice" && r.ops[i].width != 64) { return true; }
+            if (r.ops[i].kind_tag == 96 && r.ops[i].width != 64) { return true; }  // arr_slice
             i = i + 1;
         }
         fi = fi + 1;
@@ -626,7 +630,7 @@ pub function module_uses_arr_slice8(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "arr_slice" && r.ops[i].width == 64) { return true; }
+            if (r.ops[i].kind_tag == 96 && r.ops[i].width == 64) { return true; }  // arr_slice
             i = i + 1;
         }
         fi = fi + 1;
@@ -640,7 +644,7 @@ pub function module_uses_i64_divrem(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if ((r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") && r.ops[i].width == 64) { return true; }
+            if ((r.ops[i].kind_tag == 24 || r.ops[i].kind_tag == 26) && r.ops[i].width == 64) { return true; }  // div_s, rem_s
             i = i + 1;
         }
         fi = fi + 1;
@@ -794,14 +798,14 @@ pub function fn_value_table(mod: parser.Module): string[] {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "const_func" && util.index_of_str(out, r.ops[i].str) < 0) {
+            if (r.ops[i].kind_tag == 6 && util.index_of_str(out, r.ops[i].str) < 0) {  // const_func
                 out = out.append(r.ops[i].str);
             }
             // A struct/enum-keyed map (op_map_new kind 2) takes the derived
             // hash/eq via call_indirect, so they are address-taken too — add
             // them to the funcref table so map_new can store their slot indices
             // in the box. #2671.
-            if (r.ops[i].kind == "map_new" && r.ops[i].i32_imm == 2 && r.ops[i].str.len() > 0) {
+            if (r.ops[i].kind_tag == 124 && r.ops[i].i32_imm == 2 && r.ops[i].str.len() > 0) {  // map_new
                 var hf: string = pipe_before(r.ops[i].str);
                 var ef: string = pipe_after(r.ops[i].str);
                 if (util.index_of_str(out, hf) < 0) { out = out.append(hf); }
@@ -824,7 +828,7 @@ function indirect_arities(mod: parser.Module): i32[] {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "call_indirect" && !slot_in_list(out, r.ops[i].i32_imm)) {
+            if (r.ops[i].kind_tag == 150 && !slot_in_list(out, r.ops[i].i32_imm)) {  // call_indirect
                 out = out.append(r.ops[i].i32_imm);
             }
             i = i + 1;
@@ -1757,7 +1761,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // same way (bl __fern_pow_f64).
             out = out + "    call $__fern_pow_f64\n";
         } else {
-            out = out + "    " + wasm_binop_w(o.kind, o.width) + "\n";
+            out = out + "    " + wasm_binop_w(ir.kind_name(o.kind_tag), o.width) + "\n";
         }
         i = i + 1;
     }

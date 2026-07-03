@@ -229,7 +229,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
     var i: i32 = 0;
     while (i < ops.len() && ok) {
         var op: ir.Op = ops[i];
-        var k: string = op.kind;
+        var k: string = ir.kind_name(op.kind_tag);
 
         // Skip dead code after a terminator (e.g. ops after a `return`/`br`
         // inside an arm); only else/end/the matching block delimiters act on it.
