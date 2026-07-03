@@ -4539,7 +4539,18 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	zeroSeen := map[string]bool{}
 	for _, v := range info.Locals[fn] {
 		if !rcTrackedSlotType(v.Type) {
-			continue
+			// `dyn Trait` slots are in the exit sweep's tracked set
+			// (dynReclaim-gated) but not in rcTrackedSlotType — zero them too,
+			// so a conditionally-declared dyn local's exit sweep and a loop-var
+			// dyn's first-iteration reinit drop see the NULL cell
+			// __drop_dyn_<set> already guards, instead of stack garbage
+			// (#4495 — segfaulted on x86-64). The helper's null guard was
+			// written assuming this zero-init existed. Natives only: wasm
+			// locals are zero by spec, and its inline two-word [data, vtable]
+			// slot has a different store arity than the boxed one-word cell.
+			if _, isDyn := v.Type.(ast.DynTraitType); !(isDyn && b.dynReclaim() && b.ptrW == 8) {
+				continue
+			}
 		}
 		if zeroSeen[v.Name] {
 			continue
