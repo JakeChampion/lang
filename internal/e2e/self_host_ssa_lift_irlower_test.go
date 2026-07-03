@@ -29,8 +29,9 @@ import (
 // (strbuf_reset / _append / _take), the process / output ops
 // (print_str / eprint_str / exit), string indexing (str_index), and
 // Option / Result (opt_make / opt_none / opt_tag / opt_payload), args()
-// (the argv string[]), and closures (const_func -> funcaddr + call_indirect,
-// the lambda hoisted via lift_lambdas), with
+// (the argv string[]), closures (const_func -> funcaddr + call_indirect,
+// the lambda hoisted via lift_lambdas), and user enum matching
+// (struct_make tag + variant_is over the module's variant structs), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -196,6 +197,19 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"clcapture", `function main(): i32 { var x = 10; var f = (y: i32) => x + y; return f(5); }`},
 		{"clnoncap", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply(inc, 41); }`},
 		{"clmulti", `function main(): i32 { var a = 3; var b = 4; var f = (y: i32) => a + b + y; return f(5); }`},
+		// User enum matching over real irlower output (slice 14): a payload-bearing
+		// two-variant enum, a bare (payloadless) three-variant enum, an enum
+		// threaded through a variable before the match, and a variant carrying a
+		// negated payload. Enum construction lowers to a tag-prefixed struct box
+		// (slot 0 = the variant's struct id); `match` lowers to `variant_is`, which
+		// the lift renders as load_elem(box, 0) == that same id — so an enum
+		// discriminant round-trips through the low SSA heap. struct_id_of over the
+		// module's (parser-desugared) variant structs is the single mapping both
+		// sides share, so the tag written and the tag tested agree by construction.
+		{"enumpair", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`},
+		{"enumbare", `enum Color { Red, Green, Blue } function code(c: Color): i32 { match (c) { Red => { return 1; }, Green => { return 2; }, Blue => { return 3; } } } function main(): i32 { return code(Red) * 100 + code(Green) * 10 + code(Blue); }`},
+		{"enumvar", `enum Expr { Lit(i32), Neg(i32) } function eval(e: Expr): i32 { match (e) { Lit(v) => { return v; }, Neg(v) => { return 0 - v; } } } function main(): i32 { var e: Expr = Lit(7); var a = eval(e); return a + eval(Neg(5)); }`},
+		{"enumthree", `enum Dir { N, E, S, W } function turn(d: Dir): i32 { match (d) { N => { return 10; }, E => { return 20; }, S => { return 30; }, W => { return 40; } } } function main(): i32 { return turn(S) + turn(W); }`},
 	}
 	for _, tc := range cases {
 		tc := tc
