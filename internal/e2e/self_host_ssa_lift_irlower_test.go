@@ -19,9 +19,11 @@ import (
 // running native code on both backends.
 //
 // Coverage is the lift's current subset: integer control flow (straight-line,
-// loops, if-merge, break, cross-function calls, recursion) plus string literals
-// + length (const_str / str_len, which lower RC-free). Out-of-subset programs
-// make the driver exit non-zero; only in-subset programs are listed here.
+// loops, if-merge, break, cross-function calls, recursion), string literals
+// + length (const_str / str_len, which lower RC-free), and i32 arrays
+// (arr_make / arr_get / arr_set / arr_len, with irlower's RC-helper calls
+// stripped). Out-of-subset programs make the driver exit non-zero; only
+// in-subset programs are listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	armgcc, qemu := arm64Tooling(t)
@@ -103,6 +105,15 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"shift", `function main(): i32 { return (1 << 5) + (64 >> 2); }`},
 		{"nestif", `function main(): i32 { var x = 7; if (x > 5) { if (x > 10) { return 1; } return 2; } return 3; }`},
 		{"earlyret", `function main(): i32 { var i = 0; while (i < 100) { if (i * i > 50) { return i; } i = i + 1; } return 99; }`},
+		// i32 arrays over real irlower output (slice 2): literal + index, length,
+		// element update via `.with`, a loop summing elements, and a borrowed
+		// array param across a call. These lower with arr_make / arr_get /
+		// arr_set / arr_len plus the RC-helper calls the lift strips.
+		{"arrlit", `function main(): i32 { var a = [10, 20, 30]; return a[1]; }`},
+		{"arrlen", `function main(): i32 { var a = [1, 2, 3, 4]; return a.len(); }`},
+		{"arrwith", `function main(): i32 { var a = [1, 2, 3]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }`},
+		{"arrsum", `function main(): i32 { var a = [5, 10, 15]; var s = 0; var i = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`},
+		{"arrpass", `function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; } function main(): i32 { var xs = [7, 8, 9]; return sum3(xs); }`},
 	}
 	for _, tc := range cases {
 		tc := tc

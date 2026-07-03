@@ -92,6 +92,7 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"breakloop", 42}, // break out of a loop
 		{"callsum", 42},   // cross-function call_direct: main() -> add(20,22)
 		{"factrec", 120},  // self-recursion: fact(5)
+		{"arrsum", 30},    // i32 array: arr_make + arr_get (slice 2)
 	}
 	for _, tc := range cases {
 		tc := tc
