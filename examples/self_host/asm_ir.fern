@@ -96,6 +96,16 @@ pub function is_fern_helper(name: string): boolean {
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
         // only the irlower reclaim sites emit the call.
         || name == "__fern_str_free"
+        // string[] ELEMENT reclaim (#4355): the element-walking sibling of the
+        // shallow array dec — at rc==1 it __fern_str_free's every element box,
+        // then frees the buffer; rc>1 decs; rc<0 (immortal) skips; rc==0 ticks
+        // the underflow detector. Default ir_helper_symbol maps it to
+        // __fn___fern_str_arr_free (body in emit_ir_runtime); wasm_helper_symbol
+        // routes it to $__fern_arr_dec_ptr (the wasm AST path's pointer-element
+        // walk — wasm strings are single inline rc-headered blocks, so the plain
+        // per-element $__fern_arr_dec IS the wasm string free). Never
+        // user-callable — only the irlower exit sweep emits it.
+        || name == "__fern_str_arr_free"
         // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
         // local's keys + values buffers AND the raw 16-byte mapbox. Default
         // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
@@ -898,6 +908,74 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lstrfree_uf:\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Lstrfree_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the
+    // element-walking sibling of __fn___fern_arr_dec. rc word at [arr-8]:
+    // negative = immortal (skip); rc>1 = shared -> dec, elements untouched
+    // (they live on through the other owner); rc==0 = double free -> underflow
+    // detector; rc==1 = sole owner -> __fn___fern_str_free every element box
+    // (each fully rc-guarded: a shared element decs, a literal's .rodata data
+    // is heap-guard-skipped, an immortal view is skipped, a null slot is a
+    // no-op) then return the buffer to its size-class freelist exactly as
+    // __fn___fern_arr_dec's free path does (base = arr-16, class = cap+3).
+    // Array layout (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr],
+    // element i @ [arr+8+i*8]. Called ONLY on compile-time-proven fresh,
+    // non-escaping string[] locals with fresh/static elements (irlower
+    // slot_is_reclaimable_strarr). Stack-arg ABI (arr at 8(%rsp));
+    // %rbx/%r12/%r13 (callee-saved) hold arr/len/i across the per-element
+    // calls (__fn___fern_str_free clobbers only %rax/%rcx/%rdx/%rsi/%r8).
+    s = s.write("__fn___fern_str_arr_free:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");        // arr
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lsaf_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
+    s = s.write("    jb .Lsaf_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lsaf_ret\n");              // negative = immortal -> skip
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    jg .Lsaf_dec\n");              // rc>1 -> dec, keep
+    s = s.write("    jl .Lsaf_uf\n");               // rc==0 -> underflow (double free)
+    // rc==1: sole owner -> free every element string box, then the buffer.
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    movq %rax, %rbx\n");           // arr
+    s = s.write("    movq (%rbx), %r12\n");         // len @ [arr]
+    s = s.write("    movq $0, %r13\n");             // i
+    s = s.write(".Lsaf_loop:\n");
+    s = s.write("    cmpq %r12, %r13\n");
+    s = s.write("    jge .Lsaf_freebuf\n");
+    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // element i @ [arr+8+i*8]
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_str_free\n"); // rc-aware per-element free
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    incq %r13\n");
+    s = s.write("    jmp .Lsaf_loop\n");
+    s = s.write(".Lsaf_freebuf:\n");
+    // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
+    s = s.write("    movl $0, -8(%rbx)\n");         // rc = 0 (defensive vs re-free)
+    s = s.write("    movl -16(%rbx), %ecx\n");      // cap
+    s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
+    s = s.write("    cmpq $65536, %rcx\n");
+    s = s.write("    jae .Lsaf_pop\n");             // large tier -> leak buffer (sound)
+    s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
+    s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
+    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
+    s = s.write(".Lsaf_pop:\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    jmp .Lsaf_ret\n");
+    s = s.write(".Lsaf_dec:\n");
+    s = s.write("    subl $1, %ecx\n");
+    s = s.write("    movl %ecx, -8(%rax)\n");
+    s = s.write("    jmp .Lsaf_ret\n");
+    s = s.write(".Lsaf_uf:\n");
+    s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(".Lsaf_ret:\n");
     s = s.write("    ret\n");
     // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
     // map-local slice). The self-host asm map box is a RAW 16-byte __fern_alloc(16)
@@ -3457,7 +3535,11 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // (`var b = a + a` → __fern_str_free) references this symbol; the entry
         // owns the single definition (emit_ir_runtime), so export it for the
         // per-module link like every other shared runtime helper.
-        "__fn___fern_str_free"
+        "__fn___fern_str_free",
+        // string[] ELEMENT reclaim (#4355): a library module whose exit sweep
+        // frees a fresh-element string[] references this symbol; the entry owns
+        // the single definition (emit_ir_runtime).
+        "__fn___fern_str_arr_free"
     ];
     var i: i32 = 0;
     while (i < names.len()) {

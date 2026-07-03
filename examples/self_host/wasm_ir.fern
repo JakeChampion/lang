@@ -296,6 +296,13 @@ function wasm_helper_symbol(name: string): string {
     // (data-section, below heap_base) is a guarded no-op. Double frees are caught
     // by the rc-underflow detector, unlike the asm path.
     if (name == "__fern_str_free") { return "$__fern_arr_dec"; }
+    // string[] ELEMENT reclaim (#4355): route to $__fern_arr_dec_ptr, the wasm
+    // AST path's pointer-element walk (heap_alloc_helpers, always emitted with
+    // the heap runtime): at rc==1 it $__fern_arr_dec's every element — which IS
+    // the wasm string free (a wasm heap string is a single inline rc-headered
+    // block) — then frees the buffer; a shared array just decs; literals /
+    // immortal views are guarded no-ops inside the per-element dec.
+    if (name == "__fern_str_arr_free") { return "$__fern_arr_dec_ptr"; }
     // map reclaim (Perceus map-local slice): route to $__fern_map_release, the
     // wasm AST path's full map free — it null-guards, rc-guards (frees only at
     // rc==1), DEEP-releases string keys + string values (a level the asm
