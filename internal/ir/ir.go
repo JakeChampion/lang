@@ -4613,29 +4613,14 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
-	// Consumed-threaded param entry-inc: a promoted consumed param (see
-	// computeConsumedParams) is reclaimed callee-side — its reassignment-
-	// overwrites and the exit sweep deep-drop it — but the caller passes it
-	// BORROWED (no caller-side retain inc). Emit one retain inc at entry so the
-	// callee owns a reference: the first overwrite-dec (or the exit-sweep dec on
-	// a path that never reassigns) balances it, while a still-shared value stays
-	// rc>1 and is only flat-dec'd (never freed out from under the caller). Gated
-	// on freeEligible — if the escape analysis re-tainted the param (it flows
-	// into a retain sink) it is not deep-dropped, so no entry-inc is owed.
-	if ast.RcFreeEnabled {
-		for _, p := range fn.Params {
-			if !b.rc.consumedParams[p.Name] || !b.rc.freeEligible[p.Name] {
-				continue
-			}
-			slot, ok := b.locals[p.Name]
-			if !ok {
-				continue
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-		}
-	}
+	// Consumed-threaded param entry-incs are no longer emitted here: they are
+	// the first RC insertion converted to true post-lowering []Op insertion
+	// (insertConsumedParamEntryIncs, rc_insert.go — #4393 slice 4), spliced at
+	// this exact prologue boundary after the whole body has been lowered.
+	// Capture the boundary: everything before it (the rc-slot and defer-flag
+	// zero-init) is the entry prologue.
+	entryIncAt := len(out.Ops)
+	entryIncPos := b.curPos
 	// Perceus precise drops (garbage-free, straight-line subset): drop an
 	// owned rc local right after its last top-level use instead of at the
 	// exit sweep, lowering peak memory. Iterate the function body's top-
@@ -4708,6 +4693,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			}
 		}
 	}
+	// Post-lowering RC insertion (#4393 slice 4): splice the consumed-param
+	// entry retain-incs into the finished op stream at the prologue boundary
+	// captured above. Runs on the lowered []Op — the first piece of RC
+	// insertion converted off the in-build path — and allocates no slots, so
+	// it is safe before (or after) the scratch sizing below.
+	b.insertConsumedParamEntryIncs(entryIncAt, entryIncPos)
 	// Record the type of every synthetic slot the lowering pass
 	// conjured beyond the user-visible params + locals — ArrayLit
 	// / StructLit / closure helpers each added entries to

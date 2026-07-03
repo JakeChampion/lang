@@ -22,6 +22,51 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
+// insertConsumedParamEntryIncs splices the consumed-threaded param entry
+// retain-incs into the LOWERED op stream, at the prologue boundary `at`
+// (right after the rc-slot / defer-flag zero-init) — the first RC insertion
+// converted from in-build emission to a true post-lowering []Op insertion
+// (#4393 slice 4). A promoted consumed param (see computeConsumedParams) is
+// reclaimed callee-side — its reassignment-overwrites and the exit sweep
+// deep-drop it — but the caller passes it BORROWED (no caller-side retain
+// inc). One retain inc at entry gives the callee an owned reference: the
+// first overwrite-dec (or the exit-sweep dec on a path that never
+// reassigns) balances it, while a still-shared value stays rc>1 and is only
+// flat-dec'd (never freed out from under the caller). Gated on freeEligible
+// — if the escape analysis re-tainted the param (it flows into a retain
+// sink) it is not deep-dropped, so no entry-inc is owed.
+//
+// `pos` is the builder's curPos at the boundary (the zero Position at
+// function entry) so the spliced ops carry exactly the source positions the
+// in-build emission stamped. The splice allocates no slots and shifts only
+// op indices, which nothing records absolutely (control flow is
+// depth-relative), so the emitted stream is byte-identical to the old
+// in-build path.
+func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
+	if !ast.RcFreeEnabled {
+		return
+	}
+	var incs []Op
+	for _, p := range b.fn.Params {
+		if !b.rc.consumedParams[p.Name] || !b.rc.freeEligible[p.Name] {
+			continue
+		}
+		slot, ok := b.locals[p.Name]
+		if !ok {
+			continue
+		}
+		incs = append(incs,
+			Op{Kind: OpLoadLocal, I32: slot, Pos: pos},
+			Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1, Pos: pos},
+			Op{Kind: OpDrop, Pos: pos})
+	}
+	if len(incs) == 0 {
+		return
+	}
+	ops := b.out.Ops
+	b.out.Ops = append(ops[:at:at], append(incs, ops[at:]...)...)
+}
+
 // freshOwnedRcTempType classifies an expression that, when evaluated,
 // materialises a FRESH owned rc-tracked temporary — a brand-new box / heap
 // string that aliases no borrowed value. It returns the value's static type
