@@ -1,0 +1,100 @@
+// #4399 sink 1 — Array_push is a COUNTED store, so its taint arm weakened
+// to escapeOwned: emitArrayPush already inc's an aliased pointer-shaped
+// element (the same Ident / FieldAccess / Index shapes the old full-escape
+// taint walked), and the buffer's deep drop decs elements. That makes a
+// PROJECTION source (`out.push(src[i])`) co-owned by the buffer, so the
+// source container no longer escape-taints and reclaims at scope exit —
+// previously `src`'s whole buffer (and transitively its elements' buffers)
+// leaked per call, the dominant safe-leak class for push-heavy code
+// (docs/OWNERSHIP-INFERENCE-PLAN.md).
+//
+// Three contracts, mirrored on x86-64 and wasm:
+//   - BOUNDED: a loop over a function that pushes a projection must show
+//     the same heap-bump growth at N=50 and N=5000 (the source reclaims);
+//     pre-change this grew with N.
+//   - CORRECT: reading the pushed element back after the source container
+//     is reclaimable yields the right values (the element inc kept it
+//     alive — no use-after-free).
+//   - BALANCED: __rc_underflow_count() stays 0 (the new reclaim never
+//     over-releases the co-owned element).
+package e2e
+
+import "testing"
+
+func pushProjectionSrc(n string) string {
+	return `function work(k: i32): i32 {
+    var src: i32[][] = [[k, k + 1], [k + 2]];
+    var out: i32[][] = [];
+    out = out.append(src[0]);
+    var e: i32[] = out[0];
+    return e[0] + e[1];
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < ` + n + `) {
+        s = s + work(i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
+func TestX86_64ArrayPushProjectionSourceReclaims(t *testing.T) {
+	small := mustRunX86_64FreeOn(t, pushProjectionSrc("50"))
+	large := mustRunX86_64FreeOn(t, pushProjectionSrc("5000"))
+	// Bounded modulo freelist warm-up jitter: 4950 extra iterations must
+	// not add even one page. Pre-migration the tainted source leaked its
+	// buffers per call and this grew with N.
+	if large > small+4096 {
+		t.Errorf("push-projection bump growth should be bounded (source reclaims): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
+func TestWasmArrayPushProjectionSourceReclaims(t *testing.T) {
+	small := runWasm(t, pushProjectionSrc("50"))
+	large := runWasm(t, pushProjectionSrc("5000"))
+	// wasm carries a pre-existing ~64 B/iter residual in this shape that
+	// is NOT the push sink (it predates the migration at ~128 B/iter and
+	// halved when the source became reclaimable). Ratchet: per-iteration
+	// growth must stay strictly below 100 B — a regression back to the
+	// tainted source (~128 B/iter) trips this, while the residual passes.
+	perIter := (large - small) / 4950
+	if perIter >= 100 {
+		t.Errorf("push-projection per-iteration growth %dB regressed toward the tainted-source baseline (~128B): N=50 -> %d, N=5000 -> %d", perIter, small, large)
+	}
+}
+
+// The pushed element must survive its source container's reclaim, and the
+// element inc / container dec must balance exactly.
+const pushProjectionBalanceSrc = `function work(k: i32): i32 {
+    var src: string[][] = [["a", "bc"], ["def"]];
+    var out: string[][] = [];
+    out = out.append(src[1]);
+    var e: string[] = out[0];
+    return e[0].len() + k - k;
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 200) {
+        s = s + work(i);
+        i = i + 1;
+    }
+    if (s != 600) { return 1; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64ArrayPushProjectionNoUnderflow(t *testing.T) {
+	if got := mustRunX86_64FreeOn(t, pushProjectionBalanceSrc); got != 0 {
+		t.Errorf("push-projection release must stay balanced: want exit 0, got %d (non-zero = rc underflow or wrong sum)", got)
+	}
+}
+
+func TestWasmArrayPushProjectionNoUnderflow(t *testing.T) {
+	if got := runWasm(t, pushProjectionBalanceSrc); got != 0 {
+		t.Errorf("push-projection release must stay balanced: want exit 0, got %d (non-zero = rc underflow or wrong sum)", got)
+	}
+}
