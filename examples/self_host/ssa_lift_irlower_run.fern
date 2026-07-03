@@ -52,7 +52,7 @@ function main(): i32 {
         var lr: irlower.LowerResult = irlower.lower_func_for(fn, [], mod.structs, mod.funcs);
         if (!lr.ok) { return 3; }
         // Lift the real IR to SSA. nslots = params + declared locals.
-        var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops);
+        var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops, mod.structs);
         if (!lf.ok) { return 4; }
         funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lf.func, empty), empty)));
         i = i + 1;

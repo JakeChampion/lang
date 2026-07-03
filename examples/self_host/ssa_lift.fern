@@ -58,6 +58,13 @@
 //     call_indirect (target = the popped code pointer, env-FIRST args). The
 //     closure box is an `arr_make` [funcval, caps…] and captures read via
 //     `arr_get` (both already lifted); the lifted lambda takes env as param 0.
+//   - slice 14: user ENUM matching — `variant_is(name)` -> load_elem(box, 0)
+//     `==` the variant's struct id. An enum value is a `struct_make` box whose
+//     slot 0 now holds the variant's id (struct_id_of over the module's
+//     parser-desugared variant structs), so the tag WRITTEN at construction and
+//     the tag TESTED by the match share one mapping and agree by construction.
+//     The payload is bound via `struct_get` (already lifted). This needs the
+//     module's struct table threaded into `lift_from_ir` (the `structs` param).
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -69,6 +76,21 @@
 import "./ir";
 import "./ssa";
 import "./util";
+import "./parser";
+
+// struct_id_of returns the index of the struct/enum-variant named `name` in the
+// module's struct list, or -1 if absent. Both `struct_make` (the tag it stores
+// at slot 0) and `variant_is` (the discriminant it compares) use THIS single
+// mapping, so an enum box's tag and its match test agree by construction — the
+// lift is self-consistent without matching build_func's exact numbering.
+function struct_id_of(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
 
 // `bail` names the IR op kind that forced ok=false (or "unbalanced-scope"),
 // "" when the lift succeeded — a diagnostic for the coverage scan; the
@@ -194,7 +216,7 @@ function fbin_sym(k: string): string {
 
 // ---- the lift ------------------------------------------------------------
 
-pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
+pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[], structs: parser.StructDecl[]): LResult {
     var nvals: i32 = 0;
     var next_blk: i32 = 0;
     var bail: string = "";   // the op kind that forced a fall-back (scan diagnostic)
@@ -656,13 +678,12 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             // A scalar-field struct literal (or enum-variant box) → a tag-
             // prefixed heap box (slot 0 = type tag, field f at slot f+1),
             // matching build_func's ExprStructLit layout. The nfields field
-            // values are on the operand stack (field 0 deepest). The tag is a
-            // placeholder 0: the lift only ever reaches struct FIELD reads
-            // (struct_get), which never touch slot 0 — every op that reads the
-            // tag (variant_is / dyn_dispatch / opt_payload) is out-of-subset and
-            // bails first — so the tag's exact value is unobserved. A 64-bit
-            // field VALUE can't reach here either (its producer, const_f64_text /
-            // const_i64_text / int_extend, bails), so every field stores i32-wide
+            // values are on the operand stack (field 0 deepest). Slot 0 holds the
+            // struct/variant's id (struct_id_of over the module structs); for a
+            // plain struct the tag is inert (field access never reads it), for an
+            // enum variant it is exactly what variant_is compares against. A
+            // 64-bit field VALUE can't reach here (its producer, const_f64 /
+            // const_i64 / int_extend, bails), so every field stores i32-wide
             // (imm 0), which the low-heap SSA also uses for pointer fields.
             if (stack.len() < op.i32_imm) { ok = false; }
             else {
@@ -677,7 +698,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var stagi: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: stagi, args: [], imm: 0, str: "" });
                 var stagv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: stagv, args: [], imm: 0, str: "" });
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: stagv, args: [], imm: struct_id_of(structs, op.str), str: "" });
                 var stsv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: stsv, args: [sh, stagi, stagv], imm: 0, str: "" });
                 var sm2: i32 = 0;
@@ -841,6 +862,25 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var opv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: opv, args: [opb, opo], imm: 64, str: "" });
                 stack = stack.append(opv);
+            }
+        } else if (k == "variant_is") {
+            // variant_is(box) → 1 if the box's tag (slot 0) is the variant
+            // `op.str`, else 0. load_elem(box, 0) == struct_id_of(op.str) — the
+            // very id struct_make wrote into slot 0, so an enum match is exact.
+            // The payload is bound separately via struct_get once matched.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var vib: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var viz: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: viz, args: [], imm: 0, str: "" });
+                var vit: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: vit, args: [vib, viz], imm: 0, str: "" });
+                var viid: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: viid, args: [], imm: struct_id_of(structs, op.str), str: "" });
+                var viv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: viv, args: [vit, viid], imm: 0, str: "==" });
+                stack = stack.append(viv);
             }
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }

@@ -81,7 +81,7 @@ function main(): i32 {
                 if (!lr.ok) {
                     lower_bail = lower_bail + 1;
                 } else {
-                    var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops);
+                    var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops, merged.structs);
                     if (lf.ok) {
                         lifted = lifted + 1;
                     } else {

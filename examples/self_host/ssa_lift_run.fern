@@ -14,6 +14,7 @@
 import "./ir";
 import "./ssa";
 import "./ssa_lift";
+import "./parser";
 
 function int_str(n: i32): string {
     if (n == 0) { return "0"; }
@@ -45,7 +46,8 @@ function count_kind(f: ssa.SFunc, kind: string): i32 {
 
 // check_eval lifts ops, evaluates with args, and reports pass/fail.
 function check_eval(label: string, nparams: i32, nslots: i32, ops: ir.Op[], args: i32[], want: i32): i32 {
-    var lr: ssa_lift.LResult = ssa_lift.lift_from_ir(label, nparams, nslots, ops);
+    var no_structs: parser.StructDecl[] = [];
+    var lr: ssa_lift.LResult = ssa_lift.lift_from_ir(label, nparams, nslots, ops, no_structs);
     if (!lr.ok) {
         print("not ok - " + label + " (lift bailed: ok=false)");
         return 1;
@@ -61,6 +63,9 @@ function check_eval(label: string, nparams: i32, nslots: i32, ops: ir.Op[], args
 
 function main(): i32 {
     var fails: i32 = 0;
+    // These structural cases never build enum/struct boxes; an empty struct
+    // table suffices for lift_from_ir's tag-discriminant lookups.
+    var no_structs: parser.StructDecl[] = [];
 
     // --- case 1: add(a, b) = a + b ----------------------------------------
     var add_ops: ir.Op[] = [
@@ -94,7 +99,7 @@ function main(): i32 {
     fails = fails + check_eval("ifelse c=1", 3, 4, ife_ops, [1, 10, 20], 11);
     fails = fails + check_eval("ifelse c=0", 3, 4, ife_ops, [0, 10, 20], 22);
     // structural: the merge must carry a phi for r.
-    var ife_f: ssa_lift.LResult = ssa_lift.lift_from_ir("ifelse", 3, 4, ife_ops);
+    var ife_f: ssa_lift.LResult = ssa_lift.lift_from_ir("ifelse", 3, 4, ife_ops, no_structs);
     if (ife_f.ok && count_kind(ife_f.func, "phi") == 1) {
         print("ok - ifelse builds exactly one phi");
     } else {
@@ -125,7 +130,7 @@ function main(): i32 {
         ir.op_call_direct("inc", 1),
         ir.op_return()
     ];
-    var call_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("usef", 1, 1, call_ops);
+    var call_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("usef", 1, 1, call_ops, no_structs);
     if (call_lr.ok && count_kind(call_lr.func, "call") == 1) {
         print("ok - call_direct lifts to one call inst");
     } else {
@@ -254,7 +259,7 @@ function main(): i32 {
     var bad_ops: ir.Op[] = [
         ir.op_alloc()
     ];
-    var bad_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("bad", 0, 0, bad_ops);
+    var bad_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("bad", 0, 0, bad_ops, no_structs);
     if (!bad_lr.ok) {
         print("ok - out-of-subset op bails");
     } else {
