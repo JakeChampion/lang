@@ -77,13 +77,13 @@ function main(): i32 {
         + " sub=" + b2s(ir.is_commutative_kind(ir.kind_id("sub")))
         + " shl=" + b2s(ir.is_commutative_kind(ir.kind_id("shl"))) + "\n";
 
-    // 5. Constructor-baked kind_tag consistency. Every Op constructor now
-    //    stamps a kind_tag onto the box (a baked literal id for the fixed-kind
-    //    ops, kind_id(kind) for the variable-kind ones); the x86-64 IR backend
-    //    (asm_ir) dispatches on that int instead of the string kind. Assert the
-    //    baked tag equals kind_id(op.kind) across a representative spread of
-    //    constructors — a wrong literal or a registry reorder desyncs this and
-    //    fails here (and would otherwise silently misdispatch asm_ir).
+    // 5. Constructor-baked kind_tag consistency. Op no longer carries a string
+    //    kind — every constructor stamps only a kind_tag (a baked literal id
+    //    for the fixed-kind ops, kind_id(kind) for the variable-kind ones), and
+    //    all backends dispatch on it. Assert each constructor bakes the tag its
+    //    name maps to (kind_tag == kind_id(EXPECTED)) across a representative
+    //    spread — a wrong literal or a registry reorder desyncs this and fails
+    //    here rather than silently misdispatching a backend.
     var probe: ir.Op[] = [
         ir.op_const_i32(42), ir.op_const_str("x"), ir.op_load_local(0),
         ir.op_store_local(0), ir.op_tee_local(0), ir.op_bin("add", 0, false),
@@ -93,11 +93,20 @@ function main(): i32 {
         ir.op_struct_make("S", 1), ir.op_call_direct("f", 1), ir.op_if(0),
         ir.op_br(1), ir.op_drop(), ir.op_return()
     ];
+    var names: string[] = [
+        "const_i32", "const_str", "load_local",
+        "store_local", "tee_local", "add",
+        "ge_u", "fadd", "fsqrt",
+        "load", "store", "alloc",
+        "arr_make", "str_concat", "map_len",
+        "struct_make", "call_direct", "if",
+        "br", "drop", "return"
+    ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;
     var j: i32 = 0;
     while (j < probe.len()) {
-        if (probe[j].kind_tag == ir.kind_id(probe[j].kind)) { tag_ok = tag_ok + 1; }
+        if (probe[j].kind_tag == ir.kind_id(names[j])) { tag_ok = tag_ok + 1; }
         else { tag_bad = tag_bad + 1; }
         j = j + 1;
     }

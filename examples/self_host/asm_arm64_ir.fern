@@ -490,7 +490,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
             s = s.write("    bl __fern_str_box\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-        } else if (ir.is_str_op_kind(o.kind)) {
+        } else if (ir.is_str_op_kind(ir.kind_name(o.kind_tag))) {
             // All string operand-stack ops (len/index/slice/bytes/split/
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
@@ -1159,7 +1159,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else {
             // binary op: pop rhs (x1), lhs (x0), combine, push.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = s.write(ir_bin_asm(o.kind));
+            s = s.write(ir_bin_asm(ir.kind_name(o.kind_tag)));
             s = s.write("    str x0, [sp, #-16]!\n");
         }
         i = i + 1;

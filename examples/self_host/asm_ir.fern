@@ -3197,7 +3197,7 @@ function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: 
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
-        if (r.ops[i].kind == "const_func" && !module_has_func(mod, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }
+        if (r.ops[i].kind_tag == 6 && !module_has_func(mod, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }  // const_func
         i = i + 1;
     }
     return true;
@@ -3377,7 +3377,7 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
     // garbage `kind` would fabricate a bogus, possibly-dangling target). The
     // boundary label is defined at the epilogue (see emit_function_via_ir).
     if (op < 0) { return lp + util.i32_to_string(ops.len()); }
-    if (ops[op].kind == "loop") { return lp + util.i32_to_string(op); }
+    if (ops[op].kind_tag == 153) { return lp + util.i32_to_string(op); }  // loop
     return lp + util.i32_to_string(irlower.find_matching_end(ops, op + 1));
 }
 
@@ -3629,7 +3629,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     while (dop < r.ops.len()) {
         var dopop: ir.Op = r.ops[dop];
         if (dopop.kind_tag == 124 || dopop.kind_tag == 125 || dopop.kind_tag == 126) { s = s.need("maps"); }  // map_new, map_set, map_len
-        if (ir.op_allocates(dopop.kind)) { s = s.need("heap"); }
+        if (ir.op_allocates(ir.kind_name(dopop.kind_tag))) { s = s.need("heap"); }
         dop = dop + 1;
     }
 
@@ -3853,7 +3853,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rsi\n");
             s = s.write("    call __fern_str_box\n");
             s = s.write("    pushq %rax\n");
-        } else if (ir.is_str_op_kind(o.kind)) {
+        } else if (ir.is_str_op_kind(ir.kind_name(o.kind_tag))) {
             // All string operand-stack ops (len/index/slice/bytes/split/
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
@@ -4543,9 +4543,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             if (o.kind_tag == 24 || o.kind_tag == 26 || o.kind_tag == 25 || o.kind_tag == 27) {  // div_s, rem_s, div_u, rem_u
                 // Non-trapping guarded div/rem (#4329); needs a per-op-unique
                 // label base — reuse the loop prefix + this op's index.
-                s = s.write(ir_div_guarded(o.kind, o.width, lp + util.i32_to_string(i)));
+                s = s.write(ir_div_guarded(ir.kind_name(o.kind_tag), o.width, lp + util.i32_to_string(i)));
             } else {
-                s = s.write(ir_bin_asm(o.kind, o.width));
+                s = s.write(ir_bin_asm(ir.kind_name(o.kind_tag), o.width));
             }
             s = s.write("    pushq %rax\n");
         }
