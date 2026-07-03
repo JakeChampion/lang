@@ -960,13 +960,16 @@ function parse_map_lit(p: Par): ExprResult {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    var ctor: string = "map_new";
-    if (mlk.len() > 0) {
+    // map_new_i32 when the first key is a number literal (integer keys),
+    // else map_new (string keys). Written as an if/match EXPRESSION rather
+    // than the old "declare temp, statement-match to assign it" workaround
+    // (issue #4405 — block/if/match expressions now lower on every backend).
+    var ctor: string = if (mlk.len() > 0) {
         match (mlk[0]) {
-            ExprNumber(_) => { ctor = "map_new_i32"; },
-            _ => { }
+            ExprNumber(_) => "map_new_i32",
+            _ => "map_new"
         }
-    }
+    } else { "map_new" };
     var cargs: Expr[] = [];
     cargs = cargs.append(e_number("8", "", false));
     var mbase: Expr = e_call(e_ident(ctor), cargs);
