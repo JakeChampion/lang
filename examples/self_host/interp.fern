@@ -184,10 +184,13 @@ function (e: Env) update(name: string, v: Value): Env {
 // str_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 // str_to_f64 parses a decimal float literal: an optional `-`,
-// integer digits, optional `.` + fractional digits. No
-// exponents in this cut — the parser's float literals are
-// "%d.%d" shaped. Walks the integer part first, then the
-// fractional part with a 1/10**k divisor.
+// integer digits, optional `.` + fractional digits, and an
+// optional `e`/`E` exponent with an optional sign. Walks the
+// integer part first, then the fractional part with a 1/10**k
+// divisor, then scales by 10**exp. (The exponent scaling is a
+// minimal power-of-ten loop — SH-004/#2849 tracks a correctly
+// rounding decimal parser; this only stops `1e3` losing its
+// exponent entirely, #4342.)
 function str_to_f64(s: string): f64 {
     var n: i32 = s.len();
     var neg: boolean = false;
@@ -212,6 +215,29 @@ function str_to_f64(s: string): f64 {
         i = i + 1;
     }
     var v: f64 = int_part + frac_part;
+    // Exponent: `e`/`E`, an optional `+`/`-`, then digits. The mantissa loop
+    // broke at the `e`, so `i` points at it here. `1e3` -> 1000.0, `1.5e-2` ->
+    // 0.015. Applied before the mantissa sign so `-1e2` = -100.0.
+    if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
+        i = i + 1;
+        var exp_neg: boolean = false;
+        if (i < n && (s[i] == 43 || s[i] == 45)) {  // '+' / '-'
+            if (s[i] == 45) { exp_neg = true; }
+            i = i + 1;
+        }
+        var exp: i32 = 0;
+        while (i < n) {
+            var eb: i32 = s[i];
+            if (eb < 48 || eb > 57) { break; }
+            exp = exp * 10 + (eb - 48);
+            i = i + 1;
+        }
+        var k: i32 = 0;
+        while (k < exp) {
+            if (exp_neg) { v = v / 10.0; } else { v = v * 10.0; }
+            k = k + 1;
+        }
+    }
     if (neg) { v = 0.0 - v; }
     return v;
 }
@@ -390,7 +416,10 @@ function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) { return v_float(str_to_f64(n.text)); }
-            return v_int(util.digits_to_i32(n.text));
+            // lit_to_i32 (not the decimal-only digits_to_i32) so a `0x`/`0b`
+            // literal keeps its value — digits_to_i32 stops at the `x`/`b` and
+            // silently yields 0 (#4341). Decimal falls through unchanged.
+            return v_int(util.lit_to_i32(n.text));
         },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },

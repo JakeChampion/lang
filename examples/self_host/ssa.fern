@@ -429,7 +429,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 // the source text; the backend emits it as a `.double` constant.
                 return s.emit(SInst { kind: "const_float", result: s.cur_id(), args: args0, imm: 0, str: n.text });
             }
-            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: util.digits_to_i32(n.text), str: "" });
+            // lit_to_i32 (hex/binary-aware) so `0x`/`0b` literals carry their
+            // value into the const_int imm; digits_to_i32 stopped at the prefix
+            // letter and zeroed them (#4341). Decimal is unchanged.
+            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: util.lit_to_i32(n.text), str: "" });
         },
         parser.ExprBool(b) => {
             s = s.fresh();
