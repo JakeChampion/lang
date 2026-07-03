@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +62,7 @@ func TestSelfHostStrFreshRetIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			reclaims := bytes.Count(asm, []byte("call __fn___fern_str_free"))
+			reclaims := countUserStrFreeReclaims(asm)
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-ret-call reclaim (call __fn___fern_str_free), found none — r leaks", tc.name)
 			}

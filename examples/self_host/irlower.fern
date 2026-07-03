@@ -10530,6 +10530,34 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // An enum-array field still bails: aliasing it out needs deep-drop
             // recursion (a later slice).
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
+            // Returning a bare PARAM array (`return a`, a a borrowed param) —
+            // the native return-transfer inc, ported (#4357 probe). The CALLER
+            // binds the result as an owned move (its slot is exit-swept), but
+            // the param's buffer belongs to the caller's caller: without a
+            // retain the callee hands out an UNCOUNTED alias, and the two
+            // sweeps over-release it (rc 1 -> 0 while the owner still holds
+            // it — a use-after-free surfaced by the underflow detector on the
+            // identity-return probe). Mirror the struct-field Perceus dup
+            // above: retain the buffer so the escaping return is a counted
+            // reference (owner's later dec frees it exactly once). Params are
+            // never exit-swept, so no move-out bookkeeping is needed; a bare
+            // LOCAL return stays on the move-on-return path below (its slot
+            // is kept from the sweep instead).
+            var rpid: string = "";
+            match (r.value) {
+                parser.ExprIdent(rid2) => { rpid = rid2.name; },
+                _ => {}
+            }
+            if (rpid.len() > 0) {
+                var rps: i32 = s.slot_of(rpid);
+                if (rps >= 0 && rps < s.n_params && s.is_arr_slot(rps)) {
+                    var rpl: LowerState = lower_expr(r.value, s);
+                    if (!rpl.ok) { return rpl; }
+                    rpl = rpl.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+                    rpl = emit_dec_sweep_except(rpl, 0 - 1);
+                    return rpl.emit(ir.op_return());
+                }
+            }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
             // Perceus move-on-return: any array local the returned value MOVES out
@@ -19788,6 +19816,98 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         k = k + 1;
     }
     return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
+}
+
+// rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
+// string `<` operator), used to sort the name groups in rc_plan_dump the same
+// way native's sort.Strings orders them.
+function rc_dump_str_lt(a: string, b: string): boolean {
+    var la: i32 = a.len();
+    var lb: i32 = b.len();
+    var n: i32 = la;
+    if (lb < n) { n = lb; }
+    var i: i32 = 0;
+    while (i < n) {
+        var ca: i32 = a[i];
+        var cb: i32 = b[i];
+        if (ca != cb) { return ca < cb; }
+        i = i + 1;
+    }
+    return la < lb;
+}
+
+// rc_plan_dump renders THIS function's Perceus decision tables in the pinned
+// cross-compiler dump format (#4482 — the native side is
+// internal/ir/rc_dump.go, format pinned by TestRcPlanDumpFormat): one
+// `key: value` line per non-empty table, `preciseDrops` as
+// `stmtIdx=name+name` groups sorted by index (names within a group sorted).
+// Only the tables the self-host actually computes are emitted; a table the
+// port doesn't have yet (movedLocals, moveSites, ...) is omitted entirely, so
+// the native<->self-host diff DOCUMENTS the port gap instead of hiding it.
+// Registries are derived per lower_func_for_noret's convention (the
+// module-local `*_of(funcs)` side-tables, not a cross-module fixed point).
+pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string {
+    var arr_ret: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
+        k = k + 1;
+    }
+    var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs));
+    if (pd.idxs.len() == 0) { return ""; }
+    // Distinct drop indices, insertion-sorted ascending (numeric — the native
+    // renderer orders by parsed index, so "10" must sort after "9").
+    var uidx: i32[] = [];
+    var i: i32 = 0;
+    while (i < pd.idxs.len()) {
+        var seen: boolean = false;
+        var j: i32 = 0;
+        while (j < uidx.len()) {
+            if (uidx[j] == pd.idxs[i]) { seen = true; }
+            j = j + 1;
+        }
+        if (!seen) {
+            var ins: i32 = 0;
+            while (ins < uidx.len() && uidx[ins] < pd.idxs[i]) { ins = ins + 1; }
+            var grown: i32[] = [];
+            var g: i32 = 0;
+            while (g < ins) { grown = grown.append(uidx[g]); g = g + 1; }
+            grown = grown.append(pd.idxs[i]);
+            while (g < uidx.len()) { grown = grown.append(uidx[g]); g = g + 1; }
+            uidx = grown;
+        }
+        i = i + 1;
+    }
+    var out: string = "preciseDrops: ";
+    var u: i32 = 0;
+    while (u < uidx.len()) {
+        // Names dropped after statement uidx[u], insertion-sorted ascending.
+        var names: string[] = [];
+        var p: i32 = 0;
+        while (p < pd.idxs.len()) {
+            if (pd.idxs[p] == uidx[u]) {
+                var at: i32 = 0;
+                while (at < names.len() && rc_dump_str_lt(names[at], pd.names[p])) { at = at + 1; }
+                var nn: string[] = [];
+                var q: i32 = 0;
+                while (q < at) { nn = nn.append(names[q]); q = q + 1; }
+                nn = nn.append(pd.names[p]);
+                while (q < names.len()) { nn = nn.append(names[q]); q = q + 1; }
+                names = nn;
+            }
+            p = p + 1;
+        }
+        if (u > 0) { out = out + ","; }
+        out = out + util.i32_to_string(uidx[u]) + "=";
+        var n: i32 = 0;
+        while (n < names.len()) {
+            if (n > 0) { out = out + "+"; }
+            out = out + names[n];
+            n = n + 1;
+        }
+        u = u + 1;
+    }
+    return out + "\n";
 }
 
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
