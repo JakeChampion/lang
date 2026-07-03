@@ -113,6 +113,11 @@ pub function is_fern_helper(name: string): boolean {
         // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
         || name == "__fern_map_free"
         || name == "__fern_rc_is_unique"
+        // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
+        // when its cap matches, else freelists it and allocs fresh — so a reuse
+        // site guarded by __fern_rc_is_unique degrades instead of corrupting.
+        // Never user-callable — only irlower's reuse emitters emit it.
+        || name == "__fern_alloc_reuse"
         || name == "__fern_rc_underflow_get"
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
         // stack-arg body under __fn___fern_i32_to_string).
@@ -1034,6 +1039,43 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jne .Lshuniq_ret\n");
     s = s.write("    movq $1, %rax\n");
     s = s.write(".Lshuniq_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_alloc_reuse(token@16(%rsp), nfields@8(%rsp)) -> %rax = data — the
+    // FBIP reuse-degrade primitive (#4350), the self-host twin of native's
+    // __fern_alloc_reuse adapted to the arr-box layout (cap@data-16, rc@data-8):
+    // null token -> fresh __fern_arr_box(cap); cap match -> hand the SAME block
+    // back (rc stays 1 — the caller's __fern_rc_is_unique gate guaranteed sole
+    // ownership; len@data+0 is stale but every reuse caller overwrites slot 0
+    // with the shape/tag before any read); cap mismatch -> push the donor block
+    // onto its size-class freelist and alloc fresh — a mispaired reuse is only
+    // ever slower, never unsound. Clobbers rax/rcx/rdx/rsi/rdi/r8 (the same
+    // contract as the other __fn_ rc helpers).
+    s = s.write("__fn___fern_alloc_reuse:\n");
+    s = s.write("    movq 16(%rsp), %rax\n");        // token (donor data ptr, or 0)
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lsarelo_fresh\n");
+    s = s.write("    movq 8(%rsp), %rcx\n");         // nfields
+    s = s.write("    incq %rcx\n");                  // wanted cap = nfields + 1 (struct_make's arr_box cap)
+    s = s.write("    cmpq %rcx, -16(%rax)\n");       // donor cap == wanted?
+    s = s.write("    je .Lsarelo_ret\n");            // reuse: return token
+    // Mismatch: return the donor block ((cap+3) words at data-16) to its
+    // freelist class, mirroring __fn___fern_arr_dec's free path; an oversize
+    // block (>= 65536 words, outside the freelist range) is left to leak,
+    // matching __fern_alloc's own no-freelist policy for that range.
+    s = s.write("    movq -16(%rax), %rdx\n");       // donor cap
+    s = s.write("    addq $3, %rdx\n");              // block words = cap + 3
+    s = s.write("    leaq -16(%rax), %rcx\n");       // block base
+    s = s.write("    cmpq $65536, %rdx\n");
+    s = s.write("    jae .Lsarelo_fresh\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rdx,8), %rsi\n");    // old head
+    s = s.write("    movq %rsi, (%rcx)\n");          // *block = head
+    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");    // freelist[words] = block
+    s = s.write(".Lsarelo_fresh:\n");
+    s = s.write("    movq 8(%rsp), %rdi\n");         // nfields
+    s = s.write("    incq %rdi\n");                  // cap = nfields + 1
+    s = s.write("    call __fern_arr_box\n");        // rax = fresh data (rc=1)
+    s = s.write(".Lsarelo_ret:\n");
     s = s.write("    ret\n");
     // __fern_snapshot_dec(new, old, snap) -> new — the snapshot-param consume-
     // rebind reclaim (#3456 slice 2). Stack-arg ABI: 24(%rsp)=new, 16=old,
@@ -3529,6 +3571,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
+        "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
         "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
         // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string

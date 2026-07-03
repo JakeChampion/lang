@@ -5257,6 +5257,43 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, #1\n");
         s = s.write(".Lshuniq_ret:\n");
         s = s.write("    ret\n");
+        // __fern_alloc_reuse(token@[sp,#16], nfields@[sp]) -> x0 = data — the
+        // FBIP reuse-degrade primitive (#4350), arm64 mirror of the x86
+        // __fn___fern_alloc_reuse. Same arr-box layout (cap@data-16, rc@data-8):
+        // null token -> fresh __fern_arr_box(nf+1); cap match -> hand the SAME
+        // block back (rc stays 1 — the caller's __fern_rc_is_unique gate
+        // guaranteed sole ownership; the caller overwrites the shape slot before
+        // any read); cap mismatch -> return the donor block to its word-indexed
+        // freelist class (the __fn___fern_snapshot_dec free idiom: clear rc,
+        // *base = head, freelist[cap+3] = base; >= 65536 words leaks, matching
+        // __fern_alloc's no-freelist tier) and alloc fresh. Clobbers x0..x6, x9.
+        s = s.write("__fn___fern_alloc_reuse:\n");
+        s = s.write("    ldr x0, [sp, #16]\n");        // token (donor data ptr, or 0)
+        s = s.write("    cbz x0, .Lsarelo_fresh\n");
+        s = s.write("    ldr x1, [sp]\n");             // nfields
+        s = s.write("    add x1, x1, #1\n");           // wanted cap = nfields + 1
+        s = s.write("    ldur x2, [x0, #-16]\n");      // donor cap
+        s = s.write("    cmp x2, x1\n");
+        s = s.write("    beq .Lsarelo_ret\n");         // reuse: return token in x0
+        s = s.write("    add x3, x2, #3\n");           // block words = donor cap + 3
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x3, x9\n");
+        s = s.write("    bhs .Lsarelo_fresh\n");       // oversize tier: leak
+        s = s.write("    stur wzr, [x0, #-8]\n");      // clear rc (freed marker)
+        s = s.write("    sub x4, x0, #16\n");          // block base
+        s = s.write("    adrp x5, __fern_freelist\n");
+        s = s.write("    add x5, x5, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x6, [x5, x3, lsl #3]\n"); // old head
+        s = s.write("    str x6, [x4]\n");             // *base = head
+        s = s.write("    str x4, [x5, x3, lsl #3]\n"); // freelist[words] = base
+        s = s.write(".Lsarelo_fresh:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    ldr x0, [sp, #16]\n");        // nfields (arg shifted by the frame push)
+        s = s.write("    add x0, x0, #1\n");           // cap = nfields + 1
+        s = s.write("    bl __fern_arr_box\n");        // x0 = fresh data (rc=1)
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write(".Lsarelo_ret:\n");
+        s = s.write("    ret\n");
         // __fern_rc_underflow_count() -> i32 — read the detector.
         s = s.write("__fn___fern_rc_underflow_count:\n");
         s = s.write("    adrp x10, __fern_rc_underflow\n");
