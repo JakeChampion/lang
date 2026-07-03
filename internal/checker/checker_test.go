@@ -1044,20 +1044,6 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 	}
 }
 
-func TestSwitchTypechecks(t *testing.T) {
-	src := `function f(n: i32): i32 {
-		switch (n) {
-			case 1, 2: return 10;
-			case 3: return 30;
-			default: return 0;
-		}
-		return -1;
-	}`
-	if err := checkSource(t, src); err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestStructTypechecks(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
@@ -1214,43 +1200,6 @@ func TestImmutableRecursiveTypeStillCompiles(t *testing.T) {
 		}`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("recursive immutable type should compile, got: %v", err)
-	}
-}
-
-func TestSwitchRejectsTypeMismatchedCase(t *testing.T) {
-	src := `function f(n: i32): i32 {
-		switch (n) { case true: return 1; default: return 0; }
-	}`
-	if err := checkSource(t, src); err == nil {
-		t.Error("expected type-mismatch error on case value")
-	}
-}
-
-func TestSwitchRejectsFloatTag(t *testing.T) {
-	src := `function f(x: f32): i32 {
-		switch (x) { case 1.0: return 1; default: return 0; }
-	}`
-	if err := checkSource(t, src); err == nil {
-		t.Error("expected error switching on float")
-	}
-}
-
-func TestBreakInSwitchAllowed(t *testing.T) {
-	src := `function f(n: i32): i32 {
-		switch (n) { case 1: break; default: break; }
-		return 0;
-	}`
-	if err := checkSource(t, src); err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
-	src := `function f(n: i32): i32 {
-		switch (n) { case 1: continue; default: return 0; }
-	}`
-	if err := checkSource(t, src); err == nil {
-		t.Error("expected `continue outside of a loop`")
 	}
 }
 
@@ -1650,9 +1599,9 @@ func TestMissingReturnRejected(t *testing.T) {
 		`function h(b: boolean): i32 {
 			if (b) { return 1; } else { var z = 2; }
 		}`,
-		// switch with no default: an unmatched tag falls through
+		// match whose wildcard arm doesn't return: an unmatched tag falls through
 		`function sw(n: i32): i32 {
-			switch (n) { case 0: return 0; case 1: return 1; }
+			match (n) { 0 => { return 0; }, 1 => { return 1; }, _ => { var z = 2; } }
 		}`,
 	} {
 		err := checkSource(t, src)
@@ -1689,9 +1638,9 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 		`function loops2(): i32 {
 			loop { var x = 1; }
 		}`,
-		// switch with default, every arm returns
+		// match with wildcard, every arm returns
 		`function sw(n: i32): i32 {
-			switch (n) { case 0: return 0; default: return 1; }
+			match (n) { 0 => { return 0; }, _ => { return 1; } }
 		}`,
 		// void function may fall through
 		`function v(n: i32) { var x = n + 1; }`,

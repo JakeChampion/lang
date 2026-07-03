@@ -173,28 +173,6 @@ function main(): i32 {
 	}
 }
 
-// Switch statements indent each case and the optional default; the
-// case bodies use the same multi-line block formatting.
-func TestFormatSwitch(t *testing.T) {
-	got := formatSrc(t, `function f(n: i32): i32 {
-		switch (n) {
-			case 1, 2: return 10;
-			case 3: return 30;
-			default: return 0;
-		}
-		return -1;
-	}`)
-	if !strings.Contains(got, "  switch (n) {") {
-		t.Errorf("switch header should be indented:\n%s", got)
-	}
-	if !strings.Contains(got, "    case 1, 2: ") {
-		t.Errorf("case should be indented one further:\n%s", got)
-	}
-	if !strings.Contains(got, "    default: ") {
-		t.Errorf("default should be indented one further:\n%s", got)
-	}
-}
-
 // `for (init; cond; step)` keeps its three-clause shape with
 // semicolons separating the slots; init's trailing `;` is part of
 // the Var/ExprStmt, step has no trailing `;`.

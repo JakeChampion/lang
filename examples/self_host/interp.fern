@@ -1086,11 +1086,8 @@ pub struct StepResult { env: Env, ret: Value }
 
 function eval_stmt(st: parser.Stmt, env: Env): StepResult {
     match (st) {
-        // StmtSwitch is desugared to an if-chain on the fly (the interp
-        // driver doesn't run module_with_builtins). StmtDefer is lowered away
-        // by lower_defers_module before eval; both arms recurse on the
-        // lowered form.
-        parser.StmtSwitch(_) => { return eval_stmt(parser.desugar_switch_in_stmt(st), env); },
+        // StmtDefer is lowered away by lower_defers_module before eval; this
+        // arm recurses on the lowered form.
         parser.StmtDefer(d) => { return eval_stmt(d.action, env); },
         parser.StmtVar(v) => {
             var val: Value = eval_expr(v.init, env);

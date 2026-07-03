@@ -34,8 +34,6 @@ var auditBuiltinCases = []struct {
 	{"for-in-array", `function main(): i32 { var a: i32[] = [2, 3, 4]; var s: i32 = 0; for x in a { s = s + x * x; } return s; }`, 29},
 	{"range-inclusive", `function main(): i32 { var s: i32 = 0; for k in 0..=5 { s = s + k; } return s; }`, 15},
 	{"range-half-open", `function main(): i32 { var s: i32 = 0; for k in 0..4 { s = s + k; } return s; }`, 6},
-	{"switch-comma-case", `function classify(n: i32): i32 { switch (n) { case 1, 2, 3: return 42; default: return 7; } } function main(): i32 { return classify(2); }`, 42},
-	{"switch-default", `function classify(n: i32): i32 { switch (n) { case 1, 2, 3: return 42; default: return 7; } } function main(): i32 { return classify(99); }`, 7},
 	// break / continue exercised over a foreach loop (not a C-style for —
 	// see the held-out gaps below): break at the 5th element -> 5;
 	// continue skipping evens, summing odds -> 1+3+5 = 9.

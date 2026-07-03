@@ -2226,29 +2226,11 @@ type ExprStmt struct {
 	Expr Expr
 }
 
-// Switch dispatches on a single tag expression. Each case lists one or
-// more constant match values (no fallthrough — control flows out at the
-// end of the case body). A trailing `default` block runs when no case
-// matched; it may be nil.
-type Switch struct {
-	P       Position
-	Tag     Expr
-	Cases   []*SwitchCase
-	Default *Block // may be nil
-}
-
-type SwitchCase struct {
-	P      Position
-	Values []Expr
-	Body   *Block
-}
-
-// Match dispatches on a tagged-union value. Unlike Switch (whose
-// cases are constant value tests), Match arms are patterns that
-// also bind payload fields into local names visible inside the
-// arm body. Exhaustiveness is checked at type-check time: every
-// variant of the scrutinee's enum type must appear, OR the arm
-// list ends with a wildcard pattern (`_`).
+// Match dispatches on a tagged-union value. Match arms are patterns
+// that bind payload fields into local names visible inside the arm
+// body. Exhaustiveness is checked at type-check time: every variant
+// of the scrutinee's enum type must appear, OR the arm list ends
+// with a wildcard pattern (`_`).
 type Match struct {
 	P    Position
 	Tag  Expr
@@ -2346,7 +2328,6 @@ func (s *Defer) Pos() Position                  { return s.P }
 func (s *Var) Pos() Position                    { return s.P }
 func (s *Destructure) Pos() Position            { return s.P }
 func (s *ExprStmt) Pos() Position               { return s.P }
-func (s *Switch) Pos() Position                 { return s.P }
 func (s *Match) Pos() Position                  { return s.P }
 func (s *FuncDecl) Pos() Position               { return s.P }
 func (s *FuncDecl) GenericName() string         { return s.Name }
@@ -2367,7 +2348,6 @@ func (*Defer) isStmt()       {}
 func (*Var) isStmt()         {}
 func (*Destructure) isStmt() {}
 func (*ExprStmt) isStmt()    {}
-func (*Switch) isStmt()      {}
 func (*Match) isStmt()       {}
 func (*FuncDecl) isStmt()    {} // legal as a stmt only when IsLocal is true
 

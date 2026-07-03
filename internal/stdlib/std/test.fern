@@ -42,9 +42,8 @@
 // of Fern's stdlib (Array.push, struct receiver methods) and
 // sidesteps the lack of interior mutability.
 //
-// (`case` would have been the obvious method name but it's a
-// reserved keyword for `switch` arms; `it` matches the BDD
-// `describe / it` convention from JS / Ruby test frameworks.)
+// (`it` matches the BDD `describe / it` convention from JS / Ruby
+// test frameworks.)
 //
 // Discovery is intentionally explicit: Fern has no reflection,
 // so `main` lists the tests it runs. That's the same shape

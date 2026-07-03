@@ -268,19 +268,6 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 	case *Assign:
 		x.Target = rewriteExpr(x.Target, fn)
 		x.Value = rewriteExpr(x.Value, fn)
-	case *Switch:
-		x.Tag = rewriteExpr(x.Tag, fn)
-		for ci := range x.Cases {
-			for vi := range x.Cases[ci].Values {
-				x.Cases[ci].Values[vi] = rewriteExpr(x.Cases[ci].Values[vi], fn)
-			}
-			if x.Cases[ci].Body != nil {
-				rewriteStmtChildren(x.Cases[ci].Body, fn)
-			}
-		}
-		if x.Default != nil {
-			rewriteStmtChildren(x.Default, fn)
-		}
 	case *Match:
 		x.Tag = rewriteExpr(x.Tag, fn)
 		for ai := range x.Arms {
@@ -447,19 +434,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 		Walk(x.Init, fn)
 	case *ExprStmt:
 		Walk(x.Expr, fn)
-	case *Switch:
-		Walk(x.Tag, fn)
-		for _, c := range x.Cases {
-			for _, v := range c.Values {
-				Walk(v, fn)
-			}
-			if c.Body != nil {
-				Walk(c.Body, fn)
-			}
-		}
-		if x.Default != nil {
-			Walk(x.Default, fn)
-		}
 	case *Match:
 		Walk(x.Tag, fn)
 		for _, a := range x.Arms {

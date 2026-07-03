@@ -2132,8 +2132,6 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseVar()
 		case "let":
 			return p.parseLetElse()
-		case "switch":
-			return p.parseSwitch()
 		case "match":
 			return p.parseMatch()
 		case "function":
@@ -2558,9 +2556,9 @@ func (p *parser) branchStmtStart() bool {
 	}
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
-		// `if` / `match` / `switch` are deliberately NOT listed: they
-		// can stand as the trailing value expression (`{ …; if (c) { a }
-		// else { b } }`), and the existing single-expr branch form
+		// `if` / `match` are deliberately NOT listed: they can stand as
+		// the trailing value expression (`{ …; if (c) { a } else { b } }`),
+		// and the existing single-expr branch form
 		// `if (a) { … } else { if (c) { … } else { … } }` relies on the
 		// inner `if`/`match` parsing as an expression. The expr path in
 		// parseBranchBody then decides statement-vs-tail by the trailing
@@ -2896,14 +2894,6 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		for _, arm := range x.Arms {
 			desugarForEachStmt(arm.Body, streamFns)
 		}
-	case *ast.Switch:
-		desugarForEachExpr(x.Tag, streamFns)
-		for _, k := range x.Cases {
-			desugarForEachStmt(k.Body, streamFns)
-		}
-		if x.Default != nil {
-			desugarForEachStmt(x.Default, streamFns)
-		}
 	case *ast.Var:
 		desugarForEachExpr(x.Init, streamFns)
 	case *ast.ExprStmt:
@@ -3021,84 +3011,9 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, e
 	}, nil
 }
 
-// parseSwitch parses
-//
-//	switch (tag) {
-//	  case v1, v2: { ... }
-//	  case v3: { ... }
-//	  default: { ... }
-//	}
-//
-// Cases don't fall through. Each body runs until the next `case`,
-// `default`, or the closing brace; we don't require a `break` to leave
-// a case (and a leading `break` inside a case body is a no-op).
-func (p *parser) parseSwitch() (ast.Stmt, error) {
-	kw := p.advance() // `switch`
-	if _, err := p.expect(lexer.Punct, "("); err != nil {
-		return nil, err
-	}
-	tag, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, ")"); err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	sw := &ast.Switch{P: kw.Pos, Tag: tag}
-	for {
-		t := p.peek()
-		if t.Kind == lexer.Punct && t.Text == "}" {
-			p.advance()
-			return sw, nil
-		}
-		if t.Kind != lexer.Keyword || (t.Text != "case" && t.Text != "default") {
-			return nil, p.errorfCode(t.Pos, "P001", "expected `case`, `default` or `}` in switch body")
-		}
-		caseKw := p.advance()
-		if caseKw.Text == "default" {
-			if sw.Default != nil {
-				return nil, p.errorf(caseKw.Pos, "duplicate `default` clause")
-			}
-			if _, err := p.expect(lexer.Punct, ":"); err != nil {
-				return nil, err
-			}
-			body, err := p.parseCaseBody()
-			if err != nil {
-				return nil, err
-			}
-			sw.Default = body
-			continue
-		}
-		// `case v1, v2, v3:`
-		var values []ast.Expr
-		for {
-			v, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, v)
-			if _, ok := p.accept(lexer.Punct, ","); ok {
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(lexer.Punct, ":"); err != nil {
-			return nil, err
-		}
-		body, err := p.parseCaseBody()
-		if err != nil {
-			return nil, err
-		}
-		sw.Cases = append(sw.Cases, &ast.SwitchCase{P: caseKw.Pos, Values: values, Body: body})
-	}
-}
-
 // parseMatch parses `match (<expr>) { Pat => { … }, … }`. The
-// tag expression is parenthesised (matching `switch` and avoiding
-// the `Ident { … }` ambiguity with struct-literal shorthand).
+// tag expression is parenthesised (avoiding the `Ident { … }`
+// ambiguity with struct-literal shorthand).
 // Patterns are either:
 //
 //	`_`                — wildcard (must be the last arm)
@@ -3492,32 +3407,6 @@ func (p *parser) parseMatchExprArm() ([]*ast.MatchExprArm, error) {
 		}
 	}
 	return arms, nil
-}
-
-// parseCaseBody collects statements up to the next `case`, `default`,
-// or closing `}`. The block's position is the position of the first
-// statement (or 0:0 for an empty case).
-func (p *parser) parseCaseBody() (*ast.Block, error) {
-	blk := &ast.Block{}
-	first := true
-	for {
-		t := p.peek()
-		if t.Kind == lexer.Punct && t.Text == "}" {
-			return blk, nil
-		}
-		if t.Kind == lexer.Keyword && (t.Text == "case" || t.Text == "default") {
-			return blk, nil
-		}
-		if first {
-			blk.P = t.Pos
-			first = false
-		}
-		s, err := p.parseStmt()
-		if err != nil {
-			return nil, err
-		}
-		blk.Stmts = append(blk.Stmts, s)
-	}
 }
 
 func (p *parser) parseBreakContinue(isBreak bool) (ast.Stmt, error) {
@@ -4478,14 +4367,6 @@ func rewriteBuilderStmt(s ast.Stmt, b string) ast.Stmt {
 		return n
 	case *ast.ForEach:
 		n.Body = rewriteBuilderStmt(n.Body, b)
-		return n
-	case *ast.Switch:
-		for _, c := range n.Cases {
-			c.Body.Stmts = rewriteBuilderStmts(c.Body.Stmts, b)
-		}
-		if n.Default != nil {
-			n.Default.Stmts = rewriteBuilderStmts(n.Default.Stmts, b)
-		}
 		return n
 	case *ast.Match:
 		for _, arm := range n.Arms {

@@ -1381,13 +1381,6 @@ func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
 			}
 			collectLocals(arm.Body, dst)
 		}
-	case *ast.Switch:
-		for _, k := range x.Cases {
-			collectLocals(k.Body, dst)
-		}
-		if x.Default != nil {
-			collectLocals(x.Default, dst)
-		}
 	case *ast.FuncDecl:
 		// Nested local function — its parameters and body are
 		// their own scope. Don't bleed those into the enclosing
@@ -1443,17 +1436,6 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		r.rewriteExpr(&x.Init)
 	case *ast.ExprStmt:
 		r.rewriteExpr(&x.Expr)
-	case *ast.Switch:
-		r.rewriteExpr(&x.Tag)
-		for _, k := range x.Cases {
-			for i := range k.Values {
-				r.rewriteExpr(&k.Values[i])
-			}
-			r.rewriteBlock(k.Body)
-		}
-		if x.Default != nil {
-			r.rewriteBlock(x.Default)
-		}
 	case *ast.Match:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {

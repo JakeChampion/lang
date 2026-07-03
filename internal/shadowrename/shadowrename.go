@@ -182,14 +182,6 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		for _, arm := range n.Arms {
 			r.walkMatchArm(arm)
 		}
-	case *ast.Switch:
-		r.walkExpr(n.Tag)
-		for _, sc := range n.Cases {
-			r.walkBlock(sc.Body)
-		}
-		if n.Default != nil {
-			r.walkBlock(n.Default)
-		}
 	case *ast.ExprStmt:
 		if n.Expr != nil {
 			r.walkExpr(n.Expr)

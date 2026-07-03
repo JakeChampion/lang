@@ -122,7 +122,6 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
 // ts_names_stmt appends every name `st` could reference to `acc`.
 function ts_names_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
-        parser.StmtSwitch(_) => { return ts_names_stmt(parser.desugar_switch_in_stmt(st), acc); },
         parser.StmtDefer(d) => { return ts_names_stmt(d.action, acc); },
         parser.StmtVar(v) => { return ts_names_expr(v.init, acc); },
         parser.StmtReturn(r) => { return ts_names_expr(r.value, acc); },

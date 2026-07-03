@@ -548,11 +548,6 @@ function collect_locals_stmt(st: parser.Stmt, into: string[]): string[] {
                 i = i + 1;
             }
         },
-        parser.StmtSwitch(sw) => {
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { out = collect_locals_stmts(sw.cases[i].body, out); i = i + 1; }
-            out = collect_locals_stmts(sw.default_body, out);
-        },
         _ => { },
     }
     return out;

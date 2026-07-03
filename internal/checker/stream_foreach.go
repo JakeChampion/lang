@@ -99,14 +99,6 @@ func lowerStreamForEachStmt(s ast.Stmt, streamElem map[string]ast.Type) ast.Stmt
 		for _, arm := range x.Arms {
 			lowerStreamForEachStmt(arm.Body, streamElem)
 		}
-	case *ast.Switch:
-		lowerStreamForEachExpr(x.Tag, streamElem)
-		for _, k := range x.Cases {
-			lowerStreamForEachStmt(k.Body, streamElem)
-		}
-		if x.Default != nil {
-			lowerStreamForEachStmt(x.Default, streamElem)
-		}
 	case *ast.Var:
 		lowerStreamForEachExpr(x.Init, streamElem)
 	case *ast.ExprStmt:

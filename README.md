@@ -170,8 +170,8 @@ Supported:
   close a reference cycle); return the new value instead.
 - `var x: T = expr;` (annotation optional — inferred from the initialiser).
 - Statements: `if` / `else`, `while`, `for(init; cond; step)`,
-  `for x in arr / "string"`, `switch` (comma-separated cases, `default`),
-  `return`, `break`, `continue`, blocks, expression statements.
+  `for x in arr / "string"`, `match` (pattern dispatch, incl. literal
+  arms), `return`, `break`, `continue`, blocks, expression statements.
 - Types: sized integers `i8` / `i16` / `i32` / `i64` / `u8` / `u16` /
   `u32` / `u64` plus `usize` (target-aware native pointer width; `i32`
   is the default literal type), `boolean`, `void`, `f32` / `f64`

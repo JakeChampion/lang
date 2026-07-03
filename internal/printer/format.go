@@ -656,31 +656,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		}
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
-	case *ast.Switch:
-		f.b.WriteString("switch (")
-		f.formatExpr(x.Tag, precLowest)
-		f.b.WriteString(") {\n")
-		for _, k := range x.Cases {
-			f.indent(depth + 1)
-			f.b.WriteString("case ")
-			for i, v := range k.Values {
-				if i > 0 {
-					f.b.WriteString(", ")
-				}
-				f.formatExpr(v, precLowest)
-			}
-			f.b.WriteString(": ")
-			f.formatBlock(k.Body, depth+1)
-			f.b.WriteByte('\n')
-		}
-		if x.Default != nil {
-			f.indent(depth + 1)
-			f.b.WriteString("default: ")
-			f.formatBlock(x.Default, depth+1)
-			f.b.WriteByte('\n')
-		}
-		f.indent(depth)
-		f.b.WriteByte('}')
 	case *ast.Match:
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)

@@ -17,7 +17,7 @@
 //   - The op set, IR Func and Program data types.
 //   - A `Lower` pass: ast.Program + checker.Info → ir.Program.
 //   - Lowering handles arithmetic, locals, control flow (if/while/for/
-//     switch/break/continue), function calls (direct + indirect),
+//     match/break/continue), function calls (direct + indirect),
 //     ternary, array literals + indexing, struct literals + field
 //     access, string concatenation / equality / byte indexing,
 //     and closure-converted nested functions: CaptureRef expressions
@@ -608,7 +608,7 @@ type Op struct {
 // Func is a single lowered function: parameter / local list, ops, and
 // the return type. ScratchTypes carries the type of each synthetic
 // slot the lowering pass / inliner conjured (for ArrayLit / StructLit
-// / Switch / closure helpers and for inlined callees' params,
+// / closure helpers and for inlined callees' params,
 // locals, scratches). Slots live at indices [len(Params)+len(Locals),
 // …) and are addressed by OpLoadLocal / OpStoreLocal just like user
 // vars; codegen reads ScratchTypes[i] to declare each slot with the
@@ -3846,13 +3846,6 @@ func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[
 		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.For:
 		return allReturnsArePairFormShape(x.Body, names, pairForm)
-	case *ast.Switch:
-		for _, c := range x.Cases {
-			if !allReturnsArePairFormShape(c.Body, names, pairForm) {
-				return false
-			}
-		}
-		return x.Default == nil || allReturnsArePairFormShape(x.Default, names, pairForm)
 	case *ast.Match:
 		for _, arm := range x.Arms {
 			if !allReturnsArePairFormShape(arm.Body, names, pairForm) {
@@ -4123,7 +4116,7 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 
 // loopFrame records one enclosing loop's label and its break/continue
 // target depths, so a labeled `break`/`continue` can resolve past
-// intervening loops and switches.
+// intervening loops.
 type loopFrame struct {
 	label  string
 	breakD int32
@@ -4306,9 +4299,6 @@ type builder struct {
 	// enclosing loop, innermost last — carrying each loop's label (empty
 	// when unlabeled) and its break/continue target depths. A labeled
 	// `break`/`continue` resolves by scanning this for the named loop.
-	// Switch pushes breakStack but NOT a loopFrame, so an unlabeled
-	// break in a switch still targets the switch, while `break label`
-	// reaches past it to the loop.
 	loopFrames []loopFrame
 	// curPos is the source position of the AST node currently being
 	// lowered. emit() stamps it onto every op so backends can drive
@@ -4431,19 +4421,6 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 		collectDefers(x.Init, out)
 		collectDefers(x.Step, out)
 		collectDefers(x.Body, out)
-	case *ast.Switch:
-		for _, k := range x.Cases {
-			collectDefers(k.Body, out)
-		}
-		// x.Default is `*ast.Block` (concrete pointer); when
-		// the user wrote no default it's a typed-nil pointer.
-		// Boxing into the Stmt interface makes `s == nil` at
-		// the top of this function FALSE (interface has a
-		// non-nil type-tag), and we'd crash on x.Stmts in the
-		// *ast.Block case below. Guard explicitly.
-		if x.Default != nil {
-			collectDefers(x.Default, out)
-		}
 	case *ast.Match:
 		for _, arm := range x.Arms {
 			collectDefers(arm.Body, out)
@@ -8905,7 +8882,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	}
 	// Record the type of every synthetic slot the lowering pass
 	// conjured beyond the user-visible params + locals — ArrayLit
-	// / StructLit / Switch / closure helpers each added entries to
+	// / StructLit / closure helpers each added entries to
 	// the locals map. Most are i32 (heap pointers or integer tags);
 	// match-arm bindings of float-typed payloads register a
 	// FloatType in scratchType so wasm declares the local as f32.
@@ -10634,48 +10611,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			b.emit(Op{Kind: OpDrop, Width: w})
 		}
-	case *ast.Switch:
-		// Lower switch with one outer block (break target / fallthrough
-		// to default) and two nested blocks per case: the inner one is
-		// the on-match jump target, the outer skips the body when no
-		// value matched. Falling off any case body branches to the end
-		// of the switch — no implicit fall-through.
-		tagSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__sw_%d", tagSlot)] = tagSlot
-		if err := b.expr(n.Tag); err != nil {
-			return err
-		}
-		b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-		b.openBlock(BlockTypeVoid)
-		switchEndD := b.depth
-		b.breakStack = append(b.breakStack, switchEndD)
-		for _, k := range n.Cases {
-			b.openBlock(BlockTypeVoid)
-			outerCaseD := b.depth
-			b.openBlock(BlockTypeVoid)
-			for _, v := range k.Values {
-				b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
-				if err := b.expr(v); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpEq})
-				b.brTo(b.depth, true) // br 0: exit inner = match path
-			}
-			b.brTo(outerCaseD, false) // exit outer block: skip body
-			b.closeScope()            // end of inner block (matched path lands here)
-			if err := b.stmt(k.Body); err != nil {
-				return err
-			}
-			b.brTo(switchEndD, false) // jump past the rest of the cases
-			b.closeScope()            // end of outer per-case block
-		}
-		if n.Default != nil {
-			if err := b.stmt(n.Default); err != nil {
-				return err
-			}
-		}
-		b.breakStack = b.breakStack[:len(b.breakStack)-1]
-		b.closeScope() // end of switch
 	case *ast.Match:
 		// Literal-pattern match: when the scrutinee isn't an enum
 		// the arms are all literal-or-wildcard (the checker
@@ -10692,8 +10627,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// its tag once, then for each arm test `tag == k` and
 		// branch in. On match, the arm body runs with payload
 		// fields loaded into freshly-bound locals; we then break
-		// out of the whole match. The structure mirrors `switch`,
-		// extended to bind payload positions.
+		// out of the whole match.
 		//
 		// Pair-form scrutinee fast path mirrors IfLet's / LetElse's:
 		// consume (tag, payload) from the operand stack into two
@@ -10761,9 +10695,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 		matchEndD := b.depth
 		// NB: matchEndD is NOT pushed onto b.breakStack. A `match` is
 		// not a `break` target — a user `break` inside an arm must
-		// exit the enclosing loop (or switch), matching the
-		// interpreter and the checker (which rejects `break` whose
-		// only enclosing construct is a match). The arms reach the
+		// exit the enclosing loop, matching the interpreter and the
+		// checker (which rejects `break` whose only enclosing
+		// construct is a match). The arms reach the
 		// match end via the explicit `brTo(matchEndD, …)` calls below,
 		// not through the break stack; pushing it here would shadow
 		// the loop's break target and turn `break` into a no-op that

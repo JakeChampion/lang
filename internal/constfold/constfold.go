@@ -336,17 +336,6 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		s.walkExpr(&x.Init)
 	case *ast.ExprStmt:
 		s.walkExpr(&x.Expr)
-	case *ast.Switch:
-		s.walkExpr(&x.Tag)
-		for _, c := range x.Cases {
-			for i := range c.Values {
-				s.walkExpr(&c.Values[i])
-			}
-			s.walkBlock(c.Body)
-		}
-		if x.Default != nil {
-			s.walkBlock(x.Default)
-		}
 	case *ast.FuncDecl:
 		s.walkBlock(x.Body)
 	}

@@ -3193,7 +3193,6 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         // StmtDefer is lowered away (parser.lower_defers) before emit; this
         // arm only satisfies exhaustiveness — a survivor (e.g. a defer in a
         // lambda body, which lower_defers doesn't descend into) is flagged.
-        parser.StmtSwitch(_) => { return emit_stmt(parser.desugar_switch_in_stmt(stmt), s); },
         parser.StmtDefer(_) => { return s.write("    // unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
             var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));

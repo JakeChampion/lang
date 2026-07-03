@@ -13418,18 +13418,6 @@ function walk_stmt_escapes(st: parser.Stmt, acc: string[]): string[] {
             }
             return a;
         },
-        parser.StmtSwitch(sw) => {
-            var a: string[] = walk_expr_escapes(sw.scrutinee, acc);
-            var i: i32 = 0;
-            while (i < sw.cases.len()) {
-                var j: i32 = 0;
-                while (j < sw.cases[i].values.len()) { a = walk_expr_escapes(sw.cases[i].values[j], a); j = j + 1; }
-                a = walk_stmts_escapes(sw.cases[i].body, a);
-                i = i + 1;
-            }
-            if (sw.has_default) { a = walk_stmts_escapes(sw.default_body, a); }
-            return a;
-        },
         parser.StmtDefer(d) => { return walk_stmt_escapes(d.action, acc); },
         _ => { return acc; },
     }
@@ -13503,13 +13491,6 @@ function alias_names_in_stmt(st: parser.Stmt, acc: string[]): string[] {
             while (i < m.arms.len()) { a = alias_names_in_stmts(m.arms[i].body, a); i = i + 1; }
             return a;
         },
-        parser.StmtSwitch(sw) => {
-            var a: string[] = acc;
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { a = alias_names_in_stmts(sw.cases[i].body, a); i = i + 1; }
-            if (sw.has_default) { a = alias_names_in_stmts(sw.default_body, a); }
-            return a;
-        },
         parser.StmtDefer(d) => { return alias_names_in_stmt(d.action, acc); },
         // StmtReturn / StmtExpr deliberately not scanned (see the header note).
         _ => { return acc; },
@@ -13563,13 +13544,6 @@ function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], ac
             var a: string[] = acc;
             var i: i32 = 0;
             while (i < m.arms.len()) { a = collect_fresh_struct_names(m.arms[i].body, structs, a); i = i + 1; }
-            return a;
-        },
-        parser.StmtSwitch(sw) => {
-            var a: string[] = acc;
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { a = collect_fresh_struct_names(sw.cases[i].body, structs, a); i = i + 1; }
-            if (sw.has_default) { a = collect_fresh_struct_names(sw.default_body, structs, a); }
             return a;
         },
         parser.StmtDefer(d) => { return collect_fresh_in_stmt(d.action, structs, acc); },
@@ -13670,13 +13644,6 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
             while (i < m.arms.len()) { a = collect_fresh_scalar_tuple_names(m.arms[i].body, a); i = i + 1; }
             return a;
         },
-        parser.StmtSwitch(sw) => {
-            var a: string[] = acc;
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { a = collect_fresh_scalar_tuple_names(sw.cases[i].body, a); i = i + 1; }
-            if (sw.has_default) { a = collect_fresh_scalar_tuple_names(sw.default_body, a); }
-            return a;
-        },
         parser.StmtDefer(d) => { return collect_fresh_tuple_in_stmt(d.action, acc); },
         _ => { return acc; },
     }
@@ -13710,13 +13677,6 @@ function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] 
             var a: string[] = acc;
             var i: i32 = 0;
             while (i < m.arms.len()) { a = collect_fresh_string_names(m.arms[i].body, a); i = i + 1; }
-            return a;
-        },
-        parser.StmtSwitch(sw) => {
-            var a: string[] = acc;
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { a = collect_fresh_string_names(sw.cases[i].body, a); i = i + 1; }
-            if (sw.has_default) { a = collect_fresh_string_names(sw.default_body, a); }
             return a;
         },
         parser.StmtDefer(d) => { return collect_fresh_string_in_stmt(d.action, acc); },
@@ -13854,11 +13814,6 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
             parser.StmtWhile(w) => { a = collect_str_accumulator_names(w.body, reassigned, a); },
             parser.StmtFor(fo) => { a = collect_str_accumulator_names(fo.body, reassigned, a); },
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_accumulator_names(m.arms[ai].body, reassigned, a); ai = ai + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { a = collect_str_accumulator_names(sw.cases[c].body, reassigned, a); c = c + 1; }
-                if (sw.has_default) { a = collect_str_accumulator_names(sw.default_body, reassigned, a); }
-            },
             _ => {}
         }
         i = i + 1;
@@ -13889,11 +13844,6 @@ function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
             parser.StmtWhile(w) => { if (body_has_nonfresh_str_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_str_return(fo.body)) { return true; } },
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return(m.arms[a].body)) { return true; } a = a + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { if (body_has_nonfresh_str_return(sw.cases[c].body)) { return true; } c = c + 1; }
-                if (sw.has_default && body_has_nonfresh_str_return(sw.default_body)) { return true; }
-            },
             _ => {}
         }
         i = i + 1;
@@ -13934,11 +13884,6 @@ function collect_fresh_str_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
             parser.StmtWhile(w) => { a = collect_fresh_str_ret_call_names(w.body, str_fresh_ret, reassigned, a); },
             parser.StmtFor(fo) => { a = collect_fresh_str_ret_call_names(fo.body, str_fresh_ret, reassigned, a); },
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_str_ret_call_names(m.arms[ai].body, str_fresh_ret, reassigned, a); ai = ai + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { a = collect_fresh_str_ret_call_names(sw.cases[c].body, str_fresh_ret, reassigned, a); c = c + 1; }
-                if (sw.has_default) { a = collect_fresh_str_ret_call_names(sw.default_body, str_fresh_ret, reassigned, a); }
-            },
             _ => {}
         }
         i = i + 1;
@@ -13976,11 +13921,6 @@ function collect_fresh_ret_call_names(stmts: parser.Stmt[], structs: parser.Stru
             parser.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, structs, fresh_ret, reassigned, a); },
             parser.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, structs, fresh_ret, reassigned, a); },
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, structs, fresh_ret, reassigned, a); ai = ai + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { a = collect_fresh_ret_call_names(sw.cases[c].body, structs, fresh_ret, reassigned, a); c = c + 1; }
-                if (sw.has_default) { a = collect_fresh_ret_call_names(sw.default_body, structs, fresh_ret, reassigned, a); }
-            },
             _ => {}
         }
         i = i + 1;
@@ -14034,13 +13974,6 @@ function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
             var a: string[] = acc;
             var i: i32 = 0;
             while (i < m.arms.len()) { a = collect_fresh_map_names(m.arms[i].body, a); i = i + 1; }
-            return a;
-        },
-        parser.StmtSwitch(sw) => {
-            var a: string[] = acc;
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { a = collect_fresh_map_names(sw.cases[i].body, a); i = i + 1; }
-            if (sw.has_default) { a = collect_fresh_map_names(sw.default_body, a); }
             return a;
         },
         parser.StmtDefer(d) => { return collect_fresh_map_in_stmt(d.action, acc); },
@@ -14112,12 +14045,6 @@ function map_has_explicit_iter_stmt(st: parser.Stmt, name: string): boolean {
         parser.StmtMatch(m) => {
             var i: i32 = 0;
             while (i < m.arms.len()) { if (map_has_explicit_iter(m.arms[i].body, name)) { return true; } i = i + 1; }
-            return false;
-        },
-        parser.StmtSwitch(sw) => {
-            var i: i32 = 0;
-            while (i < sw.cases.len()) { if (map_has_explicit_iter(sw.cases[i].body, name)) { return true; } i = i + 1; }
-            if (sw.has_default) { return map_has_explicit_iter(sw.default_body, name); }
             return false;
         },
         _ => { return false; }
@@ -14302,11 +14229,6 @@ function body_has_return(stmts: parser.Stmt[]): boolean {
             parser.StmtWhile(w) => { if (body_has_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_return(fo.body)) { return true; } },
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_return(m.arms[a].body)) { return true; } a = a + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { if (body_has_return(sw.cases[c].body)) { return true; } c = c + 1; }
-                if (sw.has_default && body_has_return(sw.default_body)) { return true; }
-            },
             _ => {}
         }
         i = i + 1;
@@ -14322,11 +14244,6 @@ function body_has_nonfresh_return(stmts: parser.Stmt[], structs: parser.StructDe
             parser.StmtWhile(w) => { if (body_has_nonfresh_return(w.body, structs)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_return(fo.body, structs)) { return true; } },
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { if (body_has_nonfresh_return(sw.cases[c].body, structs)) { return true; } c = c + 1; }
-                if (sw.has_default && body_has_nonfresh_return(sw.default_body, structs)) { return true; }
-            },
             _ => {}
         }
         i = i + 1;
@@ -14403,11 +14320,6 @@ function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.St
             parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs)) { return true; } },
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
-            parser.StmtSwitch(sw) => {
-                var c: i32 = 0;
-                while (c < sw.cases.len()) { if (body_has_nonstrictfresh_return(sw.cases[c].body, structs)) { return true; } c = c + 1; }
-                if (sw.has_default && body_has_nonstrictfresh_return(sw.default_body, structs)) { return true; }
-            },
             _ => {}
         }
         i = i + 1;
@@ -21605,7 +21517,6 @@ function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
 
 function value_use_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
-        parser.StmtSwitch(_) => { return value_use_idents_stmt(parser.desugar_switch_in_stmt(st), acc); },
         parser.StmtDefer(d) => { return value_use_idents_stmt(d.action, acc); },
         parser.StmtVar(v) => { return value_use_idents_expr(v.init, acc); },
         parser.StmtReturn(r) => { return value_use_idents_expr(r.value, acc); },
@@ -22097,22 +22008,19 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         wi = wi + 1;
     }
     // Normalise the lifted module for the IR path, mirroring the transient-node
-    // passes the AST backend gets via module_with_builtins:
-    //   * desugar `switch` → the nested if/else-if chain the IR path lowers
-    //     (cf. desugar_switch_in_stmt);
+    // pass the AST backend gets via module_with_builtins:
     //   * lower `defer` / `errdefer` → the action scheduled at every scope exit
     //     (cf. lower_defers; the AST emitters likewise see no StmtDefer).
-    // Without these a module whose only IR-ineligible construct was a switch or
-    // a defer bailed the whole module to the AST backend. Applied to the FINAL
-    // lifted module so switches/defers inside lifted-lambda bodies (now
-    // top-level funcs in `newfuncs`) are covered — lower_defers doesn't descend
-    // into lambda bodies, but after lifting those bodies are ordinary functions.
-    // `switch` is desugared before `defer` is lowered, matching module_with_
-    // builtins' pass order. The AST fallback path uses the original `mod`, not
-    // this lifted module, so its own switch/defer handling is unchanged.
+    // Without this a module whose only IR-ineligible construct was a defer
+    // bailed the whole module to the AST backend. Applied to the FINAL
+    // lifted module so defers inside lifted-lambda bodies (now top-level funcs
+    // in `newfuncs`) are covered — lower_defers doesn't descend into lambda
+    // bodies, but after lifting those bodies are ordinary functions. The AST
+    // fallback path uses the original `mod`, not this lifted module, so its
+    // own defer handling is unchanged.
     var result: parser.Module = mod;
     if (acc.counter != 0) {
         result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
     }
-    return parser.lower_defers_module(parser.desugar_switches_module(result));
+    return parser.lower_defers_module(result);
 }

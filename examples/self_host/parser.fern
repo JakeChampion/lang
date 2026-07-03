@@ -175,23 +175,9 @@ pub struct StmtUnknown { kind: string }
 // a plain `defer`. lower_defers schedules the two kinds at the right exits.
 pub struct StmtDefer { action: Stmt, on_error: i32 }
 
-// StmtSwitch models `switch (scrut) { case v0, v1: …  default: … }`. Like
-// StmtDefer it is a TRANSIENT node: the parser builds it (instead of
-// desugaring inline) so the type checker can see the switch shape and emit
-// E025 (switch-on-float / case value type mismatch); desugar_switches_module
-// (run from module_with_builtins, and from the interp driver) then lowers
-// every StmtSwitch to the nested if/else-if chain the backends already
-// support — so no backend lowers one at runtime (their arms exist only for
-// exhaustiveness, like StmtDefer's). `cases` are the `case` arms in order;
-// each has one-or-more values (a multi-value `case a, b:`) compared with
-// `==`; default_body is the `default:` arm (empty + has_default=false when
-// absent). No fall-through: each case body runs alone.
-pub struct SwitchCase { values: Expr[], body: Stmt[] }
-pub struct StmtSwitch { scrutinee: Expr, cases: SwitchCase[], has_default: boolean, default_body: Stmt[], line: i32, col: i32 }
-
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
               | StmtAssign | StmtMatch | StmtFor
-              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer | StmtSwitch;
+              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -473,16 +459,6 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
-        StmtSwitch(sw) => {
-            var cases: SwitchCase[] = [];
-            var ci: i32 = 0;
-            while (ci < sw.cases.len()) {
-                var cs: SwitchCase = sw.cases[ci];
-                cases = cases.append(SwitchCase { values: cs.values, body: rewrite_builder_stmts(cs.body, b) });
-                ci = ci + 1;
-            }
-            return StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: rewrite_builder_stmts(sw.default_body, b), line: sw.line, col: sw.col };
-        },
         _ => { return s; },
     }
     return s;
@@ -625,78 +601,6 @@ function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0 }; }
 function s_errdefer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 1 }; }
 
-// desugar_switch lowers a StmtSwitch to the nested if/else-if chain the
-// backends consume — each `case v0, v1: body` becomes
-// `if (scrut == v0 || scrut == v1) { body } else <rest>`, the default arm
-// (or nothing) at the innermost else. Built back-to-front so each case's
-// else is the already-built remainder. With no cases it degenerates to the
-// default body's first statement (or an empty-switch placeholder),
-// preserving the original inline-desugar behaviour.
-function desugar_switch(sw: StmtSwitch): Stmt {
-    if (sw.cases.len() == 0) {
-        if (sw.has_default && sw.default_body.len() >= 1) { return sw.default_body[0]; }
-        return s_unknown("empty switch");
-    }
-    var else_body: Stmt[] = sw.default_body;
-    var i: i32 = sw.cases.len() - 1;
-    while (i >= 0) {
-        var c: SwitchCase = sw.cases[i];
-        var cond: Expr = e_binary("==", sw.scrutinee, c.values[0]);
-        var j: i32 = 1;
-        while (j < c.values.len()) {
-            cond = e_binary("||", cond, e_binary("==", sw.scrutinee, c.values[j]));
-            j = j + 1;
-        }
-        var one: Stmt[] = [s_if(cond, c.body, else_body)];
-        else_body = one;
-        i = i - 1;
-    }
-    return else_body[0];
-}
-
-// desugar_switch_block / desugar_switch_in_stmt / desugar_switches_module
-// lower every StmtSwitch in a module to its if/else-if chain, recursing
-// through all nested bodies (and desugaring switches inside case/default
-// bodies before folding the outer one). Run from module_with_builtins (the
-// emit paths) and the interp driver — AFTER the type checker, which needs
-// the StmtSwitch shape for E025.
-function desugar_switch_block(body: Stmt[]): Stmt[] {
-    var out: Stmt[] = [];
-    var i: i32 = 0;
-    while (i < body.len()) { out = out.append(desugar_switch_in_stmt(body[i])); i = i + 1; }
-    return out;
-}
-
-pub function desugar_switch_in_stmt(st: Stmt): Stmt {
-    match (st) {
-        StmtSwitch(sw) => {
-            var cases: SwitchCase[] = [];
-            var ci: i32 = 0;
-            while (ci < sw.cases.len()) {
-                cases = cases.append(SwitchCase { values: sw.cases[ci].values, body: desugar_switch_block(sw.cases[ci].body) });
-                ci = ci + 1;
-            }
-            var lowered: StmtSwitch = StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: desugar_switch_block(sw.default_body), line: sw.line, col: sw.col };
-            return desugar_switch(lowered);
-        },
-        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: desugar_switch_block(f.then_body), else_body: desugar_switch_block(f.else_body) }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_switch_block(w.body), label: w.label }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_switch_block(fr.body), label: fr.label }; },
-        StmtMatch(m) => {
-            var arms: MatchArm[] = [];
-            var a: i32 = 0;
-            while (a < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_switch_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
-                a = a + 1;
-            }
-            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
-        },
-        StmtDefer(d) => { return StmtDefer { action: desugar_switch_in_stmt(d.action), on_error: d.on_error }; },
-        _ => { return st; }
-    }
-    return st;
-}
-
 // label_depth returns the relative loop depth of `name` in the enclosing-loop
 // label stack (the last entry is the innermost loop), or -1 if absent. Depth 0 is
 // the innermost loop, 1 its enclosing loop, and so on.
@@ -711,7 +615,7 @@ function label_depth(labels: string[], name: string): i32 {
 
 // resolve_labels_stmt rewrites a labeled `break`/`continue`'s `tag` to the
 // relative loop depth of its target label, recursing through every statement
-// container (if / while / for / match / switch / defer) so a break/continue
+// container (if / while / for / match / defer) so a break/continue
 // anywhere in the nest is resolved against the live enclosing-loop label stack
 // (`labels`; "" for an unlabeled loop). An unlabeled break/continue keeps tag 0
 // (the innermost loop). This runs on the RAW parsed module before any desugar
@@ -751,16 +655,6 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms2, line: m.line, col: m.col, origin: m.origin };
         },
-        StmtSwitch(sw) => {
-            var cases2: SwitchCase[] = [];
-            var ci: i32 = 0;
-            while (ci < sw.cases.len()) {
-                var sc: SwitchCase = sw.cases[ci];
-                cases2 = cases2.append(SwitchCase { values: sc.values, body: resolve_labels_block(sc.body, labels) });
-                ci = ci + 1;
-            }
-            return StmtSwitch { scrutinee: sw.scrutinee, cases: cases2, has_default: sw.has_default, default_body: resolve_labels_block(sw.default_body, labels), line: sw.line, col: sw.col };
-        },
         StmtDefer(dd) => {
             return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error };
         },
@@ -794,16 +688,6 @@ pub function resolve_labels_module(mod: Module): Module {
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
-pub function desugar_switches_module(mod: Module): Module {
-    var funcs: FuncDecl[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_switch_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
-        i = i + 1;
-    }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_switch_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
-}
 
 // Parser state. `toks` is the lexer's output; `pos` is the
 // current cursor into it. We mutate via value-semantics (return
@@ -936,7 +820,7 @@ function (p: Par) peek_is_literal(): boolean {
 
 // peek_member_name returns the identifier at the cursor, OR a reserved
 // keyword that is nonetheless allowed in MEMBER position — currently only
-// `default` (a `switch` keyword that doubles as the `Default` trait's
+// `default` (a reserved keyword that doubles as the `Default` trait's
 // method name `Type.default()`). Returns "" otherwise. Mirrors the Go
 // parser's expectMemberName; used for function/method names and field
 // access so `function default()` and `obj.default()` parse while the
@@ -1783,8 +1667,8 @@ function if_expr_rt(e: Expr): string {
 struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // build_literal_match lowers a match on a non-enum scrutinee to a nested
-// if/else-if chain — the same shape desugar_switch produces, and what
-// the native compiler's emitLiteralMatch emits. The chain is built
+// if/else-if chain — the same shape the native compiler's emitLiteralMatch
+// emits. The chain is built
 // backwards: the `_` arm's body is the base else; each literal arm wraps
 // it as `if (scrut == lit) { body } else { rest }` (a guard folds in as
 // `scrut == lit && guard`). The caller only routes here when at least
@@ -1857,8 +1741,7 @@ struct BranchBodyResult { par: Par, body: Stmt[], rt: string }
 // are deliberately EXCLUDED: they stand as the trailing value expression
 // (`{ …; if (c) { a } else { b } }`) and the single-expr branch form
 // `else { if (c) { … } else { … } }` relies on the inner if/match parsing
-// as a value-expression. `switch` IS a statement here (the self-host has
-// no value-position switch). Everything else parses as an expression
+// as a value-expression. Everything else parses as an expression
 // (an ExprStmt when a `;` follows, else the trailing tail). Mirrors the
 // Go parser's branchStmtStart.
 function branch_stmt_start(p: Par): boolean {
@@ -1867,7 +1750,7 @@ function branch_stmt_start(p: Par): boolean {
     if (kw == "while" || kw == "loop" || kw == "for" || kw == "break"
         || kw == "continue" || kw == "return" || kw == "defer"
         || kw == "errdefer" || kw == "var" || kw == "let"
-        || kw == "function" || kw == "switch") { return true; }
+        || kw == "function") { return true; }
     return false;
 }
 
@@ -2466,63 +2349,6 @@ function parse_match_stmt(p: Par): MatchStmtResult {
     return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol) };
 }
 
-// SwitchCasesResult carries the flat `case` / `default` arms parsed from a
-// switch body (the cursor is just past the opening `{`).
-pub struct SwitchCasesResult { par: Par, cases: SwitchCase[], has_default: boolean, default_body: Stmt[] }
-
-// parse_switch_cases consumes the `case` / `default` arms of a switch into
-// a flat SwitchCase[] (plus an optional default body), preserving them for
-// the type checker (E025); desugar_switch later folds them into the
-// if/else-if chain. Each `case v0, v1, …:` collects its one-or-more values
-// and the statements up to the next `case` / `default` / `}`. No
-// fall-through: each case body runs alone.
-function parse_switch_cases(p: Par): SwitchCasesResult {
-    var cases: SwitchCase[] = [];
-    var has_default: boolean = false;
-    var default_body: Stmt[] = [];
-    while (p.peek_punct() != "}" && !p.at_end()) {
-        var kw: string = p.peek_keyword();
-        if (kw == "case") {
-            p = p.advance();  // consume `case`
-            var vals: Expr[] = [];
-            var cv: ExprResult = parse_expr(p);
-            p = cv.par;
-            vals = vals.append(cv.expr);
-            while (p.peek_punct() == ",") {
-                p = p.advance();
-                var cv2: ExprResult = parse_expr(p);
-                p = cv2.par;
-                vals = vals.append(cv2.expr);
-            }
-            if (p.peek_punct() == ":") { p = p.advance(); }
-            var body: Stmt[] = [];
-            while (p.peek_keyword() != "case" && p.peek_keyword() != "default"
-                    && p.peek_punct() != "}" && !p.at_end()) {
-                var st: StmtResult = parse_stmt(p);
-                p = st.par;
-                body = body.append(st.stmt);
-            }
-            cases = cases.append(SwitchCase { values: vals, body: body });
-            continue;
-        }
-        if (kw == "default") {
-            p = p.advance();  // consume `default`
-            if (p.peek_punct() == ":") { p = p.advance(); }
-            has_default = true;
-            while (p.peek_keyword() != "case" && p.peek_keyword() != "default"
-                    && p.peek_punct() != "}" && !p.at_end()) {
-                var ds: StmtResult = parse_stmt(p);
-                p = ds.par;
-                default_body = default_body.append(ds.stmt);
-            }
-            continue;
-        }
-        // Unexpected token inside switch body — skip to avoid a hang.
-        p = p.advance();
-    }
-    return SwitchCasesResult { par: p, cases: cases, has_default: has_default, default_body: default_body };
-}
-
 // expr_mentions / stmts_mention report whether `name` appears as an
 // identifier anywhere in an expression / statement list. Used to detect a
 // self-recursive local function (whose body references its own name) —
@@ -2840,20 +2666,6 @@ function parse_stmt(p: Par): StmtResult {
         }
         var lam: Expr = e_lambda(fr.func.params, fr.func.ret_type, fr.func.body);
         return StmtResult { par: p, stmt: s_var(fr.func.name, "", lam) };
-    }
-    if (kw == "switch") {
-        var swline: i32 = p.peek_line();
-        var swcol: i32 = p.peek_col();
-        p = p.advance();  // consume `switch`
-        if (p.peek_punct() == "(") { p = p.advance(); }
-        var se: ExprResult = parse_expr(p);
-        p = se.par;
-        if (p.peek_punct() == ")") { p = p.advance(); }
-        if (p.peek_punct() == "{") { p = p.advance(); }
-        var scr: SwitchCasesResult = parse_switch_cases(p);
-        p = scr.par;
-        if (p.peek_punct() == "}") { p = p.advance(); }
-        return StmtResult { par: p, stmt: StmtSwitch { scrutinee: se.expr, cases: scr.cases, has_default: scr.has_default, default_body: scr.default_body, line: swline, col: swcol } };
     }
     if (kw == "match") {
         var mr: MatchStmtResult = parse_match_stmt(p);
@@ -7801,7 +7613,7 @@ pub function insert_resource_drops(mod: Module): Module {
 // Empty / reversed ranges (`5..5`, `9..3`) run zero iterations. The helpers
 // return BARE Stmt[] (never a struct wrapping a fresh array) to avoid the
 // native RC free-list reclaim that corrupts a freshly-built array placed in a
-// struct-literal field (cf. #2759), mirroring desugar_switch_block.
+// struct-literal field (cf. #2759).
 //
 // This runs in module_with_builtins (AST emitters), interp.eval_module, and
 // ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
@@ -7864,15 +7676,6 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
                 a = a + 1;
             }
             return [StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin }];
-        },
-        StmtSwitch(sw) => {
-            var cases: SwitchCase[] = [];
-            var ci: i32 = 0;
-            while (ci < sw.cases.len()) {
-                cases = cases.append(SwitchCase { values: sw.cases[ci].values, body: desugar_ranges_block(sw.cases[ci].body) });
-                ci = ci + 1;
-            }
-            return [StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: desugar_ranges_block(sw.default_body), line: sw.line, col: sw.col }];
         },
         StmtDefer(d) => {
             var r: Stmt[] = desugar_ranges_one(d.action);
@@ -8991,10 +8794,7 @@ pub function module_with_builtins(mod: Module): Module {
     // `[resource-drop]` import functions — BEFORE lower_defers_module so the
     // inserted defers expand to drops on every exit path
     // (docs/WIT-BRING-YOUR-OWN.md).
-    // Lower switches to if/else-if chains first (the type checker has
-    // already run on the StmtSwitch shape for E025), so no later pass or
-    // backend sees a StmtSwitch at runtime.
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))))))));
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),

@@ -204,19 +204,6 @@ func zeroStmt(s ast.Stmt) {
 	case *ast.ExprStmt:
 		x.P = ast.Position{}
 		zeroExpr(x.Expr)
-	case *ast.Switch:
-		x.P = ast.Position{}
-		zeroExpr(x.Tag)
-		for _, k := range x.Cases {
-			k.P = ast.Position{}
-			for _, v := range k.Values {
-				zeroExpr(v)
-			}
-			zeroBlock(k.Body)
-		}
-		if x.Default != nil {
-			zeroBlock(x.Default)
-		}
 	case *ast.FuncDecl:
 		x.P = ast.Position{}
 		x.NamePos = ast.Position{}
@@ -290,17 +277,6 @@ func zeroExpr(e ast.Expr) {
 		x.FieldPos = ast.Position{}
 		zeroExpr(x.Target)
 	}
-}
-
-func TestRoundtripSwitch(t *testing.T) {
-	roundTrip(t, `function f(n: i32): i32 {
-		switch (n) {
-			case 1, 2: return 10;
-			case 3: return 30;
-			default: return 0;
-		}
-		return -1;
-	}`)
 }
 
 func TestRoundtripIfExpr(t *testing.T) {

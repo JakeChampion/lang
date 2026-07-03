@@ -2956,11 +2956,6 @@ func (c *checker) walkVarTypes(b *ast.Block, visit func(ast.Type, ast.Position))
 			for _, arm := range x.Arms {
 				c.walkVarTypes(arm.Body, visit)
 			}
-		case *ast.Switch:
-			for _, k := range x.Cases {
-				c.walkVarTypes(k.Body, visit)
-			}
-			c.walkVarTypes(x.Default, visit)
 		}
 	}
 }
@@ -4503,7 +4498,6 @@ type checker struct {
 	errors      []error
 	current     *ast.FuncDecl
 	loopDepth   int
-	switchDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -4710,11 +4704,6 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.Var:
 			c.resolveType(&x.Type, params)
-		case *ast.Switch:
-			for _, k := range x.Cases {
-				c.resolveTypesInBlock(k.Body, params)
-			}
-			c.resolveTypesInBlock(x.Default, params)
 		case *ast.Match:
 			for _, arm := range x.Arms {
 				c.resolveTypesInBlock(arm.Body, params)
@@ -4854,20 +4843,6 @@ func stmtExits(s ast.Stmt) bool {
 		// conservative treatment as literal-true While above, without
 		// needing to pattern-match a BoolLit condition.
 		return true
-	case *ast.Switch:
-		// Cases auto-break (no C-style fall-through), so a switch
-		// guarantees an exit only when it has a default arm (otherwise an
-		// unmatched tag leaves the switch) and every arm — cases and
-		// default — exits.
-		if x.Default == nil {
-			return false
-		}
-		for _, c := range x.Cases {
-			if !funcBodyExits(c.Body) {
-				return false
-			}
-		}
-		return funcBodyExits(x.Default)
 	}
 	return false
 }
@@ -7688,12 +7663,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Init, selfName, siblings, seen)
 	case *ast.ExprStmt:
 		walkExprForNames(n.Expr, selfName, siblings, seen)
-	case *ast.Switch:
-		walkExprForNames(n.Tag, selfName, siblings, seen)
-		for _, k := range n.Cases {
-			walkBodyForNames(k.Body, selfName, siblings, seen)
-		}
-		walkBodyForNames(n.Default, selfName, siblings, seen)
 	case *ast.Match:
 		walkExprForNames(n.Tag, selfName, siblings, seen)
 		for _, arm := range n.Arms {
@@ -7995,10 +7964,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		c.loopDepth--
 	case *ast.Break:
-		// `break` is legal inside a `for`/`while` (exits the loop)
-		// or inside a `switch` case (exits the switch).
-		if c.loopDepth == 0 && c.switchDepth == 0 {
-			c.errfCode(n.P, "E011", "break outside of a loop or switch")
+		// `break` is legal inside a `for`/`while` (exits the loop).
+		if c.loopDepth == 0 {
+			c.errfCode(n.P, "E011", "break outside of a loop")
 		} else if n.Label != "" && !c.labelInScope(n.Label) {
 			c.errfCode(n.P, "E058", "break label %q does not match any enclosing loop", n.Label)
 		}
@@ -8166,34 +8134,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 	case *ast.ExprStmt:
 		c.checkExpr(n.Expr, s)
 		c.checkUnusedCollectionResult(n.Expr)
-	case *ast.Switch:
-		tagT := c.checkExpr(n.Tag, s)
-		// Floats compare with NaN edge cases that switch's "exact
-		// match" semantics aren't well-defined for. Reject them up
-		// front rather than letting WASM's f32.eq surprise us. Match
-		// any float width (an `ast.Equal` against `FloatType{}` only
-		// caught the default width, so an f64 tag slipped through).
-		if _, isFloat := tagT.(ast.FloatType); isFloat {
-			c.errfCode(n.Tag.Pos(), "E025", "switch on float values is not supported")
-		}
-		// `break` inside case bodies should leave the switch but not
-		// abort an enclosing loop. `continue` falls straight through
-		// to the enclosing real loop and is invalid otherwise — that's
-		// why we bump switchDepth (a break-only counter), not loopDepth.
-		c.switchDepth++
-		for _, k := range n.Cases {
-			for _, v := range k.Values {
-				vt := c.checkExpr(v, s)
-				if tagT != nil && vt != nil && !ast.Equal(vt, tagT) {
-					c.errfCode(v.Pos(), "E025", "case value type %s, expected %s", vt, tagT)
-				}
-			}
-			c.checkBlock(k.Body, s)
-		}
-		if n.Default != nil {
-			c.checkBlock(n.Default, s)
-		}
-		c.switchDepth--
 	case *ast.Match:
 		c.checkMatch(n, s)
 	case *ast.FuncDecl:
@@ -8808,10 +8748,8 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	prevSink := c.captureSink
 	prevOuter := c.captureOuter
 	prevLoop := c.loopDepth
-	prevSwitch := c.switchDepth
 	c.current = fn
 	c.loopDepth = 0
-	c.switchDepth = 0
 	// Snapshot the mutual-recursion sibling set at this
 	// declaration point. Nested blocks inside `fn.Body`
 	// overwrite c.mutualRecSiblings as their own pre-pass runs,
@@ -8877,7 +8815,6 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		c.captureOuter = prevOuter
 		c.captureChain = c.captureChain[:len(c.captureChain)-1]
 		c.loopDepth = prevLoop
-		c.switchDepth = prevSwitch
 	}()
 
 	c.checkBlock(fn.Body, root)
@@ -10499,7 +10436,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		prevSink := c.captureSink
 		prevOuter := c.captureOuter
 		prevLoop := c.loopDepth
-		prevSwitch := c.switchDepth
 		// Stash the synthetic FuncDecl on the Lambda so
 		// closureconv can recover the Var statements registered
 		// against it during body-checking. Without this, the
@@ -10529,7 +10465,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.inferReturns = &lamRets
 		}
 		c.loopDepth = 0
-		c.switchDepth = 0
 		c.captureSink = func(name string, t ast.Type) {
 			if _, ok := captured[name]; ok {
 				return
@@ -10549,7 +10484,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.captureSink = prevSink
 		c.captureOuter = prevOuter
 		c.loopDepth = prevLoop
-		c.switchDepth = prevSwitch
 		c.inferReturns = prevInfer
 		if n.ReturnUnannotated {
 			// Unify the body's return(s) into the lambda's return type

@@ -120,7 +120,6 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `for(init; cond; step)` loop | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | self-host: fixed ([#2820](https://github.com/JakeChampion/lang/issues/2820) / #2841 — parser desugars to a while-loop with a first-iteration flag so `continue` re-runs the step); a parse-time desugar, so both the AST and IR paths get it. Guarded by the executed `c-style-for` audit case + `break`/`continue`-in-for coverage |
 | `for x in arr` / `for x in "str"` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | array ✅; `for x in <string>` self-host IR path iterates bytes — literal / local / slice / string-returning call+method ([#2822](https://github.com/JakeChampion/lang/issues/2822), #2834 + the eligibility-probe `str_ret_fns` fix) |
 | inclusive / half-open ranges `for i in a..=b` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `0..4` half-open, `0..=5` inclusive |
-| `switch` statement (comma cases, default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | multi-value case + default |
 | `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | S ok in while / foreach / C-style-for — the C-for fix ([#2820](https://github.com/JakeChampion/lang/issues/2820) / #2841) desugars so `continue` re-runs the step correctly |
 | `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | bare nested block `{}` — self-host gap fixed ([#2821](https://github.com/JakeChampion/lang/issues/2821) / #2831), re-enabled as guard |
@@ -4134,8 +4133,8 @@ integer arithmetic / comparison / bitwise / unary minus, operator precedence,
 boolean logic **with short-circuit non-evaluation proven via a divide-by-zero
 RHS that must never run**, compound assignment, `if`/`else`, `if`-expression,
 `while`, C-style `for`, `for`-in array, `for`-in **string**, inclusive +
-half-open ranges, `switch` (comma cases + default), `break` / `continue`, and
-nested blocks. ✅ on interp / x86-64 / arm64 / wasm.
+half-open ranges, `match` (multiple literal arms + wildcard), `break` /
+`continue`, and nested blocks. ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
 `internal/e2e/self_host_audit_builtins_test.go` — the same built-ins as isolated

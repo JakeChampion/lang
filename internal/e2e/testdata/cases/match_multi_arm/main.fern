@@ -1,0 +1,14 @@
+// match with several literal arms and a wildcard default.
+function classify(n: i32): i32 {
+    match (n) {
+        0 => { return 100; },
+        1 => { return 42; },
+        2 => { return 42; },
+        3 => { return 42; },
+        _ => { return 0; }
+    }
+}
+
+function main(): i32 {
+    return classify(2);
+}

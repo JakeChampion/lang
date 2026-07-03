@@ -123,8 +123,6 @@ var keywords = map[string]bool{
 	"f32":     true,
 	"f64":     true,
 	"as":      true,
-	"switch":  true,
-	"case":    true,
 	"default": true,
 	"struct":  true,
 	"import":  true,
