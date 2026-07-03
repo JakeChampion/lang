@@ -693,6 +693,46 @@ function variant_binding_type(s: Scope, type_name: string): Type {
     return t_struct(type_name);
 }
 
+// variant_payload_type_at returns the type of a variant's idx-th payload —
+// field `__ev` (idx 0), `__ev1` (idx 1), `__ev2` (idx 2), … — the multi-payload
+// naming variant_payload_count relies on. Falls back to the wrapper struct type
+// when the field is absent (a bare / struct-union variant), exactly like
+// variant_binding_type (which is the idx==0 case).
+function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
+    var ss: StructSig = s.lookup_struct(type_name);
+    var want: string = "__ev";
+    if (idx > 0) { want = "__ev" + util.i32_to_string(idx); }
+    var i: i32 = 0;
+    while (i < ss.field_names.len()) {
+        if (ss.field_names[i] == want) { return ss.field_types[i]; }
+        i = i + 1;
+    }
+    return t_struct(type_name);
+}
+
+// bind_variant_payloads brings EVERY payload binding of a matched variant into
+// the arm scope `arm`: the first (pv.binding) typed as `__ev`, then each of
+// pv.extra_bindings typed as `__ev1`, `__ev2`, … . `look` is the scope carrying
+// the struct sigs (the outer/match scope). Bare `_` and empty names stay out of
+// scope, each position independently (so `Rect(_, h)` binds only `h`). Before
+// this only pv.binding was bound, so a multi-binding payload pattern
+// (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
+function bind_variant_payloads(arm: Scope, look: Scope, pv: parser.PatVariant): Scope {
+    var sc: Scope = arm;
+    if (pv.binding.len() > 0 && pv.binding != "_") {
+        sc = sc.bind(pv.binding, variant_binding_type(look, pv.type_name));
+    }
+    var k: i32 = 0;
+    while (k < pv.extra_bindings.len()) {
+        var nm: string = pv.extra_bindings[k];
+        if (nm.len() > 0 && nm != "_") {
+            sc = sc.bind(nm, variant_payload_type_at(look, pv.type_name, k + 1));
+        }
+        k = k + 1;
+    }
+    return sc;
+}
+
 function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     var i: i32 = 0;
     while (i < s.methods.len()) {
@@ -1514,13 +1554,10 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                             } else if (struct_name.len() > 0) {
                                 if (struct_name != pv.type_name) { ok = false; }
                             }
-                            // Bring the binding into the arm's
-                            // scope as the variant's TypeStruct.
-                            // Bare names and `_` bindings stay
-                            // out of scope.
-                            if (pv.binding.len() > 0 && pv.binding != "_") {
-                                armScope = armScope.bind(pv.binding, variant_binding_type(s, pv.type_name));
-                            }
+                            // Bring the payload bindings into the arm's
+                            // scope, each typed as the matching `__ev` field.
+                            // Bare names and `_` bindings stay out of scope.
+                            armScope = bind_variant_payloads(armScope, s, pv);
                         }
                     }
                 }
@@ -2513,9 +2550,7 @@ function mx_match_arm_types(m: parser.StmtMatch, s: Scope): Type[] {
         var armScope: Scope = s;
         match (m.arms[a].pattern) {
             parser.PatVariant(pv) => {
-                if (pv.binding.len() > 0 && pv.binding != "_") {
-                    armScope = armScope.bind(pv.binding, variant_binding_type(s, pv.type_name));
-                }
+                armScope = bind_variant_payloads(armScope, s, pv);
             },
             _ => { }
         }
@@ -2662,9 +2697,7 @@ function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: par
                     var armScope: Scope = cur;
                     match (m.arms[a].pattern) {
                         parser.PatVariant(pv) => {
-                            if (pv.binding.len() > 0 && pv.binding != "_") {
-                                armScope = armScope.bind(pv.binding, variant_binding_type(cur, pv.type_name));
-                            }
+                            armScope = bind_variant_payloads(armScope, cur, pv);
                         },
                         _ => { }
                     }
@@ -4358,25 +4391,23 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                     var armScope: Scope = cur;
                     match (m.arms[a].pattern) {
                         parser.PatVariant(apv) => {
-                            if (apv.binding.len() > 0 && apv.binding != "_") {
-                                // Don't bind the payload of a FOREIGN variant
-                                // (one not in the scrutinee union) — its read
-                                // is then genuinely undefined (E001), matching
-                                // the Go checker, which reports both E014 (bad
-                                // variant) and E001 (the now-undefined binding).
-                                var foreign: boolean = false;
-                                match (mst) {
-                                    TypeUnion(amu) => {
-                                        var ausig: UnionSig = cur.lookup_union(amu.name);
-                                        if (ausig.name.len() > 0 && !util.has_str(ausig.variants, apv.type_name)) {
-                                            foreign = true;
-                                        }
-                                    },
-                                    _ => { }
-                                }
-                                if (!foreign) {
-                                    armScope = armScope.bind(apv.binding, variant_binding_type(cur, apv.type_name));
-                                }
+                            // Don't bind the payloads of a FOREIGN variant
+                            // (one not in the scrutinee union) — their reads
+                            // are then genuinely undefined (E001), matching
+                            // the Go checker, which reports both E014 (bad
+                            // variant) and E001 (the now-undefined binding).
+                            var foreign: boolean = false;
+                            match (mst) {
+                                TypeUnion(amu) => {
+                                    var ausig: UnionSig = cur.lookup_union(amu.name);
+                                    if (ausig.name.len() > 0 && !util.has_str(ausig.variants, apv.type_name)) {
+                                        foreign = true;
+                                    }
+                                },
+                                _ => { }
+                            }
+                            if (!foreign) {
+                                armScope = bind_variant_payloads(armScope, cur, apv);
                             }
                         },
                         _ => { }
@@ -4631,14 +4662,12 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                         parser.PatVariant(apv) => {
                             // A scalar-payload variant like `Has(i32)` binds
                             // the inner value (the `__ev` payload type), not
-                            // the wrapper struct — variant_binding_type reads
-                            // the precise type so an assignment to the payload
-                            // type-checks the same way the Go checker does
-                            // (and a struct-union member still binds its
-                            // struct).
-                            if (apv.binding.len() > 0 && apv.binding != "_") {
-                                asc = asc.bind(apv.binding, variant_binding_type(cur, apv.type_name));
-                            }
+                            // the wrapper struct — bind_variant_payloads reads
+                            // the precise per-payload type so an assignment to
+                            // any payload binding type-checks the same way the
+                            // Go checker does (and a struct-union member still
+                            // binds its struct).
+                            asc = bind_variant_payloads(asc, cur, apv);
                         },
                         _ => { }
                     }
