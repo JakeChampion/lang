@@ -26,8 +26,8 @@ import (
 // tuple_get, incl. nested), f64 scalars (const_f64 + fadd / fmul /
 // fgt / … + fneg), i32<->f64 casts (i32_to_f64 / f64_to_i32), string
 // concat / equality (str_concat / str_eq), the string builder
-// (strbuf_reset / _append / _take), and the process / output ops
-// (print_str / eprint_str / exit), with
+// (strbuf_reset / _append / _take), the process / output ops
+// (print_str / eprint_str / exit), and string indexing (str_index), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -169,6 +169,11 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"print", `function main(): i32 { print("hello"); return 5; }`},
 		{"write", `function main(): i32 { write("hi"); return 3; }`},
 		{"eprint", `function main(): i32 { eprint("err"); return 7; }`},
+		// String indexing over real irlower output (slice 10): a single byte
+		// read, a loop summing bytes, and indexing a string literal.
+		{"strindex", `function main(): i32 { var s: string = "ABC"; return s[1]; }`},
+		{"strsum", `function main(): i32 { var s: string = "AB"; var sum = 0; var i = 0; while (i < s.len()) { sum = sum + s[i]; i = i + 1; } return sum; }`},
+		{"strlit0", `function main(): i32 { return ("XY")[0]; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
