@@ -21,10 +21,11 @@ import (
 // Coverage is the lift's current subset: integer control flow (straight-line,
 // loops, if-merge, break, cross-function calls, recursion), string literals
 // + length (const_str / str_len, which lower RC-free), i32 arrays
-// (arr_make / arr_get / arr_set / arr_len), and scalar-field structs
-// (struct_make / struct_get, incl. nested), with irlower's RC-helper calls
-// stripped. Out-of-subset programs make the driver exit non-zero; only
-// in-subset programs are listed here.
+// (arr_make / arr_get / arr_set / arr_len), scalar-field structs
+// (struct_make / struct_get, incl. nested), and tuples (tuple_make /
+// tuple_get, incl. nested), with irlower's RC-helper calls stripped.
+// Out-of-subset programs make the driver exit non-zero; only in-subset
+// programs are listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	armgcc, qemu := arm64Tooling(t)
@@ -124,6 +125,13 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"boolfield", `struct F { a: boolean, n: i32 } function main(): i32 { var f = F { a: true, n: 7 }; if (f.a) { return f.n; } return 0; }`},
 		{"structupd", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }`},
 		{"structnest", `struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 30 }, k: 12 }; return o.inner.v + o.k; }`},
+		// Tuples over real irlower output (slice 4): a pair + element reads, a
+		// tuple returned from a function, a nested tuple (a pointer element),
+		// and a boolean-element tuple driving a branch.
+		{"tuplepair", `function main(): i32 { var t = (10, 32); return t.0 + t.1; }`},
+		{"tuplefn", `function mk(): (i32, i32) { return (5, 9); } function main(): i32 { var t = mk(); return t.0 + t.1; }`},
+		{"tuplenest", `function main(): i32 { var t = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }`},
+		{"tuplebool", `function main(): i32 { var t = (true, 7); if (t.0) { return t.1; } return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
