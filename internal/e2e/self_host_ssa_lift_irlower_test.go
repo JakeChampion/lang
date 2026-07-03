@@ -20,9 +20,10 @@ import (
 //
 // Coverage is the lift's current subset: integer control flow (straight-line,
 // loops, if-merge, break, cross-function calls, recursion), string literals
-// + length (const_str / str_len, which lower RC-free), and i32 arrays
-// (arr_make / arr_get / arr_set / arr_len, with irlower's RC-helper calls
-// stripped). Out-of-subset programs make the driver exit non-zero; only
+// + length (const_str / str_len, which lower RC-free), i32 arrays
+// (arr_make / arr_get / arr_set / arr_len), and scalar-field structs
+// (struct_make / struct_get, incl. nested), with irlower's RC-helper calls
+// stripped. Out-of-subset programs make the driver exit non-zero; only
 // in-subset programs are listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -114,6 +115,15 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"arrwith", `function main(): i32 { var a = [1, 2, 3]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }`},
 		{"arrsum", `function main(): i32 { var a = [5, 10, 15]; var s = 0; var i = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`},
 		{"arrpass", `function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; } function main(): i32 { var xs = [7, 8, 9]; return sum3(xs); }`},
+		// Scalar-field structs over real irlower output (slice 3): literal +
+		// field read, a borrowed struct param across a call, a boolean field
+		// driving a branch, a spread functional-update, and a nested struct
+		// field (a pointer field, stored/read i32-wide in the low SSA heap).
+		{"structlit", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 10, y: 32 }; return p.x + p.y; }`},
+		{"structfn", `struct P { x: i32, y: i32 } function sx(p: P): i32 { return p.x; } function main(): i32 { var p = P { x: 5, y: 9 }; return sx(p) + p.y; }`},
+		{"boolfield", `struct F { a: boolean, n: i32 } function main(): i32 { var f = F { a: true, n: 7 }; if (f.a) { return f.n; } return 0; }`},
+		{"structupd", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }`},
+		{"structnest", `struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 30 }, k: 12 }; return o.inner.v + o.k; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

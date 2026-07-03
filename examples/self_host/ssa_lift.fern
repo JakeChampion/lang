@@ -23,9 +23,13 @@
 //     runtime-helper calls (`__fern_rc_inc` / `__fern_rc_dec` /
 //     `__fern_str_free`) to no-ops — SSA's bump heap never frees, so it
 //     inherits build_func's leak-only memory model.
-// Everything else (value-producing ifs, i64 / f64 arrays, struct / map / float
-// ops, the i64 width) sets `ok=false` so a caller falls back, mirroring how
-// native's lift errors. Validated without a backend by running the lifted
+//   - slice 3: scalar-field STRUCTS — `struct_make` / `struct_get` /
+//     `struct_set` (width-0 i32 / boolean / pointer fields) lowered to
+//     build_func's tag-prefixed layout (slot 0 = tag, field f at slot f+1).
+//     Width-64 (f64 / i64) fields bail.
+// Everything else (value-producing ifs, i64 / f64 arrays + struct fields,
+// map / float ops, the i64 width) sets `ok=false` so a caller falls back,
+// mirroring how native's lift errors. Validated without a backend by running the lifted
 // SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
 //
 // The lift is a single linear pass over the op stream; the structured-control-
@@ -81,10 +85,28 @@ function drop_n(a: i32[], n: i32): i32[] {
 // lift strips (SSA has no free — see the arr_make note). All of them take the
 // box and return it (or void), and irlower always drops the result, so replacing
 // the call with a const 0 is sound on the leak-only SSA heap.
+// has_prefix reports whether `s` begins with `p` (a byte-wise compare — the
+// compiler's own checker has no `.starts_with` method).
+function has_prefix(s: string, p: string): boolean {
+    if (s.len() < p.len()) { return false; }
+    var i: i32 = 0;
+    while (i < p.len()) {
+        if (s[i] != p[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 function is_rc_noop(name: string): boolean {
     if (name == "__fern_rc_inc") { return true; }
     if (name == "__fern_rc_dec") { return true; }
     if (name == "__fern_str_free") { return true; }
+    // Per-type reclamation helpers irlower emits at scope exit (deep-drop of a
+    // struct's rc-tracked fields / a consume-rebind field reclaim). The type
+    // name is a dynamic suffix, and their result is always drop'd, so a prefix
+    // match + const-0 stand-in is sound on the leak-only SSA heap.
+    if (has_prefix(name, "__struct_drop_")) { return true; }
+    if (has_prefix(name, "__field_reclaim_")) { return true; }
     return false;
 }
 
@@ -371,6 +393,73 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var llv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: llv, args: [lbase, lzero], imm: 0, str: "" });
                 stack = stack.append(llv);
+            }
+        } else if (k == "struct_make") {
+            // A scalar-field struct literal (or enum-variant box) → a tag-
+            // prefixed heap box (slot 0 = type tag, field f at slot f+1),
+            // matching build_func's ExprStructLit layout. The nfields field
+            // values are on the operand stack (field 0 deepest). The tag is a
+            // placeholder 0: the lift only ever reaches struct FIELD reads
+            // (struct_get), which never touch slot 0 — every op that reads the
+            // tag (variant_is / dyn_dispatch / opt_payload) is out-of-subset and
+            // bails first — so the tag's exact value is unobserved. A 64-bit
+            // field VALUE can't reach here either (its producer, const_f64_text /
+            // const_i64_text / int_extend, bails), so every field stores i32-wide
+            // (imm 0), which the low-heap SSA also uses for pointer fields.
+            if (stack.len() < op.i32_imm) { ok = false; }
+            else {
+                var snf: i32 = op.i32_imm;
+                var sfields: i32[] = [];
+                var sfd: i32 = snf - 1;
+                while (sfd >= 0) { sfields = sfields.append(stack[stack.len() - 1 - sfd]); sfd = sfd - 1; }
+                var sfe: i32 = 0;
+                while (sfe < snf) { stack = drop_last(stack); sfe = sfe + 1; }
+                var sh: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "alloc", result: sh, args: [], imm: snf + 1, str: "" });
+                var stagi: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: stagi, args: [], imm: 0, str: "" });
+                var stagv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: stagv, args: [], imm: 0, str: "" });
+                var stsv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: stsv, args: [sh, stagi, stagv], imm: 0, str: "" });
+                var sm2: i32 = 0;
+                while (sm2 < snf) {
+                    var sfi: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: sfi, args: [], imm: sm2 + 1, str: "" });
+                    var sfsv: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: sfsv, args: [sh, sfi, sfields[sm2]], imm: 0, str: "" });
+                    sm2 = sm2 + 1;
+                }
+                stack = stack.append(sh);
+            }
+        } else if (k == "struct_get") {
+            // p.field on a scalar struct: field f is at slot f+1 (slot 0 is the
+            // tag), mirroring build_func's ExprFieldAccess. Width-64 (f64 / i64)
+            // fields are a later slice.
+            if (op.width == 64) { ok = false; }
+            else if (stack.len() < 1) { ok = false; }
+            else {
+                var gp: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var goff2: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: goff2, args: [], imm: op.i32_imm + 1, str: "" });
+                var glv2: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: glv2, args: [gp, goff2], imm: 0, str: "" });
+                stack = stack.append(glv2);
+            }
+        } else if (k == "struct_set") {
+            // p.field = v in place: store at slot field+1. Stack is
+            // [struct, value] (value on top). Width-64 fields bail.
+            if (op.width == 64) { ok = false; }
+            else if (stack.len() < 2) { ok = false; }
+            else {
+                var sv3: i32 = stack[stack.len() - 1];
+                var sp3: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var soff3: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: soff3, args: [], imm: op.i32_imm + 1, str: "" });
+                var ssv3: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: ssv3, args: [sp3, soff3, sv3], imm: 0, str: "" });
             }
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }

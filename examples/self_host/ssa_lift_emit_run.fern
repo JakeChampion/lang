@@ -120,6 +120,22 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "structsum") {
+        // struct P { x: i32, y: i32 }; var p = P { x: 10, y: 32 };
+        // return p.x + p.y;  => 42
+        // Exercises the slice-3 scalar-struct lift (struct_make / struct_get)
+        // through optimise / regalloc / emit on both backends. struct_make pops
+        // the two fields (field 0 deepest) and pushes the tag-prefixed box.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 1, ops: [
+                ir.op_const_i32(10), ir.op_const_i32(32),
+                ir.op_struct_make("P", 2), ir.op_store_local(0),
+                ir.op_load_local(0), ir.op_struct_get(0, 0),
+                ir.op_load_local(0), ir.op_struct_get(1, 0), ir.op_bin("add", 0, false),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 
