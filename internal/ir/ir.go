@@ -9052,11 +9052,21 @@ func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 			return b.expr(n.Left), true
 		}
 	case "&":
-		if lok && numL == -1 {
-			return b.expr(n.Right), true
-		}
-		if rok && numR == -1 {
-			return b.expr(n.Left), true
+		// `x & -1 → x` only when -1 really is this operation's all-ones
+		// mask. constNumber truncates to int32, so a 64-bit literal
+		// 0xFFFFFFFF (4294967295) also reads as -1 here — but for an i64
+		// AND that mask CLEARS the high 32 bits (e.g. after `lo as i64`
+		// sign-extends a negative i32), so folding it away is a
+		// miscompile. Restrict the identity to non-64-bit widths, where an
+		// int32 -1 is genuinely all-ones. A true i64 `x & -1` just keeps
+		// the (harmless) AND rather than risk collapsing a real mask.
+		if n.IntWidth != 64 {
+			if lok && numL == -1 {
+				return b.expr(n.Right), true
+			}
+			if rok && numR == -1 {
+				return b.expr(n.Left), true
+			}
 		}
 	case "*":
 		if lok && numL == 1 {
