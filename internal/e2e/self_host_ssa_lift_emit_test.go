@@ -101,6 +101,7 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"strbuf", 5},     // string builder: strbuf_reset/append/take (slice 8)
 		{"exitprog", 42},  // process: exit (diverging inst) (slice 9)
 		{"strindex", 66},  // string index: str_index -> load_elem (slice 10)
+		{"optval", 42},    // Option: opt_make + opt_payload (slice 11)
 	}
 	for _, tc := range cases {
 		tc := tc

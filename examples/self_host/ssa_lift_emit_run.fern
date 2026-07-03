@@ -228,6 +228,17 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "optval") {
+        // return Some(42).payload;  => 42
+        // Exercises the slice-11 Option lift (opt_make tag 0 + opt_payload) —
+        // the 2-word { tag, payload } box — through optimise / regalloc / emit.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_i32(42), ir.op_opt_make(0), ir.op_opt_payload(),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

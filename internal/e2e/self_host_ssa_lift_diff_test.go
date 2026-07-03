@@ -83,6 +83,7 @@ func TestSelfHostSSALiftDifferential(t *testing.T) {
 		{"strbuf", `function main(): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append("cde"); return strbuf_take().len(); }`},
 		{"exitprog", `function main(): i32 { exit(42); return 0; }`},
 		{"strindex", `function main(): i32 { return "ABC"[1]; }`},
+		{"optval", `function main(): i32 { match (Some(42)) { Some(v) => { return v; }, None => { return 0; } } }`},
 	}
 	for _, tc := range cases {
 		tc := tc
