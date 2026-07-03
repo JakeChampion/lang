@@ -28,10 +28,10 @@ import (
 // self-host's parallel arrays). Computed by computeRcAnalyses before any
 // Op is emitted; preciseDrops is filled at its later lowerFunc call site
 // (drop-fn registry-order constraint, see computeRcAnalyses). All tables
-// are read-only during lowering, with one documented exception: the C2
-// consuming-match reuse registers its scrutinee pairing in reuseSources
-// mid-lowering (the reuseCtor hook in (*builder).stmt's match arm) — an
-// insertion-time decision that a later slice should fold into the plan.
+// are read-only during lowering — the C2 consuming-match pairing that used
+// to register in reuseSources mid-lowering is folded into the plan too
+// (computeConsumingMatchReuse), so the plan is immutable once
+// computeRcAnalyses returns (#4475).
 type rcPlan struct {
 	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum
 	// PARAMETER that the borrow model would keep borrowed (its type is not
@@ -83,6 +83,17 @@ type rcPlan struct {
 	// computeReuseSources.
 	reuseSources  map[ast.Expr]string
 	reuseConsumed map[string]bool
+	// consumingMatchReuse marks a construction C (an arm's variant constructor)
+	// that reuses a CONSUMING match's scrutinee box in place (C2 — true
+	// zero-alloc FBIP): instead of freeing the consumed `own` box and allocating
+	// a fresh one for the arm's `return Ctor(..)`, the box shell is handed
+	// straight to C via the reuse token. The scrutinee's old payloads were MOVED
+	// into the arm bindings (reclaimed downstream), so unlike a general reuse C
+	// must NOT drop the box's old fields — this flag tells emitEnumNew to skip
+	// emitReuseOldFieldDrops. Rides on RcReuseEnabled. Filled by
+	// computeConsumingMatchReuse, which also records the ctor→scrutinee
+	// pairing in reuseSources (#4475).
+	consumingMatchReuse map[*ast.Call]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
@@ -108,6 +119,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.movedLocals = b.computeMovedLocals()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
+	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
 
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
@@ -2072,4 +2084,58 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 		return true
 	}
 	return false
+}
+
+// computeConsumingMatchReuse decides the C2 consuming-match reuse pairings up
+// front (#4475): for every enum match on an `own` (consuming) parameter, an
+// unguarded non-wildcard arm whose body is exactly `return Ctor(..)`
+// constructing a payloadful variant of the SAME (uniform-box-sized) enum hands
+// the consumed scrutinee box straight to that construction via the reuse token
+// instead of freeing it (true zero-alloc FBIP). This used to be registered
+// mid-lowering by the match arm's reuseCtor hook; deciding it here keeps the
+// rcPlan immutable during lowering.
+//
+// The gates reproduce the lowering-time hook exactly: `ownParamEnumScrutinee`
+// requires the tag to be an *ast.Ident naming an `own` enum param (an Ident
+// tag is never pair-form, so the hook's !pairFormScrutinee is implied), the
+// hook only ran for unguarded non-wildcard arms, and a ctor node already
+// paired by computeReuseSources keeps its general-FBIP donor (the hook's
+// `already` check — such an arm falls back to the C1 box free). Ordering vs.
+// the arm body is preserved trivially: registration now precedes ALL
+// lowering, and emitEnumNew reads the same tables by node identity.
+func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
+	out := map[*ast.Call]bool{}
+	if !ast.RcReuseEnabled || b.fn.Body == nil {
+		return out
+	}
+	ast.Walk(b.fn.Body, func(node ast.Node) bool {
+		m, ok := node.(*ast.Match)
+		if !ok {
+			return true
+		}
+		scrutIdent, scrutIsIdent := m.Tag.(*ast.Ident)
+		if !scrutIsIdent {
+			return true
+		}
+		consumeEnum, consumeScrut := b.ownParamEnumScrutinee(m.Tag)
+		if !consumeScrut {
+			return true
+		}
+		for _, arm := range m.Arms {
+			if arm.IsWildcard || arm.Guard != nil {
+				continue
+			}
+			reuseCtor := b.consumingReuseCtor(arm, consumeEnum)
+			if reuseCtor == nil {
+				continue
+			}
+			if _, already := b.rc.reuseSources[reuseCtor]; already {
+				continue
+			}
+			b.rc.reuseSources[reuseCtor] = scrutIdent.Name
+			out[reuseCtor] = true
+		}
+		return true
+	})
+	return out
 }
