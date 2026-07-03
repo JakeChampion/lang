@@ -93,6 +93,7 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"callsum", 42},   // cross-function call_direct: main() -> add(20,22)
 		{"factrec", 120},  // self-recursion: fact(5)
 		{"arrsum", 30},    // i32 array: arr_make + arr_get (slice 2)
+		{"structsum", 42}, // scalar struct: struct_make + struct_get (slice 3)
 	}
 	for _, tc := range cases {
 		tc := tc
