@@ -23,8 +23,9 @@ import (
 // + length (const_str / str_len, which lower RC-free), i32 arrays
 // (arr_make / arr_get / arr_set / arr_len), scalar-field structs
 // (struct_make / struct_get, incl. nested), tuples (tuple_make /
-// tuple_get, incl. nested), and f64 scalars (const_f64 + fadd / fmul /
-// fgt / … + fneg), with irlower's RC-helper calls stripped. Out-of-subset
+// tuple_get, incl. nested), f64 scalars (const_f64 + fadd / fmul /
+// fgt / … + fneg), and i32<->f64 casts (i32_to_f64 / f64_to_i32), with
+// irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
@@ -141,6 +142,11 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"f64cmp", `function main(): i32 { var a: f64 = 3.14; var b: f64 = 2.71; if (a > b) { return 1; } return 0; }`},
 		{"f64eq", `function main(): i32 { var x: f64 = 2.0; var y: f64 = 2.0; if (x == y) { return 4; } return 0; }`},
 		{"f64neg", `function main(): i32 { var x: f64 = 5.0; var y = -x; if (y < 0.0) { return 9; } return 0; }`},
+		// i32<->f64 casts over real irlower output (slice 6): float->int truncate,
+		// int->float, and a round-trip through both.
+		{"f2i", `function main(): i32 { var x: f64 = 3.7; return x as i32; }`},
+		{"i2f", `function main(): i32 { var n: i32 = 5; var x: f64 = n as f64; if (x > 4.5) { return 8; } return 0; }`},
+		{"castroundtrip", `function main(): i32 { var n: i32 = 10; var x: f64 = (n as f64) * 1.5; return x as i32; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

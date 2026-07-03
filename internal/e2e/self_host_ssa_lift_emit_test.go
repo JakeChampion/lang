@@ -96,6 +96,7 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"structsum", 42}, // scalar struct: struct_make + struct_get (slice 3)
 		{"tuplesum", 42},  // tuple: tuple_make + tuple_get (slice 4)
 		{"f64cmp", 1},     // f64: const_f64 + fmul/fadd/fgt (slice 5)
+		{"castrt", 15},    // i32<->f64 casts: i32_to_f64 + f64_to_i32 (slice 6)
 	}
 	for _, tc := range cases {
 		tc := tc

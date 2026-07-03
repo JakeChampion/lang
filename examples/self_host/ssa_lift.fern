@@ -34,11 +34,12 @@
 //     ops (fadd / fsub / fmul / fdiv / feq / … via fbin_sym) and `fneg`,
 //     lowered to SSA const_float / binary / unary. Value widths are inferred
 //     downstream by ssa.compute_isfloat, so the lift emits no float tag.
-//     f64 args / returns across calls, the int<->float casts, the libm
-//     intrinsics, and f64 array / struct / tuple elements are later slices.
-// Everything else (value-producing ifs, i64 width, f64 casts / calls / composite
-// elements, map ops) sets `ok=false` so a caller falls back, mirroring how
-// native's lift errors. Validated without a backend by running the lifted
+//   - slice 6: i32<->f64 CASTS — `i32_to_f64` -> unary "as_f64" (cvtsi2sd),
+//     `f64_to_i32` -> unary "as_i32" (cvttsd2si, truncating). f64->i64 stays
+//     out (i64 territory).
+// Everything else (value-producing ifs, i64 width, f64 across calls / composite
+// elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
+// back, mirroring how native's lift errors. Validated without a backend by running the lifted
 // SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
 //
 // The lift is a single linear pass over the op stream; the structured-control-
@@ -352,6 +353,30 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var fnv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: fnv, args: [fx], imm: 0, str: "-" });
                 stack = stack.append(fnv);
+            }
+        } else if (k == "i32_to_f64") {
+            // `n as f64` → SSA unary "as_f64" (cvtsi2sd). compute_isfloat marks
+            // the result float; ssa_x86 / ssa_arm64 emit the int->float convert.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var ifx: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var ifv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: ifv, args: [ifx], imm: 0, str: "as_f64" });
+                stack = stack.append(ifv);
+            }
+        } else if (k == "f64_to_i32") {
+            // `x as i32` on an f64 → SSA unary "as_i32" (cvttsd2si, truncating).
+            // The result is i32 (compute_isfloat leaves it non-float); the float
+            // operand selects the truncate over the identity-copy path. f64->i64
+            // (int_extend / f64_to_i64) is i64 territory and bails.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var fix: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var fiv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: fiv, args: [fix], imm: 0, str: "as_i32" });
+                stack = stack.append(fiv);
             }
         } else if (k == "call_direct") {
             var argc: i32 = op.i32_imm;
