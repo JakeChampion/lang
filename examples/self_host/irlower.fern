@@ -18644,6 +18644,16 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
                 var dslot: i32 = s.slot_of(pdrops.names[pi]);
+                // Bind the kind through an explicitly-typed `string` local before
+                // any `.len()` / slice: on the per-module bootstrap path this file
+                // is compiled STANDALONE, where a `.len()` directly on the
+                // `string[]`-element `pk` mis-infers the receiver as
+                // i32 and emits an undefined `__fn_i32__len` (a link error — the
+                // same standalone-mis-infer hazard documented at the PatVariant
+                // sites). The typed local pins the receiver type so `.len()` /
+                // indexing dispatch as strings. (Exposed by #4534's native match/
+                // tuple-pattern codegen change shifting this receiver's inference.)
+                var pk: string = pdrops.kinds[pi];
                 // Reclaim any scalar-element array slot (i32[] / i64[] / f64[] are
                 // all is_arr and freed by the exit dec-sweep with the same
                 // __fern_rc_dec); the precise drop just moves that dec earlier and
@@ -18693,7 +18703,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "box-shallow") {
+                } else if (dslot >= s.n_params && pk == "box-shallow") {
                     // Fresh SCALAR Option/Result/enum local, last-used at statement j (a
                     // nested-block match / borrow — precise_drop_names admitted it only
                     // because it has NO top-level consuming match, so it is DISJOINT
@@ -18709,7 +18719,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-rcpayload") {
+                } else if (dslot >= s.n_params && pk == "opt-rcpayload") {
                     // Fresh rc-PAYLOAD OPTION/RESULT (Option/Result of a leak-safe array
                     // or struct), last-used in a nested block — precise_drop_names
                     // admitted it only with NO top-level match (disjoint from
@@ -18722,14 +18732,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-strpayload") {
+                } else if (dslot >= s.n_params && pk == "opt-strpayload") {
                     // Fresh STRING-payload Option/Result (#4355), last-used in a nested
                     // block — same gates as "opt-rcpayload", but the payload at offset 8
                     // is a string box released by the rc-aware __fern_str_free (a plain
                     // rc-dec would free the 24-byte string block by the ARRAY layout's
                     // size class on asm — wrong class, heap corruption).
                     s = emit_opt_str_payload_drop(s, dslot);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi].len() > 15 && pdrops.kinds[pi][0:15] == "enum-rcpayload:"
+                } else if (dslot >= s.n_params && pk.len() > 15 && pk[0:15] == "enum-rcpayload:"
                         && util.index_of_str(ecross.donors, pdrops.names[pi]) < 0) {
                     // Fresh rc-PAYLOAD user-enum (a variant with a leak-safe array /
                     // deep-drop-ok struct payload), last-used in a nested block —
@@ -18744,8 +18754,8 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // recipient c (releasing only the OLD payload arrays, keeping the
                     // box), so freeing the box here would race that reuse — a UAF /
                     // double-free. The box is then freed exactly once via c.
-                    s = emit_enum_variant_drops(s, dslot, pdrops.kinds[pi][15 : pdrops.kinds[pi].len()]);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "map-buffers") {
+                    s = emit_enum_variant_drops(s, dslot, pk[15 : pk.len()]);
+                } else if (dslot >= s.n_params && pk == "map-buffers") {
                     // Fresh MAP local, last-used in a nested block — free its keys +
                     // values buffers (emit_map_buffers_free: rc-guarded __fern_rc_dec via
                     // raw_load_ptr) + zero the slot right after that statement, bounding
