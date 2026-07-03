@@ -518,6 +518,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             var name: string = "";
             var is_method: boolean = false;
             var is_closure: boolean = false;
+            var is_variant: boolean = false;
+            var variant_name: string = "";
             var recv: Value = v_err("__noreceiver__");
             var closure_val: Value = v_err("__noclosure__");
             match (c.callee) {
@@ -561,10 +563,29 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         _ => { }
                     }
                     if (!qualified_handled) {
-                        name = fa.field;
-                        is_method = true;
-                        recv = eval_expr(fa.obj, env);
-                        if (is_err(recv)) { return recv; }
+                        // `E.Some(x)` — a call whose callee object is a
+                        // bare identifier with no runtime value is a
+                        // payload enum-variant construction (the nullary
+                        // sibling `E.Red` is handled on the ExprFieldAccess
+                        // eval path). Anything with a real object value is a
+                        // method call.
+                        var variant_call: boolean = false;
+                        match (fa.obj) {
+                            parser.ExprIdent(oid) => {
+                                var probe: Value = env.lookup(oid.name);
+                                if (is_err(probe)) { variant_call = true; }
+                            },
+                            _ => { }
+                        }
+                        if (variant_call) {
+                            is_variant = true;
+                            variant_name = fa.field;
+                        } else {
+                            name = fa.field;
+                            is_method = true;
+                            recv = eval_expr(fa.obj, env);
+                            if (is_err(recv)) { return recv; }
+                        }
                     }
                 },
                 _ => {
@@ -586,6 +607,20 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 if (is_err(av)) { return av; }
                 arg_vals = arg_vals.append(av);
                 i = i + 1;
+            }
+            if (is_variant) {
+                // Payload variant: tag a VStruct with the variant name and
+                // the parser's synthesised field names __ev, __ev1, __ev2,
+                // … so a `V(a, b, …)` pattern binds each payload field
+                // positionally (see StmtMatch).
+                var vnames: string[] = [];
+                var vi: i32 = 0;
+                while (vi < arg_vals.len()) {
+                    if (vi == 0) { vnames = vnames.append("__ev"); }
+                    else { vnames = vnames.append("__ev" + util.i32_to_string(vi)); }
+                    vi = vi + 1;
+                }
+                return v_struct(variant_name, vnames, arg_vals);
             }
             if (is_method) {
                 return call_method(recv, name, arg_vals, env.funcs, env.aliases);
@@ -1306,7 +1341,8 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             while (i < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[i];
                 var matched: boolean = false;
-                var bind_name: string = "";
+                var bind_names: string[] = [];
+                var bind_values: Value[] = [];
                 match (arm.pattern) {
                     parser.PatWildcard(_) => { matched = true; },
                     parser.PatVariant(pv) => {
@@ -1330,13 +1366,37 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                                 // exactly).
                                 if (vs.type_name == pv.type_name || vs.type_name == variant_simple_name(pv.type_name)) {
                                     matched = true;
-                                    // Bare `Foo` and explicit
-                                    // `Foo(_)` both leave binding
-                                    // empty for the body env;
-                                    // only a named binding ends
-                                    // up in scope.
-                                    if (pv.binding.len() > 0 && pv.binding != "_") {
-                                        bind_name = pv.binding;
+                                    // A payload enum variant carries the
+                                    // parser's `__ev` marker as its first
+                                    // synthesised field; a `V(a, b, …)`
+                                    // pattern binds each payload field
+                                    // positionally. A plain tagged-struct /
+                                    // union variant `Circle(c)` has no `__ev`
+                                    // marker, so a single binding takes the
+                                    // whole struct (so `c.field` works).
+                                    // Bare `Foo` / `Foo(_)` bind nothing.
+                                    var is_payload: boolean = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
+                                    if (is_payload) {
+                                        var pat_binds: string[] = [];
+                                        if (pv.binding.len() > 0) { pat_binds = pat_binds.append(pv.binding); }
+                                        var xi: i32 = 0;
+                                        while (xi < pv.extra_bindings.len()) {
+                                            pat_binds = pat_binds.append(pv.extra_bindings[xi]);
+                                            xi = xi + 1;
+                                        }
+                                        var pbi: i32 = 0;
+                                        while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
+                                            if (pat_binds[pbi] != "_") {
+                                                bind_names = bind_names.append(pat_binds[pbi]);
+                                                bind_values = bind_values.append(vs.field_values[pbi]);
+                                            }
+                                            pbi = pbi + 1;
+                                        }
+                                    } else {
+                                        if (pv.binding.len() > 0 && pv.binding != "_") {
+                                            bind_names = bind_names.append(pv.binding);
+                                            bind_values = bind_values.append(sv);
+                                        }
                                     }
                                 }
                             },
@@ -1353,7 +1413,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     // `var`s) leak out.
                     var base: i32 = env.names.len();
                     var bodyEnv: Env = env;
-                    if (bind_name.len() > 0) { bodyEnv = bodyEnv.bind(bind_name, sv); }
+                    var bk: i32 = 0;
+                    while (bk < bind_names.len()) {
+                        bodyEnv = bodyEnv.bind(bind_names[bk], bind_values[bk]);
+                        bk = bk + 1;
+                    }
                     // A guard (`Pat if <expr> =>`) is evaluated with the
                     // binding in scope; a false guard falls through to the
                     // next arm instead of running this body.
