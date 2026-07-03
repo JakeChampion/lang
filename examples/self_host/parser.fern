@@ -4200,6 +4200,111 @@ function split_top_commas(s: string): string[] {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Structured type references (SH-021, foundation slice — unblocks #4394 lever 1).
+//
+// Types are carried through the self-host compiler as flat STRINGS ("i32",
+// "Map[string, i32]", "Option[(string, string)]", "i32[]", …) that a dozen
+// downstream sites re-decode by hand — depth-tracking byte scans keyed on exact
+// separators ("[", "]", "(", ", "), off-by-one bracket surgery, and unsound
+// "names never contain X" assumptions (asmcore ty_from_name / split_tuple_ret /
+// tuple_ret_tag_at, checker's six type_from_name* resolvers, wasm). Each is a
+// fresh chance to mis-read a nested generic or tuple.
+//
+// TypeRef is the structured form those scans should target instead: parse the
+// string ONCE into a tree, then pattern-match on it. This slice adds the type
+// plus the canonical parse/render pair (round-trip: render_type_ref(parse_type_ref
+// s) == s for every canonical type spelling); later slices retarget each
+// byte-scanning consumer onto parse_type_ref, and eventually the parser produces
+// TypeRef directly so the string becomes render output rather than the source of
+// truth. See docs/SELF-HOST-AUDIT.md T2.
+//
+//   base        — the head name: "i32" / "Foo" / "mod.Bar" for a scalar or named
+//                 type; the constructor ("Map" / "Option" / "Result" / …) for a
+//                 generic; "" for a tuple.
+//   args        — the generic arguments ("Map[K, V]" → [K, V]) or the tuple
+//                 element types ("(a, b)" → [a, b]); empty for a plain name.
+//   array_depth — the number of trailing "[]" suffixes ("i32[][]" → 2), applied
+//                 outside base/args so "(a, b)[]" and "Map[i32][]" round-trip.
+//   is_tuple    — true for "(…)" tuples (base is "", args are the elements),
+//                 distinguishing them from a "Name[…]" generic at render time.
+//
+// Function types ("(…) => R"), `dyn`/`own`/`borrow` handles etc. are already
+// coarsed to opaque spellings ("fn", "dyn Shape", "own R") by parse_type_name, so
+// TypeRef treats them as opaque named bases (a trailing "[]" still peels off,
+// e.g. "dyn Shape[]"); it is not a source-syntax type parser.
+pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean }
+
+// parse_type_ref decodes a canonical type spelling into a TypeRef tree. It is the
+// single place the "[]" / "(…)" / "Name[…]" / ", " grammar is scanned; every
+// other decoder should call this rather than re-implement the depth tracking.
+pub function parse_type_ref(sin: string): TypeRef {
+    var s: string = sin;
+    var depth: i32 = 0;
+    // Peel trailing array suffixes. A literal empty "[]" at the end is
+    // unambiguously an array marker: a generic's brackets always enclose
+    // content ("Map[…]") and a tuple ends with ")", so neither ends in "[]".
+    while (s.len() >= 2 && s[s.len() - 2] == 91 && s[s.len() - 1] == 93) {
+        depth = depth + 1;
+        s = s[0 : s.len() - 2];
+    }
+    // Tuple "(…)": base "", args are the (recursively parsed) elements.
+    if (s.len() >= 2 && s[0] == 40 && s[s.len() - 1] == 41) {
+        var tsegs: string[] = split_top_commas(s[1 : s.len() - 1]);
+        var targs: TypeRef[] = [];
+        var ti: i32 = 0;
+        while (ti < tsegs.len()) { targs = targs.append(parse_type_ref(tsegs[ti])); ti = ti + 1; }
+        return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true };
+    }
+    // Generic "Name[…]": base is the head before the first top-level "[", args
+    // are the bracketed, comma-split arguments. (After the array peel above the
+    // last char is the generic's own "]".)
+    var lb: i32 = 0 - 1;
+    var j: i32 = 0;
+    while (j < s.len()) {
+        if (s[j] == 91) { lb = j; j = s.len(); } else { j = j + 1; }
+    }
+    if (lb >= 0 && s.len() > 0 && s[s.len() - 1] == 93) {
+        var gsegs: string[] = split_top_commas(s[lb + 1 : s.len() - 1]);
+        var gargs: TypeRef[] = [];
+        var gi: i32 = 0;
+        while (gi < gsegs.len()) { gargs = gargs.append(parse_type_ref(gsegs[gi])); gi = gi + 1; }
+        return TypeRef { base: s[0 : lb], args: gargs, array_depth: depth, is_tuple: false };
+    }
+    // Plain scalar / named type (incl. opaque "dyn …" / "own …" spellings).
+    return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false };
+}
+
+// render_type_ref is the inverse of parse_type_ref: it reproduces the canonical
+// spelling, so render_type_ref(parse_type_ref(s)) == s for every canonical s.
+pub function render_type_ref(t: TypeRef): string {
+    var inner: string = "";
+    if (t.is_tuple) {
+        inner = "(";
+        var i: i32 = 0;
+        while (i < t.args.len()) {
+            if (i > 0) { inner = inner + ", "; }
+            inner = inner + render_type_ref(t.args[i]);
+            i = i + 1;
+        }
+        inner = inner + ")";
+    } else if (t.args.len() > 0) {
+        inner = t.base + "[";
+        var k: i32 = 0;
+        while (k < t.args.len()) {
+            if (k > 0) { inner = inner + ", "; }
+            inner = inner + render_type_ref(t.args[k]);
+            k = k + 1;
+        }
+        inner = inner + "]";
+    } else {
+        inner = t.base;
+    }
+    var d: i32 = 0;
+    while (d < t.array_depth) { inner = inner + "[]"; d = d + 1; }
+    return inner;
+}
+
 // split_dunder splits a joined instantiation key like `i32__string`
 // into its per-type-parameter concrete pieces. Concrete type names
 // never contain `__`, so a literal scan is unambiguous.

@@ -181,7 +181,7 @@ findings. Ranked by leverage.
   > bootstrap subset can take them; otherwise mirror them once in `util.fern`.
 
 ### T2 — Stringly-typed type system
-- [ ] **SH-021 — Carry a structured type AST from the parser** instead of flat
+- [~] **SH-021 — Carry a structured type AST from the parser** instead of flat
   strings re-parsed downstream. Root cause of: `parser.fern:2812-2905` (type
   re-decode by substring surgery, incl. the unsound "type names never contain
   `__`" assumption at `:2851`), `asmcore:1273-1358` (`ty_from_name`/`split_tuple_ret`,
@@ -190,6 +190,17 @@ findings. Ranked by leverage.
   _Fix:_ a small `TypeRef { base, args[], array_depth }` produced once;
   pattern-match instead of byte-scanning. Large but eliminates a whole class of
   fragility findings.
+  _Foundation slice landed:_ `parser.fern` now defines
+  `TypeRef { base, args[], array_depth, is_tuple }` plus the canonical
+  `parse_type_ref` / `render_type_ref` pair (the single place the
+  `[]` / `(…)` / `Name[…]` / `", "` grammar is scanned), with a round-trip golden
+  (`typeref_run.fern` + `TestSelfHostTypeRef`: `render(parse s) == s` over the
+  full grammar corpus + structure spot-checks). Purely additive — no consumer is
+  retargeted yet. _Remaining:_ retarget each byte-scan decoder onto
+  `parse_type_ref` (asmcore `ty_from_name` / `split_tuple_ret` /
+  `tuple_ret_tag_at`, the checker's six `type_from_name*`, wasm), then have the
+  parser store `TypeRef` directly so the string becomes render output. Unblocks
+  #4394 lever 1 (symbol interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress

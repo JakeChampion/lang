@@ -1,0 +1,90 @@
+// examples/self_host/typeref_run.fern — round-trip driver for the structured
+// type reference (parser.fern's TypeRef / parse_type_ref / render_type_ref,
+// SH-021 foundation slice — unblocks #4394 lever 1).
+//
+// It walks a corpus of canonical type spellings covering every shape the
+// self-host type-string grammar produces — scalars, named + qualified names,
+// arrays (incl. multi-depth), generics (incl. nested), tuples (incl. nested and
+// inside generics), arrays of tuples/generics, and the opaque `dyn` spelling —
+// and asserts the parse/render round-trip render_type_ref(parse_type_ref(s)) == s
+// for each. A byte-scan bug in parse_type_ref (a mis-peeled array suffix, a
+// bad generic split, a tuple mis-classified as a generic) shows up here as a
+// MISMATCH rather than silently mis-decoding a type downstream once a consumer
+// is retargeted onto parse_type_ref.
+//
+// It also spot-checks the decoded STRUCTURE of a few representative types (base
+// / arg-count / array_depth / is_tuple), so a change that still round-trips but
+// decodes the wrong tree (e.g. reading "Map[string, i32]" as one arg) is caught.
+//
+// The companion Go test (internal/e2e/self_host_typeref_test.go) asserts the
+// exact stdout and an exit code of 0 (zero round-trip failures), pinning the
+// contract end-to-end through the self-host -> native pipeline.
+
+import "./parser";
+import "./util";
+
+function b2s(b: boolean): string {
+    if (b) { return "1"; }
+    return "0";
+}
+
+// CheckResult carries a round-trip check's report line plus whether it failed
+// (Fern arrays are immutable after construction, so the driver accumulates its
+// report as a returned value rather than mutating a shared buffer cell).
+struct CheckResult { bad: i32, line: string }
+
+// check round-trips one spelling, returning the report line + a 0/1 fail flag.
+function check(s: string): CheckResult {
+    var r: string = parser.render_type_ref(parser.parse_type_ref(s));
+    if (r == s) { return CheckResult { bad: 0, line: "ok   " + s + "\n" }; }
+    return CheckResult { bad: 1, line: "BAD  " + s + " -> " + r + "\n" }; }
+
+function main(): i32 {
+    var corpus: string[] = [
+        "i32", "u32", "string", "bool", "f64",
+        "Foo", "mod.Bar",
+        "i32[]", "string[][]", "Foo[][][]",
+        "Option[i32]", "Map[string, i32]", "Result[string, Err]",
+        "Map[string, Option[i32]]", "Map[i32, Vec[string]][]", "Vec[T]",
+        "(i32, string)", "(string, (i32, bool))", "Option[(string, string)]",
+        "(i32, string)[]", "dyn Shape", "dyn Shape[]"
+    ];
+    var out: string = "";
+    var bad: i32 = 0;
+
+    // 1. Full round-trip sweep over the type-string grammar.
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var cr: CheckResult = check(corpus[i]);
+        bad = bad + cr.bad;
+        out = out + cr.line;
+        i = i + 1;
+    }
+
+    // 2. Structure spot-checks — a wrong tree that still round-trips fails here.
+    var mp: parser.TypeRef = parser.parse_type_ref("Map[string, Option[i32]]");
+    out = out + "struct Map base=" + mp.base
+        + " args=" + util.i32_to_string(mp.args.len())
+        + " depth=" + util.i32_to_string(mp.array_depth)
+        + " tuple=" + b2s(mp.is_tuple) + "\n";
+    var inner1: parser.TypeRef = mp.args[1];
+    out = out + "struct Map.arg1 base=" + inner1.base
+        + " args=" + util.i32_to_string(inner1.args.len()) + "\n";
+
+    var tp: parser.TypeRef = parser.parse_type_ref("(i32, string)[]");
+    out = out + "struct tuparr base=" + tp.base
+        + " args=" + util.i32_to_string(tp.args.len())
+        + " depth=" + util.i32_to_string(tp.array_depth)
+        + " tuple=" + b2s(tp.is_tuple) + "\n";
+
+    var ar: parser.TypeRef = parser.parse_type_ref("Foo[][][]");
+    out = out + "struct arr3 base=" + ar.base
+        + " args=" + util.i32_to_string(ar.args.len())
+        + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
+
+    out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
+    write(out);
+
+    // Exit code is the round-trip failure count: 0 on a clean sweep.
+    return bad;
+}
