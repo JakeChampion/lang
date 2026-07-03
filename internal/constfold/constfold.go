@@ -312,6 +312,8 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	case *ast.While:
 		s.walkExpr(&x.Cond)
 		s.walkStmt(x.Body)
+	case *ast.Loop:
+		s.walkStmt(x.Body)
 	case *ast.For:
 		if x.Init != nil {
 			s.walkStmt(x.Init)

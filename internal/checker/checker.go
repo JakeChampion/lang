@@ -2948,6 +2948,8 @@ func (c *checker) walkVarTypes(b *ast.Block, visit func(ast.Type, ast.Position))
 			c.walkVarTypes(asBlock(x.Else), visit)
 		case *ast.While:
 			c.walkVarTypes(asBlock(x.Body), visit)
+		case *ast.Loop:
+			c.walkVarTypes(asBlock(x.Body), visit)
 		case *ast.For:
 			c.walkVarTypes(asBlock(x.Body), visit)
 		case *ast.Match:
@@ -4702,6 +4704,8 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 			c.resolveTypesInBlock(x.Else, params)
 		case *ast.While:
 			c.resolveTypesInBlock(asBlock(x.Body), params)
+		case *ast.Loop:
+			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.For:
 			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.Var:
@@ -4759,6 +4763,14 @@ func blockDiverges(b *ast.Block) bool {
 func stmtDiverges(s ast.Stmt) bool {
 	switch x := s.(type) {
 	case *ast.Return, *ast.Break, *ast.Continue:
+		return true
+	case *ast.Loop:
+		// `loop { … }` is unconditional by construction, so treat it
+		// as diverging — same conservative "ignore breaks" stance as
+		// stmtExits below: a `loop` containing a `break` could in
+		// principle fall through to here, but requiring every escape
+		// to be spelled as an explicit trailing return/break/continue
+		// is what this analysis already asks of every other construct.
 		return true
 	case *ast.Block:
 		return blockDiverges(x)
@@ -4837,6 +4849,11 @@ func stmtExits(s ast.Stmt) bool {
 			return true
 		}
 		return false
+	case *ast.Loop:
+		// `loop { … }` is unconditional by construction — same
+		// conservative treatment as literal-true While above, without
+		// needing to pattern-match a BoolLit condition.
+		return true
 	case *ast.Switch:
 		// Cases auto-break (no C-style fall-through), so a switch
 		// guarantees an exit only when it has a default arm (otherwise an
@@ -5574,6 +5591,8 @@ func (c *checker) resolveProjInStmt(s ast.Stmt) {
 		}
 	case *ast.While:
 		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Body)
+	case *ast.Loop:
 		c.resolveProjInStmt(x.Body)
 	case *ast.For:
 		if x.Init != nil {
@@ -7411,6 +7430,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.While:
 			recordExprUses(x.Cond, moved)
 			loopBody(x.Body, nil, moved)
+		case *ast.Loop:
+			loopBody(x.Body, nil, moved)
 		case *ast.For:
 			if x.Init != nil {
 				walkStmt(x.Init, moved)
@@ -7651,6 +7672,8 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkBodyForNames(n.Else, selfName, siblings, seen)
 	case *ast.While:
 		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.Loop:
 		walkStmtForNames(n.Body, selfName, siblings, seen)
 	case *ast.For:
 		walkStmtForNames(n.Init, selfName, siblings, seen)
@@ -7929,6 +7952,16 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if t != nil && !ast.Equal(t, ast.BoolType{}) {
 			c.errfCode(n.Cond.Pos(), "E008", "while condition must be boolean, got %s", t)
 		}
+		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
+		c.checkStmt(n.Body, s)
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
+		}
+		c.loopDepth--
+	case *ast.Loop:
 		c.loopDepth++
 		if n.Label != "" {
 			c.loopLabels = append(c.loopLabels, n.Label)

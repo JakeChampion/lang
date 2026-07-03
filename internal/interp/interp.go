@@ -2434,6 +2434,27 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			// flowContinue or flowNormal: re-test the condition.
 		}
 		return result{flow: flowNormal}, nil
+	case *ast.Loop:
+		for {
+			r, err := i.execStmt(x.Body, e)
+			if err != nil {
+				return result{}, err
+			}
+			if r.flow == flowReturn {
+				return r, nil
+			}
+			if r.flow == flowBreak {
+				if r.label != "" && r.label != x.Label {
+					return r, nil // targets an outer labeled loop
+				}
+				break
+			}
+			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
+				return r, nil // targets an outer labeled loop
+			}
+			// flowContinue or flowNormal: loop forever.
+		}
+		return result{flow: flowNormal}, nil
 	case *ast.For:
 		inner := newEnv(e)
 		if x.Init != nil {

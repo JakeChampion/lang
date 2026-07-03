@@ -383,9 +383,10 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 	}
 }
 
-// `loop { ... }` desugars to `while (true) { ... }` — a While with a
-// literal-true Cond — so every backend handles it with no new node.
-func TestLoopDesugarsToWhileTrue(t *testing.T) {
+// `loop { ... }` parses to a canonical *ast.Loop node — not While-true
+// sugar — so divergence analyses can recognize it as definitionally
+// diverging without pattern-matching a literal-true While condition.
+func TestLoopParsesToCanonicalLoopNode(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
 		var i: i32 = 0;
 		loop { i = i + 1; if (i >= 3) { break; } }
@@ -394,12 +395,12 @@ func TestLoopDesugarsToWhileTrue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, ok := prog.Funcs[0].Body.Stmts[1].(*ast.While)
+	l, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Loop)
 	if !ok {
-		t.Fatalf("loop should desugar to While, got %T", prog.Funcs[0].Body.Stmts[1])
+		t.Fatalf("loop should parse to *ast.Loop, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	if b, ok := w.Cond.(*ast.BoolLit); !ok || !b.Value {
-		t.Errorf("loop Cond should be literal `true`, got %T %v", w.Cond, w.Cond)
+	if _, ok := l.Body.(*ast.Block); !ok {
+		t.Errorf("loop Body should be a Block, got %T", l.Body)
 	}
 }
 
@@ -423,9 +424,9 @@ func TestLabeledLoopsAndBreakContinue(t *testing.T) {
 		t.Fatalf("expected labeled While `outer`, got %T %q", prog.Funcs[0].Body.Stmts[0], labelOf(prog.Funcs[0].Body.Stmts[0]))
 	}
 	innerBody := outer.Body.(*ast.Block).Stmts
-	inner, ok := innerBody[0].(*ast.While)
+	inner, ok := innerBody[0].(*ast.Loop)
 	if !ok || inner.Label != "inner" {
-		t.Fatalf("expected labeled loop->While `inner`, got %T", innerBody[0])
+		t.Fatalf("expected labeled *ast.Loop `inner`, got %T", innerBody[0])
 	}
 	stmts := inner.Body.(*ast.Block).Stmts
 	br, ok := stmts[0].(*ast.Break)
@@ -441,6 +442,8 @@ func TestLabeledLoopsAndBreakContinue(t *testing.T) {
 func labelOf(s ast.Stmt) string {
 	switch n := s.(type) {
 	case *ast.While:
+		return n.Label
+	case *ast.Loop:
 		return n.Label
 	case *ast.For:
 		return n.Label

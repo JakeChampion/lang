@@ -2270,17 +2270,17 @@ func (p *parser) parseWhile(label string) (ast.Stmt, error) {
 }
 
 // parseLoop handles the `loop { ... }` canonical infinite loop. It
-// desugars to `while (true) { ... }` — a While with a literal-true
-// Cond — so every backend, the IR lowering, and the interpreter handle
-// it with no new machinery; `break` / `continue` (and their labeled
-// forms) work as in any while loop.
+// produces a dedicated ast.Loop node (not While-true sugar) so
+// divergence analyses can recognize it as definitionally diverging
+// without pattern-matching a literal-true While condition; `break` /
+// `continue` (and their labeled forms) work as in any while loop.
 func (p *parser) parseLoop(label string) (ast.Stmt, error) {
 	kw := p.advance()
 	body, err := p.parseStmt()
 	if err != nil {
 		return nil, err
 	}
-	return &ast.While{P: kw.Pos, Cond: &ast.BoolLit{P: kw.Pos, Value: true}, Body: body, Label: label}, nil
+	return &ast.Loop{P: kw.Pos, Body: body, Label: label}, nil
 }
 
 // parseLambda parses `function (params): R { body }` in
@@ -2888,6 +2888,8 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		}
 	case *ast.While:
 		desugarForEachExpr(x.Cond, streamFns)
+		x.Body = desugarForEachStmt(x.Body, streamFns)
+	case *ast.Loop:
 		x.Body = desugarForEachStmt(x.Body, streamFns)
 	case *ast.For:
 		if x.Init != nil {
@@ -4475,6 +4477,9 @@ func rewriteBuilderStmt(s ast.Stmt, b string) ast.Stmt {
 		}
 		return n
 	case *ast.While:
+		n.Body = rewriteBuilderStmt(n.Body, b)
+		return n
+	case *ast.Loop:
 		n.Body = rewriteBuilderStmt(n.Body, b)
 		return n
 	case *ast.For:

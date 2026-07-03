@@ -3864,6 +3864,8 @@ func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[
 		return allReturnsArePairFormShape(x.Then, names, pairForm) && allReturnsArePairFormShape(x.Else, names, pairForm)
 	case *ast.While:
 		return allReturnsArePairFormShape(x.Body, names, pairForm)
+	case *ast.Loop:
+		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.For:
 		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.Switch:
@@ -4433,6 +4435,8 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 	case *ast.LetElse:
 		collectDefers(x.Else, out)
 	case *ast.While:
+		collectDefers(x.Body, out)
+	case *ast.Loop:
 		collectDefers(x.Body, out)
 	case *ast.For:
 		collectDefers(x.Init, out)
@@ -5546,7 +5550,7 @@ func (b *builder) computePreciseDrops() map[int][]string {
 // extension (vs a simple top-level Var / ExprStmt / Return use).
 func (b *builder) isControlFlowStmt(st ast.Node) bool {
 	switch st.(type) {
-	case *ast.If, *ast.While, *ast.For, *ast.Match, *ast.LetElse, *ast.Block:
+	case *ast.If, *ast.While, *ast.Loop, *ast.For, *ast.Match, *ast.LetElse, *ast.Block:
 		return true
 	}
 	return false
@@ -10163,6 +10167,27 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.emit(Op{Kind: OpNot}) // br_if exits when cond was false
 		b.brTo(breakD, true)
+		b.breakStack = append(b.breakStack, breakD)
+		b.contStack = append(b.contStack, loopD)
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD})
+		if err := b.stmt(n.Body); err != nil {
+			return err
+		}
+		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
+		b.breakStack = b.breakStack[:len(b.breakStack)-1]
+		b.contStack = b.contStack[:len(b.contStack)-1]
+		b.brTo(loopD, false) // unconditional back-edge
+		b.closeScope()       // close loop
+		b.closeScope()       // close break-block
+	case *ast.Loop:
+		// Same `block`/`loop` shape as While, minus the cond check —
+		// `loop { … }` is unconditional by construction, so there is
+		// no br_if exit to emit; only an explicit `break` inside the
+		// body reaches the outer block.
+		b.openBlock(BlockTypeVoid)
+		breakD := b.depth
+		b.openLoop(BlockTypeVoid)
+		loopD := b.depth
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
 		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD})

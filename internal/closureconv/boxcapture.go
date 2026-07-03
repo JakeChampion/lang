@@ -222,6 +222,8 @@ func rewriteBoxedStmt(s ast.Stmt, boxed map[string]ast.Type) {
 	case *ast.While:
 		x.Cond = rewriteBoxedExpr(x.Cond, boxed)
 		rewriteBoxedStmt(x.Body, boxed)
+	case *ast.Loop:
+		rewriteBoxedStmt(x.Body, boxed)
 	case *ast.For:
 		if x.Init != nil {
 			rewriteBoxedStmt(x.Init, boxed)

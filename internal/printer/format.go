@@ -591,6 +591,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatExpr(x.Cond, precLowest)
 		f.b.WriteString(") ")
 		f.formatStmt(x.Body, depth)
+	case *ast.Loop:
+		f.b.WriteString("loop ")
+		f.formatStmt(x.Body, depth)
 	case *ast.For:
 		f.b.WriteString("for (")
 		if x.Init != nil {

@@ -1,5 +1,6 @@
-// `loop { ... }` is the canonical infinite loop (desugars to
-// `while (true)`); a plain `break` / `continue` works inside it.
+// `loop { ... }` is the canonical, definitionally-diverging infinite
+// loop (its own AST node, not While-true sugar); a plain `break` /
+// `continue` works inside it.
 function main(): i32 {
     var i: i32 = 0;
     var evens: i32 = 0;
