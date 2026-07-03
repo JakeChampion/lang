@@ -208,6 +208,20 @@ var interpProgs = []struct {
 	{"enum-wildcard-arm", "enum E { A, B, C } function main(): i32 { var e = E.C; match (e) { E.A => { return 1; }, _ => { return 9; } } }", 9},
 	{"enum-return-from-fn", "enum St { On, Off } function flip(s: St): St { match (s) { St.On => { return St.Off; }, St.Off => { return St.On; } } } function main(): i32 { var r = flip(St.On); match (r) { St.On => { return 1; }, St.Off => { return 0; } } }", 0},
 	{"enum-in-array", "enum E { A, B } function main(): i32 { var a: E[] = [E.A, E.B, E.A]; var n = 0; for x in a { match (x) { E.A => { n = n + 1; }, E.B => { n = n + 10; } } } return n; }", 12},
+
+	// Payload enum variants: `E.Some(x)` constructs a variant value carrying
+	// the payload as the parser's synthesised `__ev` field, and a `V(a)`
+	// pattern binds each payload field positionally (the `__ev` marker
+	// distinguishes an enum payload — bind the field — from a tagged-struct /
+	// union variant like `Circle(c)`, which binds the whole struct). The
+	// interp errored on the `E.Some(x)` call (bare enum-type object) and
+	// never constructed the value.
+	{"enum-payload-bind", "enum E { A(i32), B } function main(): i32 { var e = E.A(7); match (e) { E.A(n) => { return n; }, E.B => { return 0; } } }", 7},
+	{"enum-payload-other-arm", "enum E { A(i32), B } function main(): i32 { var e = E.B; match (e) { E.A(n) => { return n; }, E.B => { return 99; } } }", 99},
+	{"enum-option-unwrap", "enum Opt { Some(i32), None } function unwrap(o: Opt): i32 { match (o) { Opt.Some(v) => { return v; }, Opt.None => { return 0; } } } function main(): i32 { return unwrap(Opt.Some(42)) + unwrap(Opt.None); }", 42},
+	{"enum-result-err", "enum R { Ok(i32), Err(i32) } function main(): i32 { var r = R.Err(3); match (r) { R.Ok(v) => { return v; }, R.Err(e) => { return 100 + e; } } }", 103},
+	{"enum-payload-ignore", "enum E { A(i32), B } function main(): i32 { var e = E.A(5); match (e) { E.A(_) => { return 1; }, E.B => { return 2; } } }", 1},
+	{"enum-payload-in-array", "enum E { N(i32) } function main(): i32 { var a: E[] = [E.N(1), E.N(2), E.N(3)]; var s = 0; for x in a { match (x) { E.N(v) => { s = s + v; } } } return s; }", 6},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
