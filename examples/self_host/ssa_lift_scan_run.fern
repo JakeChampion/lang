@@ -1,0 +1,118 @@
+// examples/self_host/ssa_lift_scan_run.fern — coverage scan for the stack-IR ->
+// SSA lift (ssa_lift.fern). It loads a REAL module the way the production
+// compiler does — resolve imports, bundle, merge builtins, hoist lambdas — then
+// for every function lowers AST -> ir.Op[] (irlower.lower_func_for) and LIFTS
+// that IR (ssa_lift.lift_from_ir), counting how many functions LIFT vs BAIL.
+// It prints a summary plus a histogram of the op kinds that force a bail, so
+// "the lift covers the backend-supported surface" becomes a measured number and
+// the residual fall-backs are named. This is a diagnostic, not part of any
+// production path.
+//
+//   $ ssa_lift_scan_run <entry.fern>
+//
+// A function counts as:
+//   - lifted:       lower_func_for ok AND lift_from_ir ok.
+//   - lift-bail:    lower_func_for ok but lift_from_ir bailed (a lift gap; the
+//                   offending op kind is tallied in the histogram).
+//   - irlower-bail: lower_func_for itself bailed (an irlower-subset gap, not a
+//                   lift gap — the IR never reached the lift).
+
+import "std/io";
+import "./util";
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./modloader";
+import "./irlower";
+import "./ssa";
+import "./ssa_lift";
+
+// A bail histogram as parallel key/count arrays (value-semantics friendly).
+struct Hist { keys: string[], counts: i32[] }
+
+function hist_bump(h: Hist, k: string): Hist {
+    var i: i32 = 0;
+    while (i < h.keys.len()) {
+        if (h.keys[i] == k) {
+            var nc: i32[] = [];
+            var j: i32 = 0;
+            while (j < h.counts.len()) {
+                if (j == i) { nc = nc.append(h.counts[j] + 1); } else { nc = nc.append(h.counts[j]); }
+                j = j + 1;
+            }
+            return Hist { keys: h.keys, counts: nc };
+        }
+        i = i + 1;
+    }
+    return Hist { keys: h.keys.append(k), counts: h.counts.append(1) };
+}
+
+// pct renders num/den as a whole-percent i32 (0..100), guarding den == 0.
+function pct(num: i32, den: i32): i32 {
+    if (den == 0) { return 0; }
+    return (num * 100) / den;
+}
+
+function main(): i32 {
+    var av: string[] = args();
+    if (av.len() < 2) { eprint("usage: ssa_lift_scan_run <entry.fern>\n"); return 2; }
+    var entry_path: string = av[1];
+    var dir: string = modloader.dirname(entry_path);
+
+    match (read_file(entry_path)) {
+        Ok(src) => {
+            var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            var merged: parser.Module = flatten.bundle(entry, loaded);
+            merged = modloader.merge_builtins(dir, merged);
+            merged = irlower.lift_lambdas(merged);
+
+            var total: i32 = 0;
+            var lifted: i32 = 0;
+            var lift_bail: i32 = 0;
+            var lower_bail: i32 = 0;
+            var hist: Hist = Hist { keys: [], counts: [] };
+
+            var i: i32 = 0;
+            while (i < merged.funcs.len()) {
+                var fn: parser.FuncDecl = merged.funcs[i];
+                total = total + 1;
+                var lr: irlower.LowerResult = irlower.lower_func_for(fn, [], merged.structs, merged.funcs);
+                if (!lr.ok) {
+                    lower_bail = lower_bail + 1;
+                } else {
+                    var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops);
+                    if (lf.ok) {
+                        lifted = lifted + 1;
+                    } else {
+                        lift_bail = lift_bail + 1;
+                        var key: string = lf.bail;
+                        if (key.len() == 0) { key = "(unknown)"; }
+                        hist = hist_bump(hist, key);
+                    }
+                }
+                i = i + 1;
+            }
+
+            write("lift-scan " + entry_path + ": " + util.i32_to_string(total) + " functions\n");
+            write("  lifted:       " + util.i32_to_string(lifted) + " (" + util.i32_to_string(pct(lifted, total)) + "%)\n");
+            write("  lift-bail:    " + util.i32_to_string(lift_bail) + " (" + util.i32_to_string(pct(lift_bail, total)) + "%)\n");
+            write("  irlower-bail: " + util.i32_to_string(lower_bail) + " (" + util.i32_to_string(pct(lower_bail, total)) + "%)\n");
+            // Of the functions that irlower COULD lower, how many the lift covers.
+            var lowerable: i32 = lifted + lift_bail;
+            write("  lifted / irlower-lowerable: " + util.i32_to_string(lifted) + "/" + util.i32_to_string(lowerable) + " (" + util.i32_to_string(pct(lifted, lowerable)) + "%)\n");
+            write("bail histogram (op kind -> functions):\n");
+            var h: i32 = 0;
+            while (h < hist.keys.len()) {
+                write("  " + hist.keys[h] + ": " + util.i32_to_string(hist.counts[h]) + "\n");
+                h = h + 1;
+            }
+            return 0;
+        },
+        Err(e) => {
+            eprint("ssa_lift_scan_run: could not read entry file\n");
+            return 1;
+        },
+    }
+    return 3;
+}
