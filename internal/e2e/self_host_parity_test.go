@@ -104,7 +104,7 @@ func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
 			probe := runParityDriver(t, runner, driver, tc.src, "-ir-probe")
-			if !strings.HasSuffix(probe, "module: IR\n") {
+			if !strings.HasSuffix(strings.TrimRight(probe, "\n"), "module: IR") {
 				t.Fatalf("fixture does not route IR (corpus contract):\n%s", probe)
 			}
 			asm := runParityDriver(t, runner, driver, tc.src, "-ir")
