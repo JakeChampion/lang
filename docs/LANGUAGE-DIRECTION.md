@@ -235,9 +235,19 @@ Tuples (follow-up status):
   (consistent with the no-singleton-tuples rule). Mixed
   element types just work — the IR picks `Load` vs `FLoad`
   per element.
-- Match-arm and function-parameter destructuring is a separate
-  pass (binding semantics differ enough that they're worth
-  designing on their own).
+- **Function-parameter destructuring shipped.** `function f((a,
+  b): (T, U))` binds the tuple elements positionally — in named
+  functions (incl. methods), verbose lambdas, and arrow lambdas.
+  Both parsers desugar the pattern into a synthetic
+  `__ptuple_<line>_<col>` parameter of the annotated type plus a
+  leading `let (a, b) = <synth>;`, so the checker / interp / IR
+  reuse the statement-destructure path unchanged (a non-tuple
+  annotation or an arity mismatch is the usual E024, reported at
+  the parameter). A destructured param can't take a default value
+  and needs a function body (not an `@import` signature).
+- Match-arm destructuring is a separate pass (binding semantics
+  differ enough that it's worth designing on its own) — tracked
+  in #4406 alongside the `*Result`-struct cleanup it unblocks.
 
 ### PR 2.5 — Slice views (shipped)
 

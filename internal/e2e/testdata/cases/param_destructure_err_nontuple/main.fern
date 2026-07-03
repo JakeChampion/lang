@@ -1,0 +1,9 @@
+// A destructured parameter must be annotated with a tuple type —
+// the desugared `let (a, b) = <synth>;` fires the usual E024.
+function f((a, b): i32): i32 {
+    return a;
+}
+
+function main(): i32 {
+    return f(1);
+}
