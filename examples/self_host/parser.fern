@@ -9676,7 +9676,13 @@ function parse_impl_decl(p: Par): ImplResult {
         method_names = method_names.append(m.name);
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return ImplResult { par: p, funcs: out, trait_name: derive_simple_name(trait_name), impl_type: impl_type, type_params: impl_tps, method_names: method_names };
+    // Strip generic args from the trait ref (`Greet[i32]` -> `Greet`) before
+    // reducing to the simple name, so a generic-trait impl matches its trait
+    // declaration for default-method synthesis (parse_module compares against
+    // the trait decl's bracket-free simple name). Without the strip,
+    // `impl Greet[i32] for P` records trait_name "Greet[i32]", never matches
+    // the `Greet` trait, and its default methods are never synthesised (#4340).
+    return ImplResult { par: p, funcs: out, trait_name: derive_simple_name(strip_struct_base(trait_name)), impl_type: impl_type, type_params: impl_tps, method_names: method_names };
 }
 
 // finalize_impl_method turns a parsed impl/trait-default method `m` into
@@ -9948,6 +9954,24 @@ function parse_trait_decl(p: Par): TraitParseResult {
     var tname: string = p.peek_ident();
     if (tname.len() > 0) { p = p.advance(); } // name
     var simple: string = derive_simple_name(tname);
+    // Optional generic type parameters: `trait Greet[T] { … }`. Native
+    // parses these via parseTypeParamList; the self-host erases traits
+    // (dispatch is by receiver type) and monomorphises a default method
+    // through the IMPL's type params in finalize_impl_method, so the
+    // trait's declared params carry no weight — but they MUST be consumed
+    // here or `[T]` and the trait body spill back into parse_module as a
+    // stray array literal + orphan block, losing default methods (#4340).
+    // Mirrors the struct/enum decl generics loop (bracket-depth scan).
+    if (p.peek_punct() == "[") {
+        p = p.advance(); // consume `[`
+        var gd: i32 = 1;
+        while (!p.at_end() && gd > 0) {
+            var gpk: string = p.peek_punct();
+            if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
+            if (gpk == "]") { gd = gd - 1; p = p.advance(); continue; }
+            p = p.advance();
+        }
+    }
     // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
     // `mod.Trait`). The self-host dispatches by receiver type and doesn't
     // validate conformance, so supertraits carry no weight here — they're
