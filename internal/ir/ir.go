@@ -12903,7 +12903,14 @@ func (b *builder) assign(n *ast.Assign) error {
 		// See docs/RC-PERCEUS-PLAN.md "Phase 2".
 		if !t.IsSlice {
 			if arrIdent, ok := t.Array.(*ast.Ident); ok {
-				if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
+				// A boxcapture cell is a shared mutable reference (a closure and
+				// the outer scope alias it deliberately), so its `cell[0] = v`
+				// write must store IN PLACE — never CoW, which would fork the
+				// cell whenever a closure also holds it (rc > 1) and silently
+				// drop the sharing. Fall through to the direct in-place store.
+				if b.info != nil && b.info.BoxedCells[arrIdent.Name] {
+					// (skip the CoW dispatch below)
+				} else if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
 					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
 				}
 			}

@@ -39,8 +39,18 @@ func (e *Error) Code() string           { return e.ErrCode }
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
-	Locals   map[*ast.FuncDecl][]*ast.Var
-	FuncSigs map[string]*ast.FuncType
+	// BoxedCells names the locals that closureconv.BoxMutatedScalarCaptures
+	// rewrote into 1-element array cells for by-reference scalar capture. Such a
+	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
+	// outer scope observe each other's writes), so an `cell[0] = v` store must
+	// NOT go through copy-on-write (which would fork the cell when its rc > 1
+	// because a closure also holds it, breaking the sharing). The IR's index-
+	// assign CoW gate skips names in this set and stores in place. Names are
+	// unique post-shadowrename, so one program-wide set is unambiguous. Empty /
+	// nil for any program with no mutated scalar captures.
+	BoxedCells map[string]bool
+	Locals     map[*ast.FuncDecl][]*ast.Var
+	FuncSigs   map[string]*ast.FuncType
 	// OwnFuncs maps a function name to its per-parameter `own` (owned /
 	// consuming) flags, for functions that have at least one owned parameter.
 	// The IR uses it to lower ownership transfer: a callee reclaims its `own`
@@ -4494,10 +4504,10 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
-	info        *Info
-	errors      []error
-	current     *ast.FuncDecl
-	loopDepth   int
+	info      *Info
+	errors    []error
+	current   *ast.FuncDecl
+	loopDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
