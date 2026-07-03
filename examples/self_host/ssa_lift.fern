@@ -46,6 +46,8 @@
 //   - slice 9: PROCESS / OUTPUT — `print_str` -> the `write` inst (raw stdout,
 //     no newline), `eprint_str` -> the `print` inst fd 2 (stderr + newline),
 //     `exit` -> the `exit` inst (a diverging regular inst, not a terminator).
+//   - slice 10: STRING INDEX — `str_index` (`s[i]`) -> load_elem at word i+1,
+//     the same [len, byte-per-word] shape arr_get uses.
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -304,6 +306,24 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var slv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: slv, args: [sp, zc], imm: 0, str: "" });
                 stack = stack.append(slv);
+            }
+        } else if (k == "str_index") {
+            // `s[i]` → the byte at word i+1 (word 0 is the length). The SSA
+            // string is a [len, byte-per-word] block — the same shape as an i32
+            // array — so this is arr_get's lowering: load_elem at idx+1,
+            // mirroring build_func's ExprIndex on a string.
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var sixi: i32 = stack[stack.len() - 1];
+                var sixb: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var sione: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: sione, args: [], imm: 1, str: "" });
+                var sioff: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: sioff, args: [sixi, sione], imm: 0, str: "+" });
+                var siv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: siv, args: [sixb, sioff], imm: 0, str: "" });
+                stack = stack.append(siv);
             }
         } else if (k == "str_concat") {
             // `a + b` on strings → the SSA `concat` inst (a fresh heap string),
