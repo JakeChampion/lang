@@ -1445,11 +1445,17 @@ function main(): i32 {
         _ => { return 51; }
     }
 
-    // Division by zero → VErr.
+    // Division by zero → 0 (total semantics, docs/INTEGER-SEMANTICS.md /
+    // #4348 item 6), not a VErr. `x % 0 == x` likewise.
     var r6: Value = run_source("return 1 / 0;");
     match (r6) {
-        VErr(_) => { },
-        _ => { return 60; }
+        VInt(i) => { if (i.v != 0) { return 60; } },
+        _ => { return 61; }
+    }
+    var r6b: Value = run_source("return 7 % 0;");
+    match (r6b) {
+        VInt(i) => { if (i.v != 7) { return 62; } },
+        _ => { return 63; }
     }
 
     // Undefined identifier → VErr.
