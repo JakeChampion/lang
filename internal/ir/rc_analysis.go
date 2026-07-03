@@ -289,7 +289,7 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// is off; promoting it here would diverge the OwnedByDefault-vs-borrow
 		// differential gate. consumedDropWired keeps Map / slice / unwired
 		// shapes out (their deep drop is incomplete).
-		if b.typeIsStringArrayFree(p.Type, map[string]bool{}) {
+		if b.typeIsStringArrayFree(p.Type) {
 			continue
 		}
 		if !consumedDropWired(p.Type, b.info, map[string]bool{}) {
@@ -1792,65 +1792,7 @@ func (b *builder) safeForControlFlowDrop(name string) bool {
 	case ast.ArrayType:
 		return !ast.IsPointerType(ty.Elem)
 	case ast.EnumType, ast.StructType, ast.TupleType:
-		return b.typeIsStringArrayFree(t, map[string]bool{})
-	}
-	return false
-}
-
-// typeIsStringArrayFree reports whether `t`'s deep-drop reclaims no string or
-// array buffer — i.e. t is built transitively from scalars, enums, structs, and
-// tuples only (no string / array / slice / Map, no unresolved generic). `seen`
-// breaks recursive-type cycles (a self-recursive enum like List is fine: the
-// back-edge is assumed free, and any string/array on a real payload is caught on
-// its own first visit before the back-edge is taken).
-func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
-	switch ty := t.(type) {
-	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
-		return true
-	case ast.StringType, ast.ArrayType, ast.SliceType:
-		return false
-	case ast.TupleType:
-		for _, e := range ty.Elems {
-			if !b.typeIsStringArrayFree(e, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.StructType:
-		if ty.Name == "Map" {
-			return false
-		}
-		if seen[ty.Name] {
-			return true
-		}
-		seen[ty.Name] = true
-		sd, ok := b.info.Structs[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, f := range sd.Fields {
-			if !b.typeIsStringArrayFree(f.Type, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.EnumType:
-		if seen[ty.Name] {
-			return true
-		}
-		seen[ty.Name] = true
-		ed, ok := b.info.Enums[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, v := range ed.Variants {
-			for _, pl := range v.Payloads {
-				if !b.typeIsStringArrayFree(pl, seen) {
-					return false
-				}
-			}
-		}
-		return true
+		return b.typeIsStringArrayFree(t)
 	}
 	return false
 }
@@ -1953,45 +1895,6 @@ func (b *builder) initMayAliasLive(e ast.Expr) bool {
 	return false
 }
 
-// preciseDroppableType reports whether `name`'s declared type is in the
-// precise-drop scope: any owned ARRAY. emitOwnedSlotDrop reclaims every
-// element kind fully — primitive via `__fern_arr_dec` (pure buffer free,
-// slice 1); rc-tracked (`struct[]` / `enum[]` / `T[][]` / `tuple[]`) via the
-// deep `__drop_arr_*` loop (slice 2); and `string[]` via `__fern_drop_arr_str`
-// / `__fern_drop_arr_ptr` (slice 3 — str_dec each element, then the buffer).
-// Each per-element drop is_unique-gates, so a counted alias of an element only
-// DECs. Non-array box types (structs / enums / tuples — small boxes whose deep
-// drops dec shared fields and churn the `__rc_get` golden tests) are deferred.
-func (b *builder) preciseDroppableType(name string) bool {
-	t, ok := b.localDeclType(name)
-	if !ok {
-		return false
-	}
-	if et, isEnum := t.(ast.EnumType); isEnum {
-		// ENUMs are precise-droppable only under Slice 1b (rc-eligible enums):
-		// once enum construction rc-counts its pointer payloads (like StructLit)
-		// the deep drop is rc-protected exactly like a struct, and the
-		// escape-taint that kept enum locals ineligible is lifted in tandem.
-		// Under the default move model (or for Map-containing enums) they stay
-		// excluded (payloads carry no counted box reference).
-		return b.enumRcPayloadsEligible(et.Name)
-	}
-	switch t.(type) {
-	case ast.ArrayType, ast.StructType, ast.TupleType:
-		// Arrays (every element kind — slices 1–3) and STRUCT / Map / tuple
-		// boxes (slice 4). emitOwnedSlotDrop reclaims each fully and
-		// is_unique-gates; freeEligible (the taint set) excludes any value
-		// whose nested fields/payloads alias a live local; and the init/use
-		// alias gates exclude boxes bound from / flowing into an uncounted
-		// alias. Struct & tuple construction INC their pointer fields/elements
-		// (StructLit / TupleLit), so a precise drop is rc-protected — the same
-		// reason slice-2 rc-element arrays are sound. Non-droppable runtime handles (Reader /
-		// Writer / MapIter) aren't freeEligible, so they never reach here.
-		return true
-	}
-	return false
-}
-
 // isOwnedRcLocal reports whether `name` is a declared rc-tracked local
 // (array / struct incl. Map / enum / closure) that the exit sweep would
 // dec. Params are borrowed (not in info.Locals, never swept) so they're
@@ -2004,20 +1907,11 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 		if v.Name != name {
 			continue
 		}
-		switch v.Type.(type) {
-		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
-			return true
-		case ast.StringType:
-			// Two-word string ABIs (wasm + arm64-TwoWordOverride) and
-			// native single-word (x86_64) all participate in move-on-
-			// return / move-on-alias now that the rc-tracked predicate is
-			// uniform for strings: a returned string local cancels its
-			// transfer-inc against the exit-sweep dec (no free under the
-			// caller). The arm64 unblock landed __fern_str_inc / dec, so
-			// the boxed-string case applies too.
-			return true
-		}
-		return false
+		// The zero-init capability class (pointer-shaped plus strings —
+		// two-word ABIs and native single-word alike participate in
+		// move-on-return / move-on-alias: a returned string local cancels
+		// its transfer-inc against the exit-sweep dec).
+		return rcZeroInitClass(v.Type)
 	}
 	return false
 }
