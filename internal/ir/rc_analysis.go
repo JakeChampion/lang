@@ -506,13 +506,29 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					// `arr.with(i, v)` — Args[0] is the receiver array
 					// (threaded / reassigned into the buffer, not retained),
 					// Args[1] is the scalar index; Args[2] is the element
-					// moved into the buffer. Taint the element so a local
-					// flowing in isn't freed at scope exit while the array
-					// still references it (the `.append` analogue — without
-					// this, `arr = arr.with(i, ptrElem)` self-assign UAF'd
-					// on a pointer-element array).
+					// stored into the buffer.
+					//
+					// For POINTER-SHAPED elements (arrElemIsRcTracked) this
+					// is a COUNTED store (#4399 sink 2): emitArraySet inc's
+					// an aliased element (the same Ident / FieldAccess /
+					// Index shapes `escape` walks), drops the OLD element it
+					// overwrites, and the CoW copy path retains via
+					// __fern_arr_cow_inplace_ptr — so a projection source
+					// stays reclaimable and only a direct-Ident element
+					// keeps the taint (escapeOwned, the Array_push rule).
+					//
+					// STRING elements are NOT counted there (the rcTracked
+					// gate in emitArraySet excludes them — no inc, no
+					// old-element drop), so they keep the full escape taint;
+					// a scalar element can't alias but also can't strand
+					// anything, so the escape walk's pointer gate already
+					// no-ops it.
 					if len(s.Args) == 3 {
-						escape(s.Args[2])
+						if len(s.TypeArgs) == 1 && arrElemIsRcTracked(s.TypeArgs[0]) {
+							escapeOwned(s.Args[2])
+						} else {
+							escape(s.Args[2])
+						}
 					}
 				default:
 					// Variant constructor (`Arr(xs)`): under the move model

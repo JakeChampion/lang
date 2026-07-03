@@ -98,3 +98,37 @@ func TestWasmArrayPushProjectionNoUnderflow(t *testing.T) {
 		t.Errorf("push-projection release must stay balanced: want exit 0, got %d (non-zero = rc underflow or wrong sum)", got)
 	}
 }
+
+// #4399 sink 2 — the `.with` (Array_set) analogue of the push tests:
+// a pointer-shaped projection stored via .with is inc'd by emitArraySet
+// (and the overwritten element dropped), so the projection's source
+// container reclaims and the balance stays exact.
+const withProjectionBalanceSrc = `function work(k: i32): i32 {
+    var src: i32[][] = [[k, k + 1], [k + 2]];
+    var out: i32[][] = [[k]];
+    out = out.with(0, src[0]);
+    var e: i32[] = out[0];
+    return e[0] + e[1];
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 200) {
+        s = s + work(i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64ArraySetProjectionNoUnderflow(t *testing.T) {
+	if got := mustRunX86_64FreeOn(t, withProjectionBalanceSrc); got != 0 {
+		t.Errorf(".with-projection release must stay balanced: want exit 0, got %d", got)
+	}
+}
+
+func TestWasmArraySetProjectionNoUnderflow(t *testing.T) {
+	if got := runWasm(t, withProjectionBalanceSrc); got != 0 {
+		t.Errorf(".with-projection release must stay balanced: want exit 0, got %d", got)
+	}
+}
