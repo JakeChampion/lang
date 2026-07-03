@@ -134,11 +134,14 @@ landed in green, bounded slices.
   old box via `__fern_snapshot_dec` — itself now real (frees the uniquely-owned
   `old`, never decrementing a shared/borrowed box). Slice-1 reclaim parity with
   x86-64 and arm64 is **complete** on all three IR backends.
-- **Deferred on the IR path (all backends):** string RC (header-less /
-  leak-only), closure-env reclamation, `Option`/`Result` payload release,
-  tuple-element release, map element (key/value) RC, struct/enum
-  **non-array** rc fields (string / nested-struct / enum-payload), reuse /
-  FBIP, full drop-on-last-use.
+- **Deferred on the IR path (all backends):** string RC beyond the landed
+  slices (boxes are rc-headered since #4294; fresh string LOCALS, struct
+  string FIELDS, and fresh-element `string[]` ELEMENT reclaim via
+  `__fern_str_arr_free` are live — see the 2026-07-03 log entry; enum/Option
+  **string payloads** still leak), closure-env reclamation,
+  `Option`/`Result` payload release, tuple-element release, map element
+  (key/value) RC, struct/enum enum-payload fields, reuse beyond the landed
+  slices, full drop-on-last-use.
 
 ### LowerState RC/ownership fields (the analysis substrate that exists)
 
@@ -3518,3 +3521,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   struct decls not loaded) still can't type these payloads, so enum_only_wildcard_used_rec keeps
   its `!= ""` standalone workaround; the widening helps every module-LOADING path (the per-module
   build and user programs).
+- 2026-07-03: **Landed string[] ELEMENT reclaim on the IR path (#4355 slice, all
+  three backends).** A fresh, non-escaping `string[]` local whose EVERY stored
+  element is provably fresh (a concat / named producer / `.to_upper`-family
+  copy) or a static literal is credited "SARR:<name>" by reclaimable_names_of,
+  and the exit sweep frees it with the new `__fern_str_arr_free` instead of the
+  shallow buffer-only dec: at rc==1 it `__fern_str_free`s every element box
+  (rc-aware — a shared element decs, a literal's .rodata data is
+  heap-guard-skipped, an immortal view is skipped, rc==0 ticks the underflow
+  detector) then returns the buffer to its size-class freelist. Soundness rides
+  a dedicated element-hazard walk (strarr_unsafe_for / strarr_expr_unsafe):
+  exactly one reassignment form is sanctioned — the self-append rebind
+  `xs = xs.append(<fresh|literal>)`, whose grow MOVES elements buffer-to-buffer
+  while the assign's cow-guarded shallow dec frees only the superseded buffer —
+  and any lasting element alias (a `var t = xs[i]` binding, `return xs[i]`, a
+  container/struct/tuple store, a method arg, a non-borrowable call arg, an
+  element slice/trim view, `for x in xs`) excludes the array (elements keep the
+  sound leak). Transient element reads stay admitted: binary operands
+  (`xs[i] + y`, `xs[i] == y`), read-only / fresh-copy method receivers
+  (`.len()` / `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` /
+  `.starts_with` / `.ends_with` / `.contains` / `.index_of`), byte reads
+  `xs[i][j]`, match scrutinees, and DIRECT `xs[i]` args at borrowable params.
+  Backends: x86-64 `__fn___fern_str_arr_free` (asm_ir.emit_ir_runtime), arm64
+  mirror (asm_arm64.emit_runtime), wasm routes to the existing
+  `$__fern_arr_dec_ptr` (a wasm heap string is a single inline rc-headered
+  block, so the per-element `$__fern_arr_dec` IS the wasm string free);
+  ssa_lift no-ops it (leak-only SSA heap); the IR round-trip evaluator models
+  it value-preserving (is_reclaim_helper). VERIFIED:
+  TestSelfHostStrArrElemReclaimIRX86_64 (2M build/drop churn stays flat +
+  underflow 0; alias/return/borrowed-store exclusion cases assert the call is
+  NOT emitted and stay balanced), arm64 + wasm siblings (correctness +
+  underflow + emitted-shape assertions). Native reference:
+  `__fern_drop_arr_str` (rc_insert.go) — the native flat-`string[]` element
+  walk this mirrors. Remaining #4355 gap after this slice: enum/Option STRING
+  payloads (still classified leak-safe; next sub-slice).

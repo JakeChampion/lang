@@ -12766,7 +12766,16 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     while (i < st.locals.len()) {
         if (!slot_list_has(keeps, i) && st.is_arr_slot(i)) {
             st = st.emit(ir.op_load_local(i));
-            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            if (slot_is_reclaimable_strarr(st, i)) {
+                // string[] ELEMENT reclaim (#4355): a proven fresh-element string
+                // array frees its element boxes too — __fern_str_arr_free walks the
+                // elements (rc==1-gated, each via the rc-aware string free) and then
+                // frees the buffer. Every other array slot keeps the shallow
+                // buffer-only dec (elements leak — sound).
+                st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+            } else {
+                st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            }
             st = st.emit(ir.op_drop());
         }
         i = i + 1;
@@ -14051,6 +14060,306 @@ function map_has_explicit_iter_stmt(st: parser.Stmt, name: string): boolean {
     }
 }
 
+// --- string[] ELEMENT reclaim (#4355: string RC, string-array slice) ---------
+//
+// A fresh string[] local whose EVERY stored element is provably fresh (a concat /
+// named producer / string method copy) or a static literal box owns each element
+// box at rc==1 for its whole life: array stores are MOVES (op_arr_push copies no
+// rc), the sanctioned self-append rebind `xs = xs.append(e)` transfers elements
+// buffer-to-buffer (the push helper never frees; the assign's cow-guarded shallow
+// dec releases only the superseded buffer), and the element-hazard walk below
+// proves no element pointer ever outlives the frame. Such a local is credited
+// "SARR:<name>" so the exit sweep frees it with __fern_str_arr_free — the
+// element-walking sibling of the shallow __fern_rc_dec: at rc==1 it
+// __fern_str_free's every element box (rc-aware: a shared element decs, a static
+// literal's .rodata data is heap-guard-skipped, an immortal view is skipped) and
+// then frees the buffer. Anything the analyses cannot prove stays on the shallow
+// buffer-only dec (elements leak — sound, never an over-release).
+
+// strarr_elem_store_ok: `e`, stored as a string[] element, is a value the element
+// walk may free — a FRESH producer (str_local_binding_is_fresh: concat / named
+// producer / .to_upper-family copy, each a fresh rc==1 box) or a string LITERAL
+// (const_str allocates a fresh box per store; its .rodata data is skipped by
+// __fern_str_free's heap-base guard, the box itself is reclaimed). A bare ident /
+// field read / index read / general call may ALIAS a live box — storing one
+// disqualifies the array from element reclaim (the buffer-only dec still runs).
+function strarr_elem_store_ok(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        _ => {}
+    }
+    return str_local_binding_is_fresh(e);
+}
+
+// collect_fresh_strarr_names: locals declared `var xs [: string[]] = [e0, ...]`
+// whose every literal element is strarr_elem_store_ok (an empty `[]` qualifies).
+// Purely syntactic, like collect_fresh_string_names — the TYPE gate is the slot's
+// is_strarr at the reclaim site (slot_is_reclaimable_strarr), so an i32[] literal
+// collected here is never element-walked.
+function collect_fresh_strarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_fresh_strarr_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_fresh_strarr_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprArray(al) => {
+                    var i: i32 = 0;
+                    while (i < al.elements.len()) {
+                        if (!strarr_elem_store_ok(al.elements[i])) { return acc; }
+                        i = i + 1;
+                    }
+                    return push_str_unique(acc, v.name);
+                },
+                _ => { return acc; }
+            }
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_fresh_strarr_names(iff.then_body, acc);
+            return collect_fresh_strarr_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_fresh_strarr_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_fresh_strarr_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_fresh_strarr_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_fresh_strarr_in_stmt(d.action, acc); },
+        _ => { return acc; },
+    }
+}
+
+// strarr_elem_read: `e` is a DIRECT element read `name[i]` of the candidate array.
+function strarr_elem_read(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(id) => { return id.name == name; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// strarr_expr_unsafe: the element-hazard sibling of expr_unsafe_for. TRUE when
+// `e` uses `name` (the candidate string[] local) or an ELEMENT of it in a way
+// that could let a pointer outlive the frame's exit sweep — in which case the
+// element walk would free a box someone still holds. expr_unsafe_for alone is
+// NOT enough here: it deliberately treats `name[i]` as a borrow (safe for the
+// buffer-only dec), but for ELEMENT reclaim a `var t = xs[i]` binding, a
+// `return xs[i]`, or an `ys.append(xs[i])` store is a lasting element alias.
+// SAFE element-read positions (the element is read transiently, before the
+// sweep): a binary operand (`xs[i] + y` copies bytes, `xs[i] == y` compares),
+// a read-only / fresh-copy method receiver (`xs[i].len()` / `.to_upper()` /
+// `.to_lower()` / `.reverse()` / `.repeat(n)` / `.starts_with(p)` /
+// `.ends_with(p)` / `.contains(p)` / `.index_of(p)`), a byte read `xs[i][j]`,
+// a match scrutinee (string match compares), and a DIRECT arg to a free
+// function whose param is borrowable. Everything else — bare binding, return,
+// container/struct/tuple store, method arg, non-borrowable call arg, a slice
+// or `.trim()` VIEW of an element (shares the element's buffer), an unknown
+// method — is a hazard. The array ITSELF follows expr_unsafe_for's rules,
+// tightened: a method receiver `name.m()` is only `.len()`-safe (`.append` is
+// sanctioned only as the `name = name.append(e)` rebind, handled at the
+// StmtAssign arm; `.with()` / slices alias the buffer AND its elements).
+function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprBinary(b) => {
+            var lu: boolean = false;
+            if (!strarr_elem_read(b.left, name)) { lu = strarr_expr_unsafe(b.left, name, borrowable); }
+            if (lu) { return true; }
+            if (!strarr_elem_read(b.right, name)) { return strarr_expr_unsafe(b.right, name, borrowable); }
+            return false;
+        },
+        parser.ExprUnary(u) => { return strarr_expr_unsafe(u.operand, name, borrowable); },
+        parser.ExprIndex(ix) => {
+            // `name[i]` reaching here is a general VALUE position (binding /
+            // container element / index-store value / ...): a lasting alias.
+            if (strarr_elem_read(e, name)) { return true; }
+            // `xs[i][j]` byte read: the inner element read is transient.
+            var base_u: boolean = false;
+            if (!strarr_elem_read(ix.array, name)) {
+                match (ix.array) {
+                    parser.ExprIdent(_) => { base_u = false; },
+                    _ => { base_u = strarr_expr_unsafe(ix.array, name, borrowable); }
+                }
+            }
+            if (base_u) { return true; }
+            return strarr_expr_unsafe(ix.index, name, borrowable);
+        },
+        parser.ExprSlice(sl) => {
+            // a slice of an ELEMENT is a zero-copy view of its buffer; a slice of
+            // the ARRAY aliases buffer + elements. Both are hazards.
+            if (strarr_elem_read(sl.array, name)) { return true; }
+            if (strarr_expr_unsafe(sl.array, name, borrowable)) { return true; }
+            if (strarr_expr_unsafe(sl.start, name, borrowable)) { return true; }
+            return strarr_expr_unsafe(sl.end, name, borrowable);
+        },
+        parser.ExprCall(c) => {
+            var callee_name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    callee_name = cid.name;
+                    if (cid.name == name) { return true; }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (strarr_elem_read(fa.obj, name)) {
+                        // element method receiver: read-only / fresh-copy only.
+                        if (!(fa.field == "len" || fa.field == "to_upper" || fa.field == "to_lower"
+                                || fa.field == "reverse" || fa.field == "repeat"
+                                || fa.field == "starts_with" || fa.field == "ends_with"
+                                || fa.field == "contains" || fa.field == "index_of")) { return true; }
+                    } else {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => {
+                                if (rid.name == name && fa.field != "len") { return true; }
+                            },
+                            _ => { if (strarr_expr_unsafe(fa.obj, name, borrowable)) { return true; } }
+                        }
+                    }
+                },
+                _ => { if (strarr_expr_unsafe(c.callee, name, borrowable)) { return true; } }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                var arg_ok: boolean = false;
+                match (c.args[ai]) {
+                    parser.ExprIdent(aid) => {
+                        if (aid.name == name && callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) { arg_ok = true; }
+                    },
+                    _ => {
+                        // a DIRECT `name[i]` arg to a free fn at a borrowable param
+                        // is a transient read (the callee provably retains nothing).
+                        if (strarr_elem_read(c.args[ai], name) && callee_name.len() > 0
+                                && param_is_borrowable(borrowable, callee_name, ai)) { arg_ok = true; }
+                    }
+                }
+                if (!arg_ok && strarr_expr_unsafe(c.args[ai], name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => {
+            if (strarr_elem_read(fa.obj, name)) { return true; }
+            match (fa.obj) {
+                parser.ExprIdent(_) => { return false; },
+                _ => { return strarr_expr_unsafe(fa.obj, name, borrowable); }
+            }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (strarr_expr_unsafe(a.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (strarr_expr_unsafe(t.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(slz) => {
+            if (slz.has_base && strarr_expr_unsafe(slz.base, name, borrowable)) { return true; }
+            var i: i32 = 0;
+            while (i < slz.field_values.len()) { if (strarr_expr_unsafe(slz.field_values[i], name, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => {
+            var used: string[] = [];
+            var i: i32 = 0;
+            while (i < lm.body.len()) { used = astwalk.collect_idents_stmt(lm.body[i], used); i = i + 1; }
+            return util.index_of_str(used, name) >= 0;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// strarr_unsafe_for / stmt_strarr_unsafe_for: the whole-body gate for string[]
+// ELEMENT reclaim. Like body_unsafe_for plus the element hazards, with exactly
+// one sanctioned reassignment form — the self-append rebind
+// `name = name.append(e)` where `e` is itself a fresh/static element store
+// (strarr_elem_store_ok) that doesn't otherwise leak `name`. `for x in name`
+// binds an element per iteration (a lasting alias the walker can't see through)
+// — conservatively unsafe.
+function strarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_strarr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_strarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return strarr_expr_unsafe(v.init, name, borrowable); },
+        parser.StmtReturn(r) => { return strarr_expr_unsafe(r.value, name, borrowable); },
+        parser.StmtExpr(e) => { return strarr_expr_unsafe(e.value, name, borrowable); },
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                match (a.value) {
+                    parser.ExprCall(c) => {
+                        var is_self_append: boolean = false;
+                        match (c.callee) {
+                            parser.ExprFieldAccess(fa) => {
+                                if (fa.field == "append") {
+                                    match (fa.obj) {
+                                        parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
+                                        _ => {}
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
+                        if (is_self_append && c.args.len() == 1
+                                && strarr_elem_store_ok(c.args[0])
+                                && !strarr_expr_unsafe(c.args[0], name, borrowable)) { return false; }
+                    },
+                    _ => {}
+                }
+                return true;   // any other reassignment of the candidate
+            }
+            return strarr_expr_unsafe(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (strarr_expr_unsafe(f.cond, name, borrowable)) { return true; }
+            return strarr_unsafe_for(f.then_body, name, borrowable) || strarr_unsafe_for(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (strarr_expr_unsafe(w.cond, name, borrowable)) { return true; }
+            return strarr_unsafe_for(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(fid) => { iter_unsafe = fid.name == name; },   // `for x in name`: element binding
+                _ => { iter_unsafe = strarr_expr_unsafe(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return strarr_unsafe_for(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            // a string scrutinee only compares (transient); an element read there is safe.
+            if (!strarr_elem_read(m.scrutinee, name) && strarr_expr_unsafe(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && strarr_expr_unsafe(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (strarr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_strarr_unsafe_for(d.action, name, borrowable); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -14153,6 +14462,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("MAP:" + maps[mi]);
         }
         mi = mi + 1;
+    }
+    // Fresh string[] locals with provably-fresh/static ELEMENTS (#4355): credited
+    // under an "SARR:" prefix so only slot_is_reclaimable_strarr matches. The
+    // strarr_unsafe_for gate proves non-escape of the array AND of every element
+    // pointer (no element binding / return / store / view; only the sanctioned
+    // `xs = xs.append(<fresh|literal>)` rebind), so the exit sweep's
+    // __fern_str_arr_free walk frees each element box exactly once. NOT excluded
+    // on `reassigned` — the self-append rebind IS a reassignment; the gate
+    // validates each one individually.
+    var sarrs: string[] = collect_fresh_strarr_names(body, []);
+    var sri: i32 = 0;
+    while (sri < sarrs.len()) {
+        if (!strarr_unsafe_for(body, sarrs[sri], borrowable)) { out = out.append("SARR:" + sarrs[sri]); }
+        sri = sri + 1;
     }
     // Reassigned array-payload ENUM locals: credited "ENUMRE:<E>:<name>" so the StmtAssign
     // deep-drops each superseded box's payload (emit_enum_reclaim_store) instead of the
@@ -15828,6 +16151,20 @@ function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_str) { return false; }
     return util.index_of_str(s.reclaimable_names, "STR:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_strarr: slot `i` is a fresh, non-escaping string[] local
+// whose every stored element is provably fresh/static and whose element pointers
+// never outlive the frame (#4355) — credited "SARR:" by reclaimable_names_of. A
+// non-param string-array slot whose name is in the reclaim set. The exit sweep
+// frees it with __fern_str_arr_free (rc==1-gated element walk via the rc-aware
+// per-element string free, then the buffer) instead of the shallow buffer-only
+// __fern_rc_dec every other array slot gets.
+function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_strarr) { return false; }
+    return util.index_of_str(s.reclaimable_names, "SARR:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
@@ -19838,7 +20175,8 @@ function bin_apply(tag: i32, l: i32, r: i32): i32 {
 function is_reclaim_helper(name: string): boolean {
     if (name.len() >= 14 && name[0:14] == "__struct_drop_") { return true; }
     if (name.len() >= 16 && name[0:16] == "__field_reclaim_") { return true; }
-    return name == "__fern_snapshot_dec" || name == "__fern_arr_dec" || name == "__fern_drop_arr_ptr";
+    return name == "__fern_snapshot_dec" || name == "__fern_arr_dec" || name == "__fern_drop_arr_ptr"
+        || name == "__fern_str_arr_free";
 }
 
 pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[], heap_in: i32[], freehead_in: i32): EvalOut {
