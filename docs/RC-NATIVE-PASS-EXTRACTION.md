@@ -125,13 +125,17 @@ two separable moves:
   consumes exactly this decomposition: port each analysis as a
   pure AST→tables function (differential-diff the tables), then
   port the insertion helpers site by site.
-- **Paired simplifications** (same review, each shrinks what the
-  port mirrors): unify the type-classification predicates
-  (`isOwnedByDefaultType`, `preciseDroppableType`,
-  `typeIsStringArrayFree`, `enumRcPayloadsEligible*`, …) into one
-  capability table; one per-param ownership verdict enum
-  (borrowed / owned / consumed-threaded / read-only-comparator);
-  factor the duplicated last-use micro-analyses.
+- **Paired simplifications** (same review; #4474 epic — landed):
+  the type-classification predicates consolidated into
+  `rc_caps.go` behind a documented capability matrix, with the
+  layered tracked-sets made explicit (`arrElemIsRcTracked` ⊂
+  `rcTrackedSlotType` ⊂ the sweep set) — #4477; one per-param
+  ownership verdict ladder (`paramVerdict`: NotOwnedType / Owned /
+  Borrowed / ReadOnlyComparator / TrmcExcluded / TrmcConsume)
+  replacing the paramBorrowable trio — #4478; the duplicated
+  last-use micro-analyses factored behind `identOrder`/`isLast` +
+  `stmtReferencesName` — #4480; the C2 consuming-match pairing
+  folded into the plan (`computeConsumingMatchReuse`) — #4475.
 - **Stage-boundary alignment** (related, not blocking): native
   runs closure conversion inside `ir.LowerWith` while the
   self-host runs `lift_lambdas` as an explicit pass — align the

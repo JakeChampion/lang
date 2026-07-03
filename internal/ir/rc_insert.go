@@ -709,46 +709,9 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// struct values (Reader/Writer/Map/MapIter) whose header
 	// holds 0x80000000 instead of a real rc.
 	rcTracked := func(t ast.Type) bool {
-		if _, isArr := t.(ast.ArrayType); isArr {
-			return true
-		}
-		if _, isStruct := t.(ast.StructType); isStruct {
-			return true
-		}
-		// Phase 1e-enums-ii: enum values are always pointer-shaped
-		// in a local / param slot — either a headered heap box
-		// (emitEnumNew / pair rebox / runtime helper) or a static
-		// sentinel that now carries a 0x80000000 rc header. The
-		// transient pair-form (tag, payload) only lives on the
-		// operand stack between a pair call and its match dispatch,
-		// never in a slot, so the dec sweep never sees it.
-		if _, isEnum := t.(ast.EnumType); isEnum {
-			return true
-		}
-		// Phase 1e-closures-ii: a FuncType local holds a heap
-		// closure pair / env block (rc=1 header via
-		// __fern_alloc_rc1) or a static function-value cell
-		// (immortal sentinel on natives, low-address short-circuit
-		// on wasm). All pointer-shaped; rc_inc/dec are safe.
-		if _, isFunc := t.(*ast.FuncType); isFunc {
-			return true
-		}
-		// Heap strings carry an rc header (prereq 1), and the emitDec
-		// string branch reclaims owned ones via __fern_str_dec on wasm
-		// or __fern_rc_dec on native single-word (x86_64). arm64
-		// (TwoWordOverride boxed) excluded — no native str_dec runtime
-		// helper, same gating as the rest of the native string-reclaim
-		// path. The SSO inline-tag low-bit guard in __fern_rc_dec
-		// (Slice 8) keeps short inline strings safe.
-		if _, isStr := t.(ast.StringType); isStr {
-			// arm64 now has __fern_str_inc / __fern_str_dec / __fern_cell_free
-			// runtime helpers, so the wasm two-word path applies there too.
-			// All non-zero ptrW with strings is rc-tracked.
-			return true
-		}
-		// Tuple values are always pointer-shaped headered boxes
-		// (TupleLit lowering); rc_inc/dec + box_free apply.
-		if _, isTuple := t.(ast.TupleType); isTuple {
+		// The shared slot set (rc_caps.go): array / struct / enum / closure /
+		// tuple / string — see rcTrackedSlotType for the per-shape notes.
+		if rcTrackedSlotType(t) {
 			return true
 		}
 		// `dyn Trait` values own their erased concrete `data` object
@@ -992,22 +955,6 @@ func (b *builder) emitReuseOldFieldDrops(reusedSlot, baseSlot int32, offsets []i
 		b.emitFieldDropOnStack(t)
 	}
 	b.emit(Op{Kind: OpEnd})
-}
-
-// arrElemIsRcTracked reports whether an array element type is a
-// pointer-shaped rc-tracked value — array / struct (incl. Map) /
-// enum / closure. These are the elements __fern_drop_arr_ptr can
-// safely dec on the array's last release (each was inc'd at
-// array-literal construction). Strings are deliberately excluded:
-// they are not rc-tracked yet (the SSO native flip is in flight),
-// so they are never inc'd on insertion and must not be dec'd.
-// Primitive elements (i32 etc.) are not pointers, so no drop.
-func arrElemIsRcTracked(elem ast.Type) bool {
-	switch elem.(type) {
-	case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
-		return true
-	}
-	return false
 }
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
@@ -1321,60 +1268,6 @@ func mangleTupleInst(tt ast.TupleType) string {
 	return tupleEnumMangler.Replace(tt.String())
 }
 
-// tupleNeedsDrop reports whether tt has at least one element worth
-// recursing through — its drop fn dec's only rc-tracked / string
-// elements, so a tuple of plain i32s (or any other non-rc shape) has
-// nothing to do beyond the surrounding box dec the caller already
-// emits. Mirrors enumNeedsDrop in role: dropFnNameFor uses it to
-// decide whether to register and route through `__drop_tuple_<...>`
-// at all.
-func tupleNeedsDrop(tt ast.TupleType, ptrW int) bool {
-	for _, et := range tt.Elems {
-		if arrElemIsRcTracked(et) {
-			return true
-		}
-		if _, isStr := et.(ast.StringType); isStr {
-			// Two-word string element (wasm + arm64-TwoWordOverride) or
-			// native single-word: both reach __fern_str_dec / __fern_rc_dec
-			// from the per-tuple drop.
-			if ast.UseTwoWordStrings(ptrW) || (ptrW == 8 && !ast.UseTwoWordStrings(ptrW)) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// enumNeedsDrop reports whether a concrete enum has a heap box worth
-// reclaiming: at least one payload-carrying variant and no ParamType
-// payload (generic). Mirrors enumVariantDropPlan's success condition
-// without needing ptrW, so dropFnNameFor and the genEnumDropFn worklist
-// agree on which enums get a __drop_enum_ fn.
-func enumNeedsDrop(ed *ast.EnumDecl) bool {
-	hasPayload := false
-	for _, v := range ed.Variants {
-		for _, pt := range v.Payloads {
-			if _, isParam := pt.(ast.ParamType); isParam {
-				return false
-			}
-		}
-		if len(v.Payloads) > 0 {
-			hasPayload = true
-		}
-	}
-	return hasPayload
-}
-
-// isMapType reports whether t is the runtime Map handle type. A
-// Map-typed field / payload / capture reclaims its structure (value
-// column + buf + handle) via __map_drop_values then __fern_map_drop,
-// both of which self-guard on the map's own rc==1 and return the map
-// ptr (so a stack value chains through).
-func isMapType(t ast.Type) bool {
-	st, ok := t.(ast.StructType)
-	return ok && st.Name == "Map"
-}
-
 // appendMapDrop appends the map-reclamation chain for a map pointer
 // already on the operand stack.
 func appendMapDrop(ops []Op) []Op {
@@ -1382,28 +1275,6 @@ func appendMapDrop(ops []Op) []Op {
 		Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
 		Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1},
 		Op{Kind: OpDrop})
-}
-
-// enumHasPointerPayload reports whether any variant of ed carries a
-// POINTER-shaped payload (array / struct / enum / closure / Map — all
-// heap-boxed). This is the condition for "the eligible enum drop should
-// take the tag-dispatch variant-plan path rather than the branchless
-// uniform path": every such payload is deep-droppable in a tag-guarded
-// arm (where its exact type is known), where the uniform path could
-// only flat-dec it (and a union's variants differ at the shared
-// offset). It's also the gate for adopting a generic instantiation's
-// substituted decl — a pointer payload proves a heap-boxed (non-pair-
-// form) instantiation, so the variant-plan's box_free is valid; scalar
-// payloads (pair-form, no box) read false and stay on the flat path.
-func enumHasPointerPayload(ed *ast.EnumDecl) bool {
-	for _, v := range ed.Variants {
-		for _, pt := range v.Payloads {
-			if arrElemIsRcTracked(pt) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // substituteEnumDecl returns a copy of ed with each variant payload's
