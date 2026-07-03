@@ -143,6 +143,14 @@ var interpProgs = []struct {
 	// exits 1 on the out-of-bounds `a[5]`; the interp surfaces the VErr, which
 	// the driver maps to 254 — the point is that it is NOT swallowed to 7.
 	{"oob-var-init-not-swallowed", "function main(): i32 { var a = [1, 2, 3]; var x = a[5]; return 7; }", 254},
+	// Braceless single-statement control-flow bodies (#4337): native accepts a
+	// single statement as an if/else/while/loop/for body (`if (c) x = 1;`). The
+	// self-host required `{` and mis-parsed a braceless body into an
+	// unknown-stmt with the real statement hoisted to run unconditionally. Now
+	// those body sites accept a braceless statement (wrapped in a 1-stmt block).
+	{"braceless-if-else", "function main(): i32 { var x = 0; if (x == 0) x = 40; else x = 1; return x; }", 40},
+	{"braceless-while", "function main(): i32 { var x = 0; while (x < 42) x = x + 1; return x; }", 42},
+	{"braceless-for", "function main(): i32 { var s = 0; for i in 0..5 s = s + i; return s; }", 10},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
