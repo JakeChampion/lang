@@ -152,6 +152,20 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "f64cmp") {
+        // return (1.5 * 2.0 + 0.5 > 3.0) ? 1 : 0;  => 1
+        // Exercises the slice-5 f64 lift (const_f64 + fmul / fadd / fgt) through
+        // optimise / regalloc / emit on both backends. compute_isfloat infers
+        // the operand widths from the const_float seeds; the compare yields i32.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_f64_text("1.5"), ir.op_const_f64_text("2.0"), ir.op_fbin("fmul"),
+                ir.op_const_f64_text("0.5"), ir.op_fbin("fadd"),
+                ir.op_const_f64_text("3.0"), ir.op_fbin("fgt"),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

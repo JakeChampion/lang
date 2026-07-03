@@ -767,8 +767,9 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		// keyword (the `use x <- call();` monadic bind, #4335/#4450) after this
 		// case landed, and the self-host parser then silently miscompiled the
 		// program into an infinite loop (the `i = i + 1` increment lowered to
-		// StmtUnknown), hanging the CI shard at the 18m go-test timeout.
-		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function hold(src: E[]): i32 { var h = H { es: src }; return h.es[0].v; } function main(): i32 { var shared: E[] = [E { v: 3 }, E { v: 4 }]; var s = 0; var i = 0; while (i < 2000) { s = s + hold(shared); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
+		// StmtUnknown), hanging the CI shard at the 18m go-test timeout. The
+		// silent-miscompile-on-parse-error footgun is tracked in #4471.
+		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function wrapH(src: E[]): i32 { var h = H { es: src }; return h.es[0].v; } function main(): i32 { var shared: E[] = [E { v: 3 }, E { v: 4 }]; var s = 0; var i = 0; while (i < 2000) { s = s + wrapH(shared); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
 		// Struct-array field from a fresh CALL value (sole owner, no inc): the
 		// field-drop frees it; a non-fresh callee would over-free here.
 		{"struct-arr-field-callvalue-no-underflow", "struct E { v: i32 } struct H { es: E[] } function mk(n: i32): E[] { return [E { v: n }, E { v: n * 2 }]; } function step(n: i32): i32 { var h = H { es: mk(n) }; return h.es[1].v; } function main(): i32 { var s = 0; var i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},

@@ -1,0 +1,3 @@
+// SH-057 repro (#2850): a lambda WRITES a captured scalar without reading it.
+// By-value capture loses the write (8); by-reference: 7 + 42 = 49.
+function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }
