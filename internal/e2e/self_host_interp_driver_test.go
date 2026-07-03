@@ -137,6 +137,12 @@ var interpProgs = []struct {
 	// The `||` mirror short-circuits on a true LHS.
 	{"and-short-circuit", "function main(): i32 { var a = [1, 2, 3]; var i = 5; if (i < 3 && a[i] == 1) { return 0; } return 42; }", 42},
 	{"or-short-circuit", "function main(): i32 { var a = [1, 2, 3]; var i = 5; if (i >= 3 || a[i] == 1) { return 42; } return 0; }", 42},
+	// Unconsumed runtime errors are no longer swallowed (#4348 item 4): a
+	// var-initializer (or expression-statement) that raises a runtime error
+	// aborts the function instead of binding the VErr and continuing. Native
+	// exits 1 on the out-of-bounds `a[5]`; the interp surfaces the VErr, which
+	// the driver maps to 254 — the point is that it is NOT swallowed to 7.
+	{"oob-var-init-not-swallowed", "function main(): i32 { var a = [1, 2, 3]; var x = a[5]; return 7; }", 254},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
