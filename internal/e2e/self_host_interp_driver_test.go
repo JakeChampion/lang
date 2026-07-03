@@ -222,6 +222,16 @@ var interpProgs = []struct {
 	{"enum-result-err", "enum R { Ok(i32), Err(i32) } function main(): i32 { var r = R.Err(3); match (r) { R.Ok(v) => { return v; }, R.Err(e) => { return 100 + e; } } }", 103},
 	{"enum-payload-ignore", "enum E { A(i32), B } function main(): i32 { var e = E.A(5); match (e) { E.A(_) => { return 1; }, E.B => { return 2; } } }", 1},
 	{"enum-payload-in-array", "enum E { N(i32) } function main(): i32 { var a: E[] = [E.N(1), E.N(2), E.N(3)]; var s = 0; for x in a { match (x) { E.N(v) => { s = s + v; } } } return s; }", 6},
+
+	// Methods declared on an enum type dispatch on its variant values. An
+	// enum desugars to variant structs but not to a union alias, so the
+	// interp's union-receiver method dispatch (is_variant_of_alias_interp,
+	// which consults only the alias table) couldn't see that a variant
+	// belongs to the enum — `Sh.Sq(4).area()` failed to resolve. eval_module
+	// now folds each enum into the alias table as a synthetic union.
+	{"enum-method-payload", "enum Sh { Circle(i32), Sq(i32) } function (s: Sh) area(): i32 { match (s) { Sh.Circle(r) => { return r * r * 3; }, Sh.Sq(w) => { return w * w; } } } function main(): i32 { var s = Sh.Sq(4); return s.area(); }", 16},
+	{"enum-method-nullary", "enum Dir { N, S, E, W } function (d: Dir) dx(): i32 { match (d) { Dir.E => { return 1; }, Dir.W => { return 0 - 1; }, _ => { return 0; } } } function main(): i32 { var d = Dir.E; return d.dx(); }", 1},
+	{"enum-method-with-arg", "enum Opt { Some(i32), None } function (o: Opt) unwrap_or(dflt: i32): i32 { match (o) { Opt.Some(x) => { return x; }, Opt.None => { return dflt; } } } function main(): i32 { return Opt.Some(7).unwrap_or(0) + Opt.None.unwrap_or(5); }", 12},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

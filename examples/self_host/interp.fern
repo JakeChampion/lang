@@ -894,6 +894,23 @@ function variant_simple_name(name: string): string {
     return name;
 }
 
+// aliases_with_enums appends a synthetic union alias (name → variant
+// names) for each enum to the alias list. Enums desugar to variant
+// structs but not to a TypeAlias, so without this a method declared on
+// the enum type — `function (s: Shape) area()` where `Shape` is an enum —
+// wouldn't dispatch on a variant value: is_variant_of_alias_interp only
+// consults the alias table. Treating each enum as a union of its
+// variants makes union-receiver method dispatch resolve enum methods too.
+function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
+    var out: parser.TypeAlias[] = aliases;
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        out = out.append(parser.TypeAlias { name: enums[i].name, variants: enums[i].variant_names, line: 0, col: 0 });
+        i = i + 1;
+    }
+    return out;
+}
+
 // call_closure runs a VFunc with the given args. The closure's
 // captured names + values seed the body's env so free idents in
 // the lambda body resolve against the enclosing function's
@@ -1567,15 +1584,18 @@ pub function eval_module(raw_mod: parser.Module): Value {
     // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
     // (The IR path keeps the `__range` shape for irlower.lower_range_for.)
     var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(raw_mod));
+    // Fold each enum into the alias table as a synthetic union so a method
+    // declared on the enum type dispatches on its variant values.
+    var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {
             var empty_args: Value[] = [];
-            return call_func("main", empty_args, mod.funcs, mod.aliases);
+            return call_func("main", empty_args, mod.funcs, all_aliases);
         }
         i = i + 1;
     }
-    var env: Env = new_env_with_funcs_aliases(mod.funcs, mod.aliases);
+    var env: Env = new_env_with_funcs_aliases(mod.funcs, all_aliases);
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
