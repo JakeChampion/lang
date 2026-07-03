@@ -3534,6 +3534,86 @@ function main(): i32 {
     return (g[0][0] - 1) + (g[1][0] - 2) + (h[0][0] - 9) + (h[1][0] - 2) + __rc_underflow_count();
 }`,
 	},
+	{
+		// string[] grown through repeated `.append` inside a struct functional
+		// update (`S{f: s.f.append(v)}` — the EmitState.needed threading shape,
+		// #3425). Each append's grow COPY duplicates the element pointers; the
+		// old struct's drop then walk-frees its buffer at rc==1
+		// (__fern_drop_arr_str), so without the __fern_arr_push_grow_ptr/_str
+		// element retain the copied elements were freed under the live grown
+		// buffer — the self-host-driver SIGSEGV / poison-mode UAF. 40 elements
+		// force multiple grows; every element's length + prefix is verified
+		// after all the intermediate structs have been dropped. 0 when correct.
+		name: "string_array_append_grow_struct_field",
+		src: `
+struct St {
+    needed: string[],
+    n: i32
+}
+function need(s: St, name: string): St {
+    return St { needed: s.needed.append(name), n: s.n + 1 };
+}
+function main(): i32 {
+    var s: St = St { needed: [], n: 0 };
+    var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
+    var i: i32 = 0;
+    while (i < 40) {
+        var piece: string = base[0 : 20 + (i - (i / 30) * 30)];
+        s = need(s, "structdroptestprefix:" + piece);
+        i = i + 1;
+    }
+    var bad: i32 = 0;
+    var j: i32 = 0;
+    while (j < 40) {
+        var want: i32 = 21 + 20 + (j - (j / 30) * 30);
+        if (s.needed[j].len() != want) { bad = bad + 1; }
+        if (s.needed[j][0:20] != "structdroptestprefix") { bad = bad + 1; }
+        j = j + 1;
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// struct[] grown through repeated `.append` inside a struct functional
+		// update — the parser `Par{toks: Token[]}` shape (#3425). Same grow-copy
+		// element-share as the string[] case, but the freeing walk is the deep
+		// struct-element drop (__drop_arr_struct_<E> / element arr_dec), which
+		// freed the shared Tok boxes (and their string fields) under the live
+		// grown buffer. Pre-fix this segfaulted outright on x86-64. 0 when
+		// correct.
+		name: "struct_array_append_grow_struct_field",
+		src: `
+struct Tok {
+    kind: i32,
+    text: string
+}
+struct Par {
+    toks: Tok[],
+    pos: i32
+}
+function push_tok(p: Par, t: Tok): Par {
+    return Par { toks: p.toks.append(t), pos: p.pos + 1 };
+}
+function main(): i32 {
+    var p: Par = Par { toks: [], pos: 0 };
+    var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
+    var i: i32 = 0;
+    while (i < 40) {
+        var t: Tok = Tok { kind: i, text: "tokentextprefixvalue:" + base[0 : 20 + (i - (i / 30) * 30)] };
+        p = push_tok(p, t);
+        i = i + 1;
+    }
+    var bad: i32 = 0;
+    var j: i32 = 0;
+    while (j < 40) {
+        if (p.toks[j].kind != j) { bad = bad + 1; }
+        var want: i32 = 21 + 20 + (j - (j / 30) * 30);
+        if (p.toks[j].text.len() != want) { bad = bad + 1; }
+        j = j + 1;
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

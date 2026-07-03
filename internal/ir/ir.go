@@ -4168,6 +4168,17 @@ type builder struct {
 	// findReturnsNoParamEscape. The stage-(b) arg-temp reclaim reads it to
 	// safely dec an owned temp passed to a POINTER-returning such callee.
 	returnsNoParamEscape map[string]bool
+	// selfPushMoveCall is the exact `a.append(v)` RHS call node of a
+	// self-append assignment (`a = a.append(v)`, isSelfArrayPushLocal),
+	// set by the Assign lowering just before it lowers the RHS and
+	// cleared after. emitArrayPush consults it (by node identity) to keep
+	// that one push on the plain MOVE-semantics __fern_arr_push_grow: the
+	// self-append's overwrite reclaim is a buffer-only __fern_arr_dec
+	// that pairs with a non-retaining copy, while every other push of an
+	// rc-tracked-element array uses the element-RETAINING grow variants
+	// (#3425). Node identity keeps nested appends inside the pushed
+	// value on the retaining path.
+	selfPushMoveCall ast.Expr
 	// paramEscapes[name][i] is true when parameter i of function `name` can
 	// escape (inferParamEscapes). Borrow inference (BorrowInferEnabled) keeps a
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
@@ -9915,6 +9926,61 @@ func isFloatType(t ast.Type) bool {
 	return ok
 }
 
+// bindingSlotTwoWord reports whether a binding of type t occupies a
+// two-word logical slot (fan-out at OpLoadLocal/OpStoreLocal): a string
+// under the two-word ABI, or an inline `dyn Trait` pair on wasm32.
+func bindingSlotTwoWord(t ast.Type, ptrW int) bool {
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
+		return true
+	}
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
+		return true
+	}
+	return false
+}
+
+// bindingSlot returns the local slot for a match / if-let / let-else arm
+// binding `name` of static type bt. When the name ALREADY has a slot — a
+// `var` of the same name elsewhere in the function (pre-allocated at
+// entry and covered by the zero-init safety net) or an earlier arm's
+// same-named binding — the slot is REUSED instead of freshly allocated.
+//
+// Why reuse is load-bearing: the return / function-exit dec sweep
+// resolves names through b.locals at the moment each return is LOWERED.
+// A fresh binding slot permanently shadows the var's pre-allocated slot,
+// so every later-lowered return sweeps the ARM's slot — which is never
+// written on paths that don't enter that arm. The sweep then rc_dec's
+// uninitialized stack garbage; when the leftover value happens to look
+// like a heap pointer (past the null / low-address / sentinel guards) it
+// decrements a random block's rc word — a layout-dependent heap
+// corruption. Observed in the wild as the self-host driver miscompiling
+// `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
+// .Lir_main_* label): irlower's alias_names_in_stmt binds its StmtAssign
+// arm payload as `a`, shadowing the `var a: string[]` accumulators bound
+// in sibling arms, and the wildcard arm's return swept the unwritten
+// binding slot. Reusing the entry-zeroed slot makes that sweep a
+// null-guarded no-op on unentered paths and keeps every same-named
+// var / binding on one slot — matching the zero-init pass's "one slot
+// per name" model.
+//
+// Slot-shape guard: a two-word logical slot (wasm strings / inline dyn)
+// cannot share an index with a single-word one — the backend sizes
+// physical slots from the final scratchType stamp. Mixed shapes fall
+// back to a fresh slot (the pre-fix behavior) — the shadowing hazard
+// remains only for that rare cross-shape collision.
+func (b *builder) bindingSlot(name string, bt ast.Type) int32 {
+	if slot, ok := b.locals[name]; ok {
+		if bindingSlotTwoWord(b.scratchType[slot], b.ptrW) == bindingSlotTwoWord(bt, b.ptrW) {
+			b.scratchType[slot] = bt
+			return slot
+		}
+	}
+	slot := b.allocSlot()
+	b.locals[name] = slot
+	b.scratchType[slot] = bt
+	return slot
+}
+
 func (b *builder) stmt(s ast.Stmt) error {
 	b.curPos = s.Pos()
 	switch n := s.(type) {
@@ -9959,14 +10025,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// surrounding scope can read.
 		bindingSlots := make([]int32, len(n.Bindings))
 		for i, name := range n.Bindings {
-			slot := b.allocSlot()
 			bt := ast.Type(ast.NumberType{})
 			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
 				bt = n.BindingTypes[i]
 			}
-			b.scratchType[slot] = bt
-			b.locals[name] = slot
-			bindingSlots[i] = slot
+			bindingSlots[i] = b.bindingSlot(name, bt)
 		}
 		if b.isPairFormScrutinee(n.Source) {
 			tagSlot := b.allocSlot()
@@ -10072,13 +10135,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// Pair-form is scoped to Option[i32] today; there's
 			// always exactly one binding (the payload).
 			for i, name := range n.Bindings {
-				slot := b.allocSlot()
-				b.locals[name] = slot
 				bt := ast.Type(ast.NumberType{})
 				if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
 					bt = n.BindingTypes[i]
 				}
-				b.scratchType[slot] = bt
+				slot := b.bindingSlot(name, bt)
 				b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
@@ -10109,13 +10170,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Match: bind payloads, run Then.
 		offsets, _ := payloadLayout(n.BindingTypes, len(n.Bindings), b.ptrW)
 		for i, name := range n.Bindings {
-			slot := b.allocSlot()
-			b.locals[name] = slot
 			bt := ast.Type(ast.NumberType{})
 			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
 				bt = n.BindingTypes[i]
 			}
-			b.scratchType[slot] = bt
+			slot := b.bindingSlot(name, bt)
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 			b.emit(Op{Kind: OpAdd})
@@ -10770,13 +10829,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// scrutinees load from `[ptr+offset]`.
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			for i, name := range arm.Bindings {
-				slot := b.allocSlot()
-				b.locals[name] = slot
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
-				b.scratchType[slot] = bt
+				slot := b.bindingSlot(name, bt)
 				if pairFormScrutinee {
 					b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 				} else {
@@ -11419,13 +11476,11 @@ func (b *builder) expr(e ast.Expr) error {
 			b.closeScope() // matched path lands here
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			for i, name := range arm.Bindings {
-				slot := b.allocSlot()
-				b.locals[name] = slot
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
-				b.scratchType[slot] = bt
+				slot := b.bindingSlot(name, bt)
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 				b.emit(Op{Kind: OpAdd})
@@ -17094,7 +17149,17 @@ func (b *builder) assign(n *ast.Assign) error {
 		if done, err := b.tryEnumReuseOverwrite(n, t, idx); done {
 			return err
 		}
-		if err := b.expr(n.Value); err != nil {
+		// Mark a self-append RHS (`a = a.append(v)`) before lowering it so
+		// emitArrayPush keeps that exact push on the MOVE-semantics plain
+		// grow — its overwrite reclaim below is the buffer-only
+		// __fern_arr_dec that pairs with a non-retaining copy (see
+		// selfPushMoveCall / the #3425 retain routing in emitArrayPush).
+		if b.isSelfArrayPushLocal(n.Value, t.Name) {
+			b.selfPushMoveCall = n.Value
+		}
+		err := b.expr(n.Value)
+		b.selfPushMoveCall = nil
+		if err != nil {
 			return err
 		}
 		// Phase 1d: same alias-bump as the Var-binding path —
@@ -19418,10 +19483,54 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpStoreLocal, I32: oldLenSlot})
 
 	// buf = __fern_arr_push_grow(arr, oldLen, stride)
+	//
+	// Element-retain on the grow COPY (#3425): when the elements are
+	// rc-tracked pointers (string / struct / enum / array / tuple /
+	// closure), the plain helper's raw memcpy would leave the fresh
+	// buffer sharing the old buffer's element pointers at unchanged rc.
+	// The old buffer is still owned by its holder (e.g. the struct whose
+	// field was appended FROM in the `S{f: s.f.append(v)}` functional-
+	// update threading); when that holder's walk-drop later ran at the
+	// old buffer's rc==1 it dec'd/freed elements the grown copy still
+	// referenced — a use-after-free once the element drops actually free
+	// (string elements via __fern_drop_arr_str, struct elements via the
+	// deep __drop_arr_struct_<E> walks). Route those element types
+	// through __fern_arr_push_grow_ptr / _str, which retain each copied
+	// element exactly like __fern_arr_cow_inplace_ptr does for `.with`.
+	// Gated on RcFreeEnabled: free-off never walk-frees elements, so the
+	// plain helper keeps that baseline byte-identical.
+	//
+	// EXCEPTION — the self-append form `a = a.append(v)` keeps the plain
+	// MOVE-semantics helper. Its overwrite reclaim (the Assign array
+	// branch, isSelfArrayPushLocal) frees the old buffer with a
+	// buffer-only __fern_arr_dec that never walks elements, deliberately
+	// pairing with a non-retaining copy ("the old buffer's pointer
+	// elements were transferred to the new buffer"). Routing it through
+	// the retaining variant would add one uncompensated +1 per element
+	// per grow (nothing ever walk-decs that old buffer), leaking every
+	// element — the O(1)-heap self-append gate
+	// (TestX86_64ArrayPushPtrElemReclaim) catches it. The assign lowering
+	// marks the exact RHS call node before lowering it (selfPushMoveCall),
+	// so nested appends inside the pushed value still retain.
+	growHelper := "__fern_arr_push_grow"
+	if ast.RcFreeEnabled && ast.Expr(n) != b.selfPushMoveCall {
+		if _, isStr := elemType.(ast.StringType); isStr {
+			if b.twoWordStrings() {
+				// Two-word (data, len) elements: pair-walking retain.
+				growHelper = "__fern_arr_push_grow_str"
+			} else if b.ptrW == 8 {
+				// Native single-word string elements: plain pointer
+				// retain (rc_inc guards SSO / literal / sentinel).
+				growHelper = "__fern_arr_push_grow_ptr"
+			}
+		} else if arrElemIsRcTracked(elemType) {
+			growHelper = "__fern_arr_push_grow_ptr"
+		}
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_push_grow", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Str: growHelper, I32: 3})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})

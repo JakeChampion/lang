@@ -410,6 +410,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
+	if g.usesArrPushGrowPtr {
+		g.emitArrPushGrowPtrRuntime()
+	}
+	if g.usesArrPushGrowStr {
+		g.emitArrPushGrowStrRuntime()
+	}
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
 	}
@@ -1756,6 +1762,190 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.sizeDirective("__fern_arr_push_grow")
+	g.line(".ltorg")
+}
+
+// emitArrPushGrowPtrRuntime emits `__fern_arr_push_grow_ptr(arr,
+// oldLen, stride) -> new_data` — the rc-tracked-pointer-element variant
+// of __fern_arr_push_grow (#3425). Identical fast path (rc==1 +
+// capacity → in-place, no element traffic). On the COPY path, after the
+// memcpy it walks the oldLen copied elements and __fern_rc_inc's each
+// so the fresh buffer independently OWNS its references; the plain
+// helper's raw memcpy left the copy sharing the old buffer's element
+// pointers at unchanged rc, and the old buffer's later walk-drop at
+// rc==1 freed elements the grown copy still referenced (use-after-
+// free). Mirrors __fern_arr_cow_inplace_ptr's retain loop (#4187).
+//
+// AAPCS64 inputs: x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
+// Returns new data pointer in x0.
+func (g *generator) emitArrPushGrowPtrRuntime() {
+	g.line("")
+	g.line(".global __fern_arr_push_grow_ptr")
+	g.typeDirective("__fern_arr_push_grow_ptr")
+	g.label("__fern_arr_push_grow_ptr")
+	// Fast path: rc==1 and oldLen < cap → in place (rc=2, len++).
+	g.emit("ldur w3, [x0, #-8]")
+	g.emit("cmp w3, #1")
+	g.emit("b.ne .Lpushp_copy")
+	g.emit("ldur w4, [x0, #-12]")
+	g.emit("cmp w1, w4")
+	g.emit("b.ge .Lpushp_copy")
+	g.emit("mov w3, #2")
+	g.emit("stur w3, [x0, #-8]")
+	g.emit("add w4, w1, #1")
+	g.emit("stur w4, [x0, #-4]")
+	g.emit("ret")
+	// Copy path — same frame plan as __fern_arr_push_grow.
+	g.label(".Lpushp_copy")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0")      // x19 = arr
+	g.emit("mov w20, w1")      // w20 = oldLen
+	g.emit("mov w21, w2")      // w21 = stride
+	g.emit("add w22, w20, #1") // w22 = newLen
+	// newCap = max(2*newLen, 4)
+	g.emit("lsl w23, w22, #1")
+	g.emit("mov w0, #4")
+	g.emit("cmp w23, w0")
+	g.emit("csel w23, w23, w0, ge")
+	// headerBytes = max(16, stride)
+	g.emit("mov w24, #16")
+	g.emit("cmp w21, w24")
+	g.emit("csel w24, w21, w24, ge")
+	// allocSize = headerBytes + newCap * stride
+	g.emit("mul w0, w23, w21")
+	g.emit("add w0, w0, w24")
+	g.emit("bl __fern_alloc")
+	g.emit("add x25, x0, x24") // x25 = new_data
+	g.emit("sub w1, w24, #12")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w23, [x2]") // cap
+	g.emit("sub w1, w24, #8")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("mov w3, #1")
+	g.emit("str w3, [x2]") // rc = 1
+	g.emit("sub w1, w24, #4")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w22, [x2]") // len = newLen
+	// memcpy(new_data, arr, oldLen * stride)
+	g.emit("mov x0, x25")
+	g.emit("mov x1, x19")
+	g.emit("mul w2, w20, w21")
+	g.emit("bl __fern_memcpy")
+	// Element-retain loop: inc each copied pointer element. x25 =
+	// new_data, w20 = oldLen, w21 = stride survive __fern_rc_inc
+	// (callee-saved); w26 = i.
+	g.emit("mov w26, #0")
+	g.label(".Lpushp_inc_loop")
+	g.emit("cmp w26, w20")
+	g.emit("b.ge .Lpushp_inc_done")
+	g.emit("mul w0, w26, w21")
+	g.emit("add x0, x25, w0, uxtw")
+	g.emit("ldr x0, [x0]")     // element pointer (8-byte)
+	g.emit("bl __fern_rc_inc") // guards null / low / sentinel
+	g.emit("add w26, w26, #1")
+	g.emit("b .Lpushp_inc_loop")
+	g.label(".Lpushp_inc_done")
+	g.emit("mov x0, x25") // return new_data
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_arr_push_grow_ptr")
+	g.line(".ltorg")
+}
+
+// emitArrPushGrowStrRuntime emits `__fern_arr_push_grow_str(arr,
+// oldLen, stride) -> new_data` — the two-word string[] variant of
+// __fern_arr_push_grow (#3425). Same shape as the _ptr sibling, but
+// each element is a (data, len) pair at stride bytes apart (16 on
+// arm64 two-word), retained via __fern_str_inc — matching the
+// __fern_drop_arr_str walk that releases them, so a grow copy and the
+// old buffer's eventual element walk stay balanced.
+//
+// AAPCS64 inputs: x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
+// Returns new data pointer in x0.
+func (g *generator) emitArrPushGrowStrRuntime() {
+	g.line("")
+	g.line(".global __fern_arr_push_grow_str")
+	g.typeDirective("__fern_arr_push_grow_str")
+	g.label("__fern_arr_push_grow_str")
+	g.emit("ldur w3, [x0, #-8]")
+	g.emit("cmp w3, #1")
+	g.emit("b.ne .Lpushs_copy")
+	g.emit("ldur w4, [x0, #-12]")
+	g.emit("cmp w1, w4")
+	g.emit("b.ge .Lpushs_copy")
+	g.emit("mov w3, #2")
+	g.emit("stur w3, [x0, #-8]")
+	g.emit("add w4, w1, #1")
+	g.emit("stur w4, [x0, #-4]")
+	g.emit("ret")
+	g.label(".Lpushs_copy")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0")      // x19 = arr
+	g.emit("mov w20, w1")      // w20 = oldLen
+	g.emit("mov w21, w2")      // w21 = stride
+	g.emit("add w22, w20, #1") // w22 = newLen
+	g.emit("lsl w23, w22, #1")
+	g.emit("mov w0, #4")
+	g.emit("cmp w23, w0")
+	g.emit("csel w23, w23, w0, ge") // newCap = max(2*newLen, 4)
+	g.emit("mov w24, #16")
+	g.emit("cmp w21, w24")
+	g.emit("csel w24, w21, w24, ge") // headerBytes = max(16, stride)
+	g.emit("mul w0, w23, w21")
+	g.emit("add w0, w0, w24")
+	g.emit("bl __fern_alloc")
+	g.emit("add x25, x0, x24") // x25 = new_data
+	g.emit("sub w1, w24, #12")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w23, [x2]") // cap
+	g.emit("sub w1, w24, #8")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("mov w3, #1")
+	g.emit("str w3, [x2]") // rc = 1
+	g.emit("sub w1, w24, #4")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w22, [x2]") // len = newLen
+	g.emit("mov x0, x25")
+	g.emit("mov x1, x19")
+	g.emit("mul w2, w20, w21")
+	g.emit("bl __fern_memcpy")
+	// Element-retain loop: __fern_str_inc each copied (data, len)
+	// pair — data at [new_data + i*stride], len 8 bytes above. str_inc
+	// no-ops on inline-tagged / null / literal-tagged values, mirroring
+	// the __fern_drop_arr_str walk's __fern_str_dec.
+	g.emit("mov w26, #0")
+	g.label(".Lpushs_inc_loop")
+	g.emit("cmp w26, w20")
+	g.emit("b.ge .Lpushs_inc_done")
+	g.emit("mul w0, w26, w21")
+	g.emit("add x2, x25, w0, uxtw")
+	g.emit("ldp x0, x1, [x2]") // (data, len) pair
+	g.emit("bl __fern_str_inc")
+	g.emit("add w26, w26, #1")
+	g.emit("b .Lpushs_inc_loop")
+	g.label(".Lpushs_inc_done")
+	g.emit("mov x0, x25")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_arr_push_grow_str")
 	g.line(".ltorg")
 }
 
@@ -6487,6 +6677,17 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md "Phase 2" + `internal/ir/ir.go`'s
 	// emitArrayPush.
 	usesArrPushGrow bool
+	// usesArrPushGrowPtr / usesArrPushGrowStr gate the rc-tracked-element
+	// variants of __fern_arr_push_grow (#3425): identical fast path, but
+	// the grow COPY retains each copied element (__fern_rc_inc for
+	// single-word pointer elements, __fern_str_inc for two-word (data,
+	// len) string pairs) so the fresh buffer independently owns its
+	// references. Without the retain, the old buffer's later walk-drop
+	// at rc==1 (__fern_drop_arr_str / deep struct walks) freed elements
+	// the grown copy still referenced — a use-after-free. Mirrors
+	// __fern_arr_cow_inplace_ptr (#4187), the `.with` sibling.
+	usesArrPushGrowPtr bool
+	usesArrPushGrowStr bool
 	// usesArrCowInPlace gates `__fern_arr_cow_inplace` — the
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. Returns the buffer the
@@ -9060,6 +9261,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArrPushGrow = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "__fern_arr_push_grow_ptr":
+			g.usesArrPushGrowPtr = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesRcInc = true
+		case "__fern_arr_push_grow_str":
+			g.usesArrPushGrowStr = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesStrInc = true
 		case "__fern_arr_cow_inplace":
 			g.usesArrCowInPlace = true
 			g.usesAlloc = true
