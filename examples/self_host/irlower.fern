@@ -12526,7 +12526,9 @@ function struct_lit_precise_ok(structs: parser.StructDecl[], slit: parser.ExprSt
 // (array / scalar struct / tuple, dispatched by slot flags); "box-shallow" = a scalar
 // Option/Result/enum box (a plain __fern_rc_dec — the scalar payload is an inline
 // value, so no field/element walk); "opt-rcpayload" = an rc-payload Option/Result
-// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec); "enum-rcpayload:<E>"
+// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec); "opt-strpayload"
+// = a STRING-payload Option/Result (#4355 — emit_opt_str_payload_drop:
+// op_opt_payload → __fern_str_free → box dec); "enum-rcpayload:<E>"
 // = an rc-payload user enum (emit_enum_variant_drops: runtime variant-dispatch deep-
 // drop of enum <E>, whose name rides in the kind). Carrying the kind lets the emission
 // free a box whose type the slot alone can't classify — a Result box (Ok-vs-Err
@@ -12631,6 +12633,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // slot type Result[T,E] alone can't distinguish an Ok-array box from an
                 // Err-scalar box).
                 var is_rcopt: boolean = false;
+                var rcopt_str: boolean = false;
                 if (!is_lit && !is_opt) {
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
@@ -12640,7 +12643,10 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                             if (match_scrutinee_is(body[mk2], v.name)) { has_tlm2 = true; }
                             mk2 = mk2 + 1;
                         }
-                        if (!has_tlm2 && !opt_body_binding_escapes(body, v.name, rcc.variant)) { is_rcopt = true; }
+                        if (!has_tlm2 && !opt_body_binding_escapes(body, v.name, rcc.variant)) {
+                            is_rcopt = true;
+                            rcopt_str = rcc.ptype == "string";
+                        }
                     }
                 }
                 // A fresh SCALAR user-enum local (`var x = Circle(7)` of an all-scalar-
@@ -12711,7 +12717,8 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     }
                     if (last > i) {
                         var kind: string = "";
-                        if (is_rcopt) { kind = "opt-rcpayload"; }
+                        if (is_rcopt && rcopt_str) { kind = "opt-strpayload"; }
+                        else if (is_rcopt) { kind = "opt-rcpayload"; }
                         else if (is_opt || is_enum) { kind = "box-shallow"; }
                         else if (is_rcenum) { kind = "enum-rcpayload:" + rcenum_owner; }
                         else if (is_map) { kind = "map-buffers"; }
@@ -15123,15 +15130,18 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
 
 // enum_field_rc_droppable: a payload field type whose value is an rc-headered box
 // the match-consume reclaim can release — a leak-safe scalar array
-// (i32[]/i64[]/f64[]/boolean[], freed by one __fern_rc_dec) OR a deep-drop-ok
+// (i32[]/i64[]/f64[]/boolean[], freed by one __fern_rc_dec), a deep-drop-ok
 // nested struct (Perceus enum-payload slice: an rc-array-carrying LEAF struct,
 // released by __struct_drop_<T> + a box dec, the same depth-1 recursion the
-// struct-field deep-drop uses — see emit_enum_variant_drops). NOT a scalar (no rc —
-// released with the box), NOT a string (a header-less {ptr,len} fat struct,
-// leak-only on this path — see the block comment above), NOT string[] / enum / map /
-// opt / tuple, and NOT a non-leaf (cycle-risk) struct.
+// struct-field deep-drop uses — see emit_enum_variant_drops), OR a STRING (#4355:
+// string boxes are rc-HEADERED since #4294, released by the rc-aware
+// __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
+// the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
+// sole owner). NOT a scalar (no rc — released with the box), NOT string[] / enum /
+// map / opt / tuple, and NOT a non-leaf (cycle-risk) struct.
 function enum_field_rc_droppable(structs: parser.StructDecl[], t: string): boolean {
-    return is_leaksafe_array_field(t) || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t));
+    return is_leaksafe_array_field(t) || t == "string"
+        || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t));
 }
 
 // enum_variant_rc_droppable: every payload field of variant `vname` is either a
@@ -15201,6 +15211,19 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
             }
             if (!fresh) { return false; }
         }
+        // A STRING payload (#4355) must be FRESH too — a literal (const_str allocs
+        // a fresh box per construction; its .rodata data is heap-guard-skipped by
+        // __fern_str_free) or a fresh producer (concat / named producer / string
+        // method copy). A bare ident / field read / general call would alias a
+        // live box the match-site __fern_str_free would free out from under it.
+        if (ft == "string") {
+            var sfresh: boolean = false;
+            match (args[i]) {
+                parser.ExprString(_) => { sfresh = true; },
+                _ => { sfresh = str_local_binding_is_fresh(args[i]); }
+            }
+            if (!sfresh) { return false; }
+        }
         i = i + 1;
     }
     return true;
@@ -15209,10 +15232,10 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
 // fresh_rcpayload_enum_init: `e` is a sole-owner construction of an rc-payload
 // (deep-droppable) enum — `V(args...)` or a bare unit variant `V`. Returns the
 // enum's name, or "". Mirrors fresh_scalar_enum_init for the widened set. A
-// deep-drop-ok STRUCT payload must be a fresh struct literal
-// (variant_struct_payloads_fresh) so its match-site deep-drop can't double-free a
-// local the payload aliases; array payloads ride the construction alias-inc and need
-// no such gate.
+// deep-drop-ok STRUCT payload must be a fresh struct literal and a STRING payload a
+// fresh literal/producer (variant_struct_payloads_fresh) so the match-site drop
+// can't double-free a local the payload aliases; array payloads ride the
+// construction alias-inc and need no such gate.
 function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[]): string {
     match (e) {
         parser.ExprCall(c) => {
@@ -15427,8 +15450,10 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
 //     if (box != null && variant_is(box, V)) { drop V's rc payload fields }
 // (variant_is is false for a null/mismatched box, so the guard also covers null).
 // Each rc field is struct_get + __fern_rc_dec (the same single-dec full release
-// emit_struct_field_drops uses for a leak-safe array — the only eligible rc
-// payload here; enum_field_rc_droppable excludes strings, which are leak-only).
+// emit_struct_field_drops uses for a leak-safe array); a STRING payload (#4355)
+// is struct_get + the rc-aware __fern_str_free (box + separate data buffer on
+// asm; one inline block on wasm), fresh-gated at admission
+// (variant_struct_payloads_fresh) so the box is its sole owner.
 // After the per-variant drops, the box itself
 // is dec'd (__fern_rc_dec frees the box buffer) and the slot zeroed so the exit
 // sweep harmlessly decs a null. The payload is therefore dropped BEFORE the box
@@ -15455,6 +15480,19 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (eft == "string") {
+                    // STRING payload (#4355): the rc-aware __fern_str_free releases
+                    // the box + its separate data buffer on asm (one inline block on
+                    // wasm, where it maps to $__fern_arr_dec). Fresh-gated at
+                    // admission (variant_struct_payloads_fresh: literal / fresh
+                    // producer only), so the box is the sole owner — a literal's
+                    // .rodata data is heap-guard-skipped, an immortal view (never
+                    // admitted) would be sentinel-skipped, and a double free ticks
+                    // the underflow detector instead of corrupting the heap.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
                     st = st.emit(ir.op_drop());
                 } else if (decl_is_struct(st.structs, eft) && nested_field_deep_drop_ok(st.structs, eft)) {
                     // deep-drop-ok nested-struct payload (Perceus enum-payload slice):
@@ -15897,6 +15935,21 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
     // Annotated array payload.
     var pt: string = opt_payload_type(v.type_name, kind);
     if (is_leaksafe_array_field(pt)) { return OptRcCand { variant: kind, ptype: pt }; }
+    // Annotated STRING payload (#4355) — admitted only when FRESH: a literal
+    // (const_str allocs a fresh box per construction; its .rodata data is
+    // heap-guard-skipped by __fern_str_free) or a fresh producer (concat / named
+    // producer / string-method copy). A bare ident / field read / general call
+    // would alias a live box the match-site __fern_str_free frees out from under
+    // it — rejected, keeping today's sound leak.
+    if (pt == "string") {
+        var sfresh: boolean = false;
+        match (arg0) {
+            parser.ExprString(_) => { sfresh = true; },
+            _ => { sfresh = str_local_binding_is_fresh(arg0); }
+        }
+        if (sfresh) { return OptRcCand { variant: kind, ptype: "string" }; }
+        return OptRcCand { variant: "", ptype: "" };
+    }
     // Un-annotated array literal (Option infers its single param) — the exact
     // element type is immaterial to a shallow buffer dec, so tag it i32[]/f64[].
     match (arg0) {
@@ -15904,6 +15957,10 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
             if (all_i32_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "i32[]" }; }
             if (all_f64_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "f64[]" }; }
         },
+        // Un-annotated STRING literal payload (`var o = Some("x")`) — unambiguous
+        // by shape (a fresh box per construction), unlike a bare `a + b` producer
+        // whose un-annotated form could be an int add. #4355.
+        parser.ExprString(_) => { return OptRcCand { variant: kind, ptype: "string" }; },
         // FRESH leak-safe struct literal payload — sole owner (rc==1). The box is
         // freed by a shallow __fern_rc_dec (emit_opt_payload_drop). A scalar-only
         // struct box holds only inline scalars (nothing to walk); a struct with
@@ -16006,8 +16063,12 @@ function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string
 }
 
 // OptRcFrees: parallel arrays for the rc-payload option/result free — the
-// consuming match index and the freed local name.
-struct OptRcFrees { idxs: i32[], names: string[] }
+// consuming match index, the freed local name, and whether the payload is a
+// STRING (#4355: released via __fern_str_free instead of the shallow
+// __fern_rc_dec — on asm a string box's data buffer is separate and its
+// 24-byte block class differs from the array layout, so the array dec would
+// free it wrongly).
+struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
 // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
@@ -16020,6 +16081,7 @@ struct OptRcFrees { idxs: i32[], names: string[] }
 function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[]): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
+    var strs: boolean[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
@@ -16042,6 +16104,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                         if (!arms_use && dead_after && !escapes && !binds_esc) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
+                            strs = strs.append(cand.ptype == "string");
                         }
                     }
                 }
@@ -16050,7 +16113,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
         }
         vi = vi + 1;
     }
-    return OptRcFrees { idxs: idxs, names: names };
+    return OptRcFrees { idxs: idxs, names: names, strs: strs };
 }
 
 // emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
@@ -16061,6 +16124,28 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
 // box, so a single __fern_rc_dec releases it with no inner walk. The option box is
 // then dec'd and the slot zeroed so the exit sweep decs a null. Payload dropped
 // BEFORE the box, each freed exactly once.
+// emit_opt_str_payload_drop — the STRING-payload sibling of emit_opt_payload_drop
+// (#4355): identical shape, but the payload at offset 8 is a string box, released
+// by the rc-aware __fern_str_free (box + separate data buffer on asm; one inline
+// block on wasm, where it maps to $__fern_arr_dec). The classifier admitted only
+// FRESH payloads (literal / fresh producer), so the box is the sole owner; a
+// literal's .rodata data is heap-guard-skipped and a double free ticks the
+// underflow detector.
+function emit_opt_str_payload_drop(s: LowerState, slot: i32): LowerState {
+    var st: LowerState = s;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());
+    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+    st = st.emit(ir.op_drop());
+    // free the option box itself and zero the slot.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
 function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
     var st: LowerState = s;
     // release the payload (flat scalar-array buffer or scalar-only struct box).
@@ -18637,6 +18722,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
+                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-strpayload") {
+                    // Fresh STRING-payload Option/Result (#4355), last-used in a nested
+                    // block — same gates as "opt-rcpayload", but the payload at offset 8
+                    // is a string box released by the rc-aware __fern_str_free (a plain
+                    // rc-dec would free the 24-byte string block by the ARRAY layout's
+                    // size class on asm — wrong class, heap corruption).
+                    s = emit_opt_str_payload_drop(s, dslot);
                 } else if (dslot >= s.n_params && pdrops.kinds[pi].len() > 15 && pdrops.kinds[pi][0:15] == "enum-rcpayload:"
                         && util.index_of_str(ecross.donors, pdrops.names[pi]) < 0) {
                     // Fresh rc-PAYLOAD user-enum (a variant with a leak-safe array /
@@ -18714,7 +18806,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (rcoptfrees.idxs[roi] == j) {
                 var roslot: i32 = s.slot_of(rcoptfrees.names[roi]);
                 if (roslot >= s.n_params) {
-                    s = emit_opt_payload_drop(s, roslot);
+                    if (rcoptfrees.strs[roi]) {
+                        s = emit_opt_str_payload_drop(s, roslot);
+                    } else {
+                        s = emit_opt_payload_drop(s, roslot);
+                    }
                 }
             }
             roi = roi + 1;
