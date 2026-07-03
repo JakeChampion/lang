@@ -7,11 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostPerModuleArm64LeafOnlyLinkRun is the regression guard for #4305:
@@ -37,22 +32,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	x86gcc, _ := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload arm64 driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit driver: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "arm64linkdriver", asm)
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64linkdriver")
 
 	proj := t.TempDir()
 	if err := os.WriteFile(filepath.Join(proj, "leaf.fern"),
@@ -71,7 +51,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 
 	drive := func(args ...string) string {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entry}, args...)...).Output()
+		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64"}, args...)...).Output()
 		if err != nil {
 			t.Fatalf("driver %v: %v", args, err)
 		}

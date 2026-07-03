@@ -51,7 +51,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "treeshake.fern", "asm_arm64_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "treeshake.fern", "asm.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -60,7 +60,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	driverSrc := filepath.Join(dir, "asm_arm64_load_run.fern")
+	driverSrc := filepath.Join(dir, "asm_load_run.fern")
 
 	// Build mmc via the Go arm64 backend → aarch64 binary running
 	// under qemu.
@@ -131,14 +131,14 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	for _, rel := range cases {
 		t.Run(filepath.Base(rel), func(t *testing.T) {
 			testSrc := langSrcAbs(t, rel)
-			nativeOut, err := runArm64Bin(qemu, mmcNative, testSrc, stdlibRoot).Output()
+			nativeOut, err := runArm64Bin(qemu, mmcNative, testSrc, stdlibRoot, "-target", "arm64").Output()
 			if err != nil {
 				t.Fatalf("mmc_arm64_native: %v", err)
 			}
 			if len(nativeOut) == 0 {
 				t.Fatal("mmc_arm64_native emitted 0 bytes — the bugs the gate guards against (strbuf return shape, ProcessResult rodata, arm64 heap size)")
 			}
-			crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot).Output()
+			crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot, "-target", "arm64").Output()
 			if err != nil {
 				t.Fatalf("mmc_x86_cross: %v", err)
 			}

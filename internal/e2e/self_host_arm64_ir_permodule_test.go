@@ -7,16 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostIRPerModuleLinkArm64 is the arm64 counterpart of the x86
 // per-module link/driver tests (#3451 / #3457 step 0a): the arm64
-// asm_arm64_modload_run driver compiling a multi-module program by emitting
+// asm_modload_run -target arm64 driver compiling a multi-module program by emitting
 // each module as its OWN arm64 translation unit and linking them.
 //
 // The program is the cross-module ENUM case (mirroring
@@ -38,33 +33,9 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 	// The arm64 backend + its per-module driver, alongside the shared modload
 	// project (which already holds util/lexer/parser/flatten/asm_ir/builtins/…).
-	for _, name := range []string{"asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_modload_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload arm64 driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit driver: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "arm64driver", asm)
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")
 
 	// Two-module program: col constructs Blue(7); the entry matches it.
 	colSrc := "pub enum Color { Red(i32), Green, Blue(i32) }\n" +
@@ -89,7 +60,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 
 	drive := func(t *testing.T, args ...string) string {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entryPath}, args...)...).Output()
+		out, err := exec.Command(driverBin, append([]string{entryPath, "-target", "arm64"}, args...)...).Output()
 		if err != nil {
 			t.Fatalf("driver failed (args %v): %v", args, err)
 		}

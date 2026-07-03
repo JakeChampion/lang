@@ -7,11 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostModloadPerModuleWholeCompilerArm64 is the arm64 counterpart of
@@ -40,38 +35,14 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, _ := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	for _, name := range []string{"asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_modload_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload arm64 driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit driver: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "arm64driver", asm)
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")
 
-	entry := filepath.Join(dir, "asm_arm64_modload_run.fern")
+	entry := filepath.Join(dir, "asm_modload_run.fern")
 	drive := func(t *testing.T, args ...string) (string, error) {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entry}, args...)...).Output()
+		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64"}, args...)...).Output()
 		return string(out), err
 	}
 
@@ -97,26 +68,72 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 		}
 	}
 
+	// Per-module function counts, for the same [lo,hi) function-window sharding
+	// the x86 whole-compiler test uses (#3425): an oversized module OOMs
+	// (exit 137) if emitted in one process, and the #4398 driver fold doubled
+	// this self-build's program (both backends in one closure), pushing the
+	// biggest modules past the ceiling. See the x86 twin for the threshold
+	// rationale.
+	fcOut, err := drive(t, "-per-module-func-counts")
+	if err != nil {
+		t.Fatalf("-per-module-func-counts: %v", err)
+	}
+	var funcCounts []int
+	for _, ln := range strings.Split(strings.TrimSpace(fcOut), "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			c, cerr := strconv.Atoi(s)
+			if cerr != nil {
+				t.Fatalf("-per-module-func-counts: non-int line %q: %v", s, cerr)
+			}
+			funcCounts = append(funcCounts, c)
+		}
+	}
+	if len(funcCounts) != n {
+		t.Fatalf("-per-module-func-counts returned %d counts, want %d (module count)", len(funcCounts), n)
+	}
+	const shardThreshold = 100
+
 	// 3. Emit every module as its own arm64 unit (every module emitting proves
-	// the per-module eligibility frontier; a bail returns 0 bytes).
+	// the per-module eligibility frontier; a bail returns 0 bytes). Oversized
+	// modules emit in threshold-sized [lo,hi) function windows.
 	var objs []string
-	sawEntry := false
-	for i := 0; i < n; i++ {
-		unit, err := drive(t, append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)...)
+	entryUnits := 0
+	emitUnit := func(t *testing.T, modIdx int, tag string, rangeArgs []string) {
+		t.Helper()
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(modIdx)}, needArgs...)
+		emitArgs = append(emitArgs, rangeArgs...)
+		unit, err := drive(t, emitArgs...)
 		if err != nil || len(unit) == 0 {
-			t.Fatalf("module %d: per-module emit bailed (err=%v, %d bytes)", i, err, len(unit))
+			t.Fatalf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", modIdx, tag, err, len(unit))
 		}
 		if strings.Contains(unit, "\n_start:\n") || strings.HasPrefix(unit, "_start:\n") {
-			sawEntry = true
+			entryUnits++
 		}
-		p := filepath.Join(dir, "wc_arm_unit_"+strconv.Itoa(i)+".s")
+		p := filepath.Join(dir, "wc_arm_unit_"+strconv.Itoa(modIdx)+tag+".s")
 		if err := os.WriteFile(p, []byte(unit), 0o644); err != nil {
-			t.Fatalf("write unit %d: %v", i, err)
+			t.Fatalf("write unit %d%s: %v", modIdx, tag, err)
 		}
 		objs = append(objs, p)
 	}
-	if !sawEntry {
-		t.Fatalf("no entry unit (_start) among the %d per-module units", n)
+	for i := 0; i < n; i++ {
+		if funcCounts[i] <= shardThreshold {
+			emitUnit(t, i, "", nil)
+			continue
+		}
+		for lo := 0; lo < funcCounts[i]; lo += shardThreshold {
+			hi := lo + shardThreshold
+			if hi > funcCounts[i] {
+				hi = funcCounts[i]
+			}
+			rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
+			emitUnit(t, i, "_s"+strconv.Itoa(lo), []string{"-func-range", rng})
+		}
+	}
+	if entryUnits == 0 {
+		t.Fatalf("no entry unit (_start) among the per-module units")
+	}
+	if entryUnits != 1 {
+		t.Fatalf("expected exactly one entry unit (_start), got %d — was the entry module sharded?", entryUnits)
 	}
 
 	// 4. Link all arm64 units into one compiler binary.
@@ -134,7 +151,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	if err := os.WriteFile(trivArg, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
 		t.Fatalf("write triv.fern: %v", err)
 	}
-	out, err := exec.Command(qemu, binPath, trivArg).Output()
+	out, err := exec.Command(qemu, binPath, trivArg, "-target", "arm64").Output()
 	if err != nil {
 		t.Fatalf("per-module-built arm64 compiler crashed on a zero-need program (the close_needs UAF): %v", err)
 	}
@@ -149,7 +166,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 		[]byte("function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n"), 0o644); err != nil {
 		t.Fatalf("write add.fern: %v", err)
 	}
-	addAsm, err := exec.Command(qemu, binPath, addArg).Output()
+	addAsm, err := exec.Command(qemu, binPath, addArg, "-target", "arm64").Output()
 	if err != nil || len(addAsm) == 0 {
 		t.Fatalf("per-module-built arm64 compiler failed to compile add.fern: %v (%d bytes)", err, len(addAsm))
 	}
@@ -172,7 +189,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// crashing and emits a real `call __fn_main`. Guards the string[]-struct-field
 	// `.append()` aliasing UAF in the checker (see the x86 twin for the mechanism) —
 	// the fix is in shared irlower.fern, so it must hold on both backends.
-	gen2, err := exec.Command(qemu, binPath, entry).Output()
+	gen2, err := exec.Command(qemu, binPath, entry, "-target", "arm64").Output()
 	if err != nil {
 		t.Fatalf("per-module-built arm64 compiler crashed self-compiling the whole compiler (#3561 regression): %v", err)
 	}
@@ -184,7 +201,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// compiler drives its own whole-program runtime-need query without OOM, now that it
 	// returns the static all_runtime_need_roots over-approximation instead of re-emitting
 	// every module (see the x86 twin for the mechanism).
-	selfNeeds, err := exec.Command(qemu, binPath, entry, "-per-module-needs").Output()
+	selfNeeds, err := exec.Command(qemu, binPath, entry, "-target", "arm64", "-per-module-needs").Output()
 	if err != nil {
 		t.Fatalf("per-module-built arm64 compiler OOM/crash on its own -per-module-needs (#3456): %v", err)
 	}

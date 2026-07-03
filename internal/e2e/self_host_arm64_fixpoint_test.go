@@ -4,23 +4,18 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostFixpointArm64 — the file-based arm64 self-hosting fixpoint,
 // arm64 counterpart of TestSelfHostModloadFixpointX86_64 and successor to
 // the retired bundle_run_arm64 marker fixpoint. The arm64-emitting driver
-// (asm_arm64_modload_run) compiles its OWN source graph off disk to a
+// (asm_modload_run -target arm64, #4398 fold) compiles its OWN source graph off disk to a
 // byte-identical 3-generation fixpoint, emitting aarch64 asm.
 //
 //	stage 0: native fern builds the arm64 driver as an x86 HOST binary
 //	         (runs on x86, emits arm64 asm).
 //	stage 1: that driver compiles the compiler's own on-disk source
-//	         (asm_arm64_modload_run.fern + its import graph) → mmc, an
+//	         (asm_modload_run.fern + its import graph) → mmc, an
 //	         aarch64 binary (cross-gcc linked, run under qemu-aarch64).
 //	stage 2: mmc compiles the same source → gen2.
 //	stage 3: gen2 compiles the same source → gen3.
@@ -36,47 +31,33 @@ func TestSelfHostFixpointArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	// stage 0: build the arm64 driver (asm_arm64_modload_run) as an x86
-	// host binary — it runs on the test host and emits arm64 asm.
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload arm64 driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
+	// stage 0: build the merged modload driver (asm_modload_run, whose
+	// -target arm64 mode replaced the asm_arm64_modload_run mirror, #4398) as
+	// an x86 host binary — it runs on the test host and emits arm64 asm.
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "driver")
 
-	entry := filepath.Join(dir, "asm_arm64_modload_run.fern")
+	entry := filepath.Join(dir, "asm_modload_run.fern")
 	var arm64runner []string
 	if qemu != "" {
 		arm64runner = []string{qemu}
 	}
 
 	// stage 1: driver (x86) compiles the compiler's own source -> mmc (arm64).
-	mmcAsm := runDriverFile(t, x86runner, driverBin, entry)
+	mmcAsm := runDriverFile(t, x86runner, driverBin, entry, "-target", "arm64")
 	if len(mmcAsm) == 0 {
 		t.Fatal("stage 1: driver emitted 0 bytes compiling the arm64 compiler source")
 	}
 	mmcBin := buildBin(t, arm64gcc, dir, "mmc", string(mmcAsm))
 
 	// stage 2: mmc (arm64, under qemu) compiles the same source -> gen2.
-	gen2Asm := runDriverFile(t, arm64runner, mmcBin, entry)
+	gen2Asm := runDriverFile(t, arm64runner, mmcBin, entry, "-target", "arm64")
 	if len(gen2Asm) == 0 {
 		t.Fatal("stage 2: mmc emitted 0 bytes compiling the arm64 compiler source")
 	}
 	gen2Bin := buildBin(t, arm64gcc, dir, "gen2", string(gen2Asm))
 
 	// stage 3: gen2 compiles the same source -> gen3.
-	gen3Asm := runDriverFile(t, arm64runner, gen2Bin, entry)
+	gen3Asm := runDriverFile(t, arm64runner, gen2Bin, entry, "-target", "arm64")
 	if len(gen3Asm) == 0 {
 		t.Fatal("stage 3: gen2 emitted 0 bytes compiling the arm64 compiler source")
 	}
@@ -100,7 +81,7 @@ func TestSelfHostFixpointArm64(t *testing.T) {
 		[]byte("import \"./a\";\nfunction main(): i32 { return a.add(19, 23); }\n"), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	progAsm := runDriverFile(t, arm64runner, gen2Bin, filepath.Join(progDir, "main.fern"))
+	progAsm := runDriverFile(t, arm64runner, gen2Bin, filepath.Join(progDir, "main.fern"), "-target", "arm64")
 	progBin := buildBin(t, arm64gcc, progDir, "prog", string(progAsm))
 	pcmd := runArm64Bin(qemu, progBin)
 	_, _ = pcmd.CombinedOutput()

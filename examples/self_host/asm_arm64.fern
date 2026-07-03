@@ -3783,7 +3783,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
 // layout; only mod.funcs are EMITTED. The _start is copied verbatim from
 // emit_body (the proven single-unit IR path). Caller must have established
 // asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
-pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
+pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32): string {
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
@@ -3820,8 +3820,15 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
+    // [lo, hi) function-index window (function-sharding, #3425 — the arm64
+    // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
+    // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
+    // window lets an oversized module emit across separate processes without
+    // any single emit's leak-mode heap crossing the arena ceiling.
+    var hh: i32 = hi;
+    if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
+    var fi: i32 = lo;
+    while (fi < hh) {
         if (globl_defs) {
             var gname: string = mod.funcs[fi].name;
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }

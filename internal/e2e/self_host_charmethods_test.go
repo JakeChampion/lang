@@ -116,7 +116,7 @@ func TestSelfHostSortArm64(t *testing.T) {
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 	main := "import \"./sort\";\n" +
 		"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 9, 3]; var r = sort.sort_i32_asc(xs); return r[0] * 100 + r[5]; }\n"
-	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"sort"}, main)
+	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"sort"}, main, "-target", "arm64")
 	progBin := buildBin(t, arm64gcc, progDir, "sortprog", asm)
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()

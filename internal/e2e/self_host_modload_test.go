@@ -18,7 +18,7 @@ func writeSelfHostModloadProject(t *testing.T) string {
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
 		"ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64_ir.fern",
 		"flatten.fern", "modloader.fern", "builtins.fern", "asm_modload_run.fern",
-		"asm_arm64.fern", "asm_arm64_modload_run.fern",
+		"asm_arm64.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -32,14 +32,16 @@ func writeSelfHostModloadProject(t *testing.T) string {
 }
 
 // runDriverFile runs the compiled driver binary with `entry` as argv[1]
-// and returns its stdout (the emitted asm).
-func runDriverFile(t *testing.T, runner []string, bin, entry string) []byte {
+// (plus any extra driver flags, e.g. "-target", "arm64") and returns its
+// stdout (the emitted asm).
+func runDriverFile(t *testing.T, runner []string, bin, entry string, extraArgs ...string) []byte {
 	t.Helper()
+	argv := append([]string{entry}, extraArgs...)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(bin, entry)
+		cmd = exec.Command(bin, argv...)
 	} else {
-		args := append(append([]string{}, runner[1:]...), bin, entry)
+		args := append(append(append([]string{}, runner[1:]...), bin), argv...)
 		cmd = exec.Command(runner[0], args...)
 	}
 	out, err := cmd.Output()

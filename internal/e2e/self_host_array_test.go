@@ -32,7 +32,7 @@ func TestSelfHostArrayX86_64(t *testing.T) {
 func TestSelfHostArrayArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
-	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"array", "sort"}, arrayMain)
+	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"array", "sort"}, arrayMain, "-target", "arm64")
 	progBin := buildBin(t, arm64gcc, progDir, "arrprog", asm)
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()

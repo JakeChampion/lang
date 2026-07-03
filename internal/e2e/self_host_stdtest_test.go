@@ -115,7 +115,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 
 // TestSelfHostStdTestE2EArm64 is the arm64 mirror of the gate above.
 // Gates the arm64 self-host emitter (`asm_arm64.fern`): mmc is built
-// from `asm_arm64_load_run.fern` as a native x86 host binary (the
+// from `asm_load_run.fern -target arm64` as a native x86 host binary (the
 // same cross-compiler-on-host pattern the existing arm64 reader /
 // alloc-trap tests use), then for each case the host mmc emits
 // aarch64 assembly, the aarch64 cross-gcc assembles + links, and
@@ -136,7 +136,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "treeshake.fern", "asm_arm64_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "treeshake.fern", "asm.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -150,7 +150,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	// qemu and avoids any arm64-self-compiling-arm64-self bugs in
 	// the Go arm64 backend that aren't part of what this gate is
 	// trying to validate.
-	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_load_run.fern", "mmc_arm64")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64")
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
@@ -180,7 +180,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 			// Self-host: native x86 mmc emits aarch64 asm; gcc-
 			// aarch64 assembles + links; qemu-aarch64 runs (or
 			// native, when qemu == "").
-			asm, err := exec.Command(mmc, tc.src, stdlibRoot).Output()
+			asm, err := exec.Command(mmc, tc.src, stdlibRoot, "-target", "arm64").Output()
 			if err != nil {
 				t.Fatalf("self-host compile failed: %v", err)
 			}
