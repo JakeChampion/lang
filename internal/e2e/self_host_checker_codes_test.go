@@ -954,6 +954,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"match-multi-binding-guard", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { match (s) { Rect(w, h) when h > 0 => { return w * h; }, _ => { return 0; } } }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
 		{"match-multi-binding-assign", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { match (s) { Rect(w, h) => { h = h + 1; return w * h; }, Circle(r) => { return r; } } }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
 		{"match-multi-binding-wild-first", "enum Shape { Circle(i32), Rect(i32, i32) }\nfunction area(s: Shape): i32 { return match (s) { Circle(r) => r, Rect(_, h) => h }; }\nfunction main(): i32 { return area(Rect(3, 4)); }\n"},
+		// Guarded match arms (#4344). A guarded arm doesn't fully cover its
+		// variant, so:
+		//   - guarded-then-unguarded is VALID (no false E028) — the self-host
+		//     used to add every variant to `seen` regardless of the guard.
+		//   - a guarded-ONLY variant is NON-exhaustive (E030) — the self-host
+		//     used to count it as covered (accepts-invalid). Native is the
+		//     oracle: the first is clean, the second draws E030.
+		{"match-guarded-then-unguarded-ok", "enum Color { Red, Green, Blue }\nfunction f(c: Color): i32 { match (c) { Red when 1 == 1 => { return 1; }, Red => { return 2; }, Green => { return 3; }, Blue => { return 4; } } }\nfunction main(): i32 { return f(Green); }\n"},
+		{"match-guarded-only-nonexhaustive", "enum Color { Red, Green, Blue }\nfunction f(c: Color): i32 { match (c) { Red when 1 == 2 => { return 1; }, Green => { return 3; }, Blue => { return 4; } } }\nfunction main(): i32 { return f(Green); }\n"},
 	}
 
 	for _, tc := range progs {
