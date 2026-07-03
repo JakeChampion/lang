@@ -86,6 +86,15 @@ var interpProgs = []struct {
 	{"range-break", "function main(): i32 { var s = 0; for i in 0..100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
 	{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
 	{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
+	// Generic trait declaration header `trait Name[T]` with a default
+	// method (#4340): parse_trait_decl walked name -> `:` supertraits ->
+	// `{` and never consumed the `[T]` type-param list, so `[T] { … }`
+	// spilled back into parse_module as a stray array literal + orphan
+	// block and the default method `greet` was lost — dispatch of
+	// `p.greet()` then failed (interp 254). Now the header consumes `[T]`,
+	// so the default method is synthesised onto `impl Greet[i32] for P`
+	// and `p.greet()` resolves to 42.
+	{"generic-trait-default-method", "trait Greet[T] { function greet(self: Self): i32 { return 42; } } struct P { x: i32 } impl Greet[i32] for P {} function main(): i32 { var p = P { x: 1 }; return p.greet(); }", 42},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
