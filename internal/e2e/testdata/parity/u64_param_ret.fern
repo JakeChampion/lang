@@ -1,0 +1,4 @@
+// u64 PARAM + RETURN through a called function (unsigned max), then a logical
+// shift on the result kept in a u64 local (#2904). Exercises the i64-domain
+// param/return signature path plus expr_is_u64 on the local -> 2.
+function umax(a: u64, b: u64): u64 { if (a > b) { return a; } return b; } function main(): i32 { var one: u64 = 1 as u64; var big: u64 = one << 63; var m: u64 = umax(big, one); var sh: u64 = m >> 62; return sh as i32; }

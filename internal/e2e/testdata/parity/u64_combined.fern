@@ -1,0 +1,13 @@
+// Combined (#2904 repro): unsigned compare + logical shift + unsigned div in
+// one program, summed as 1 + 10 + 100 = 111.
+function main(): i32 {
+    var one: u64 = 1 as u64;
+    var big: u64 = one << 63;
+    var r: i32 = 0;
+    if (big > one) { r = r + 1; }
+    var sh: u64 = big >> 62;
+    if (sh == (2 as u64)) { r = r + 10; }
+    var q: u64 = big / (2 as u64);
+    if (q == (one << 62)) { r = r + 100; }
+    return r;
+}

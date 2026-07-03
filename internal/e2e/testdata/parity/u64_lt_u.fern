@@ -1,0 +1,2 @@
+// Unsigned `<` (#2904): 1 < 2^63 is TRUE unsigned (signed: 1 < negative is FALSE) -> 7.
+function main(): i32 { var one: u64 = 1 as u64; var big: u64 = one << 63; if (one < big) { return 7; } return 0; }

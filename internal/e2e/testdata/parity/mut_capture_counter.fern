@@ -1,0 +1,2 @@
+// Counter closure (#2850): read+write capture accumulates across two calls -> 2.
+function main(): i32 { var x = 0; var inc = function (): i32 { x = x + 1; return x; }; var a = inc(); var b = inc(); return x; }

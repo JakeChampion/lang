@@ -1,0 +1,2 @@
+// putchar writes the low byte to stdout (#2839): "Hi\n", exit 0.
+function main(): i32 { putchar(72); putchar(105); putchar(10); return 0; }

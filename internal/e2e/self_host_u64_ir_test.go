@@ -12,7 +12,8 @@ import (
 // u64IRCases exercise std/u64's named methods — `min` / `max` / `clamp` — through
 // the self-host IR path on x86-64 + wasm. The raw unsigned operators
 // (`>` `<` `>>` `/` `%`, plus u64 param+return) are already covered by the #2904
-// `TestSelfHostU64UnsignedIR` family; this adds the std/u64 *method* surface that
+// u64_* fixtures in the parity corpus (testdata/parity/,
+// TestSelfHostParityCorpus*); this adds the std/u64 *method* surface that
 // those don't, and the new wrinkle is **unsigned `clamp`/`max` against a
 // high-bit-set bound** (>= 2^63), where a signed comparison inside the helper
 // would pick the wrong branch. min/max/clamp are inlined verbatim from std/u64 as

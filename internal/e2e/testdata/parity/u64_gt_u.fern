@@ -1,0 +1,3 @@
+// Unsigned `>` (#2904): 2^63 (bit 63 set) > 1 is TRUE unsigned, FALSE signed
+// (2^63 reads as a negative i64). Returns 7 iff the unsigned compare is selected.
+function main(): i32 { var one: u64 = 1 as u64; var big: u64 = one << 63; if (big > one) { return 7; } return 0; }
