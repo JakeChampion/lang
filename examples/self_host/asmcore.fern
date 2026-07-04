@@ -2533,8 +2533,9 @@ pub function parse_unknown_errors_module(mod: parser.Module): string {
     while (fi < mod.funcs.len()) {
         var where: string = "in fn '" + mod.funcs[fi].name + "'";
         if (mod.funcs[fi].name.len() == 0) {
-            errs = errs + "error[P001]: malformed function declaration at "
-                + util.i32_to_string(mod.funcs[fi].line) + ":" + util.i32_to_string(mod.funcs[fi].col) + "\n";
+            errs = errs + "error[P001]: at "
+                + util.i32_to_string(mod.funcs[fi].line) + ":" + util.i32_to_string(mod.funcs[fi].col)
+                + ": malformed function declaration\n";
             where = "in malformed function declaration";
         }
         var bi: i32 = 0;
