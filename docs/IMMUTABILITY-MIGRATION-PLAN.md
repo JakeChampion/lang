@@ -1,15 +1,16 @@
 # Immutability migration plan — scope + struct-update design
 
 Date: 2026-06-01.
-Status: **shipped (Go reference compiler); self-host enforcement partial.**
+Status: **shipped (Go reference compiler + self-host compile drivers).**
 The immutability rules described here are live and tested in the native
 checker — `E048` (struct fields immutable after construction), `E056`
 (`arr[i] = v` subscripts read-only), `E049` (reference-typed closure-capture
 write-back rejected), `E055` (discarded value-returning collection result),
 `E057` (`Cell[T]` restricted to cycle-free scalar/string `T`). The
 sanctioned mutable escape hatch is `Cell[T]` (see `docs/CELL-TYPE-PLAN.md`).
-Remaining work is **self-host parity**: not all self-host drivers gate on
-these rules yet and `checker.fern` does not enforce `E057` — see the
+Remaining work is **self-host parity beyond the compile gate**: field
+immutability (`E048`) is now gated on the self-host checker/CLI + stdin/file
+compile drivers, but the broader checker port remains partial — see the
 "cycle-freedom enforcement is compiler-dependent" issue in the tracker.
 
 ## Purpose
@@ -41,8 +42,7 @@ The decision's 4-step sequencing is:
      cycle vector is closed). The detection keys off the
      `captureChain` + `ast.IsPointerType`.
 
-   **Self-host enforcement — error-reporting groundwork now in place,
-   compile-driver wiring still to come.** The self-host *checker*
+   **Self-host enforcement — shipped on the compile drivers.** The self-host *checker*
    (`checker.fern`) already detects the cycle rules — **E048** (field
    assign, via the `__set_field` desugar), **E056** (subscript assign,
    via `__set_index`), **E055** (discarded pure result), **E049**
@@ -58,8 +58,8 @@ The decision's 4-step sequencing is:
    / `error[E056]` and exits 1) and the `index-assign-e056` differential
    case (self-host E056 matches the Go checker).
 
-   **Compile-driver gate — DONE for the file-loading drivers.** The
-   x86-64 and arm64 file-loading drivers (`asm_load_run.fern`,
+   **Compile-driver gate — DONE on both the file-loading and stdin/specialised
+   drivers.** The x86-64 and arm64 file-loading drivers (`asm_load_run.fern`,
    `asm_arm64_load_run.fern`) now run
    `filter_immutability(check_module(merged).diags)` after flattening and,
    on any hit, `eprint(format_diags(...))` + `return 1` — so codegen itself
@@ -74,11 +74,12 @@ The decision's 4-step sequencing is:
    real latent violation — a self-host test program using the old
    discarded-result `m.insert(...)` idiom — now fixed to `m = m.insert(...)`.
 
-   **Still to do:** the stdin drivers (`asm_run` / `asm_ir_run`, used for
-   small single-file programs) and the wasm/ssa drivers don't gate yet — a
-   mechanical follow-up applying the same three lines. The replacement
-   idioms — struct-update (`T { ...old, f: v }`) and `arr = arr.with(i, v)`
-   — parse, emit, and run on every backend (verified by
+   The same **field-immutability** check now runs on the stdin/specialised
+   drivers (`asm_run`, `asm_ir_run`, `wasm_run`, `wasm_ir_run`, `ssa_emit_run`)
+   before they emit code, so `p.x = v` is rejected consistently instead of
+   compiling on one path and failing on another. The replacement idioms —
+   struct-update (`T { ...old, f: v }`) and `arr = arr.with(i, v)` —
+   parse, emit, and run on every backend (verified by
    `self_host_struct_update_test.go`, `self_host_functional_update_test.go`,
    and the `array_build` / `map_build` differentials).
 

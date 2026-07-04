@@ -10,6 +10,7 @@
 // A SEPARATE driver so wasm.fern + the wasm_run bootstrap stay untouched.
 
 import "std/io";
+import "./checker";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -26,6 +27,11 @@ function main(): i32 {
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var imm: checker.Diag[] = checker.filter_field_immutability(checker.check_module(mod).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
     var emitted: string = "";
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
     // Eligibility must be judged with the builtin structs/enums injected

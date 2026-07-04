@@ -4607,6 +4607,20 @@ pub function filter_immutability(diags: Diag[]): Diag[] {
     return out;
 }
 
+// filter_field_immutability keeps only E048 (assignment to an immutable struct
+// field) — the cycle-closing field-mutation rule. The stdin/self-host compile
+// drivers use this narrower gate so they close the field-mutation hole without
+// also changing the status quo of unrelated self-host mutation diagnostics.
+pub function filter_field_immutability(diags: Diag[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (diags[i].code == "E048") { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // format_diags renders diagnostics one-per-line as
 // `error[CODE]: message (line:col)` — the self-host counterpart of the Go
 // driver's diag.Format. Used by the checking drivers to surface a rejection

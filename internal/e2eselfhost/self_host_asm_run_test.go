@@ -1931,18 +1931,18 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-update-3a", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, a: 50 }; return w.a + w.b + w.c; }", 55, "", ""},
 		{"struct-update-3c", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, c: 90 }; return w.a + w.b + w.c; }", 93, "", ""},
 		{"struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, "", ""},
-		// Field mutation `p.x = v` (in-place struct_set, scalar fields).
-		{"field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, "", ""},
-		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 0 }; p.x = 30; p.y = 12; return p.x + p.y; }", 42, "", ""},
-		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, "", ""},
-		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, "", ""},
+		// Functional struct update replaces field mutation (`p.x = v`).
+		{"field-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }", 42, "", ""},
+		{"field-update-both", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 0 }; p = P { ...p, x: 30 }; p = P { ...p, y: 12 }; return p.x + p.y; }", 42, "", ""},
+		{"field-update-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }", 10, "", ""},
+		{"field-update-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = P { ...p, x: 9 }; return p.x * 10 + q.x; }", 19, "", ""},
 		// String-returning functions (str_ret_fns tracking; box leaks).
 		{"str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, "", ""},
 		{"str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, "", ""},
 		// String-typed struct/enum fields (leak-safe — strings never freed, no RC).
 		{"struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, "", ""},
 		{"struct-str-method", "struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { var x = N { s: \"abcd\" }; return x.sz(); }", 4, "", ""},
-		{"struct-str-mutate", "struct N { s: string } function main(): i32 { var n = N { s: \"a\" }; n.s = \"abcde\"; return n.s.len(); }", 5, "", ""},
+		{"struct-str-update", "struct N { s: string } function main(): i32 { var n = N { s: \"a\" }; n = N { ...n, s: \"abcde\" }; return n.s.len(); }", 5, "", ""},
 		{"enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, "", ""},
 		{"match-guard-fallthrough", "enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }", 123, "", ""},
 		{"match-guard-mixed", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) when n > 3 => { return n * 2; }, A(n) => { return n; }, B => { return 99; } } return 0; } function main(): i32 { return f(A(5)) + f(A(1)) + f(B); }", 110, "", ""},

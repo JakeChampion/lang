@@ -13,9 +13,9 @@ import (
 // arm is the `audit_types_match` fixture (all four native backends).
 //
 // NOTE: struct fields are immutable after construction — the sanctioned
-// update is functional (`T { ...old, f: v }`). The native checker rejects
-// `p.x = v` (E048); the self-host checker currently does NOT (issue
-// #2825), so these cases deliberately use only functional update.
+// update is functional (`T { ...old, f: v }`). The self-host compile
+// drivers now match the native checker and reject `p.x = v` (E048), so
+// these cases deliberately use only functional update.
 var auditTypesCases = []struct {
 	name string
 	src  string

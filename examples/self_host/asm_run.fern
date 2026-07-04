@@ -13,6 +13,7 @@
 // asm.fern produces working executables.
 
 import "std/io";
+import "./checker";
 import "./lexer";
 import "./parser";
 import "./asm";
@@ -20,6 +21,11 @@ import "./asm";
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var imm: checker.Diag[] = checker.filter_field_immutability(checker.check_module(mod).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
     var emitted: string = asm.emit_module(parser.module_with_builtins(mod));
     print(emitted);
     return 0;

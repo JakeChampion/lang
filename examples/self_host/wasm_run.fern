@@ -11,6 +11,7 @@
 // that wasm.fern emits runnable WebAssembly.
 
 import "std/io";
+import "./checker";
 import "./lexer";
 import "./parser";
 import "./wasm";
@@ -18,6 +19,11 @@ import "./wasm";
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var imm: checker.Diag[] = checker.filter_field_immutability(checker.check_module(mod).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
     var emitted: string = wasm.emit_module(parser.module_with_builtins(mod));
     write(emitted);
     return 0;

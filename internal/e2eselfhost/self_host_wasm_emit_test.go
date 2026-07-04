@@ -173,10 +173,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Functional struct update `P { ...base, f: v }`.
 		{"ir-struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, ""},
 		{"ir-struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, ""},
-		// Field mutation `p.x = v`.
-		{"ir-field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, ""},
-		{"ir-field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, ""},
-		{"ir-field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, ""},
+		// Functional struct update replaces field mutation (`p.x = v`).
+		{"ir-field-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }", 42, ""},
+		{"ir-field-update-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }", 10, ""},
+		{"ir-field-update-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = P { ...p, x: 9 }; return p.x * 10 + q.x; }", 19, ""},
 		{"ir-str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, ""},
 		{"ir-str-index-local", "function main(): i32 { var s = \"hello\"; return s[0]; }", 104, ""},
 		{"ir-str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }", 94, ""},
@@ -416,10 +416,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"split-no-match", "function main(): i32 { var parts = \"abc\".split(\",\"); return parts.len(); }", 1, ""},
 		{"split-then-join", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); return 0; }", 0, "a-b-c"},
 		{"split-elem-method", "function main(): i32 { var parts = \"ab,cd\".split(\",\"); write(parts[0].to_upper()); return 0; }", 0, "AB"},
-		// Structs: literal, field read, field assign, struct param/return.
+		// Structs: literal, field read, functional update, struct param/return.
 		{"struct-field-read", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }", 42, ""},
 		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 2, x: 40 }; return p.x; }", 40, ""},
-		{"struct-field-assign", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 99; return p.x + p.y; }", 101, ""},
+		{"struct-field-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 99 }; return p.x + p.y; }", 101, ""},
 		{"struct-string-field", "struct Person { name: string, age: i32 } function main(): i32 { var p = Person { name: \"Sam\", age: 30 }; write(p.name); return p.age; }", 30, "Sam"},
 		{"struct-string-field-concat", "struct Person { name: string, age: i32 } function main(): i32 { var p = Person { name: \"Sam\", age: 30 }; write(\"hi \" + p.name); return 0; }", 0, "hi Sam"},
 		{"struct-string-field-method", "struct Box { s: string } function main(): i32 { var b = Box { s: \"abc\" }; write(b.s.to_upper()); return 0; }", 0, "ABC"},
@@ -427,7 +427,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"struct-return", "struct P { x: i32, y: i32 } function mk(): P { return P { x: 20, y: 22 }; } function main(): i32 { var p = mk(); return p.x + p.y; }", 42, ""},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 40 }, k: 2 }; return o.inner.v + o.k; }", 42, ""},
 		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 40 }; return q.x + q.y; }", 42, ""},
-		{"struct-field-in-loop", "struct Acc { total: i32 } function main(): i32 { var a = Acc { total: 0 }; var i = 1; while (i <= 5) { a.total = a.total + i; i = i + 1; } return a.total; }", 15, ""},
+		{"struct-field-in-loop", "struct Acc { total: i32 } function main(): i32 { var a = Acc { total: 0 }; var i = 1; while (i <= 5) { a = Acc { ...a, total: a.total + i }; i = i + 1; } return a.total; }", 15, ""},
 		// Option / Result via tag boxes + match.
 		{"opt-some", "function find(): Option[i32] { return Some(42); } function main(): i32 { match (find()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
 		{"opt-none", "function find(): Option[i32] { return None; } function main(): i32 { match (find()) { Some(v) => { return v; }, None => { return 7; } } return 1; }", 7, ""},
@@ -975,8 +975,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"string-char-compare", "function main(): i32 { var s: string = \"a1b2\"; var digits: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (s[i] >= 48 && s[i] <= 57) { digits = digits + 1; } i = i + 1; } print_int(digits); return 0; }", 0, "2"},
 		{"elseif-chain", "function grade(n: i32): string { if (n >= 90) { return \"A\"; } else if (n >= 80) { return \"B\"; } else if (n >= 70) { return \"C\"; } else { return \"F\"; } } function main(): i32 { write(grade(95)); write(grade(85)); write(grade(50)); return 0; }", 0, "ABF"},
 		{"three-variant-union", "struct A { v: i32 } struct B { v: i32 } struct C { v: i32 } type T = A | B | C; function f(t: T): i32 { match (t) { A(a) => { return a.v + 1; }, B(b) => { return b.v + 2; }, C(c) => { return c.v + 3; } } return 0; } function main(): i32 { print_int(f(A { v: 10 })); print_int(f(B { v: 10 })); print_int(f(C { v: 10 })); return 0; }", 0, "111213"},
-		{"struct-mutate-via-fn", "struct Counter { n: i32 } function bump(c: Counter): i32 { c.n = c.n + 1; return 0; } function main(): i32 { var c = Counter { n: 5 }; bump(c); bump(c); print_int(c.n); return 0; }", 0, "7"},
-		{"array-elem-field-set", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; pts[0].x = 99; print_int(pts[0].x); print_int(pts[1].x); return 0; }", 0, "993"},
+		{"struct-update-via-fn", "struct Counter { n: i32 } function bump(c: Counter): Counter { return Counter { ...c, n: c.n + 1 }; } function main(): i32 { var c = Counter { n: 5 }; c = bump(c); c = bump(c); print_int(c.n); return 0; }", 0, "7"},
+		{"array-elem-field-update", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; pts = pts.with(0, Pt { ...pts[0], x: 99 }); print_int(pts[0].x); print_int(pts[1].x); return 0; }", 0, "993"},
 		{"string-methods-combo", "function main(): i32 { var s: string = \"hello world\"; if (s.starts_with(\"hello\")) { print_int(1); } if (s.contains(\"o w\")) { print_int(2); } print_int(s.index_of(\"world\")); return 0; }", 0, "126"},
 
 		// Hardening pass 6: bitwise operators (i32 + i64).
@@ -997,7 +997,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// unary, and complex conditions.
 		{"compound-assign-var", "function main(): i32 { var x: i32 = 10; x += 5; x -= 2; x *= 2; x /= 3; x %= 5; print_int(x); return 0; }", 0, "3"},
 		{"compound-assign-array", "function main(): i32 { var xs = [1, 2, 3]; xs[1] += 10; xs[2] *= 5; print_int(xs[1]); print_int(xs[2]); return 0; }", 0, "1215"},
-		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n += 3; c.n *= 2; print_int(c.n); return 0; }", 0, "16"},
+		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c = C { ...c, n: c.n + 3 }; c = C { ...c, n: c.n * 2 }; print_int(c.n); return 0; }", 0, "16"},
 		{"hex-literal", "function main(): i32 { print_int(0xFF); print_int(0x10); return 0; }", 0, "25516"},
 		{"escape-sequences", "function main(): i32 { write(\"a\\tb\\nc\"); return 0; }", 0, "a\tb\nc"},
 		// \xNN hex byte escapes (string + f-string), via string_from_bytes.

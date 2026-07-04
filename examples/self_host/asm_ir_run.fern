@@ -19,6 +19,7 @@
 // ~50 asm_run-based harnesses stay untouched.
 
 import "std/io";
+import "./checker";
 import "./lexer";
 import "./parser";
 import "./asm";
@@ -119,6 +120,11 @@ function main(): i32 {
         var ni: i32 = 0;
         while (ni < nds.len()) { print(nds[ni] + "\n"); ni = ni + 1; }
         return 0;
+    }
+    var imm: checker.Diag[] = checker.filter_field_immutability(checker.check_module(mod).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
     }
     // `-target arm64`: the arm64 leg (replacing the retired asm_arm64_ir_run
     // mirror). `-ir` + fully-eligible routes IR via asm_arm64.emit_module_ir —

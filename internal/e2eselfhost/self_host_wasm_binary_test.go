@@ -98,7 +98,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"shift-right", "function main(): i32 { return 100 >> 2; }", 25},
 		{"shift-left", "function main(): i32 { return 5 << 3; }", 40},
 		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
-		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n = c.n + 37; return c.n; }", 42},
+		{"struct-update", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c = C { ...c, n: c.n + 37 }; return c.n; }", 42},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
 		// i64.
 		{"i64-div", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 7; return ((a / 1000000000) + b) as i32; }", 12},

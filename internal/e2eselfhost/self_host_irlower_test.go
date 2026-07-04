@@ -163,7 +163,7 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"struct-lit-unused", "struct P { x: i32 } function main(): i32 { var p = P { x: 7 }; return 5; }", 5},
 		{"struct-nested", "struct P { x: i32 } struct Q { p: P } function main(): i32 { var q = Q { p: P { x: 9 } }; return q.p.x; }", 9},
 		{"struct-bool-field", "struct F { a: boolean, n: i32 } function main(): i32 { var f = F { a: true, n: 8 }; if (f.a) { return f.n; } return 0; }", 8},
-		{"struct-mutate", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; p.x = 41; return p.x + 1; }", 42},
+		{"struct-update", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; p = P { ...p, x: 41 }; return p.x + 1; }", 42},
 		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { ...a, y: 40 }; return b.x + b.y; }", 41},
 		{"struct-in-loop", "struct P { x: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i }; s = s + p.x; i = i + 1; } return s; }", 6},
 		{"enum-bare-construct", "enum E { A, B } function main(): i32 { var e = E.A; return 5; }", 5},

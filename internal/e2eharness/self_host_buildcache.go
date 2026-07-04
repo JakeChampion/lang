@@ -203,6 +203,7 @@ func BuildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
 
 func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 	t.Helper()
+	ensureSelfHostDriverDeps(t, dir, fernName)
 	key := HashSelfHostSources(t, dir, fernName)
 	path, err := selfHostDriverBinCache.get(key, func() (string, error) {
 		base, err := linkCacheBaseDir()
@@ -261,6 +262,24 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func ensureSelfHostDriverDeps(t *testing.T, dir, fernName string) {
+	t.Helper()
+	switch fernName {
+	case "asm_run.fern", "asm_ir_run.fern", "wasm_run.fern", "wasm_ir_run.fern", "ssa_emit_run.fern":
+		dst := filepath.Join(dir, "checker.fern")
+		if _, err := os.Stat(dst); err == nil {
+			return
+		}
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", "checker.fern"))
+		if err != nil {
+			t.Fatalf("read checker.fern: %v", err)
+		}
+		if err := os.WriteFile(dst, src, 0o644); err != nil {
+			t.Fatalf("write checker.fern: %v", err)
+		}
+	}
 }
 
 var fastLinkOnce sync.Once

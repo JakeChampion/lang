@@ -7,6 +7,7 @@
 // proof that AST → SSA → optimise → emit → execute preserves semantics.
 
 import "std/io";
+import "./checker";
 import "./lexer";
 import "./parser";
 import "./ssa";
@@ -25,6 +26,11 @@ function main(): i32 {
     }
 
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    var imm: checker.Diag[] = checker.filter_field_immutability(checker.check_module(mod).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
     mod = parser.fill_default_args_module(mod);
     // Several lowerings (build_func) emit calls to injected runtime helper
     // functions (__ssa_*) defined in pure Fern (ssa.ssa_helpers_src) — the map
