@@ -1,11 +1,20 @@
 name: Test e2e self-host
 
-# `TestSelfHost*` — the self-hosting pipeline suite under
-# internal/e2e/self_host_*.go. Covers the bootstrap chain
+# `TestSelfHost*` — the self-hosting pipeline suite, now its own Go
+# package `internal/e2eselfhost` (#4398 part 3: the e2e package split;
+# shared harness in internal/e2eharness). Covers the bootstrap chain
 # (lexer → parser → checker → constfold → printer → disasm → asm →
 # VM → cross-validation → self-compile). Each test runs the
 # current `lang` binary against the in-tree self-host sources and
 # diffs the output against the reference.
+#
+# RESIDUAL TESTS: ~30 TestSelfHost* functions still live in
+# internal/e2e — files that pair a TestSelfHost* leg with its
+# TestNative* oracle sibling sharing one fixture table (splitting them
+# would sever the fixtures). The build job compiles BOTH test binaries
+# and the shard script round-robins over the UNION of both lists,
+# running each test against the binary/package it lives in — so the
+# residuals keep exactly their old coverage.
 #
 # COMPILE ONCE, RUN MANY. A `build` job (per arch) compiles the e2e
 # test binary a single time with `go test -c` and uploads it as an
@@ -177,12 +186,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
-      - name: compile e2e test binary (go test -c)
-        run: go test -c -o e2e.test ./internal/e2e/
+      # Two binaries: the selfhost package plus the remainder package (for
+      # the ~30 residual TestSelfHost tests in mixed fixture files — see
+      # RESIDUAL TESTS above).
+      - name: compile test binaries (go test -c)
+        run: |
+          go test -c -o e2eselfhost.test ./internal/e2eselfhost/
+          go test -c -o e2e.test ./internal/e2e/
       - uses: actions/upload-artifact@v4
         with:
           name: e2e-test-${{ matrix.host.name }}
-          path: e2e.test
+          path: |
+            e2eselfhost.test
+            e2e.test
           retention-days: 1
           if-no-files-found: error
 
@@ -233,9 +249,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
-          chmod +x e2e.test
-          BIN="$PWD/e2e.test"
-          cd internal/e2e
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
           "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       # CLI/whole-compiler driver tests, folded into the `cli` warm job. Only the
@@ -257,9 +273,9 @@ jobs:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          chmod +x e2e.test
-          BIN="$PWD/e2e.test"
-          cd internal/e2e
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
           "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
       # Publish each warmed driver for the `test` shards to restore — EXCEPT `cli`:
@@ -377,30 +393,44 @@ jobs:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-irx86"
         run: |
           set -euo pipefail
-          chmod +x e2e.test
-          BIN="$PWD/e2e.test"
-          # Sorted list of every TestSelfHost* function, partitioned round-robin
-          # by list index so each shard runs a disjoint ~1/N slice. Read from the
-          # prebuilt binary (no recompile). Sorting makes the partition
-          # deterministic and stable as tests are added. The isolated fern.fern
-          # driver tests (ISOLATED_DRIVER_TESTS) are filtered out here — they run
-          # in the dedicated `driver-tests` job, not the round-robin shards.
-          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
-          SEL=()
+          chmod +x e2eselfhost.test e2e.test
+          SH_BIN="$PWD/e2eselfhost.test"
+          E2E_BIN="$PWD/e2e.test"
+          # Sorted UNION of every TestSelfHost* function across BOTH packages
+          # (internal/e2eselfhost + the ~30 residuals still in internal/e2e —
+          # see RESIDUAL TESTS above), partitioned round-robin by list index so
+          # each shard runs a disjoint ~1/N slice. Read from the prebuilt
+          # binaries (no recompile). Sorting makes the partition deterministic
+          # and stable as tests are added. The isolated fern.fern driver tests
+          # (ISOLATED_DRIVER_TESTS) are filtered out here — they run inside the
+          # `cli` warm job, not the round-robin shards.
+          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
+          mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
+          mapfile -t ALL < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort)
+          SEL_SH=()
+          SEL_RES=()
           for i in "${!ALL[@]}"; do
-            if [ $(( i % NSHARD )) -eq "$SHARD" ]; then SEL+=("${ALL[$i]}"); fi
+            if [ $(( i % NSHARD )) -eq "$SHARD" ]; then
+              t="${ALL[$i]}"
+              # membership: residual tests run against the e2e binary, the rest
+              # against the selfhost binary (names are disjoint across packages).
+              if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
+            fi
           done
-          if [ ${#SEL[@]} -eq 0 ]; then
+          if [ ${#SEL_SH[@]} -eq 0 ] && [ ${#SEL_RES[@]} -eq 0 ]; then
             echo "no TestSelfHost tests for shard $SHARD/$NSHARD"; exit 0
           fi
-          # Anchored alternation: ^(A|B|C)$ matches each top-level test exactly
-          # (and runs all of its subtests).
-          PAT="^($(IFS='|'; echo "${SEL[*]}"))\$"
-          echo "shard $SHARD/$NSHARD: ${#SEL[@]} tests: ${SEL[*]}"
-          # Run from the package dir so the tests' ../../ relative paths
+          echo "shard $SHARD/$NSHARD: ${#SEL_SH[@]} selfhost-pkg + ${#SEL_RES[@]} residual tests"
+          # Run from each package dir so the tests' ../../ relative paths
           # (examples/self_host, internal/stdlib) resolve. -test.v streams each
           # test's RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min
           # job budget so a genuine hang fails cleanly; a preemption reclaim is
           # distinct and out of our control (see RUNNER PREEMPTION above).
-          cd internal/e2e
-          "$BIN" -test.run "$PAT" -test.v -test.timeout 18m
+          if [ ${#SEL_SH[@]} -gt 0 ]; then
+            PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
+            ( cd internal/e2eselfhost && "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
+          fi
+          if [ ${#SEL_RES[@]} -gt 0 ]; then
+            PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
+            ( cd internal/e2e && "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
+          fi

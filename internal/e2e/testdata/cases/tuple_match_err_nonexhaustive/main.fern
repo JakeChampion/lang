@@ -1,0 +1,10 @@
+// A tuple match with only refutable arms (every arm carries a
+// literal element or a guard) is not exhaustive.
+function main(): i32 {
+    var p = (1, 2);
+    match (p) {
+        (0, y) => { return y; },
+        (x, y) when x > y => { return x; }
+    }
+    return 0;
+}

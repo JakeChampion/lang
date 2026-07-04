@@ -132,3 +132,111 @@ func TestWasmArraySetProjectionNoUnderflow(t *testing.T) {
 		t.Errorf(".with-projection release must stay balanced: want exit 0, got %d", got)
 	}
 }
+
+// #4399 sink 4a — if-expr yield balance: whichever arm runs, the yielded
+// alias is inc'd and every local (sources + binding) reclaims exactly once.
+func ifYieldBalanceSrc(cond string) string {
+	return `function pick(c: boolean, k: i32): i32 {
+    var a: i32[][] = [[k, k + 1]];
+    var b2: i32[][] = [[k + 2]];
+    var v: i32[][] = if (c) { a } else { b2 };
+    var e: i32[] = v[0];
+    return e[0];
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 200) {
+        s = s + pick(` + cond + `, i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    return __rc_underflow_count();
+}`
+}
+
+func TestX86_64IfExprYieldNoUnderflow(t *testing.T) {
+	for _, cond := range []string{"true", "false", "i % 2 == 0"} {
+		if got := mustRunX86_64FreeOn(t, ifYieldBalanceSrc(cond)); got != 0 {
+			t.Errorf("if-yield release must stay balanced (cond=%s): want exit 0, got %d", cond, got)
+		}
+	}
+}
+
+func TestWasmIfExprYieldNoUnderflow(t *testing.T) {
+	for _, cond := range []string{"true", "false", "i % 2 == 0"} {
+		if got := runWasm(t, ifYieldBalanceSrc(cond)); got != 0 {
+			t.Errorf("if-yield release must stay balanced (cond=%s): want exit 0, got %d", cond, got)
+		}
+	}
+}
+
+// #4399 sink 4b — match-expr yields are counted in all lowering routes.
+// The general (enum) route and the literal route both yield aliased
+// locals from arms; balance must stay exact whichever arm runs.
+const matchYieldBalanceSrc = `enum Tag { A, B }
+function pick(t: Tag, k: i32): i32 {
+    var a: i32[][] = [[k, k + 1]];
+    var b2: i32[][] = [[k + 2]];
+    var v: i32[][] = match (t) { A => a, _ => b2 };
+    var w: i32[][] = match (k % 2) { 0 => a, _ => v };
+    return w[0][0];
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 200) {
+        var t: Tag = A;
+        if (i % 3 == 0) { t = B; }
+        s = s + pick(t, i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64MatchExprYieldNoUnderflow(t *testing.T) {
+	if got := mustRunX86_64FreeOn(t, matchYieldBalanceSrc); got != 0 {
+		t.Errorf("match-yield release must stay balanced: want exit 0, got %d", got)
+	}
+}
+
+func TestWasmMatchExprYieldNoUnderflow(t *testing.T) {
+	if got := runWasm(t, matchYieldBalanceSrc); got != 0 {
+		t.Errorf("match-yield release must stay balanced: want exit 0, got %d", got)
+	}
+}
+
+// #4402 opt 1 — dead-alias cancellation balance: reads through the borrowed
+// view stay valid for the whole function, releases stay exact, and the churn
+// loop stays flat (x reclaims once per call; the elided pair adds nothing).
+const deadAliasBalanceSrc = `function work(k: i32): i32 {
+    var x: i32[][] = [[k, k + 1], [k + 2]];
+    var y: i32[][] = x;
+    return y[1][0] + y[0][1] + x[0][0];
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 5000) {
+        s = s + work(i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    if (__rc_underflow_count() != 0) { return 2; }
+    if (__heap_bump_bytes() - before > 65536) { return 3; }
+    return 0;
+}`
+
+func TestX86_64DeadAliasCancellationBalanced(t *testing.T) {
+	if got := mustRunX86_64FreeOn(t, deadAliasBalanceSrc); got != 0 {
+		t.Errorf("dead-alias cancellation must stay balanced and flat: want exit 0, got %d", got)
+	}
+}
+
+func TestWasmDeadAliasCancellationBalanced(t *testing.T) {
+	if got := runWasm(t, deadAliasBalanceSrc); got != 0 {
+		t.Errorf("dead-alias cancellation must stay balanced and flat: want exit 0, got %d", got)
+	}
+}

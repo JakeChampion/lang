@@ -85,7 +85,7 @@ function main(): i32 {
 	// unwritten (and never zero-inited) on every path that skips the arm.
 	for i := 0; i+1 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind == ir.OpLoadLocal &&
-			fn.Ops[i+1].Kind == ir.OpCallDirect && fn.Ops[i+1].Str == "__fern_rc_dec" {
+			fn.Ops[i+1].Kind == ir.OpRcDec {
 			slot := fn.Ops[i].I32
 			if slot > 1 && !zeroed[slot] {
 				t.Errorf("return sweep decs slot %d (not a param, not zero-stored) — a same-named match binding shadowed the var's slot; that slot is uninitialized stack garbage on paths that skip its arm (heap corruption)", slot)

@@ -669,6 +669,7 @@ func CloneStmt(s Stmt) Stmt {
 			ac := *arm
 			ac.Guard = CloneExpr(arm.Guard)
 			ac.Body = CloneBlock(arm.Body)
+			ac.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
 			c.Arms[i] = &ac
 		}
 		return &c
@@ -749,6 +750,7 @@ func CloneExpr(e Expr) Expr {
 				a.Guard = CloneExpr(arm.Guard)
 			}
 			a.Body = CloneExpr(arm.Body)
+			a.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
 			c.Arms[i] = &a
 		}
 		return &c
@@ -2254,6 +2256,16 @@ type Match struct {
 // with VariantName / IsWildcard — the parser sets exactly one
 // of {Literal, IsWildcard, VariantName}. Literal-pattern arms
 // dispatch via equality comparison instead of tag-based match.
+// TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
+// match arm — exactly one of: a binder name (binds the element in the
+// arm's scope), the `_` wildcard (element ignored), or a literal
+// (element compared by equality). See MatchArm.TupleElems.
+type TuplePatElem struct {
+	Name       string // binder; empty when IsWildcard or Literal != nil
+	IsWildcard bool   // `_` element
+	Literal    Expr   // literal element; nil otherwise
+}
+
 type MatchArm struct {
 	P           Position
 	VariantName string // empty when IsWildcard or Literal != nil
@@ -2274,8 +2286,15 @@ type MatchArm struct {
 	NamedFields bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
-	Guard       Expr // optional `when <expr>`; nil for unconditional arms
-	Body        *Block
+	// TupleElems is a tuple pattern `(p0, p1, …) => …` on a tuple-typed
+	// scrutinee — one element per scrutinee tuple element (arity checked
+	// by the checker). Nil for non-tuple patterns; mutually exclusive
+	// with VariantName / IsWildcard / Literal. BindingTypes runs parallel
+	// to TupleElems (the checker fills it with the scrutinee's element
+	// types) so the IR picks the right per-element load width.
+	TupleElems []TuplePatElem
+	Guard      Expr // optional `when <expr>`; nil for unconditional arms
+	Body       *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -2309,8 +2328,11 @@ type MatchExprArm struct {
 	NamedFields   bool // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
-	Guard         Expr
-	Body          Expr
+	// TupleElems is a tuple pattern on a tuple-typed scrutinee — see
+	// MatchArm.TupleElems. BindingTypes runs parallel to it.
+	TupleElems []TuplePatElem
+	Guard      Expr
+	Body       Expr
 }
 
 func (s *Block) Pos() Position                  { return s.P }

@@ -2232,15 +2232,18 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return memory.InstI32Store8(body, 0, 0), nil
 
 	// ---- Calls (slice 5) ----
-	case ir.OpCallDirect:
+	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
 		// Source-language built-ins (e.g. `print(s)`) get lowered
 		// to OpCallDirect with the source name. Map those names
 		// onto the synthetic runtime helpers that implement them.
 		// User functions and helpers without an alias map 1:1.
+		// The dedicated rc ops (#4402 opt 2) carry the helper name
+		// in Str and lower to the same plain call; opt 2b replaces
+		// this shared path with inline fast-path bodies.
 		name := callDirectAlias(op.Str)
 		idx, ok := ctx.funcIdx[name]
 		if !ok {
-			return nil, fmt.Errorf("OpCallDirect: unknown callee %q", op.Str)
+			return nil, fmt.Errorf("%s: unknown callee %q", op.Kind, op.Str)
 		}
 		return inst.InstCall(body, idx), nil
 
@@ -2511,13 +2514,13 @@ var CallDirectAliases = map[string]string{
 	// declares concrete `_impl` counterparts and call sites route
 	// through these aliases. Mirrors codegenAliasMap in the WAT
 	// path verbatim.
-	"map_new":                   "map_new_impl",
-	"__method_Map_len":          "__map_len_impl",
-	"__method_Map_has":          "__map_has_impl",
-	"__method_Map_get":          "__map_get_impl",
-	"__method_Map_get_or":       "__map_get_or_impl",
-	"__method_Map_set":          "__map_set_impl",
-	"__method_Map_delete":       "__map_delete_impl",
+	"map_new":             "map_new_impl",
+	"__method_Map_len":    "__map_len_impl",
+	"__method_Map_has":    "__map_has_impl",
+	"__method_Map_get":    "__map_get_impl",
+	"__method_Map_get_or": "__map_get_or_impl",
+	"__method_Map_set":    "__map_set_impl",
+	"__method_Map_delete": "__map_delete_impl",
 	// Struct/enum (keyKind-3) keys: `_keyed` variants take the key
 	// type's derived hash/eq as trailing fn-value args (#2671).
 	"__method_Map_has_keyed":    "__map_has_keyed_impl",

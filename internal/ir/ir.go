@@ -301,6 +301,24 @@ const (
 	// OpCallClosureDirect — the pair's fn_idx field
 	// becomes dead, the pair allocation goes away with it.
 	OpMakeEnv // (cap_0 ... cap_{n-1}) → i32 (env ptr or 0)
+
+	// Dedicated refcount ops (#4402 opt 2). Every rc-inc / rc-dec /
+	// is-unique probe used to be an OpCallDirect to the matching
+	// runtime helper, invisible to IR passes except by Str match.
+	// The dedicated kinds make rc traffic structurally visible
+	// (dup/drop fusion, token threading) and give backends a seam
+	// to inline the fast path (sentinel test + in-place RMW) with
+	// the helper call as the fallback body.
+	//
+	// All three are pass-through-shaped like the helpers they
+	// replace: one pointer popped, one word pushed (rc_inc / rc_dec
+	// return their argument; is_unique returns the 0/1 flag). Str
+	// still carries the runtime-helper symbol and I32 the arg count
+	// (always 1), so helper-reachability scans and the backends'
+	// call-lowering paths stay shared with OpCallDirect.
+	OpRcInc      // (ptr) → ptr (pass-through; bumps rc, sentinel-guarded)
+	OpRcDec      // (ptr) → ptr (pass-through; drops one reference)
+	OpRcIsUnique // (ptr) → i32 (1 iff rc == 1; sentinel/static → 0)
 )
 
 // BlockType describes the type a block / loop / if leaves on the stack
@@ -507,6 +525,12 @@ func (k OpKind) String() string {
 		return "make_closure"
 	case OpMakeEnv:
 		return "make_env"
+	case OpRcInc:
+		return "rc.inc"
+	case OpRcDec:
+		return "rc.dec"
+	case OpRcIsUnique:
+		return "rc.is_unique"
 	}
 	return "<invalid>"
 }
@@ -1571,7 +1595,8 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s", op.Kind, blockTypeName(op.I32))
 	case OpBr, OpBrIf:
 		return fmt.Sprintf("%s %d", op.Kind, op.I32)
-	case OpCallDirect, OpCallClosureDirect, OpCallDirectPair:
+	case OpCallDirect, OpCallClosureDirect, OpCallDirectPair,
+		OpRcInc, OpRcDec, OpRcIsUnique:
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
@@ -5538,7 +5563,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 					return err
 				}
 				b.openIf(BlockTypeVoid)
-				if err := b.expr(arm.Body); err != nil {
+				if err := b.emitCountedYield(arm.Body); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5546,7 +5571,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 				b.closeScope()
 				continue
 			}
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5570,7 +5595,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 				return err
 			}
 			b.openIf(BlockTypeVoid)
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5580,12 +5605,276 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			continue
 		}
 		b.openIf(BlockTypeVoid)
-		if err := b.expr(arm.Body); err != nil {
+		if err := b.emitCountedYield(arm.Body); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 		b.brTo(exitDepth, false)
 		b.closeScope()
+	}
+	b.closeScope()
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+// isTupleMatch / isTupleMatchExprArms report whether any arm carries a
+// tuple pattern — the dispatch cue for a tuple-typed scrutinee (the
+// checker guarantees the remaining arms are tuple patterns or `_`).
+func isTupleMatch(arms []*ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.TupleElems != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isTupleMatchExprArms(arms []*ast.MatchExprArm) bool {
+	for _, arm := range arms {
+		if arm.TupleElems != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// tupleMatchPrep caches the scrutinee tuple pointer in a scratch slot.
+// The pointer is BORROWED (no inc, no free), mirroring the enum-match
+// heap-form scrutinee; bindings extracted on the matched path are
+// borrows of the box's elements the same way enum payload bindings are.
+func (b *builder) tupleMatchPrep(tag ast.Expr, elems []ast.Type) (ptrSlot int32, offs []int32, elemName []string, err error) {
+	ptrSlot = b.allocSlot()
+	b.locals[fmt.Sprintf("__tup_match_p_%d", ptrSlot)] = ptrSlot
+	if err := b.expr(tag); err != nil {
+		return 0, nil, nil, err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+	offs, _ = tupleElemLayout(elems, b.ptrW)
+	elemName = make([]string, len(elems))
+	return ptrSlot, offs, elemName, nil
+}
+
+// tupleMatchElemIdent returns (lazily creating) a synthetic typed
+// scratch local holding element k of the scrutinee, for use as the left
+// side of a literal-comparison Binary — the exact emitLiteralMatch
+// scrutinee-slot shape, which settles string (OpStrEq) / float compares
+// uniformly, including the two-word string ABI.
+func (b *builder) tupleMatchElemIdent(ptrSlot int32, offs []int32, elems []ast.Type, elemName []string, k int) string {
+	if elemName[k] != "" {
+		return elemName[k]
+	}
+	s := b.allocSlot()
+	name := fmt.Sprintf("__tup_match_e_%d", s)
+	b.locals[name] = s
+	b.scratchType[s] = elems[k]
+	elemName[k] = name
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: offs[k]})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(payloadLoadOpFor(elems[k], b.ptrW))
+	b.emit(Op{Kind: OpStoreLocal, I32: s})
+	return name
+}
+
+// tupleMatchArmCond builds the arm's literal-element condition as an
+// AST expression (nil when the arm is irrefutable — all binders / `_`).
+func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatElem, ptrSlot int32, offs []int32, elems []ast.Type, elemName []string) ast.Expr {
+	var cond ast.Expr
+	for k, el := range tupleElems {
+		if el.Literal == nil || k >= len(elems) {
+			continue
+		}
+		name := b.tupleMatchElemIdent(ptrSlot, offs, elems, elemName, k)
+		eq := &ast.Binary{
+			P:           arm,
+			Op:          "==",
+			Left:        &ast.Ident{P: arm, Name: name},
+			Right:       el.Literal,
+			IsStringCmp: isStringType(elems[k]),
+			IsFloat:     isFloatType(elems[k]),
+		}
+		if cond == nil {
+			cond = eq
+		} else {
+			cond = &ast.Binary{P: arm, Op: "&&", Left: cond, Right: eq}
+		}
+	}
+	return cond
+}
+
+// tupleMatchBindArm extracts the arm's binder elements from the tuple
+// box into their binding slots (same load shape as the enum-match
+// heap-form payload binds — borrowed, no inc).
+func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, ptrSlot int32, offs []int32) {
+	for k, el := range tupleElems {
+		if el.Name == "" || k >= len(offs) {
+			continue
+		}
+		bt := ast.Type(ast.NumberType{})
+		if k < len(bindingTypes) && bindingTypes[k] != nil {
+			bt = bindingTypes[k]
+		}
+		slot := b.bindingSlot(el.Name, bt)
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(payloadLoadOpFor(bt, b.ptrW))
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
+}
+
+// emitTupleMatch lowers a `match` on a tuple-typed scrutinee: cache the
+// tuple pointer, then per arm test the literal elements (an if-else-if
+// chain like emitLiteralMatch), bind the binder elements on the matched
+// path, run the optional guard with bindings in scope, and branch out
+// of the exit block.
+func (b *builder) emitTupleMatch(n *ast.Match) error {
+	tup, ok := b.exprType(n.Tag).(ast.TupleType)
+	if !ok {
+		return fmt.Errorf("ir: tuple-pattern match scrutinee is not tuple-typed (compiler bug)")
+	}
+	ptrSlot, offs, elemName, err := b.tupleMatchPrep(n.Tag, tup.Elems)
+	if err != nil {
+		return err
+	}
+	b.openBlock(BlockTypeVoid)
+	exitDepth := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.openIf(BlockTypeVoid)
+				if err := b.stmt(arm.Body); err != nil {
+					return err
+				}
+				b.brTo(exitDepth, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			b.brTo(exitDepth, false)
+			continue
+		}
+		cond := b.tupleMatchArmCond(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		if cond != nil {
+			if err := b.expr(cond); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		// Bind BEFORE the guard so the guard sees the arm's names.
+		b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		if err := b.stmt(arm.Body); err != nil {
+			return err
+		}
+		b.brTo(exitDepth, false)
+		if arm.Guard != nil {
+			b.closeScope()
+		}
+		if cond != nil {
+			b.closeScope()
+		}
+	}
+	b.closeScope() // exit block
+	return nil
+}
+
+// emitTupleMatchExpr is the expression-form counterpart of
+// emitTupleMatch: same per-arm test/bind/guard shape, but each arm body
+// is an Expr stored into a result slot before branching out (mirroring
+// emitLiteralMatchExpr's result handling).
+func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
+	tup, ok := b.exprType(n.Tag).(ast.TupleType)
+	if !ok {
+		return fmt.Errorf("ir: tuple-pattern match scrutinee is not tuple-typed (compiler bug)")
+	}
+	ptrSlot, offs, elemName, err := b.tupleMatchPrep(n.Tag, tup.Elems)
+	if err != nil {
+		return err
+	}
+	// Result slot — typed from the first non-polymorphic arm body,
+	// mirroring emitLiteralMatchExpr.
+	resultType := ast.Type(ast.NumberType{})
+	for _, arm := range n.Arms {
+		if arm == nil || arm.Body == nil {
+			continue
+		}
+		t := b.exprType(arm.Body)
+		if t == nil {
+			continue
+		}
+		if nt, isNum := t.(ast.NumberType); isNum && nt.Polymorphic {
+			continue
+		}
+		if ft, isFloat := t.(ast.FloatType); isFloat && ft.Polymorphic {
+			continue
+		}
+		resultType = t
+		break
+	}
+	resultSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
+	b.scratchType[resultSlot] = resultType
+
+	b.openBlock(BlockTypeVoid)
+	exitDepth := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.openIf(BlockTypeVoid)
+				if err := b.emitCountedYield(arm.Body); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+				b.brTo(exitDepth, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.emitCountedYield(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(exitDepth, false)
+			continue
+		}
+		cond := b.tupleMatchArmCond(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		if cond != nil {
+			if err := b.expr(cond); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		if err := b.emitCountedYield(arm.Body); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+		b.brTo(exitDepth, false)
+		if arm.Guard != nil {
+			b.closeScope()
+		}
+		if cond != nil {
+			b.closeScope()
+		}
 	}
 	b.closeScope()
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
@@ -6178,7 +6467,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (computeMovedLocals) — the reference moves to this binding
 		// and the source is excluded from the exit sweep, so the
 		// inc/dec pair is elided.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] {
+		// Dead-alias cancellation (#4402 opt 1): a proven borrowed-view
+		// alias skips the transfer inc — its exit-sweep dec is equally
+		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
+		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] {
 			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this
@@ -6187,7 +6479,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// `var` the zero-init makes it a NULL-guarded no-op. The new value
 		// is on the stack underneath — emitVarReinitDropOld is net-zero —
 		// so it survives for the store below.
-		b.emitVarReinitDropOld(n.Name, idx)
+		//
+		// A borrowed-view alias site (#4402 opt 1) skips this too: the
+		// slot only ever holds the (un-inc'd) borrowed pointer, so a
+		// loop-repeated decl would otherwise dec the source's buffer once
+		// per iteration with no matching inc.
+		if !b.rc.borrowedAliasSites[n] {
+			b.emitVarReinitDropOld(n.Name, idx)
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
 		// Evaluate Init once into the synthesised temp slot,
@@ -6278,9 +6577,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// Native single-word string element: dup via __fern_rc_inc
 				// so the binding co-owns the buffer alongside the tuple
 				// box's later dec.
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			} else if arrElemIsRcTracked(tup.Elems[i]) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
 			// Loop-body reclamation: like the temp above, a binding declared
 			// by a destructure inside a loop reuses one slot per iteration.
@@ -6335,6 +6634,15 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpDrop, Width: w})
 		}
 	case *ast.Match:
+		// Tuple-pattern match: the scrutinee is a tuple (the checker
+		// dispatched to `checkTupleMatch`). Lower via emitTupleMatch —
+		// per-arm element eq-tests + binder extraction.
+		if isTupleMatch(n.Arms) {
+			if err := b.emitTupleMatch(n); err != nil {
+				return err
+			}
+			break
+		}
 		// Literal-pattern match: when the scrutinee isn't an enum
 		// the arms are all literal-or-wildcard (the checker
 		// dispatched to `checkLiteralMatch`). Lower as if-else-if
@@ -7041,15 +7349,25 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		b.openIf(bt)
-		if err := b.expr(n.Then); err != nil {
+		// Counted yields (#4399 sink 4): see emitCountedYield. Slice
+		// yields stay uncounted views and keep their escape taint.
+		if err := b.emitCountedYield(n.Then); err != nil {
 			return err
 		}
 		b.elseBranch()
-		if err := b.expr(n.Else); err != nil {
+		if err := b.emitCountedYield(n.Else); err != nil {
 			return err
 		}
 		b.closeScope()
 	case *ast.MatchExpr:
+		// Tuple-pattern match-expr: scrutinee is a tuple — see
+		// emitTupleMatchExpr.
+		if isTupleMatchExprArms(n.Arms) {
+			if err := b.emitTupleMatchExpr(n); err != nil {
+				return err
+			}
+			return nil
+		}
 		// Literal-pattern match-expr: arms are literal/wildcard,
 		// scrutinee is number/string/bool. Lower as an if-chain
 		// over the result slot — same shape as the stmt-form
@@ -7138,7 +7456,7 @@ func (b *builder) expr(e ast.Expr) error {
 					}
 					b.emit(Op{Kind: OpNot})
 					b.brTo(armEndD, true)
-					if err := b.expr(arm.Body); err != nil {
+					if err := b.emitCountedYield(arm.Body); err != nil {
 						return err
 					}
 					b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -7146,7 +7464,7 @@ func (b *builder) expr(e ast.Expr) error {
 					b.closeScope()
 					continue
 				}
-				if err := b.expr(arm.Body); err != nil {
+				if err := b.emitCountedYield(arm.Body); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -7187,7 +7505,7 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpNot})
 				b.brTo(outerArmD, true)
 			}
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -7314,7 +7632,7 @@ func (b *builder) expr(e ast.Expr) error {
 					// Field / index alias: the container drop below
 					// would otherwise free the forwarded box out from
 					// under the caller. Re-inc so the dec nets out.
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+					b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				}
 				b.emitRcDecLocalsAtExitExcept(sweepExclude)
 				b.emit(Op{Kind: OpReturn})
@@ -7970,7 +8288,7 @@ func (b *builder) expr(e ast.Expr) error {
 					if _, isStr := ft.(ast.StringType); isStr && b.twoWordStrings() {
 						b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 					} else {
-						b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+						b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 					}
 				}
 				b.emit(payloadStoreOpFor(ft, b.ptrW))
@@ -10024,20 +10342,20 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __rc_inc / __rc_dec — refcount helpers exposed as Lang
-	// builtins. Lower to OpCallDirect with the runtime-side
-	// name so backends pick up the matching gate flag. Both
-	// accept a u8[] today; Phase 1e will widen to strings /
-	// structs / enums / closures. See docs/RC-PERCEUS-PLAN.md.
+	// builtins. Lower to the dedicated rc ops (#4402 opt 2) with
+	// the runtime-side name so backends pick up the matching gate
+	// flag. Both accept a u8[] today; Phase 1e will widen to
+	// strings / structs / enums / closures. See docs/RC-PERCEUS-PLAN.md.
 	if (id.Name == "__rc_inc" || id.Name == "__rc_dec") && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if err := b.expr(n.Args[0]); err != nil {
 				return err
 			}
-			target := "__fern_rc_inc"
+			kind, target := OpRcInc, "__fern_rc_inc"
 			if id.Name == "__rc_dec" {
-				target = "__fern_rc_dec"
+				kind, target = OpRcDec, "__fern_rc_dec"
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: target, I32: 1})
+			b.emit(Op{Kind: kind, Str: target, I32: 1})
 			return nil
 		}
 	}
@@ -10267,7 +10585,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		if err := b.expr(n.Args[2]); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
@@ -10308,7 +10626,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.expr(n.Args[2]); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		}
@@ -10350,7 +10668,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.expr(n.Args[1]); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		}
@@ -10450,7 +10768,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 		}
@@ -10481,7 +10799,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			return nil
 		}
 	}
@@ -10521,7 +10839,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// drop doesn't free it from under the caller.
 			if _, isStr := n.TypeArgs[1].(ast.StringType); isStr &&
 				b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
 			return nil
 		}
@@ -10600,7 +10918,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 		b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		return nil
 	}
 	// MapIter.value() / MapIter.key() on native single-word string K/V:
@@ -10633,7 +10951,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			return nil
 		}
 	}
@@ -11035,7 +11353,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 	tokenSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_src_tok_%d", tokenSlot)] = tokenSlot
@@ -11047,7 +11365,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
@@ -11183,7 +11501,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 
 	tokenSlot := b.allocSlot()
@@ -11196,7 +11514,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
@@ -11276,7 +11594,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 				// Retain the carried pointer for the fresh box's own
 				// reference (the reuse branch keeps the box's existing one).
 				b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
@@ -11452,7 +11770,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__ereuse_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 
 	tokenSlot := b.allocSlot()
@@ -11465,7 +11783,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
@@ -11747,7 +12065,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// ptr; __fern_rc_dec it (inline-tag / sentinel guards keep all sources
 	// safe). arm64 / wasm two-word ABIs take the two-word str_dec branch above.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -11781,7 +12099,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// __fern_rc_dec is a void-returning runtime helper but OpCallDirect's
 	// codegen always pushes the call's return-value register onto the operand
 	// stack; drop the bogus push to keep the stack balanced.
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -11806,7 +12124,7 @@ func (b *builder) dropStructField(t ast.Type) {
 	// ptr via payloadLoadOpFor; __fern_rc_dec it. SSO inline-tag low-bit guard
 	// + literal sentinel keep all sources safe.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -11896,7 +12214,7 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12011,7 +12329,7 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	// Unique: free the box BUFFER only — NO per-payload deep-drop (they were
 	// moved into the bindings). __fern_box_free(data, size) internally frees
@@ -12024,7 +12342,7 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 	b.emit(Op{Kind: OpElse})
 	// Shared / sentinel: just dec (an alias keeps it; a sentinel dec no-ops).
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
 }
@@ -12171,7 +12489,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// where each arm knows its exact type.
 		if loadsOk && sizeOk && !enumHasPointerPayload(ed) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for _, ld := range loads {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -12188,7 +12506,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 			return
@@ -12207,7 +12525,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// __drop_enum_ route handles the per-iteration loop-var reinit drop.
 		if plan, ok := enumVariantDropPlan(ed, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			// One shared per-function tag stash (#4476): allocated on first
 			// use, reused by every later inline enum slot-drop. Sound because
@@ -12259,7 +12577,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			}
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 			return
@@ -12268,7 +12586,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	if edOk {
 		if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for _, ld := range loads {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -12283,7 +12601,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		}
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12310,7 +12628,7 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12441,6 +12759,22 @@ func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
 	return false
 }
 
+// emitCountedYield lowers a conditional-expression arm body (if-expr /
+// match-expr yield) and incs an ALIASED pointer-shaped result — the
+// needsRcIncOnAlias shapes — so the expression's value is an OWNED
+// reference whichever arm ran (#4399 sink 4). A fresh arm value (call
+// result / literal / constructor) reads false and moves out as-is.
+// computeFreeEligible drops the escape taint for exactly these shapes.
+func (b *builder) emitCountedYield(e ast.Expr) error {
+	if err := b.expr(e); err != nil {
+		return err
+	}
+	if needsRcIncOnAlias(e, b) {
+		b.emitAliasInc(e)
+	}
+	return nil
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
@@ -12526,7 +12860,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpNe})                      // cow copied?
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
@@ -12602,7 +12936,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emitStructEnumSlotDrop(idx, sety)
 			} else {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
@@ -12649,7 +12983,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		} else if tt, isTup := tupleTypeOfLocal(t.Name, b); isTup && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
@@ -12747,7 +13081,14 @@ func (b *builder) assign(n *ast.Assign) error {
 		// See docs/RC-PERCEUS-PLAN.md "Phase 2".
 		if !t.IsSlice {
 			if arrIdent, ok := t.Array.(*ast.Ident); ok {
-				if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
+				// A boxcapture cell is a shared mutable reference (a closure and
+				// the outer scope alias it deliberately), so its `cell[0] = v`
+				// write must store IN PLACE — never CoW, which would fork the
+				// cell whenever a closure also holds it (rc > 1) and silently
+				// drop the sharing. Fall through to the direct in-place store.
+				if b.info != nil && b.info.BoxedCells[arrIdent.Name] {
+					// (skip the CoW dispatch below)
+				} else if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
 					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
 				}
 			}
@@ -14314,7 +14655,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// copy is rc 1.) A move receiver (last use / reassign-self / temp)
 	// skips this and keeps the rc==1 in-place fast path.
 	if b.rc.arraySetInc[n] {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	cowHelper := "__fern_arr_cow_inplace"
@@ -14423,7 +14764,7 @@ func cellElemOf(t ast.Type) ast.Type {
 // array's). Net-zero on the operand stack.
 func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 	if !ast.RcFreeEnabled || !eligible {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14522,7 +14863,7 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		} else if b.ptrW == 8 {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		}
 	}
 	return nil
@@ -14563,7 +14904,7 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 		} else {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		}
 		b.emit(Op{Kind: OpDrop})
 	}
@@ -14963,7 +15304,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		// strings under TwoWordOverride) is excluded since map values
 		// are stored as cell pointers and rc_inc on a cell pointer
 		// would bump the cell's rc, not the string's.
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
 	// Non-boxed: the payload IS the V value (an i32 in the low
 	// bits, or a pointer-shaped V address). payloadStoreOpFor

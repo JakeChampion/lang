@@ -1771,7 +1771,18 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
 // `_with_struct_names` variant takes just the name set
 // (cheaper to build up-front); the `_with_structs` variant
 // takes the full StructSig[] for callers that already have it.
-function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
+pub function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
+    // Array suffix `Elem[]` → TypeArray of the recursively-resolved element, one
+    // `[]` per level. Detected via the structured TypeRef (SH-021 — parse_type_ref
+    // peels the trailing `[]`s into array_depth) instead of the magic-byte
+    // `[`(91)/`]`(93) scan; byte-identical (both detect a literal trailing `[]`,
+    // and a depth-0 name — incl. a generic/tuple that ends in `]`/`)` — resolves
+    // by its full spelling exactly as before).
+    var r: parser.TypeRef = parser.parse_type_ref(name);
+    if (r.array_depth > 0) {
+        var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+        return t_array(type_from_name_with_structs(parser.render_type_ref(elem), structs));
+    }
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u32") { return t_u32(); }
@@ -1779,9 +1790,6 @@ function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
-    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
-        return t_array(type_from_name_with_structs(name[0:name.len() - 2], structs));
-    }
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) { return t_struct(name); }
@@ -1790,7 +1798,15 @@ function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
     return t_unknown("unrecognised type name: " + name);
 }
 
-function type_from_name_with_struct_names(name: string, struct_names: string[]): Type {
+pub function type_from_name_with_struct_names(name: string, struct_names: string[]): Type {
+    // Array suffix `Elem[]` → TypeArray of the recursively-resolved element (incl.
+    // cross-module `mod__T[]`), via the structured TypeRef's array_depth (SH-021)
+    // rather than the magic-byte `[`/`]` scan. Byte-identical.
+    var r: parser.TypeRef = parser.parse_type_ref(name);
+    if (r.array_depth > 0) {
+        var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+        return t_array(type_from_name_with_struct_names(parser.render_type_ref(elem), struct_names));
+    }
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u32") { return t_u32(); }
@@ -1798,12 +1814,6 @@ function type_from_name_with_struct_names(name: string, struct_names: string[]):
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
-    // Array suffix `Elem[]` → TypeArray of the recursively-resolved
-    // element, so a field / param typed `T[]` (incl. cross-module
-    // `mod__T[]`) resolves instead of falling through to `unknown`.
-    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
-        return t_array(type_from_name_with_struct_names(name[0:name.len() - 2], struct_names));
-    }
     var i: i32 = 0;
     while (i < struct_names.len()) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -1895,7 +1905,14 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
 }
 
 
-function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
+pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
+    // Array suffix `Elem[]` → TypeArray via the structured TypeRef's array_depth
+    // (SH-021), replacing the magic-byte `[`/`]` scan. Byte-identical.
+    var r: parser.TypeRef = parser.parse_type_ref(name);
+    if (r.array_depth > 0) {
+        var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+        return t_array(type_from_name_with_names_and_unions(parser.render_type_ref(elem), struct_names, union_names));
+    }
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u32") { return t_u32(); }
@@ -1903,9 +1920,6 @@ function type_from_name_with_names_and_unions(name: string, struct_names: string
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
-    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
-        return t_array(type_from_name_with_names_and_unions(name[0:name.len() - 2], struct_names, union_names));
-    }
     var i: i32 = 0;
     while (i < struct_names.len()) {
         if (struct_names[i] == name) { return t_struct(name); }

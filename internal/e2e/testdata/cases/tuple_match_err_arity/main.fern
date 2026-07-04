@@ -1,0 +1,9 @@
+// A tuple pattern's arity must match the scrutinee tuple's.
+function main(): i32 {
+    var p = (1, 2);
+    match (p) {
+        (a, b, c) => { return a; },
+        (a, b) => { return b; }
+    }
+    return 0;
+}

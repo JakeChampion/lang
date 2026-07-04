@@ -3249,6 +3249,7 @@ type matchPattern struct {
 	NamedFields   bool
 	IsWildcard    bool
 	Literal       ast.Expr
+	TupleElems    []ast.TuplePatElem // tuple pattern `(p0, p1, …)`; nil otherwise
 }
 
 // parseMatchPattern parses a single pattern (wildcard / literal / variant
@@ -3260,6 +3261,46 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 	if t.Kind == lexer.Ident && t.Text == "_" {
 		p.advance()
 		pat.IsWildcard = true
+	} else if t.Kind == lexer.Punct && t.Text == "(" {
+		// Tuple pattern: `(p0, p1, …) => …` on a tuple-typed scrutinee.
+		// Each element is a binder name, `_`, or a literal (compared by
+		// equality). At least 2 elements (no-singleton-tuples rule);
+		// nested patterns are not supported. The checker validates the
+		// arity against the scrutinee tuple and types each element.
+		p.advance()
+		for {
+			et := p.peek()
+			var elem ast.TuplePatElem
+			if et.Kind == lexer.Ident && et.Text == "_" {
+				p.advance()
+				elem.IsWildcard = true
+			} else if isLiteralPatternStart(et) {
+				lit, err := p.parsePrimary()
+				if err != nil {
+					return pat, err
+				}
+				elem.Literal = lit
+			} else if et.Kind == lexer.Ident {
+				p.advance()
+				elem.Name = et.Text
+			} else {
+				return pat, p.errorfCode(et.Pos, "P001", "expected binder, literal, or `_` in tuple pattern, got %s", et.Text)
+			}
+			pat.TupleElems = append(pat.TupleElems, elem)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				if p.match(lexer.Punct, ")") {
+					break
+				}
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return pat, err
+		}
+		if len(pat.TupleElems) < 2 {
+			return pat, p.errorfCode(t.Pos, "P001", "tuple pattern needs at least 2 elements")
+		}
 	} else if isLiteralPatternStart(t) {
 		// Literal pattern: `0 => …`, `"yes" => …`, `true => …`,
 		// `1.5f64 => …`. Dispatched via equality comparison
@@ -3350,7 +3391,7 @@ func (p *parser) parseMatchArm() ([]*ast.MatchArm, error) {
 		arms[i] = &ast.MatchArm{
 			P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 			Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
-			Literal: pat.Literal, Guard: g, Body: b,
+			Literal: pat.Literal, TupleElems: pat.TupleElems, Guard: g, Body: b,
 		}
 	}
 	return arms, nil
@@ -3385,6 +3426,13 @@ func (p *parser) parseArmPatterns() ([]matchPattern, ast.Expr, error) {
 			if pt.Literal != nil {
 				return nil, nil, p.errorfCode(pt.P, "P001",
 					"or-patterns (`|`) are only supported between variant patterns, not literals — use separate arms")
+			}
+			// Tuple patterns bind names per-alternative and carry per-element
+			// literals, so `(0, y) | (x, 0)` has no coherent binding set —
+			// same restriction as literals.
+			if pt.TupleElems != nil {
+				return nil, nil, p.errorfCode(pt.P, "P001",
+					"or-patterns (`|`) are only supported between variant patterns, not tuple patterns — use separate arms")
 			}
 		}
 	}
@@ -3483,7 +3531,7 @@ func (p *parser) parseMatchExprArm() ([]*ast.MatchExprArm, error) {
 		arms[i] = &ast.MatchExprArm{
 			P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 			Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
-			Literal: pat.Literal, Guard: g, Body: b,
+			Literal: pat.Literal, TupleElems: pat.TupleElems, Guard: g, Body: b,
 		}
 	}
 	return arms, nil
