@@ -1,0 +1,10 @@
+// Expression-form match with tuple patterns: each arm body is an
+// expression and the construct evaluates to the unified arm type.
+function main(): i32 {
+    var p = (1, 2);
+    var a = match (p) { (1, b) => b * 10, (x, _) => x };
+    var q = (7, 7);
+    var b = match (q) { (0, y) => y, (x, y) when x == y => x + y, (x, y) => x - y };
+    // a=20, b=14 → 20 + 14 + 8 = 42
+    return a + b + 8;
+}

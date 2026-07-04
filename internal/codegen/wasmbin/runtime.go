@@ -99,12 +99,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// __fern_alloc internally.
 				needs.add("__fern_alloc")
 				needs.add("__fern_alloc_rc1")
-			case ir.OpCallDirect:
+			case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
 				// Source-language built-ins lower to OpCallDirect
 				// with the source name; the call-site lookup
 				// goes through callDirectAlias which routes to
 				// the synthetic helper. The trigger here uses
 				// the same alias so the helper actually exists.
+				// The dedicated rc ops (#4402 opt 2) keep the
+				// helper name in Str, so the same scan covers them.
 				switch callDirectAlias(op.Str) {
 				case "__fern_str_dec":
 					// Two-word string-local reclamation (emitDec

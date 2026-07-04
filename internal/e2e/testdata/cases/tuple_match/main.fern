@@ -1,0 +1,31 @@
+// Tuple patterns in match arms: literal elements dispatch by
+// equality, binders bind, `_` is ignored, guards run with the
+// arm's bindings in scope, and a trailing `_` arm is the
+// catch-all. String elements exercise the string-eq compare on
+// every backend (incl. the two-word wasm ABI).
+function classify(p: (i32, i32)): i32 {
+    match (p) {
+        (0, 0) => { return 1; },
+        (0, y) => { return y; },
+        (x, 0) => { return x * 10; },
+        (x, y) when x > y => { return x - y; },
+        (x, y) => { return x + y; }
+    }
+    return -1;
+}
+
+function tag(p: (string, i32)): i32 {
+    match (p) {
+        ("a", n) => { return n; },
+        (_, n) when n > 5 => { return n * 2; },
+        _ => { return 40; }
+    }
+    return -1;
+}
+
+function main(): i32 {
+    // classify: 1 + 7 + 30 + 5 + 7 = 50
+    var t = classify((0, 0)) + classify((0, 7)) + classify((3, 0)) + classify((9, 4)) + classify((2, 5));
+    // tag: 2 + 14 + 40 = 56;  50 + 56 - 64 = 42
+    return t + tag(("a", 2)) + tag(("z", 7)) + tag(("z", 1)) - 64;
+}

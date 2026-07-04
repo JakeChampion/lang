@@ -193,7 +193,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	for _, fn := range ip.Funcs {
 		for _, op := range fn.Ops {
-			if op.Kind == ir.OpCallDirect {
+			if op.Kind == ir.OpCallDirect ||
+				op.Kind == ir.OpRcInc || op.Kind == ir.OpRcDec || op.Kind == ir.OpRcIsUnique {
 				g.recordUse(op.Str)
 			}
 			if op.Kind == ir.OpAlloc {
@@ -1987,7 +1988,11 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		g.push()
 
-	case ir.OpCallDirect:
+	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
+		// The dedicated rc ops (#4402 opt 2) carry the helper name in
+		// Str and argc in I32, so they share OpCallDirect's lowering
+		// verbatim — same call, same result push. Opt 2b replaces
+		// this shared path with inline fast-path bodies.
 		target := op.Str
 		// Cheap f64 math intrinsics lower inline — no libm. The f64
 		// argument rides the operand stack as raw bits (same as

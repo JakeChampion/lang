@@ -301,7 +301,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 				g.usesAlloc = true
 				continue
 			}
-			if op.Kind != ir.OpCallDirect {
+			if op.Kind != ir.OpCallDirect &&
+				op.Kind != ir.OpRcInc && op.Kind != ir.OpRcDec && op.Kind != ir.OpRcIsUnique {
 				continue
 			}
 			switch op.Str {
@@ -9151,7 +9152,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpMakeClosure, ir.OpMakeEnv:
 		return g.emitMakeClosureOrEnv(op)
 
-	case ir.OpCallDirect:
+	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
+		// The dedicated rc ops (#4402 opt 2) carry the helper name in
+		// Str and argc in I32, so they share OpCallDirect's lowering
+		// verbatim — same call, same result push. Opt 2b replaces
+		// this shared path with inline fast-path bodies.
+		//
 		// AAPCS64: load args 0..n-1 from the operand stack into
 		// x0..x{n-1} (rightmost-on-top, so we pop in reverse
 		// order), then `bl target`. Result lands in x0; push it.

@@ -44,7 +44,6 @@
 package e2e
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,14 +52,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
@@ -257,18 +254,6 @@ func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
 	}
 }
 
-func runFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
-	t.Helper()
-	bin := buildLangBinForInterp(t)
-	cmd := exec.Command(bin, "-interp", mainPath)
-	cmd.Stdin = strings.NewReader(stdin)
-	var so, se bytes.Buffer
-	cmd.Stdout = &so
-	cmd.Stderr = &se
-	_ = cmd.Run()
-	return so.String(), cmd.ProcessState.ExitCode()
-}
-
 func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
@@ -351,55 +336,6 @@ func runFixtureCompileError(mainPath string) (string, bool) {
 	return "", false
 }
 
-// loadCheckMono runs the shared front of the pipeline (modload →
-// constfold → check → monomorph) against a fixture's entry file. It
-// loads from the real fixture directory so relative `./sibling`
-// imports resolve against the on-disk layout.
-func loadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
-	t.Helper()
-	// Ensure core/int is in the import closure so the wasm runner's
-	// BuildOptions.PrintMainResult wrapper can stringify main()'s i32
-	// return (int_to_string) — the auto-prelude used to supply that
-	// name. Injected via a LoadWith override on the entry file so
-	// relative `./sibling` imports still resolve against the real
-	// fixture directory; harmless (unused, tree-shaken) on the x86 /
-	// arm64 runners, which don't print the result. Negative `err_*`
-	// fixtures bypass this (they go through runFixtureCompileError).
-	abs, err := filepath.Abs(mainPath)
-	if err != nil {
-		t.Fatalf("abs: %v", err)
-	}
-	orig, err := os.ReadFile(mainPath)
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	overrides := map[string]string{abs: "import \"core/int\";\n" + string(orig)}
-	prog, _, err := modload.LoadWith(mainPath, overrides)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	return info, prog
-}
-
-func runBin(cmd *exec.Cmd, stdin string) (string, int) {
-	cmd.Stdin = strings.NewReader(stdin)
-	var so, se bytes.Buffer
-	cmd.Stdout = &so
-	cmd.Stderr = &se
-	_ = cmd.Run()
-	return so.String(), cmd.ProcessState.ExitCode()
-}
-
 func linkAsm(t *testing.T, gcc, asm string, flags ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -428,13 +364,4 @@ func readOptionalFileDefault(dir, name, def string) string {
 		return s
 	}
 	return def
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

@@ -692,11 +692,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		v := l.out.AddOp(l.cur, OpEnumSentinel)
 		l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
 		l.stack = append(l.stack, v)
-	case ir.OpCallDirect:
+	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
+		// The dedicated rc ops (#4402 opt 2) carry the runtime
+		// helper's name in Str and argc in I32, exactly like the
+		// OpCallDirect they replaced — lift them as the same
+		// one-result OpCall so SSA passes keep seeing the calls
+		// they saw before the kinds split.
 		argc := int(op.I32)
 		if len(l.stack) < argc {
-			return fmt.Errorf("ssa.LiftFromIR: OpCallDirect at op[%d] needs %d args, stack has %d",
-				i, argc, len(l.stack))
+			return fmt.Errorf("ssa.LiftFromIR: %s at op[%d] needs %d args, stack has %d",
+				op.Kind, i, argc, len(l.stack))
 		}
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]

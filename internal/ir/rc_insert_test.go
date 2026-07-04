@@ -25,7 +25,7 @@ function main(): i32 { return thread(Ctx { name: "a", n: 1 }); }`)
 	}
 	idx := -1
 	for i, op := range f.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == "__fern_rc_inc" {
+		if op.Kind == ir.OpRcInc {
 			idx = i
 			break
 		}

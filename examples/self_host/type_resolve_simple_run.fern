@@ -1,0 +1,51 @@
+// examples/self_host/type_resolve_simple_run.fern — golden driver for the
+// checker's three simpler type-name resolvers (checker.fern's
+// type_from_name_with_structs / _with_struct_names / _with_names_and_unions,
+// SH-021 slice 5 — docs/SELF-HOST-AUDIT.md T2).
+//
+// Each maps a type STRING to the checker's Type against a name context. Unlike
+// the richest resolver (_with_structs_unions, slice 4) these recognise only
+// scalars, the `Elem[]` array suffix, and struct / union NAMES — a tuple or a
+// generic (`(a, b)`, `Map[…]`, `Option[…]`) is not modelled and resolves to
+// unknown by its full spelling. This slice retargets their array-suffix decode
+// from the magic-byte `[`(91)/`]`(93) scan onto the structured TypeRef's
+// array_depth (the same array-depth peel proven byte-identical in slice 4). This
+// driver resolves a corpus covering every branch of all three (scalars, struct /
+// union / unknown names, arrays incl. multi-depth and of struct/union/unknown
+// elements, and the array-of-tuple / array-of-generic / bogus-element cases that
+// peel to an unknown element) and prints type_debug of each. The companion Go
+// test pins the exact mapping.
+
+import "./checker";
+import "./util";
+
+function main(): i32 {
+    var structs: checker.StructSig[] = [
+        checker.StructSig { name: "Foo", field_names: [], field_types: [] },
+        checker.StructSig { name: "Bar", field_names: [], field_types: [] }
+    ];
+    var snames: string[] = ["Foo", "Bar"];
+    var unames: string[] = ["Shape"];
+    var corpus: string[] = [
+        "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32", "float",
+        "Foo", "Bar", "Shape", "Baz",
+        "i32[]", "string[]", "Foo[]", "Shape[]", "i32[][]", "Foo[][]", "Bar[][][]",
+        "(i32, string)", "Map[string, i32]", "Option[i32]", "Vec[T]",
+        "(i32, string)[]", "Map[string, i32][]", "Bogus[]",
+        "mod.Thing", ""
+    ];
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var n: string = corpus[i];
+        var a: checker.Type = checker.type_from_name_with_structs(n, structs);
+        var b: checker.Type = checker.type_from_name_with_struct_names(n, snames);
+        var c: checker.Type = checker.type_from_name_with_names_and_unions(n, snames, unames);
+        out = out + n + " => structs=" + checker.type_debug(a)
+            + " names=" + checker.type_debug(b)
+            + " names+unions=" + checker.type_debug(c) + "\n";
+        i = i + 1;
+    }
+    write(out);
+    return 0;
+}

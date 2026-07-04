@@ -3,9 +3,10 @@ name: Test units
 # Fast unit tests — everything under internal/ except the two
 # big-iron packages that get their own workflows:
 #
-#   internal/e2e       — split into test-e2e-* (arm64 / x86_64 /
-#                        wasm / selfhost / other) so the 5-minute
-#                        sequential block fans out.
+#   internal/e2e + internal/e2eselfhost (+ their shared
+#                        internal/e2eharness) — split into test-e2e-*
+#                        (arm64 / x86_64 / wasm / selfhost / other) so
+#                        the 5-minute sequential block fans out.
 #   internal/fernsmith — its own workflow (fuzz corpus + generator
 #                        machinery; ~60s).
 #

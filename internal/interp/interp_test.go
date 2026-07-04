@@ -635,3 +635,38 @@ func TestInterpParamDestructure(t *testing.T) {
 		t.Errorf("param destructure: got %v, want 42", v)
 	}
 }
+
+// Tuple patterns in match arms — literal elements dispatch by
+// equality, binders bind, `_` is ignored, guards see the bindings.
+// Covers the statement form, the expression form, and a string
+// element.
+func TestInterpTupleMatch(t *testing.T) {
+	src := `function classify(p: (i32, i32)): i32 {
+		match (p) {
+			(0, 0) => { return 1; },
+			(0, y) => { return y; },
+			(x, 0) => { return x * 10; },
+			(x, y) when x > y => { return x - y; },
+			(x, y) => { return x + y; }
+		}
+		return -1;
+	}
+	function tag(p: (string, i32)): i32 {
+		match (p) {
+			("a", n) => { return n; },
+			(_, n) => { return n * 100; }
+		}
+		return -1;
+	}
+	function main(): i32 {
+		// 1 + 7 + 30 + 5 + 7 = 50
+		var t = classify((0, 0)) + classify((0, 7)) + classify((3, 0)) + classify((9, 4)) + classify((2, 5));
+		var s = match ((1, 2)) { (1, b) => b * 3, (a, _) => a };
+		// t=50, s=6, tag(("a",2))=2, tag(("z",1))=100 → 50+6+2+100 = 158
+		return t + s + tag(("a", 2)) + tag(("z", 1));
+	}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 158 {
+		t.Errorf("tuple match: got %v, want 158", v)
+	}
+}

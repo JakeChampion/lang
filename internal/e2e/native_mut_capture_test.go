@@ -4,19 +4,24 @@ import "testing"
 
 // TestNativeMutScalarCapture proves the NATIVE compiled pipeline
 // (internal/closureconv → internal/ir → codegen) implements MUTABLE SCALAR
-// CAPTURES by reference (#2896): a closure that writes a captured outer
-// i32/bool/f64 shares the write with the enclosing scope (closures as
-// counters). The native pipeline previously captured every scalar BY VALUE, so
-// the write was lost (repro → 8 not 49; counter → 0 not 2). The fix boxes
-// captured-and-mutated scalars into 1-element array cells
-// (closureconv.BoxMutatedScalarCaptures) so the existing array-pointer capture
-// is by-reference — mirroring the self-host IR fix (#2895) and matching the Go
+// CAPTURES by reference (#2896): a captured outer i32/bool/f64 is ONE shared
+// cell, so writes are visible symmetrically in BOTH directions — a closure's
+// write escapes to the enclosing scope, AND an enclosing-scope write is seen by
+// a closure that reads the variable. The native pipeline previously captured
+// scalars BY VALUE, so the write was lost (repro → 8 not 49; counter → 0 not 2)
+// and, until the #4391 follow-up, an outer-scope mutation after capture was a
+// stale make-time snapshot (`outer-mutation`/`loop-outer-mutation` returned 0
+// where the interpreter returned 5/10). The fix boxes captured mutable scalars
+// into 1-element array cells (closureconv.BoxMutatedScalarCaptures) — boxing on
+// assignment ANYWHERE, not only inside the closure — and marks those cells so
+// the IR's index-assign copy-on-write is skipped for them (a shared cell is
+// never forked). This mirrors the self-host IR fix (#2895) and matches the Go
 // reference interpreter, which defines the semantics.
 //
 // Run on x86-64, arm64 (qemu), and the wasmbin core-module path for full
-// backend parity. Expected values are the interpreter's; read-only captures
-// stay by-value (not boxed) and the read-only case guards that path is
-// unchanged.
+// backend parity. Expected values are the interpreter's. A captured scalar that
+// is never assigned anywhere is left unboxed (by-value and by-reference
+// coincide); the read-only case guards that path is unchanged.
 func TestNativeMutScalarCapture(t *testing.T) {
 	cases := []struct {
 		name string
@@ -42,6 +47,17 @@ func TestNativeMutScalarCapture(t *testing.T) {
 		{"shared-cell", `function main(): i32 { var x = 0; var setter = function (): i32 { x = 4; return 0; }; var getter = function (): i32 { return x + 5; }; var a = setter(); return getter(); }`, 9},
 		// A boxed counter driven inside a loop → 3.
 		{"loop-counter", `function main(): i32 { var x = 0; var inc = function (): i32 { x = x + 1; return 0; }; var i = 0; while (i < 3) { var r = inc(); i = i + 1; } return x; }`, 3},
+		// #4391 follow-up — by-reference is SYMMETRIC: an outer-scope write AFTER
+		// the closure is made is seen by a closure that only READS the capture.
+		// By-value-at-make-time snapshotted x=0 (returned 0); shared cell → 5.
+		{"outer-mutation", `function main(): i32 { var i = 0; var f = function (): i32 { return i; }; i = 5; return f(); }`, 5},
+		// A read-only capture whose value the enclosing loop keeps mutating: the
+		// closure reads the live counter each call → 1+2+3+4 = 10 (was 0).
+		{"loop-outer-mutation", `function main(): i32 { var s = 0; var i = 0; var add = function (): i32 { s = s + i; return 0; }; while (i < 4) { i = i + 1; add(); } return s; }`, 10},
+		// Both sides mutate the same captured cell: outer sets 3, closure adds 4,
+		// outer reads the shared result → 7. Guards that skipping CoW on the cell
+		// keeps the outer write and the closure write on the SAME buffer.
+		{"outer-and-inner", `function main(): i32 { var x = 0; var f = function (): i32 { x = x + 4; return 0; }; x = 3; f(); return x; }`, 7},
 	}
 	for _, tc := range cases {
 		tc := tc

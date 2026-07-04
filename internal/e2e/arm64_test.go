@@ -27,120 +27,8 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/parser"
 )
-
-// arm64Tooling locates the C linker used to assemble the
-// generated asm and the runner used to execute the resulting
-// binary. On a native arm64 Linux host the system `gcc` is
-// already arm64 and the binary runs without an emulator, so
-// `qemu` comes back empty. On x86 hosts (the historical CI
-// shape) we need the aarch64 cross-toolchain and qemu-aarch64;
-// the test SKIPs cleanly if neither path is available.
-func arm64Tooling(t *testing.T) (gcc, qemu string) {
-	t.Helper()
-	// Native arm64 Linux: plain `gcc` produces arm64 binaries,
-	// no emulator needed.
-	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
-		if p, err := exec.LookPath("gcc"); err == nil {
-			return p, ""
-		}
-	}
-	for _, c := range []string{"aarch64-linux-gnu-gcc", "aarch64-unknown-linux-gnu-gcc"} {
-		if p, err := exec.LookPath(c); err == nil {
-			gcc = p
-			break
-		}
-	}
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
-	}
-	if gcc == "" || qemu == "" {
-		t.Skipf("aarch64 cross toolchain not available (gcc=%q qemu=%q)", gcc, qemu)
-	}
-	return gcc, qemu
-}
-
-// runArm64Bin builds the exec.Cmd for running an arm64 Linux
-// binary either natively (when `qemu` is empty — we're already
-// on arm64) or via qemu-aarch64 (cross-host case). Centralises
-// the "qemu prefix or not" dispatch so callers don't sprinkle
-// the same conditional through every test.
-func runArm64Bin(qemu, binPath string, args ...string) *exec.Cmd {
-	if qemu == "" {
-		return exec.Command(binPath, args...)
-	}
-	return exec.Command(qemu, append([]string{binPath}, args...)...)
-}
-
-func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) {
-	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-
-	// Route the source through modload so cross-module qualified
-	// imports inside the stdlib (e.g. `int.int_to_string_radix(…)`
-	// in std/i32) get the proper rewriting — that's the same
-	// pipeline `cmd/fern` uses. Without this, bare in-source
-	// qualified calls would hit "undefined identifier" because
-	// modload's rewriter is the only thing that recognises the
-	// `mod.fn(args)` shape.
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	// FERN_NATIVE_ASM=1 routes the assemble+link step through the pure-Go
-	// native backend instead of gcc — used to audit native coverage across
-	// the whole arm64 e2e suite. Default (unset) keeps the gcc path.
-	if os.Getenv("FERN_NATIVE_ASM") != "" {
-		text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
-		if err != nil {
-			t.Fatalf("NATIVE-ASM-FAIL: %v\n--- asm ---\n%s", err, asm)
-		}
-		if err := os.WriteFile(binPath, nativeelf.StaticExecutableData(text, rodata), 0o755); err != nil {
-			t.Fatalf("write native bin: %v", err)
-		}
-	} else if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
-	cmd := runArm64Bin(qemu, binPath)
-	out, _ := cmd.CombinedOutput()
-	return string(out), cmd.ProcessState.ExitCode()
-}
 
 // First arm64 e2e: `function main(): i32 { return 42; }`
 // validates the toolchain end-to-end. Compiles via the
@@ -12842,21 +12730,29 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d: `var y = x;` where x is an array variable load
-// bumps the refcount via __fern_rc_inc, so both x and y own
-// references. With the inc, the rc goes 1 → 2 across the
-// aliasing. Without it (the pre-Phase-1d behavior), rc would
-// stay at 1, which is the bug Phase 2 will rely on NOT being
-// the case. Returns 0 iff the post-alias rc is exactly 2.
+// Phase 1d transfer inc, refined by #4402 opt 1 (dead-alias dup/drop
+// cancellation): a pure borrowed-view alias — never reassigned, never
+// returned, never moved — elides its inc AND its exit-sweep dec as a
+// net-zero pair, so the rc stays 1. An alias that is still referenced
+// under the return keeps the ordinary transfer inc (rc 2).
 func TestArm64RcAliasInc(t *testing.T) {
-	src := `
+	dead := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var alias: u8[] = arr;
-    return __rc_get(arr) - 2;
+    return __rc_get(arr) - 1;
 }`
-	if _, code := compileAndRunArm64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", code)
+	if _, code := compileAndRunArm64(t, dead); code != 0 {
+		t.Errorf("dead alias: got exit %d, want 0 (borrowed view elides the inc — rc stays 1)", code)
+	}
+	live := `
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var alias: u8[] = arr;
+    return __rc_get(arr) - 2 + alias.len() - 8;
+}`
+	if _, code := compileAndRunArm64(t, live); code != 0 {
+		t.Errorf("returned alias: got exit %d, want 0 (transfer inc kept — rc 2)", code)
 	}
 }
 

@@ -1195,6 +1195,19 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    br_if " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind_tag == 159) {  // drop
             out = out + "    drop\n";
+        } else if (o.kind_tag == 84) {  // raw_store_ptr
+            // pop v (top), off, ptr; store the 4-byte word slot at ptr+off*4
+            // (W=4 on wasm32); push v back — the same contract as the register
+            // backends' 8-byte slots (ir.fern:358). Used by the reuse guard's
+            // fresh-arm shape/type-id copy (#4350).
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.mul\n    i32.add\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n";
+        } else if (o.kind_tag == 85) {  // raw_load_ptr
+            // pop off (top), ptr; push the 4-byte word slot at ptr+off*4.
+            out = out + "    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n";
         } else if (o.kind_tag == 87) {  // arr_make
             // n element values on the wasm stack (element n-1 on top).
             // __fern_arr_box(n*esz) -> a; store len@a, cap@a+4, then the

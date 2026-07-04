@@ -229,10 +229,17 @@ func findFunc(p *Program, name string) *Func {
 	return nil
 }
 
+// isNamedCallKind reports whether the op kind carries a callee name in
+// Str — OpCallDirect plus the dedicated rc ops (#4402 opt 2), so rc-op
+// assertions keep working across the kinds split.
+func isNamedCallKind(k OpKind) bool {
+	return k == OpCallDirect || k == OpRcInc || k == OpRcDec || k == OpRcIsUnique
+}
+
 func countCallDirect(ops []Op, name string) int {
 	n := 0
 	for _, op := range ops {
-		if op.Kind == OpCallDirect && op.Str == name {
+		if isNamedCallKind(op.Kind) && op.Str == name {
 			n++
 		}
 	}
@@ -1541,7 +1548,7 @@ func callsDirect(p *Program, fnName, callee string) bool {
 			continue
 		}
 		for _, op := range fn.Ops {
-			if op.Kind == OpCallDirect && op.Str == callee {
+			if isNamedCallKind(op.Kind) && op.Str == callee {
 				return true
 			}
 		}
@@ -2008,7 +2015,7 @@ func closureDropCallsDirect(p *Program, callee string) bool {
 			continue
 		}
 		for _, op := range fn.Ops {
-			if op.Kind == OpCallDirect && op.Str == callee {
+			if isNamedCallKind(op.Kind) && op.Str == callee {
 				return true
 			}
 		}
@@ -2571,7 +2578,7 @@ function build(): i32 {
 	}
 	sawRcDec := false
 	for _, op := range td.Ops {
-		if op.Kind == OpCallDirect && op.Str == "__fern_rc_dec" {
+		if op.Kind == OpRcDec {
 			sawRcDec = true
 		}
 	}

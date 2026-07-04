@@ -39,8 +39,18 @@ func (e *Error) Code() string           { return e.ErrCode }
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
-	Locals   map[*ast.FuncDecl][]*ast.Var
-	FuncSigs map[string]*ast.FuncType
+	// BoxedCells names the locals that closureconv.BoxMutatedScalarCaptures
+	// rewrote into 1-element array cells for by-reference scalar capture. Such a
+	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
+	// outer scope observe each other's writes), so an `cell[0] = v` store must
+	// NOT go through copy-on-write (which would fork the cell when its rc > 1
+	// because a closure also holds it, breaking the sharing). The IR's index-
+	// assign CoW gate skips names in this set and stores in place. Names are
+	// unique post-shadowrename, so one program-wide set is unambiguous. Empty /
+	// nil for any program with no mutated scalar captures.
+	BoxedCells map[string]bool
+	Locals     map[*ast.FuncDecl][]*ast.Var
+	FuncSigs   map[string]*ast.FuncType
 	// OwnFuncs maps a function name to its per-parameter `own` (owned /
 	// consuming) flags, for functions that have at least one owned parameter.
 	// The IR uses it to lower ownership transfer: a callee reclaims its `own`
@@ -4494,10 +4504,10 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
-	info        *Info
-	errors      []error
-	current     *ast.FuncDecl
-	loopDepth   int
+	info      *Info
+	errors    []error
+	current   *ast.FuncDecl
+	loopDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -8211,6 +8221,12 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
+		// Tuple scrutinee: arms are tuple patterns `(p0, p1, …)` or
+		// the wildcard — see checkTupleMatch.
+		if tup, isTup := tagT.(ast.TupleType); isTup {
+			c.checkTupleMatch(n, tup, s)
+			return
+		}
 		// Non-enum scrutinee: every arm must be a literal pattern
 		// or the wildcard. Dispatch via the literal-pattern shape.
 		// Conventional types are number / string / bool — anything
@@ -8254,6 +8270,14 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		// A tuple pattern on an enum scrutinee is a shape error —
+		// report it directly rather than letting the empty
+		// VariantName fall through to a confusing E014.
+		if arm.TupleElems != nil {
+			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -8389,6 +8413,90 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 	}
 }
 
+// checkTupleMatch handles `match (pair) { (0, y) => …, (x, y) => … }`
+// where the scrutinee is a tuple. Every arm must carry a tuple pattern
+// of matching arity or be the wildcard. Literal elements type-check
+// against the scrutinee's element types; binder elements are declared
+// in a fresh per-arm scope with the element's type (BindingTypes is
+// filled parallel to TupleElems so the IR picks the right load width).
+// Exhaustiveness: an unguarded `_` OR an unguarded all-binder/wildcard
+// (irrefutable) tuple arm covers everything; any arm after such an arm
+// is unreachable (E026-family), and a match with neither is E030.
+func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
+	sawIrrefutable := false
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.TupleElems == nil {
+			c.errfCode(arm.P, "E035", "match on tuple `%s` only accepts tuple patterns or `_`", tup)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if len(arm.TupleElems) != len(tup.Elems) {
+			c.errfCode(arm.P, "E035", "tuple pattern has %d elements, but scrutinee tuple has %d", len(arm.TupleElems), len(tup.Elems))
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		armScope := newScope(s)
+		irrefutable := true
+		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
+		seen := map[string]bool{}
+		for k, el := range arm.TupleElems {
+			elT := tup.Elems[k]
+			arm.BindingTypes[k] = elT
+			if el.Literal != nil {
+				irrefutable = false
+				litT := c.checkExpr(el.Literal, s)
+				if litT != nil {
+					c.settleNumeric(el.Literal, elT)
+					litT = c.postSettleType(el.Literal, litT)
+					if !c.assignable(litT, elT) {
+						c.errfCode(arm.P, "E035", "literal pattern of type %s does not match tuple element %d of type %s", litT, k, elT)
+					}
+				}
+				continue
+			}
+			if el.IsWildcard {
+				continue
+			}
+			if seen[el.Name] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", el.Name)
+				continue
+			}
+			seen[el.Name] = true
+			armScope.names[el.Name] = elT
+		}
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
+	}
+}
+
 // checkLiteralMatchExpr is the expression-form counterpart of
 // checkLiteralMatch. Each arm body is an Expr and the unified
 // arm type is returned as the match-expression's result.
@@ -8455,6 +8563,103 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 	return result
 }
 
+// checkTupleMatchExpr is the expression-form counterpart of
+// checkTupleMatch: same tuple-pattern arity / element-literal /
+// binder rules, plus the arm-type unification checkLiteralMatchExpr
+// does (each arm body is an Expr and the whole match evaluates to
+// the unified type).
+func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *scope) ast.Type {
+	sawIrrefutable := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		if c.assignable(armT, result) {
+			return
+		}
+		if c.assignable(result, armT) {
+			result = armT
+			return
+		}
+		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
+	}
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if arm.TupleElems == nil {
+			c.errfCode(arm.P, "E035", "match on tuple `%s` only accepts tuple patterns or `_`", tup)
+			continue
+		}
+		if len(arm.TupleElems) != len(tup.Elems) {
+			c.errfCode(arm.P, "E035", "tuple pattern has %d elements, but scrutinee tuple has %d", len(arm.TupleElems), len(tup.Elems))
+			continue
+		}
+		armScope := newScope(s)
+		irrefutable := true
+		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
+		seen := map[string]bool{}
+		for k, el := range arm.TupleElems {
+			elT := tup.Elems[k]
+			arm.BindingTypes[k] = elT
+			if el.Literal != nil {
+				irrefutable = false
+				litT := c.checkExpr(el.Literal, s)
+				if litT != nil {
+					c.settleNumeric(el.Literal, elT)
+					litT = c.postSettleType(el.Literal, litT)
+					if !c.assignable(litT, elT) {
+						c.errfCode(arm.P, "E035", "literal pattern of type %s does not match tuple element %d of type %s", litT, k, elT)
+					}
+				}
+				continue
+			}
+			if el.IsWildcard {
+				continue
+			}
+			if seen[el.Name] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", el.Name)
+				continue
+			}
+			seen[el.Name] = true
+			armScope.names[el.Name] = elT
+		}
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
+	}
+	return result
+}
+
 // checkMatchExpr validates an expression-position `match` and
 // returns the unified arm type. Same scrutinee, payload-binding,
 // guard, and exhaustiveness rules as checkMatch — the difference
@@ -8468,6 +8673,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	}
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
+		// Tuple scrutinee: arms are tuple patterns + a wildcard.
+		if tup, isTup := tagT.(ast.TupleType); isTup {
+			return c.checkTupleMatchExpr(n, tup, s)
+		}
 		// Non-enum scrutinee: arms are literal patterns + a
 		// wildcard. Delegate to the literal-pattern branch.
 		return c.checkLiteralMatchExpr(n, tagT, s)
@@ -8522,6 +8731,11 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 				}
 			}
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			continue
+		}
+		// Same tuple-pattern shape guard as the stmt-form arm loop.
+		if arm.TupleElems != nil {
+			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
 			continue
 		}
 		// Same qualifier validation as the stmt-form arm loop above.

@@ -124,6 +124,18 @@ type rcPlan struct {
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
 	preciseDrops map[int][]string
+	// Dead-alias dup/drop cancellation (#4402 opt 1): borrowedAlias[y] marks a
+	// `var y = x` alias local proven to be a pure BORROWED VIEW of an owned
+	// local x for its whole life — its transfer inc and its exit-sweep dec are
+	// a guaranteed net-zero pair, so both are elided (the fusion Koka calls
+	// dup/drop cancellation, done in the analysis layer where the emission
+	// sites are known). borrowedAliasSites keys the specific *ast.Var so the
+	// lowering skips exactly that inc; borrowSources[x] pins the source: x
+	// must release ONLY at the exit sweep (never precise-dropped, never a
+	// reuse donor) so the borrow can never outlive the buffer.
+	borrowedAlias      map[string]bool
+	borrowedAliasSites map[ast.Node]bool
+	borrowSources      map[string]bool
 }
 
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
@@ -148,6 +160,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.moveSites = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
 	b.rc.arraySetInc = b.computeArraySetIncs()
+	b.computeBorrowedAliases()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
@@ -457,6 +470,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			tainted[id.Name] = true
 		}
 	}
+	// escapeCountedYield is the if-/match-expr yield variant (#4399 sink
+	// 4): the arm's emitCountedYield inc covers the needsRcIncOnAlias
+	// shapes, so only uncovered yields (slice views, scalar / untracked
+	// projections) keep the escape walk.
+	escapeCountedYield := func(e ast.Expr) {
+		switch e.(type) {
+		case *ast.Ident, *ast.FieldAccess, *ast.Index:
+			if needsRcIncOnAlias(e, b) {
+				return // counted: the arm's alias inc covers it
+			}
+		}
+		escape(e)
+	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
@@ -486,16 +512,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				}
 			}
 		case *ast.IfExpr:
-			// A bare local read in an if-expr's value position
-			// (`var v = if (c) { v0 } else { v1 }`) aliases that local
-			// WITHOUT a reliable inc — the alias-inc only fires for a
-			// direct Ident RHS, not one wrapped in a conditional, and a
-			// per-arm inc can't be emitted unconditionally (some arms
-			// yield fresh rc=1 values). Freeing the source at scope exit
-			// would then strand the alias the conditional handed out, so
-			// taint any local that flows out of an arm.
-			escape(s.Then)
-			escape(s.Else)
+			// If- and match-expr yields are COUNTED for the
+			// needsRcIncOnAlias shapes (#4399 sink 4): emitCountedYield
+			// incs an aliased bare ident / field / index yield per arm,
+			// so the expression's result is owned whichever arm ran and
+			// the source local stays reclaimable — no move-site
+			// suppression applies (computeMovedLocals never keys arm
+			// yields), so even a direct-Ident yield is fully counted.
+			// Only the shapes the inc does NOT cover keep the escape
+			// taint: a slice yield is an uncounted view into its source,
+			// and a scalar / untracked projection falls through escape's
+			// pointer gate as before.
+			escapeCountedYield(s.Then)
+			escapeCountedYield(s.Else)
 		case *ast.Destructure:
 			// Destructure bindings are NOT tainted: the lowering dups
 			// (rc_inc) each extracted pointer-shaped element, so the
@@ -522,11 +551,14 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		case *ast.MatchExpr:
 			for _, arm := range s.Arms {
 				markBindings(arm.Bindings)
-				// A local yielded from a match-expression arm
-				// (`var v = match (x) { … => v0 }`) is conditionally
-				// aliased without a reliable inc, so it must not be
-				// freed at scope exit. Mirrors the IfExpr case.
-				escape(arm.Body)
+				// Match-expr yields are counted exactly like if-expr
+				// yields (#4399 sink 4b — every arm-body yield site in
+				// all three match-expr lowering routes goes through
+				// emitCountedYield), so the covered shapes drop the
+				// escape taint; slice yields and untracked shapes keep
+				// it. Arm BINDINGS stay tainted above — they alias enum
+				// payloads with no projection dup.
+				escapeCountedYield(arm.Body)
 			}
 		case *ast.IfLet:
 			markBindings(s.Bindings)
@@ -1517,6 +1549,12 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			if b.rc.movedLocals[dName] {
 				continue
 			}
+			// A borrow source must stay alive to the exit sweep (a live
+			// borrowed view reads through it — #4402 opt 1); a borrowed
+			// alias owns nothing to donate.
+			if b.rc.borrowSources[dName] || b.rc.borrowedAlias[dName] {
+				continue
+			}
 			if !b.rc.freeEligible[dName] || !b.localNameUnique(dName) {
 				continue
 			}
@@ -1715,6 +1753,12 @@ func (b *builder) computePreciseDrops() map[int][]string {
 	out := map[int][]string{}
 	for name, di := range declIdx {
 		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
+			continue
+		}
+		// #4402 opt 1: a borrow source releases ONLY at the exit sweep (a
+		// live borrowed view reads through its buffer until then); a
+		// borrowed alias is a view and is never dropped at all.
+		if b.rc.borrowSources[name] || b.rc.borrowedAlias[name] {
 			continue
 		}
 		// A local whose box is handed off to a general-FBIP reuse site
@@ -2503,4 +2547,96 @@ func identOrderOf(body ast.Node) identOrder {
 // of its name — the "last use anywhere in the body" test.
 func (o identOrder) isLast(id *ast.Ident) bool {
 	return o.idx[id] == o.last[id.Name]
+}
+
+// computeBorrowedAliases finds `var y = x` aliases that are pure BORROWED
+// VIEWS (#4402 opt 1 — dead-alias dup/drop cancellation): y's transfer inc
+// and exit-sweep dec are a guaranteed net-zero pair, so both are elided and
+// x is pinned to exit-sweep-only release. Soundness gates (all required):
+//
+//   - x is an owned rc LOCAL (not a param — borrowed params are the
+//     caller's), never reassigned anywhere, not moved (movedLocals covers
+//     move-on-alias/return/destructure AND move-on-consume into `own`
+//     params), and freeEligible (untainted, proven owner);
+//   - y is rc-tracked, never reassigned, not itself moved, freeEligible
+//     (untainted — no container escape), declared with the bare-Ident init
+//     `var y = x` (its ONLY inc site), name-unique in the function (the
+//     slot-sharing hazard), and never referenced under a Return (a returned
+//     borrow would outlive x's sweep — conservative subtree check).
+//
+// x's release stays the exit dec sweep — after every statement, hence after
+// every read through y — enforced by the borrowSources exclusions in
+// computePreciseDrops and computeReuseSources' donor gate.
+func (b *builder) computeBorrowedAliases() {
+	b.rc.borrowedAlias = map[string]bool{}
+	b.rc.borrowedAliasSites = map[ast.Node]bool{}
+	b.rc.borrowSources = map[string]bool{}
+	reassigned := map[string]bool{}
+	returned := map[string]bool{}
+	scrutinee := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
+		case *ast.Return:
+			if x.Value != nil {
+				ast.Walk(x.Value, func(m ast.Node) bool {
+					if id, ok := m.(*ast.Ident); ok {
+						returned[id.Name] = true
+					}
+					return true
+				})
+			}
+		case *ast.Match:
+			// A matched-on local can be reclaimed mid-function
+			// (reclaimableMatchScrutinee frees the box after the match);
+			// a borrow through it would dangle — exclude both roles.
+			if id, ok := x.Tag.(*ast.Ident); ok {
+				scrutinee[id.Name] = true
+			}
+		case *ast.MatchExpr:
+			if id, ok := x.Tag.(*ast.Ident); ok {
+				scrutinee[id.Name] = true
+			}
+		}
+		return true
+	})
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		src, ok := v.Init.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		y, x := v.Name, src.Name
+		if y == x || b.rc.borrowedAlias[y] || b.rc.borrowSources[y] || b.rc.borrowedAlias[x] {
+			return true
+		}
+		if !b.isOwnedRcLocal(x) || !b.isOwnedRcLocal(y) {
+			return true
+		}
+		if reassigned[x] || reassigned[y] || returned[y] || scrutinee[x] || scrutinee[y] {
+			return true
+		}
+		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
+			return true
+		}
+		if !b.rc.freeEligible[x] || !b.rc.freeEligible[y] {
+			return true
+		}
+		if !b.localNameUnique(x) || !b.localNameUnique(y) {
+			return true
+		}
+		if !needsRcIncOnAlias(v.Init, b) {
+			return true // untracked shape: no inc to cancel
+		}
+		b.rc.borrowedAlias[y] = true
+		b.rc.borrowedAliasSites[v] = true
+		b.rc.borrowSources[x] = true
+		return true
+	})
 }

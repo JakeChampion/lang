@@ -72,7 +72,7 @@ function main(): i32 { return churn(3); }`)
 	// OpLoadLocal/__fern_rc_dec/OpDrop between MakeClosure and StoreLocal
 	// would block the elide pass and leave an OpMakeClosure behind.
 	for _, op := range f.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == "__fern_rc_dec" {
+		if op.Kind == ir.OpRcDec {
 			t.Errorf("closure loop-body var must not lower a dec-on-reinit __fern_rc_dec")
 		}
 	}

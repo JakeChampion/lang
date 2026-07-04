@@ -245,9 +245,28 @@ Tuples (follow-up status):
   annotation or an arity mismatch is the usual E024, reported at
   the parameter). A destructured param can't take a default value
   and needs a function body (not an `@import` signature).
-- Match-arm destructuring is a separate pass (binding semantics
-  differ enough that it's worth designing on its own) — tracked
-  in #4406 alongside the `*Result`-struct cleanup it unblocks.
+- **Match-arm tuple patterns shipped.** `match (pair) { (0, y) =>
+  …, (x, y) when x > y => …, (x, y) => … }` — in both the
+  statement and expression forms. Each pattern element is a
+  binder, `_`, or a literal (compared by equality; string / float
+  elements use the same settled compares as literal matches);
+  guards run with the arm's binders in scope. Arity is checked
+  per arm (E035), element literals type-check against the
+  scrutinee's element types (E035), and exhaustiveness requires
+  an unguarded `_` or an unguarded all-binder arm (E030); an arm
+  after an irrefutable arm is unreachable (E026). Or-patterns
+  and nested patterns are not supported in tuple arms. The
+  native compiler lowers them directly (checker + interp + a
+  dedicated IR path mirroring the literal-match chain, with
+  bindings borrowed from the tuple box like enum payload binds);
+  the self-host parser desugars the whole match at parse time
+  (build_tuple_match) into a destructure + flag-guarded if
+  chain, so every self-host backend gets them for free. One
+  self-host dispatch limit: the FIRST arm must be a tuple
+  pattern (a guarded-`_`-first tuple match parses natively but
+  not in the self-host compiler).
+  With this, tuple destructuring covers all binding sites
+  (#4406): statements, function parameters, and match arms.
 
 ### PR 2.5 — Slice views (shipped)
 
