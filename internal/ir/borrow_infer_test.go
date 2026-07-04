@@ -23,7 +23,7 @@ func rcOpCount(ip *ir.Program, fn, needle string) int {
 	}
 	n := 0
 	for _, op := range f.Ops {
-		if op.Kind == ir.OpCallDirect && strings.Contains(op.Str, needle) {
+		if (op.Kind == ir.OpCallDirect || op.Kind == ir.OpRcInc || op.Kind == ir.OpRcDec || op.Kind == ir.OpRcIsUnique) && strings.Contains(op.Str, needle) {
 			n++
 		}
 	}

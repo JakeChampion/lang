@@ -133,17 +133,19 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 				case OpLoadLocal:
 					w.aliasOk = true
 					w.aliasSrc = prev.I32
-				case OpCallDirect:
-					if prev.Str == "__fern_rc_inc" && i >= 2 && fn.Ops[i-2].Kind == OpLoadLocal {
+				case OpRcInc:
+					if i >= 2 && fn.Ops[i-2].Kind == OpLoadLocal {
 						// rc-tracked alias `b = a` → `OpLoadLocal a;
-						// OpCallDirect __fern_rc_inc; OpStoreLocal b`.
-						// rc_inc passes its argument through, so the
-						// alias source is the slot loaded before it.
+						// OpRcInc; OpStoreLocal b`. rc_inc passes its
+						// argument through, so the alias source is
+						// the slot loaded before it.
 						w.aliasOk = true
 						w.aliasSrc = fn.Ops[i-2].I32
 					} else {
 						failed[op.I32] = true
 					}
+				case OpCallDirect:
+					failed[op.I32] = true
 				case OpConstI32:
 					if prev.I32 == 0 {
 						// Zero-init store (Phase 1e pre-zeroes
@@ -182,23 +184,23 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 				r.aliasOk = true
 				r.aliasDst = fn.Ops[i+1].I32
 			}
-			// rc-tracked alias read: OpLoadLocal slot; OpCallDirect
-			// __fern_rc_inc; OpStoreLocal dst. The dst slot copies
-			// this value (through the pass-through rc_inc), so it's
-			// an alias edge just like the bare load+store form.
+			// rc-tracked alias read: OpLoadLocal slot; OpRcInc;
+			// OpStoreLocal dst. The dst slot copies this value
+			// (through the pass-through rc_inc), so it's an alias
+			// edge just like the bare load+store form.
 			if !r.canonicalOk && !r.aliasOk && i+2 < len(fn.Ops) &&
-				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__fern_rc_inc" &&
+				fn.Ops[i+1].Kind == OpRcInc &&
 				fn.Ops[i+2].Kind == OpStoreLocal {
 				r.aliasOk = true
 				r.aliasDst = fn.Ops[i+2].I32
 			}
-			// Benign exit dec: OpLoadLocal slot; OpCallDirect
-			// __fern_rc_dec. The dec sweep reads every tracked slot
-			// at function exit; rc_dec consumes the pointer and its
-			// result is dropped, so the value never escapes. Skip it
-			// so it neither qualifies nor disqualifies the slot.
+			// Benign exit dec: OpLoadLocal slot; OpRcDec. The dec
+			// sweep reads every tracked slot at function exit;
+			// rc_dec consumes the pointer and its result is
+			// dropped, so the value never escapes. Skip it so it
+			// neither qualifies nor disqualifies the slot.
 			if !r.canonicalOk && !r.aliasOk && i+1 < len(fn.Ops) &&
-				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__fern_rc_dec" {
+				fn.Ops[i+1].Kind == OpRcDec {
 				continue
 			}
 			// Benign closure drop: OpLoadLocal slot; OpCallDirect to

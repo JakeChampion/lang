@@ -168,7 +168,7 @@ func TestIfExprYieldSourceFreeEligible(t *testing.T) {
 		if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__drop_arr_") {
 			drops++
 		}
-		if op.Kind == OpCallDirect && op.Str == "__fern_rc_inc" {
+		if op.Kind == OpRcInc {
 			incs++
 		}
 	}
@@ -207,7 +207,7 @@ func TestDeadAliasPairCancelled(t *testing.T) {
 	}
 	incs, deepDrops := 0, 0
 	for _, op := range work.Ops {
-		if op.Kind == OpCallDirect && op.Str == "__fern_rc_inc" {
+		if op.Kind == OpRcInc {
 			incs++
 		}
 		if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__drop_arr_") {
@@ -245,7 +245,7 @@ func TestDeadAliasPairCancelled(t *testing.T) {
 	}
 	kIncs := 0
 	for _, op := range keep.Ops {
-		if op.Kind == OpCallDirect && op.Str == "__fern_rc_inc" {
+		if op.Kind == OpRcInc {
 			kIncs++
 		}
 	}
