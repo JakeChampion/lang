@@ -1988,11 +1988,75 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		g.push()
 
-	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
-		// The dedicated rc ops (#4402 opt 2) carry the helper name in
-		// Str and argc in I32, so they share OpCallDirect's lowering
-		// verbatim — same call, same result push. Opt 2b replaces
-		// this shared path with inline fast-path bodies.
+	case ir.OpRcInc, ir.OpRcDec:
+		// #4402 opt 2b: inline the rc fast path — the hot no-op guards
+		// (null / SSO tag / below-heap / static sentinel) and the RMW
+		// happen without a call or caller-save spills. Semantics mirror
+		// emitRcIncRuntime / emitRcDecRuntime instruction-for-
+		// instruction, including rc_dec's underflow-counter bump (the
+		// helpers stay emitted: runtime code tail-calls them and the
+		// debug build below still calls out). rc ops are pass-through —
+		// rax holds the pointer and doubles as the result.
+		if ast.RcFreeDebug {
+			// Debug builds keep the call: the helpers carry the
+			// RcPoison use-after-free trap the inline path omits.
+			g.emitCallArgsLoad(1)
+			g.emit(fmt.Sprintf("call %s", op.Str))
+			g.push()
+			return nil
+		}
+		done := fmt.Sprintf(".Lrcop_done_%d", g.labelCounter)
+		g.labelCounter++
+		g.pop()
+		g.emit("test rax, rax")
+		g.emit(fmt.Sprintf("jz %s", done))
+		g.emit("test al, 1")
+		g.emit(fmt.Sprintf("jnz %s", done))
+		g.emit("cmp rax, 0x10000000")
+		g.emit(fmt.Sprintf("jb %s", done))
+		g.emit("mov ecx, dword ptr [rax - 8]")
+		g.emit("test ecx, ecx")
+		g.emit(fmt.Sprintf("js %s", done))
+		if op.Kind == ir.OpRcInc {
+			g.emit("add ecx, 1")
+		} else {
+			// Underflow detector: a healthy dec sees rc >= 1; rc <= 0
+			// here is an over-release — bump the counter, then still
+			// decrement (mirrors the helper).
+			decLbl := fmt.Sprintf(".Lrcop_dec_%d", g.labelCounter)
+			g.labelCounter++
+			g.emit("cmp ecx, 0")
+			g.emit(fmt.Sprintf("jg %s", decLbl))
+			g.emit("add dword ptr [rip + __fern_rc_underflow], 1")
+			g.label(decLbl)
+			g.emit("sub ecx, 1")
+		}
+		g.emit("mov dword ptr [rax - 8], ecx")
+		g.label(done)
+		g.push()
+
+	case ir.OpRcIsUnique:
+		// #4402 opt 2b: inline is_unique — load, sentinel test, ==1
+		// compare. Mirrors emitRcIsUniqueRuntime (note its guards
+		// differ from inc/dec: low bound 0x10000, no SSO-tag test).
+		uniqDone := fmt.Sprintf(".Lrcop_uniq_%d", g.labelCounter)
+		g.labelCounter++
+		g.pop()
+		g.emit("xor ecx, ecx")
+		g.emit("test rax, rax")
+		g.emit(fmt.Sprintf("jz %s", uniqDone))
+		g.emit("cmp rax, 0x10000")
+		g.emit(fmt.Sprintf("jb %s", uniqDone))
+		g.emit("mov edx, dword ptr [rax - 8]")
+		g.emit("test edx, edx")
+		g.emit(fmt.Sprintf("js %s", uniqDone))
+		g.emit("cmp edx, 1")
+		g.emit("sete cl")
+		g.label(uniqDone)
+		g.emit("mov eax, ecx")
+		g.push()
+
+	case ir.OpCallDirect:
 		target := op.Str
 		// Cheap f64 math intrinsics lower inline — no libm. The f64
 		// argument rides the operand stack as raw bits (same as
