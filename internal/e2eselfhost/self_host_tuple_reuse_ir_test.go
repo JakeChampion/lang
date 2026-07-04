@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,7 +121,7 @@ func TestSelfHostTupleReuseIRX86_64(t *testing.T) {
 			// Every case uses only tuples, so each `call __fern_arr_box` (the raw
 			// runtime allocator symbol) is a tuple-box allocation. The
 			// `__fern_arr_box:` definition label is not a call and is not counted.
-			boxes := bytes.Count(asm, []byte("call __fern_arr_box"))
+			boxes := countUserArrBoxAllocs(asm)
 			if boxes != tc.boxAssert {
 				t.Errorf("%s: expected %d tuple-box allocations (call __fern_arr_box), found %d — reuse emission contract regressed", tc.name, tc.boxAssert, boxes)
 			}

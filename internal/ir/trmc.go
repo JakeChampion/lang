@@ -491,7 +491,7 @@ func (b *builder) emitTrmcConsumeScrut() {
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	//   if is_unique(scrut) { box_free(scrut, size) }
 	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
 	b.emit(Op{Kind: OpConstI32, I32: size})
@@ -500,7 +500,7 @@ func (b *builder) emitTrmcConsumeScrut() {
 	//   else { dec(scrut); stillFreeing = 0 }
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: b.trmcStillSlot})

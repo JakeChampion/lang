@@ -55,7 +55,7 @@ func countStringDecs(p *Program, fnName string) int {
 			continue
 		}
 		for _, op := range fn.Ops {
-			if op.Kind == OpCallDirect && (op.Str == "__fern_str_dec" || op.Str == "__fern_rc_dec") {
+			if (op.Kind == OpCallDirect && op.Str == "__fern_str_dec") || op.Kind == OpRcDec {
 				n++
 			}
 		}
