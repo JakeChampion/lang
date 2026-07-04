@@ -26,37 +26,38 @@ name: Test e2e self-host
 # shard's wall-clock by ~2.5 min — which matters because of the runner
 # behaviour documented under RUNNER PREEMPTION below.
 #
-# DRIVER WARM CACHE (x86). The dominant per-shard cost is not the Go test binary
-# but the self-host DRIVERS: each `*_run.fern` driver statically imports the
-# multi-thousand-line front-end, and the Go x86-64 backend takes ~50-70s to emit
-# one. A shard that touches several distinct drivers pays that many times (and
-# the linked binaries pile multiple GB into the link cache) — long enough to be
-# caught by the preemption below. Two changes cut it:
+# DRIVER WARM ARTIFACTS (x86). The dominant per-shard cost is not the Go test
+# binary but the self-host DRIVERS: each `*_run.fern` driver statically imports
+# the multi-thousand-line front-end, and the Go x86-64 backend takes ~50-70s to
+# emit one. A shard that touches several distinct drivers pays that many times
+# (and the linked binaries pile multiple GB into the link cache) — long enough
+# to be caught by the preemption below. Two changes cut it:
 #   * the self-host build cache is keyed on a driver's IMPORT CLOSURE, not its
 #     project-dir contents (hashSelfHostSources), so a given driver hashes to ONE
 #     key across every test regardless of which other drivers a test drops in the
 #     same dir — it builds at most once per shard, and its key is reproducible.
 #   * separate, parallel `warm` jobs each compile ONE driver up front (short jobs
-#     are never reclaimed) and save it under a per-(driver, SHA) cache key; the
-#     test shards RESTORE those, serving the driver from disk (~1s) instead of
-#     recompiling. This is the bootstrap a per-shard cache could never give: a
-#     shard reclaimed mid-run never reaches its own post-save, so cold shards
-#     never seeded one another — a warm job that always finishes does. Warmed:
-#     every file-based x86 driver the suite builds — asm_run / asm_pathprobe_run
-#     (the bulk of `*IRX86_64` tests), asm_ir_run / asm_load_run / asm_modload_run
-#     / checker_modload_run / ssa, and asm_ir_elig_run (the lean front-end+asm_ir
+#     are never reclaimed) and upload it as a workflow ARTIFACT; the test shards
+#     DOWNLOAD those, serving the driver from disk (~1s) instead of recompiling.
+#     This is the bootstrap a per-shard cache could never give: a shard reclaimed
+#     mid-run never reaches its own post-save, so cold shards never seeded one
+#     another — a warm job that always finishes does. Warmed: every file-based
+#     x86 driver the suite builds — asm_run / asm_pathprobe_run (the bulk of
+#     `*IRX86_64` tests), asm_ir_run / asm_load_run / asm_modload_run /
+#     checker_modload_run / ssa, and asm_ir_elig_run (the lean front-end+asm_ir
 #     probe the six IR-eligibility tests share, in place of a whole-compiler
 #     driver whose 256 MB binary did not disk-cache).
 #     Un-warmed drivers still compile per shard, now at most once each.
-#   * the warm/restore cache stores ONLY the linked driver BINARY, keyed by the
-#     driver's source-closure hash (cachedDriverBin) — NOT the ~680 MB emitted
-#     `.s`. That `.s` was cached only to skip the ~47 s emit, but binary-only
-#     consumers (every driver build — they just run the driver) never need the
-#     asm text. Restoring it dragged ~826 MB per driver onto the runner (679 MB
-#     of it dead-weight .s); restoring all the warmed drivers exhausted disk, so
-#     restores silently dropped and the driver re-emitted COLD (~47 s — the
-#     residual ~50 s tail). Binary-only caching keeps each warmed driver ~4x
-#     smaller (~190 MB), so the restores fit and the emit is skipped.
+#     IMPORTANT: artifacts are used instead of actions/cache here because the
+#     repo's 10 GB shared cache budget is routinely filled by other PRs/branches.
+#     When test shards spend hours in the GitHub Actions queue before running,
+#     warm cache entries get evicted, cold driver builds (~80s each) push shard
+#     wall-clock into the runner-preemption window. Workflow artifacts are
+#     per-run and not subject to the shared cache eviction, so they remain
+#     available however long shards wait in queue.
+#   * the warm artifact stores ONLY the linked driver BINARY — NOT the ~680 MB
+#     emitted `.s`. Binary-only keeps each warmed driver ~4x smaller (~190 MB),
+#     so downloads fit on-runner disk and the emit (~47 s) is skipped.
 #
 # Matrix per arch because individual tests are split per backend
 # (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on
@@ -278,16 +279,17 @@ jobs:
           cd internal/e2eselfhost
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
           "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
-      # Publish each warmed driver for the `test` shards to restore — EXCEPT `cli`:
-      # nothing consumes the fern.fern cache anymore (the shards stopped restoring it,
+      # Publish each warmed driver for the `test` shards to download — EXCEPT `cli`:
+      # nothing consumes the fern.fern artifact anymore (the shards stopped needing it,
       # and the tests that build it now run in the step above), so skipping its
-      # ~245 MB upload also frees that much of the 10 GB repo-cache budget, easing the
-      # eviction pressure that was dropping the OTHER drivers' restores.
-      - uses: actions/cache@v4
+      # ~245 MB upload saves artifact storage and transfer time.
+      - uses: actions/upload-artifact@v4
         if: matrix.key != 'cli'
         with:
+          name: warm-x86_64-${{ matrix.key }}
           path: ${{ runner.temp }}/selfhost-unicache
-          key: selfhost-unicache-x86_64-${{ matrix.key }}-${{ github.sha }}
+          retention-days: 1
+          if-no-files-found: warn
 
 
   test:
@@ -324,68 +326,77 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host.name }}
-      # RESTORE the driver caches warmed by the `warm` jobs (x86 only). Each
-      # restore drops one prebuilt driver (content-addressed, byte-identical to a
+      # DOWNLOAD the driver artifacts warmed by the `warm` jobs (x86 only). Each
+      # download drops one prebuilt driver (content-addressed, byte-identical to a
       # fresh compile) into FERN_SELFHOST_BUILD_CACHE, so a shard whose tests use
       # that driver serve it from disk (~1s) instead of the ~70s front-end emit.
-      # Restore-only and per-(driver, SHA) keyed: the warm jobs own the entries,
-      # so shards never race to save, and the SHA match means no staleness.
+      # Drivers are per-run workflow artifacts (not actions/cache): artifacts are not
+      # subject to the 10 GB shared cache budget, so they survive however long shards
+      # queue before running — the eviction that was causing cold-build preemptions.
       # Drivers not warmed here still compile per-shard (now closure-cached, so a
       # given driver builds at most once per shard regardless of dir shape).
-      # One restore per warm group into a SEPARATE dir: actions/cache/restore
-      # only populates the first restore into a given path, so restoring all
-      # groups into one shared dir would silently keep only the first. The shard
-      # points FERN_SELFHOST_BUILD_CACHE at the whole ':'-list (read scans all).
-      - uses: actions/cache/restore@v4
+      # One download per warm group into a SEPARATE dir: each artifact name is unique,
+      # so all groups can coexist. The shard points FERN_SELFHOST_BUILD_CACHE at the
+      # whole ':'-list (read scans all). continue-on-error so a missing artifact
+      # (shouldn't happen — warm job is a prerequisite) falls back to cold build
+      # rather than failing the whole shard before any test runs.
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-elig
           path: ${{ runner.temp }}/uc-elig
-          key: selfhost-unicache-x86_64-elig-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-asm
           path: ${{ runner.temp }}/uc-asm
-          key: selfhost-unicache-x86_64-asm-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-pathprobe
           path: ${{ runner.temp }}/uc-pathprobe
-          key: selfhost-unicache-x86_64-pathprobe-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-asmir
           path: ${{ runner.temp }}/uc-asmir
-          key: selfhost-unicache-x86_64-asmir-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-asmload
           path: ${{ runner.temp }}/uc-asmload
-          key: selfhost-unicache-x86_64-asmload-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-modload
           path: ${{ runner.temp }}/uc-modload
-          key: selfhost-unicache-x86_64-modload-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-checker
           path: ${{ runner.temp }}/uc-checker
-          key: selfhost-unicache-x86_64-checker-${{ github.sha }}
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-ssa
           path: ${{ runner.temp }}/uc-ssa
-          key: selfhost-unicache-x86_64-ssa-${{ github.sha }}
-      # NOTE: the `cli` (fern.fern) warm cache is intentionally NOT restored here —
-      # the fern.fern driver tests are isolated into the `driver-tests` job (see
+      # NOTE: the `cli` (fern.fern) warm artifact is intentionally NOT downloaded here —
+      # the fern.fern driver tests are isolated into the `driver-tests` step (see
       # ISOLATED_DRIVER_TESTS), so no round-robin shard builds fern.fern anymore.
-      # Dropping its ~245 MB restore also relieves the per-shard disk pressure that
-      # was causing the OTHER driver restores to be silently dropped.
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         if: matrix.host.name == 'x86_64'
+        continue-on-error: true
         with:
+          name: warm-x86_64-irx86
           path: ${{ runner.temp }}/uc-irx86
-          key: selfhost-unicache-x86_64-irx86-${{ github.sha }}
       - name: run self-host shard ${{ matrix.shard }}/20 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
