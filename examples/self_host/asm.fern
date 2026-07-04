@@ -7126,6 +7126,12 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 pub function emit_module(mod: parser.Module): string {
+    var parse_errs: string = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+        eprint(parse_errs);
+        exit(1);
+        return "";
+    }
     // IR code path (parallel-path migration, docs/RC-PERCEUS-SELF-HOST-IR-
     // REBUILD.md §3): when use_ir is set AND the whole module is in the IR
     // subset, lower it AST -> stack IR -> asm via asm_ir.emit_module_ir
