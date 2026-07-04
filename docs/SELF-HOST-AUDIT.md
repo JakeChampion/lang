@@ -214,12 +214,17 @@ findings. Ranked by leverage.
   / `trim_spaces` helpers). Byte-identical, locked by `type_resolve_run.fern` +
   `TestSelfHostTypeResolve` (a golden — via a new `type_debug` renderer — over
   scalar / struct / union / array / tuple / Map / generic / unknown branches,
-  reasons included) + the bootstrap. _Remaining:_ retarget the four simpler
-  `type_from_name*` variants (`_with_structs` / `_with_struct_names` /
-  `_with_names_and_unions` / the scalar-only base — each only does the `[]`
-  suffix) and wasm onto `parse_type_ref`, then have the parser store `TypeRef`
-  directly so the string becomes render output. Unblocks #4394 lever 1 (symbol
-  interning ripples into this type system).
+  reasons included) + the bootstrap.
+  _Slice 5 landed:_ the three simpler resolvers (`_with_structs` /
+  `_with_struct_names` / `_with_names_and_unions`) now peel their `Elem[]` array
+  suffix via `parse_type_ref`'s `array_depth`, retiring the magic-byte `[`(91)/
+  `]`(93) scan; byte-identical (before/after diff over a 30-entry × 3-resolver
+  corpus), locked by `type_resolve_simple_run.fern` + `TestSelfHostTypeResolveSimple`.
+  The scalar-only base `type_from_name` has no byte-scan, so it is left as-is.
+  _Remaining:_ retarget wasm's type decode (`wasm.fern`) and the parser's own
+  `type_from_name`-style substring surgery (`parser.fern`) onto `parse_type_ref`,
+  then have the parser store `TypeRef` directly so the string becomes render
+  output. Unblocks #4394 lever 1 (symbol interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress
