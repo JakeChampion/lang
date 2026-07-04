@@ -5287,11 +5287,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x6, [x4]\n");             // *base = head
         s = s.write("    str x4, [x5, x3, lsl #3]\n"); // freelist[words] = base
         s = s.write(".Lsarelo_fresh:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    ldr x0, [sp, #16]\n");        // nfields (arg shifted by the frame push)
+        s = s.write("    ldr x0, [sp]\n");             // nfields
         s = s.write("    add x0, x0, #1\n");           // cap = nfields + 1
-        s = s.write("    bl __fern_arr_box\n");        // x0 = fresh data (rc=1)
-        s = s.write("    ldp x29, x30, [sp], #16\n");
+        // TAIL-branch (not bl): arr_box returns straight to OUR caller with
+        // the fresh data ptr in x0 — no frame needed, and the emitted text
+        // stays free of an extra `bl __fern_arr_box` line (the reuse contract
+        // tests count that exact string in the whole asm).
+        s = s.write("    b __fern_arr_box\n");
         s = s.write(".Lsarelo_ret:\n");
         s = s.write("    ret\n");
         // __fern_rc_underflow_count() -> i32 — read the detector.

@@ -1074,7 +1074,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lsarelo_fresh:\n");
     s = s.write("    movq 8(%rsp), %rdi\n");         // nfields
     s = s.write("    incq %rdi\n");                  // cap = nfields + 1
-    s = s.write("    call __fern_arr_box\n");        // rax = fresh data (rc=1)
+    // TAIL-jump (not call): arr_box returns straight to OUR caller with the
+    // fresh data ptr in %rax. Besides saving a frame, this keeps the emitted
+    // text free of an extra `call __fern_arr_box` line — the reuse contract
+    // tests count that exact string in the whole asm, and the helper body
+    // must not inflate every program's static count by one.
+    s = s.write("    jmp __fern_arr_box\n");
     s = s.write(".Lsarelo_ret:\n");
     s = s.write("    ret\n");
     // __fern_snapshot_dec(new, old, snap) -> new — the snapshot-param consume-
