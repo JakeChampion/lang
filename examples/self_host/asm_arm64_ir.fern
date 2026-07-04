@@ -68,10 +68,19 @@ function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState 
 // ir_bin_asm renders the arm64 for one IR binary op: lhs in x0, rhs in x1,
 // result in x0 — mirroring asm_arm64's own ExprBinary sequences (64-bit ops,
 // signed i32 div/rem via sdiv/msub) so the IR and AST paths agree.
-function ir_bin_asm(tag: i32): string {
+function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 21) { return "    add x0, x0, x1\n"; }
     if (tag == 22) { return "    sub x0, x0, x1\n"; }
     if (tag == 23) { return "    mul x0, x0, x1\n"; }
+    // i32 signed division narrows its result back to 32 bits: the operands
+    // ride sign-extended in 64-bit regs, and the one quotient that overflows
+    // i32 — INT_MIN / -1 = 2^31 — is representable in the 64-bit register, so
+    // without the sxtw it stayed positive instead of wrapping to INT_MIN like
+    // native, interp, and the x86 IR path's guarded div (#4329). sdiv itself
+    // is non-trapping (x/0 = 0), so no guard is needed — only the narrow.
+    // rem needs no sxtw: |rem| < |divisor| keeps it in i32 range, and the
+    // INT_MIN % -1 msub yields 0 in-register already.
+    if (tag == 24 && width != 64) { return "    sdiv x0, x0, x1\n    sxtw x0, w0\n"; }
     if (tag == 24) { return "    sdiv x0, x0, x1\n"; }
     if (tag == 26) { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
     // Unsigned 64-bit div/rem (u64, #2904): udiv instead of sdiv.
@@ -80,9 +89,24 @@ function ir_bin_asm(tag: i32): string {
     if (tag == 28) { return "    and x0, x0, x1\n"; }
     if (tag == 29) { return "    orr x0, x0, x1\n"; }
     if (tag == 30) { return "    eor x0, x0, x1\n"; }
-    if (tag == 31) { return "    lsl x0, x0, x1\n"; }
-    if (tag == 32) { return "    asr x0, x0, x1\n"; }
-    if (tag == 33) { return "    lsr x0, x0, x1\n"; }
+    // Shift counts mask to the operand width: mod 64 for i64 (the x-form masks
+    // the count register to 6 bits in hardware), mod 32 for i32/u32. The i32
+    // shifts used to emit the bare x-form, so a count >= 32 wrapped mod 64
+    // instead of mod 32 (#4330). Mirror asm_ir.fern's fix: mask the count to 5
+    // bits BUT keep the 64-bit shift, so the operand's slot extension is
+    // preserved — a u32 rides zero-extended (bit 63 = 0) and an i32
+    // sign-extended (bit 63 = bit 31), and `asr`/`lsr`/`lsl` on the full
+    // register does the right thing for both. (A w-form `asr` would fill from
+    // bit 31, corrupting a u32 `>>` — which lowers through shr_s — whose bit 31
+    // is a data bit, not a sign bit.)
+    if (width == 64) {
+        if (tag == 31) { return "    lsl x0, x0, x1\n"; }
+        if (tag == 32) { return "    asr x0, x0, x1\n"; }
+        if (tag == 33) { return "    lsr x0, x0, x1\n"; }
+    }
+    if (tag == 31) { return "    and x1, x1, #31\n    lsl x0, x0, x1\n"; }
+    if (tag == 32) { return "    and x1, x1, #31\n    asr x0, x0, x1\n"; }
+    if (tag == 33) { return "    and x1, x1, #31\n    lsr x0, x0, x1\n"; }
     if (tag == 35) { return "    cmp x0, x1\n    cset x0, eq\n"; }
     if (tag == 36) { return "    cmp x0, x1\n    cset x0, ne\n"; }
     if (tag == 37) { return "    cmp x0, x1\n    cset x0, lt\n"; }
@@ -1159,7 +1183,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else {
             // binary op: pop rhs (x1), lhs (x0), combine, push.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = s.write(ir_bin_asm(o.kind_tag));
+            s = s.write(ir_bin_asm(o.kind_tag, o.width));
             s = s.write("    str x0, [sp, #-16]!\n");
         }
         i = i + 1;
