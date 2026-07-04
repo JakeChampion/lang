@@ -1726,6 +1726,29 @@ function build(s: string): i32 {
 	}
 }
 
+// A fresh local string stored into a struct field is retained into the
+// field (__fern_str_inc) and must still reclaim from the source local at
+// scope exit / reinit. Otherwise the field drop only decs to rc=1 and a
+// churn-heavy overwrite loop leaks one heap string per iteration.
+func TestLowerStringLocalIntoStructFieldStillDropsSource(t *testing.T) {
+	p := lowerSourceWith(t, `struct Holder { name: string }
+function build(): i32 {
+    var s: string = "hello" + "world";
+    var h: Holder = Holder { name: s };
+    return h.name.len();
+}`, 4)
+	var got int
+	for _, fn := range p.Funcs {
+		if fn.Name == "build" {
+			got = countCallDirect(fn.Ops, "__fern_str_dec")
+			break
+		}
+	}
+	if got < 2 {
+		t.Errorf("expected build to reclaim both the source string local and the struct field, got %d __fern_str_dec calls:\n%s", got, p)
+	}
+}
+
 // TestLowerStringNestedStructFieldReclaim verifies the generated
 // __drop_struct_<T> path: an Inner struct nested as a field of Outer
 // reclaims through Outer's drop recursing into __drop_struct_Inner,

@@ -424,8 +424,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// (`Holder { items: p.items }`) is inc'd into the box, so its
 	// container stays reclaimable, and tainting it would needlessly
 	// defeat constructor reuse (TestStructReuseFiresForPointerField).
+	//
+	// String idents are the exception: move-on-construction deliberately
+	// excludes strings, so a direct string Ident stored into one of these
+	// counted sinks always takes the alias-inc path (__fern_str_inc). That
+	// makes the source local reclaimable again: suppressing its exit/reinit
+	// drop strands one extra counted reference and leaks the buffer on
+	// churn-heavy struct-update loops.
 	escapeOwned := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok {
+			if _, isStr := b.exprType(id).(ast.StringType); isStr {
+				return
+			}
 			tainted[id.Name] = true
 		}
 	}
