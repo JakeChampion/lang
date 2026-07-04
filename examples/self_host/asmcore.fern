@@ -2468,7 +2468,18 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: string
 function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: string): string {
     match (st) {
         parser.StmtVar(v) => { return collect_expr_unknown_errors(v.init, where, errs); },
-        parser.StmtReturn(r) => { return collect_expr_unknown_errors(r.value, where, errs); },
+        parser.StmtReturn(r) => {
+            // A bare `return;` is encoded as ExprUnknown("punct:;"). It's a
+            // parser sentinel, not a real unknown expression — later checker
+            // passes validate whether it is legal in context (void vs non-void).
+            match (r.value) {
+                parser.ExprUnknown(u) => {
+                    if (u.kind == "punct:;") { return errs; }
+                },
+                _ => {}
+            }
+            return collect_expr_unknown_errors(r.value, where, errs);
+        },
         parser.StmtExpr(e) => { return collect_expr_unknown_errors(e.value, where, errs); },
         parser.StmtIf(i) => {
             errs = collect_expr_unknown_errors(i.cond, where, errs);
