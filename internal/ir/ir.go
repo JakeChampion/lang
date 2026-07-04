@@ -12814,6 +12814,18 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
+		} else if sl, isStructLit := n.Value.(*ast.StructLit); isStructLit && sl.Base != nil {
+			if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
+				// Struct-update overwrite — `s = T{ ...s, field: v }` bails out
+				// of tryStructReuseOverwrite (the spread fields aren't copied on
+				// the fresh-alloc branch there), then used to fall through this
+				// assignment path with NO old-value release at all. That leaked
+				// the old box's rc-tracked fields on every iteration of the
+				// immutable-update/request-loop pattern. Deep-drop the old box
+				// exactly like the loop-reinit path before storing the new
+				// spread-built value.
+				b.emitStructEnumSlotDrop(idx, sety)
+			}
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
 			// Phase 1e-strings: dec the OLD string buffer before the
 			// overwrite, mirroring the exit-sweep string branch (emitDec)
