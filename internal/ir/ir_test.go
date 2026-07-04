@@ -2267,6 +2267,36 @@ function build(): i32 {
 	}
 }
 
+// TestLowerStructSpreadOverwriteDrop verifies a self-update spread
+// `st = State { ...st, ... }` deep-drops the old struct box before the
+// store. The spread copy path retains any carried pointer fields itself,
+// so the overwrite must reclaim the replaced box instead of falling
+// through to the leak-prone flat dec / no-drop path.
+func TestLowerStructSpreadOverwriteDrop(t *testing.T) {
+	p := lowerSourceWith(t, `struct State { count: i32, last: string }
+function build(): i32 {
+    var st: State = State { count: 0, last: "seed" + "!" };
+    st = State { ...st, count: st.count + 1, last: "next" + "!" };
+    return st.count;
+}`, 4)
+	if !funcExists(p, "__drop_struct_State") {
+		t.Fatalf("expected generated __drop_struct_State:\n%s", p)
+	}
+	var got int
+	for _, fn := range p.Funcs {
+		if fn.Name == "build" {
+			got = countCallDirect(fn.Ops, "__drop_struct_State")
+			break
+		}
+	}
+	if got < 2 {
+		t.Errorf("expected build to call __drop_struct_State for both overwrite and exit-sweep drops, got %d:\n%s", got, p)
+	}
+	if !callsDirect(p, "__drop_struct_State", "__fern_str_dec") {
+		t.Errorf("expected __drop_struct_State to reclaim its string field via __fern_str_dec:\n%s", p)
+	}
+}
+
 // TestLowerMapStringValueReclaim verifies a Map[i32, string] (wasm)
 // reclaims its string values: the map local's drop routes through the
 // generated __drop_map_str_values column walk, which __fern_str_dec's

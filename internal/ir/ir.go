@@ -12791,7 +12791,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// __fern_arr_dec branch above, which is double-free-safe; this
 				// guards the struct / enum case that the flat / deep drop below
 				// would over-release.)
-			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
+			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety) || b.selfSpreadUpdateOwnedLocal(n.Value, t.Name)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
 				// like a scope exit (or a loop reinit) would, so deep-drop the
@@ -12813,18 +12813,6 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
-			}
-		} else if sl, isStructLit := n.Value.(*ast.StructLit); isStructLit && sl.Base != nil {
-			if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
-				// Struct-update overwrite — `s = T{ ...s, field: v }` bails out
-				// of tryStructReuseOverwrite (the spread fields aren't copied on
-				// the fresh-alloc branch there), then used to fall through this
-				// assignment path with NO old-value release at all. That leaked
-				// the old box's rc-tracked fields on every iteration of the
-				// immutable-update/request-loop pattern. Deep-drop the old box
-				// exactly like the loop-reinit path before storing the new
-				// spread-built value.
-				b.emitStructEnumSlotDrop(idx, sety)
 			}
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
 			// Phase 1e-strings: dec the OLD string buffer before the
@@ -13309,6 +13297,35 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 	}
 	mentions := false
 	ast.Walk(rhs, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			mentions = true
+		}
+		return !mentions
+	})
+	return mentions
+}
+
+// selfSpreadUpdateOwnedLocal reports whether `rhs` is a struct-update
+// self-reassign `x = T{ ...x, ... }` on a LOCAL `x` (never a param). The
+// spread copy path retains every copied pointer-shaped field (including
+// two-word strings via __fern_str_inc), and explicit override fields retain
+// alias-shaped values through the normal StructLit field-init path, so the
+// old box can be deep-dropped before the store without freeing anything the
+// new value still points at. This is narrower than the general
+// selfReassignOwnedLocal call-form gate: it applies only to the struct-update
+// shape, whose copy/retain rules are known.
+func (b *builder) selfSpreadUpdateOwnedLocal(rhs ast.Expr, name string) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return false
+		}
+	}
+	sl, ok := rhs.(*ast.StructLit)
+	if !ok || sl.Base == nil {
+		return false
+	}
+	mentions := false
+	ast.Walk(sl.Base, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && id.Name == name {
 			mentions = true
 		}
