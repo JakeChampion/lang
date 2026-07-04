@@ -80,7 +80,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     // is non-trapping (x/0 = 0), so no guard is needed — only the narrow.
     // rem needs no sxtw: |rem| < |divisor| keeps it in i32 range, and the
     // INT_MIN % -1 msub yields 0 in-register already.
-    if (tag == 24 && width != 64) { return "    sdiv x0, x0, x1\n    sxtw x0, x0\n"; }
+    if (tag == 24 && width != 64) { return "    sdiv x0, x0, x1\n    sxtw x0, w0\n"; }
     if (tag == 24) { return "    sdiv x0, x0, x1\n"; }
     if (tag == 26) { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
     // Unsigned 64-bit div/rem (u64, #2904): udiv instead of sdiv.
