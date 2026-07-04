@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,7 +132,7 @@ func TestSelfHostEnumCrossReuseFiresX86_64(t *testing.T) {
 
 	countAllocs := func(prog string) int {
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-		return bytes.Count(asm, []byte("call __fern_arr_box"))
+		return countUserArrBoxAllocs(asm)
 	}
 	if got := countAllocs(enumCrossReuseFiresDeadDonor); got != 3 {
 		t.Errorf("dead enum donor: got %d box allocs, want 3 (reuse should fire)", got)

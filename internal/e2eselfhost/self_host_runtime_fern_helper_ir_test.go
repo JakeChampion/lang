@@ -203,10 +203,49 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 				t.Errorf("IR asm missing call %s — call site not resolving to the Fern helper", tc.sym)
 			}
 			for _, bad := range tc.gone {
-				if strings.Contains(got, bad) {
+				// Label patterns ("\n__fern_x:" definitions, ".L*" local
+				// labels) are unique to the retired hand-written bodies, so
+				// they scan the whole output. Generic instruction idioms
+				// (the old stack-arg load `movq 8(%rsp), %rdi`) can
+				// legitimately appear in OTHER hand-written runtime helpers
+				// (#4551's __fn___fern_alloc_reuse uses the same load), so
+				// they scan only the helper-under-test's own body — the
+				// migration contract is that THIS symbol's body is
+				// Fern-compiled, not that the idiom vanished globally.
+				scope := got
+				if !strings.HasPrefix(bad, "\n") && !strings.HasPrefix(bad, ".") {
+					scope = extractFuncBody(got, tc.sym)
+				}
+				if strings.Contains(scope, bad) {
 					t.Errorf("IR asm still contains hand-written form %q — IR migration regressed", bad)
 				}
 			}
 		})
+	}
+}
+
+// extractFuncBody returns the asm text of the named function: from its
+// column-0 `sym:` label to the next column-0 function label (local `.L*:`
+// labels inside the body don't terminate it). Empty when the label is
+// missing — callers that need the definition assert it separately.
+func extractFuncBody(asm, sym string) string {
+	start := strings.Index(asm, "\n"+sym+":")
+	if start < 0 {
+		return ""
+	}
+	body := asm[start+1:]
+	for off := len(sym) + 2; ; {
+		next := strings.Index(body[off:], "\n")
+		if next < 0 {
+			return body
+		}
+		lineStart := off + next + 1
+		rest := body[lineStart:]
+		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '.' && rest[0] != '\n' {
+			if end := strings.Index(rest, "\n"); end < 0 || strings.Contains(rest[:end], ":") {
+				return body[:lineStart]
+			}
+		}
+		off = lineStart
 	}
 }

@@ -134,7 +134,7 @@ func TestSelfHostCrossTypeReuseFiresX86_64(t *testing.T) {
 
 	countAllocs := func(prog string) int {
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-		return bytes.Count(asm, []byte("call __fern_arr_box"))
+		return countUserArrBoxAllocs(asm)
 	}
 	if got := countAllocs(crossTypeReuseDeadDonor); got != 1 {
 		t.Errorf("dead cross-type donor: got %d struct-box allocs, want 1 (reuse should fire)", got)
