@@ -72,6 +72,15 @@ function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 21) { return "    add x0, x0, x1\n"; }
     if (tag == 22) { return "    sub x0, x0, x1\n"; }
     if (tag == 23) { return "    mul x0, x0, x1\n"; }
+    // i32 signed division narrows its result back to 32 bits: the operands
+    // ride sign-extended in 64-bit regs, and the one quotient that overflows
+    // i32 — INT_MIN / -1 = 2^31 — is representable in the 64-bit register, so
+    // without the sxtw it stayed positive instead of wrapping to INT_MIN like
+    // native, interp, and the x86 IR path's guarded div (#4329). sdiv itself
+    // is non-trapping (x/0 = 0), so no guard is needed — only the narrow.
+    // rem needs no sxtw: |rem| < |divisor| keeps it in i32 range, and the
+    // INT_MIN % -1 msub yields 0 in-register already.
+    if (tag == 24 && width != 64) { return "    sdiv x0, x0, x1\n    sxtw x0, x0\n"; }
     if (tag == 24) { return "    sdiv x0, x0, x1\n"; }
     if (tag == 26) { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
     // Unsigned 64-bit div/rem (u64, #2904): udiv instead of sdiv.
