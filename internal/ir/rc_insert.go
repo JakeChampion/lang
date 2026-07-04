@@ -16,6 +16,7 @@ package ir
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -779,6 +780,31 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			continue
 		}
 		emitDec(slot, p.Type, true, p.Name)
+	}
+	// Consuming-owned-match bindings (#4400) are counted owners: the per-arm
+	// scrutinee release transferred (unique branch) or dup'd (shared branch)
+	// their payload reference, so the sweep deep-drops them like owned locals.
+	// They live in neither info.Locals nor Params, hence the extra pass. The
+	// prologue pre-zeroed their slots, so a binding whose arm never ran decs a
+	// NULL (inert under the helpers' guards). An escaped binding lost its
+	// freeEligible bit (re-tainted) and is skipped — leak, never a UAF.
+	if len(b.rc.consumingBindings) > 0 {
+		names := make([]string, 0, len(b.rc.consumingBindings))
+		for nm := range b.rc.consumingBindings {
+			names = append(names, nm)
+		}
+		sort.Strings(names)
+		for _, nm := range names {
+			if seen[nm] || !b.rc.freeEligible[nm] {
+				continue
+			}
+			seen[nm] = true
+			slot, ok := b.locals[nm]
+			if !ok {
+				continue
+			}
+			emitDec(slot, b.rc.consumingBindings[nm], true, nm)
+		}
 	}
 }
 

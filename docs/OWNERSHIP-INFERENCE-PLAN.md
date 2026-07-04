@@ -299,11 +299,37 @@ analysis, which is independent, pure, and de-risks the design.
   caller-side incs and its callee-side reclamation while an escaping
   (returned) param stays owned.
 
+  **Sub-slice 2e — Koka consuming match on owned-by-default enum params —
+  DONE (#4400).** A `match` whose scrutinee is a bare owned-by-default enum
+  parameter at its LAST occurrence (outside loops, defer-free function) now
+  releases the box PER ARM instead of holding it to the exit sweep — the
+  classic Perceus drop-specialization for the counted model, the sibling of
+  the `own`-param C1: unique → `__fern_box_free` (the extracted bindings
+  inherit the box's payload counts; the dup/child-dec pairs cancel
+  statically), shared → dup each pointer binding (`__fern_rc_inc`) + flat
+  dec; either way the param slot is zeroed so the sweep no-ops. The arm
+  bindings become COUNTED OWNERS (`consumingBindings`): pre-zeroed slots,
+  exempt from the match-binding taint and the `escapeOwned`
+  construction-store taint (every inc-ing sink dups them), and deep-dropped
+  by the exit sweep like owned locals. A match qualifies only when every
+  pointer payload of every unguarded arm is a trackable named binding
+  (`computeConsumingOwnedMatches`' fixpoint — a `_` discard or shadowed
+  name would strand the transferred count, so the whole match falls back).
+  Self-host mirror (`irlower.fern`): the rc-payload consumed-enum free no
+  longer rejects candidates whose arm bindings ESCAPE — the free site skips
+  the dec of each moved (variant, field) pair instead
+  (`match_moved_rc_payloads` / `emit_enum_variant_drops_moved`), the same
+  dup/dec cancellation with the dup elided. Verified: IR shape tests,
+  multi-backend e2e (underflow-zero unique + shared paths, bounded
+  high-water on wasm), and the self-host escaping-binding cases flipped
+  from rejected-leak to freed-box + moved payload.
+
   **Remaining sub-slices (optional, later):** admit array/string/
   non-uniform-payload enums and string-containing structs/tuples into
   owned-by-default (more reclaim coverage; borrow inference already skips
   the inc/dec for the non-escaping readers among them via the borrow
-  fallback).
+  fallback); widen 2e to `MatchExpr` scrutinees and owned local (non-param)
+  scrutinees, and let a guarded-arm release fire on the guard-true path.
 
 - **Slice 3 — `own` optional + the `fip` checked guarantee — DONE
   (first cut).** With borrow inference driving reclaim, `own` is no longer

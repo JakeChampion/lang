@@ -4584,6 +4584,26 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
+	// Consuming-owned-match bindings (#4400): pre-allocate each binding's slot
+	// and zero it, so (a) bindingSlot reuses this slot when the arm binds (the
+	// scratchType stamp gives it the right single-word shape), and (b) the
+	// exit-sweep dec added for these names sees a NULL — not stack garbage —
+	// when the binding's arm never ran. Same safety-zero contract as the
+	// rc-tracked local zeroing above; sorted for deterministic slot order.
+	if len(b.rc.consumingBindings) > 0 {
+		names := make([]string, 0, len(b.rc.consumingBindings))
+		for nm := range b.rc.consumingBindings {
+			names = append(names, nm)
+		}
+		sort.Strings(names)
+		for _, nm := range names {
+			slot := b.allocSlot()
+			b.locals[nm] = slot
+			b.scratchType[slot] = b.rc.consumingBindings[nm]
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+	}
 	// Consumed-threaded param entry-incs are no longer emitted here: they are
 	// the first RC insertion converted to true post-lowering []Op insertion
 	// (insertConsumedParamEntryIncs, rc_insert.go — #4393 slice 4), spliced at
@@ -6384,10 +6404,29 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (computeMovedLocals) so the exit sweep doesn't ALSO deep-drop it.
 		var consumeEnum ast.EnumType
 		consumeScrut := false
+		// Consuming owned match (#4400): the scrutinee is an OWNED-BY-DEFAULT
+		// enum parameter at its last use. The arms release the box per arm via
+		// the drop-specialized emitOwnedConsumingArmDrop (unique → shallow
+		// free, payload counts transfer to the bindings; shared → dup the
+		// counted bindings + flat dec) and zero the param slot so the exit
+		// sweep no-ops. Disjoint from the `own`-param path above (that one
+		// MOVES payloads, E051-guarded); guarded / wildcard arms skip the
+		// release and leave the box to the exit sweep.
+		consumeOwnedName := ""
 		if !pairFormScrutinee {
 			consumeEnum, consumeScrut = b.ownParamEnumScrutinee(n.Tag)
 		}
 		if !pairFormScrutinee && !consumeScrut {
+			// computeConsumingOwnedMatches never admits an `own` param, so the
+			// two consuming paths are disjoint by construction.
+			if name, isConsuming := b.rc.consumingOwnedMatches[n]; isConsuming {
+				if et, isEnum := b.exprStaticType(n.Tag).(ast.EnumType); isEnum {
+					consumeEnum = et
+					consumeOwnedName = name
+				}
+			}
+		}
+		if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
 			bts := make([][]ast.Type, 0, len(n.Arms))
 			for _, arm := range n.Arms {
 				bts = append(bts, arm.BindingTypes)
@@ -6503,6 +6542,27 @@ func (b *builder) stmt(s ast.Stmt) error {
 				if reuseCtor := b.consumingReuseCtor(arm, consumeEnum); reuseCtor == nil || !b.rc.consumingMatchReuse[reuseCtor] {
 					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
 				}
+			}
+			// Consuming owned match (#4400): with the bindings copied into
+			// their slots, release the scrutinee box here — the Koka
+			// drop-specialization. Unique: shallow box free (the counted
+			// payload references transfer to the bindings — dup/dec pairs
+			// cancelled statically). Shared: dup each qualifying pointer
+			// binding (it becomes a second counted owner) and flat-dec the
+			// box. Then zero the PARAM slot so the exit sweep's deep-drop
+			// no-ops; guarded arms skip (no release on a fall-through path)
+			// and leave the box to the exit sweep.
+			if consumeOwnedName != "" && !pairFormScrutinee && arm.Guard == nil {
+				var dupSlots []int32
+				for _, bname := range arm.Bindings {
+					if _, owned := b.rc.consumingBindings[bname]; !owned {
+						continue
+					}
+					if slot, ok := b.locals[bname]; ok {
+						dupSlots = append(dupSlots, slot)
+					}
+				}
+				b.emitOwnedConsumingArmDrop(ptrSlot, consumeEnum, dupSlots, consumeOwnedName)
 			}
 			// Optional guard: with bindings now in locals, run
 			// the guard expression. On false, branch out of the
@@ -11967,6 +12027,71 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
+}
+
+// emitOwnedConsumingArmDrop releases an OWNED-BY-DEFAULT enum scrutinee's box
+// inside a consuming-match arm (#4400) — the Koka drop-specialization for the
+// COUNTED ownership model, the sibling of emitConsumingMatchBoxFree's move
+// model. After the arm's bindings are extracted:
+//
+//	if __fern_rc_is_unique(box):
+//	    __fern_box_free(box, size)      // shallow — the box's counted payload
+//	                                    // references transfer to the bindings
+//	                                    // (dup + child-dec cancelled statically)
+//	else:
+//	    __fern_rc_inc(binding) …        // dup: each qualifying pointer binding
+//	                                    // becomes a second counted owner
+//	    __fern_rc_dec(box)              // release our reference; the box (and
+//	                                    // its payload counts) stays with the
+//	                                    // other owners
+//
+// then the PARAM's slot is zeroed so the exit sweep's deep-drop no-ops (the
+// helpers' null / low-address guards make a zeroed slot inert). dupSlots holds
+// the slots of this arm's consumingBindings — single-word box pointers by
+// construction (enum / user struct / tuple; string / array payloads are
+// excluded by the isOwnedByDefaultType gate). Uniform-box enums only; anything
+// else keeps the box for the exit sweep (safe, and excluded by the analysis
+// gates anyway).
+func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupSlots []int32, paramName string) {
+	paramSlot, ok := b.locals[paramName]
+	if !ok {
+		return
+	}
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	size, ok := uniformEnumBoxSize(ed, b.ptrW)
+	if !ok {
+		return
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	// Unique: free the box BUFFER only — the bindings inherit the payload
+	// counts. Same shape as the `own`-param shallow free.
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpElse})
+	// Shared: dup the counted bindings, then release our box reference.
+	for _, slot := range dupSlots {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+	// Dead the param slot: the scrutinee is consumed on this path, so the
+	// exit sweep (which still visits the param) must see a null.
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: paramSlot})
 }
 
 // ownParamEnumScrutinee reports the enum type when `tag` is a bare reference to
