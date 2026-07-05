@@ -2600,9 +2600,12 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             var got: Ty = infer_expr_type(a.value, ctx.st);
             var tt: Ty = ctx.st.local_type_of(a.target);
             if (!assignable(tt, got)) {
+                // E003, matching native's numbering (assignment / annotated-var
+                // type mismatch); native E004 is call arity (#4327 fold-in —
+                // this guard used to say E004).
                 return CheckCtx {
                     st: ctx.st,
-                    errs: ctx.errs + "error[E004]: in fn '" + fname
+                    errs: ctx.errs + "error[E003]: in fn '" + fname
                         + "': assignment to '" + a.target + "' of type "
                         + ty_friendly(tt) + " from expression of type "
                         + ty_friendly(got) + "\n"
