@@ -474,6 +474,9 @@ func TestWASMArrayDropFree(t *testing.T) {
 	}
 	for _, c := range rcCorpus {
 		t.Run(c.name, func(t *testing.T) {
+			if c.skipWasm != "" {
+				t.Skip(c.skipWasm)
+			}
 			if got := runWasm(t, c.src); got != 0 {
 				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption)", c.name, got)
 			}
