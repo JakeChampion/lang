@@ -75,10 +75,15 @@ measured on the 500×20 self-compile*, not elegance.
 The migration is deliberately **additive-then-consume**, so no single slice
 rewrites the whole pipeline:
 
-0. **Foundation — `SymTab` + tests, not yet consumed.** Add the table and its
-   round-trip / equality contract with a golden driver + Go test. Consumed
-   immediately by slice 1 so it does not sit as dead bundle weight against the
-   ~512-function budget. Mirrors the SH-021 TypeRef foundation slice.
+0. **Foundation — `SymTab` + tests, not yet consumed.** _(Landed:
+   `examples/self_host/symtab.fern` + `symtab_run.fern` +
+   `TestSelfHostSymTab`.)_ The table and its intern / name_of / lookup / count /
+   round-trip contract, `string[]`-backed via `util.index_of_str` (no runtime-map
+   dependency — the compiler itself uses no `core/map`; a map-backed index is the
+   benchmarked follow-up behind this same contract). It is a standalone module
+   `fern.fern` does not import, so it is inert to the main self-compile (only its
+   test driver pulls it in) — it costs nothing against the ~512-function bundle
+   budget until slice 1 consumes it. Mirrors the SH-021 TypeRef foundation slice.
 1. **Intern the mangled names at `mangle_bare`.** Return an id-backed handle for
    the mangled symbol; keep the *textual* `Op.str` for now by materialising
    `name_of` at the op-construction boundary. This is behaviour-preserving

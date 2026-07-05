@@ -1,0 +1,39 @@
+// examples/self_host/symtab_run.fern — golden driver for the symbol intern table
+// (symtab.fern's SymTab, #4394 lever 1 foundation — docs/SELFHOST-SYMBOL-INTERNING.md).
+//
+// Exercises the full intern/name_of/lookup/count contract: dense id assignment,
+// dedup of a repeated name to its original id, the name_of inverse (incl. the
+// out-of-range guard on negative / too-large ids), lookup's -1-on-absent, and the
+// round-trip invariant name_of(intern(s).id) == s. The companion Go test pins the
+// exact output.
+
+import "./symtab";
+import "./util";
+
+function b(x: boolean): string { if (x) { return "T"; } return "F"; }
+function q(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
+
+function main(): i32 {
+    var t: symtab.SymTab = symtab.symtab_new();
+    var r1: symtab.InternResult = t.intern("alpha"); t = r1.tab;
+    var r2: symtab.InternResult = t.intern("beta");  t = r2.tab;
+    var r3: symtab.InternResult = t.intern("alpha"); t = r3.tab;   // dup -> same id
+    var r4: symtab.InternResult = t.intern("gamma"); t = r4.tab;
+
+    var out: string = "";
+    out = out + "alpha=" + util.i32_to_string(r1.id) + "\n";
+    out = out + "beta=" + util.i32_to_string(r2.id) + "\n";
+    out = out + "alpha2=" + util.i32_to_string(r3.id) + " same=" + b(r3.id == r1.id) + "\n";
+    out = out + "gamma=" + util.i32_to_string(r4.id) + "\n";
+    out = out + "count=" + util.i32_to_string(t.count()) + "\n";
+    out = out + "name_of(0)=" + q(t.name_of(r1.id)) + "\n";
+    out = out + "name_of(1)=" + q(t.name_of(r2.id)) + "\n";
+    out = out + "name_of(2)=" + q(t.name_of(r4.id)) + "\n";
+    out = out + "name_of(-1)=" + q(t.name_of(0 - 1)) + "\n";
+    out = out + "name_of(99)=" + q(t.name_of(99)) + "\n";
+    out = out + "lookup(beta)=" + util.i32_to_string(t.lookup("beta")) + "\n";
+    out = out + "lookup(missing)=" + util.i32_to_string(t.lookup("missing")) + "\n";
+    out = out + "roundtrip=" + b(t.name_of(r1.id) == "alpha" && t.name_of(r4.id) == "gamma") + "\n";
+    write(out);
+    return 0;
+}
