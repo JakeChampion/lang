@@ -228,13 +228,22 @@ findings. Ranked by leverage.
   (pure boolean fns, so identical output ⇒ unchanged wasm codegen), verified
   old-vs-new over a 25-input corpus and pinned by `wasm_extern_sum_run.fern` +
   `TestSelfHostWasmExternSum`.
+  _wasm payload-extractor slice landed:_ `parse_option_payload` /
+  `parse_result_err_payload` now pull the Some/Ok payload `T` and the Err type `E`
+  out of an `Option[T]` / `Result[T, E]` via `parse_type_ref` (`base` / `args` /
+  `array_depth`) instead of the `Option[` / `Result[` prefix + top-level-comma
+  depth scan. Byte-identical on every valid input; the migration additionally
+  corrects the old scan's garbage-on-array edge case (`Option[i32][]` /
+  `Result[…][]` — an array value, for which the prefix + trailing-`]` test wrongly
+  fired — now correctly return "" via the `array_depth == 0` guard). The three x86
+  self-compile fixpoints confirm no such array type reaches these during
+  bootstrap, so the correction leaves the self-compile byte-identical. Pinned by
+  `wasm_option_payload_run.fern` + `TestSelfHostWasmOptionPayload`.
   _Remaining:_ the rest of wasm's scattered type decode (the `ft[0:len-2]`
-  element-strips and the `parse_option_payload` / `parse_result_err_payload`
-  extractors — the latter need care around their garbage-on-array edge case) and
-  the parser's own `type_from_name`-style substring surgery (`parser.fern`,
-  monomorphisation-mangling — byte-identity-critical), then have the parser store
-  `TypeRef` directly so the string becomes render output. Unblocks #4394 lever 1
-  (symbol interning ripples into this type system).
+  element-strips) and the parser's own `type_from_name`-style substring surgery
+  (`parser.fern`, monomorphisation-mangling — byte-identity-critical), then have
+  the parser store `TypeRef` directly so the string becomes render output.
+  Unblocks #4394 lever 1 (symbol interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress
