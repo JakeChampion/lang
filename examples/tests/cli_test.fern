@@ -111,6 +111,27 @@ function test_short_lone_dash_is_positional(): test.TestOutcome {
     return test.assert_true(a.operands().len() == 1 && !a.is_error());
 }
 
+// ---- ANSI colour helpers (env-robust: assert per cli_color_enabled) ----
+
+// A coloriser wraps text in an SGR sequence when colour is on, and
+// is a passthrough when NO_COLOR disables it.
+function test_color_red(): test.TestOutcome {
+    var red: string = cli.cli_red("x");
+    if (cli.cli_color_enabled()) {
+        // ESC (byte 27) ... "31m" ... "x"
+        return test.assert_true(red[0] == 27 && red.contains("31m") && red.contains("x"));
+    }
+    return test.assert_eq(red, "x");
+}
+
+function test_color_bold(): test.TestOutcome {
+    var b: string = cli.cli_bold("hi");
+    if (cli.cli_color_enabled()) {
+        return test.assert_true(b[0] == 27 && b.contains("1m") && b.contains("hi"));
+    }
+    return test.assert_eq(b, "hi");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/cli");
     r = r.it("option --long V",        test_option_long());
@@ -129,5 +150,7 @@ function main(): i32 {
     r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued());
     r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value());
     r = r.it("lone dash is positional", test_short_lone_dash_is_positional());
+    r = r.it("colour red wraps or passes", test_color_red());
+    r = r.it("colour bold wraps or passes", test_color_bold());
     return r.finish();
 }
