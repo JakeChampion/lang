@@ -5713,70 +5713,12 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = ashIn.state;
         var ashOt: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Other");
         s = ashOt.state;
-        s = s.write(".globl __fern_io_error\n");
-        s = s.write(".type __fern_io_error, %function\n");
-        s = s.write("__fern_io_error:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    cmp x19, #2\n");
-        s = s.write("    b.eq .Laioe_nf\n");
-        s = s.write("    cmp x19, #13\n");
-        s = s.write("    b.eq .Laioe_pd\n");
-        s = s.write("    cmp x19, #17\n");
-        s = s.write("    b.eq .Laioe_ae\n");
-        s = s.write("    cmp x19, #4\n");
-        s = s.write("    b.eq .Laioe_intr\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    adrp x9, .Laioe_empty\n");
-        s = s.write("    add x9, x9, :lo12:.Laioe_empty\n");
-        s = s.write("    str x9, [x0]\n");
-        s = s.write("    str xzr, [x0, #8]\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x0, #24\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    adrp x9, " + ashOt.label + "\n");
-        s = s.write("    add x9, x9, :lo12:" + ashOt.label + "\n");
-        s = s.write("    str x9, [x0]\n");
-        s = s.write("    str x20, [x0, #8]\n");
-        s = s.write("    str x19, [x0, #16]\n");
-        s = s.write("    b .Laioe_done\n");
-        s = s.write(".Laioe_nf:\n");
-        s = s.write("    adrp x19, " + ashNf.label + "\n");
-        s = s.write("    add x19, x19, :lo12:" + ashNf.label + "\n");
-        s = s.write("    b .Laioe_withpath\n");
-        s = s.write(".Laioe_pd:\n");
-        s = s.write("    adrp x19, " + ashPd.label + "\n");
-        s = s.write("    add x19, x19, :lo12:" + ashPd.label + "\n");
-        s = s.write("    b .Laioe_withpath\n");
-        s = s.write(".Laioe_ae:\n");
-        s = s.write("    adrp x19, " + ashAe.label + "\n");
-        s = s.write("    add x19, x19, :lo12:" + ashAe.label + "\n");
-        s = s.write("    b .Laioe_withpath\n");
-        s = s.write(".Laioe_intr:\n");
-        s = s.write("    mov x0, #8\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    adrp x9, " + ashIn.label + "\n");
-        s = s.write("    add x9, x9, :lo12:" + ashIn.label + "\n");
-        s = s.write("    str x9, [x0]\n");
-        s = s.write("    b .Laioe_done\n");
-        s = s.write(".Laioe_withpath:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x19, [x0]\n");
-        s = s.write("    str x20, [x0, #8]\n");
-        s = s.write(".Laioe_done:\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_io_error, .-__fern_io_error\n");
-        s = s.write("    .section .rodata\n");
-        s = s.write(".Laioe_empty:\n");
-        s = s.write("    .byte 0\n");
-        s = s.write("    .text\n");
+        // Emitted as a few coalesced multi-line writes (not one per asm
+        // line), like __fern_subprocess: the compiler's per-module emit of
+        // THIS module sits near the #3425 arena ceiling, and per-statement
+        // writes grow its lowering live set (exit-137 on the per-module
+        // whole-compiler test).
+        s = s.write(".globl __fern_io_error\n.type __fern_io_error, %function\n__fern_io_error:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    mov x19, x0\n    mov x20, x1\n    cmp x19, #2\n    b.eq .Laioe_nf\n    cmp x19, #13\n    b.eq .Laioe_pd\n    cmp x19, #17\n    b.eq .Laioe_ae\n    cmp x19, #4\n    b.eq .Laioe_intr\n    mov x0, #16\n    bl __fern_alloc\n    adrp x9, .Laioe_empty\n    add x9, x9, :lo12:.Laioe_empty\n    str x9, [x0]\n    str xzr, [x0, #8]\n    mov x19, x0\n    mov x0, #24\n    bl __fern_alloc\n    adrp x9, " + ashOt.label + "\n    add x9, x9, :lo12:" + ashOt.label + "\n    str x9, [x0]\n    str x20, [x0, #8]\n    str x19, [x0, #16]\n    b .Laioe_done\n.Laioe_nf:\n    adrp x19, " + ashNf.label + "\n    add x19, x19, :lo12:" + ashNf.label + "\n    b .Laioe_withpath\n.Laioe_pd:\n    adrp x19, " + ashPd.label + "\n    add x19, x19, :lo12:" + ashPd.label + "\n    b .Laioe_withpath\n.Laioe_ae:\n    adrp x19, " + ashAe.label + "\n    add x19, x19, :lo12:" + ashAe.label + "\n    b .Laioe_withpath\n.Laioe_intr:\n    mov x0, #8\n    bl __fern_alloc\n    adrp x9, " + ashIn.label + "\n    add x9, x9, :lo12:" + ashIn.label + "\n    str x9, [x0]\n    b .Laioe_done\n.Laioe_withpath:\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x20, [x0, #8]\n.Laioe_done:\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n.size __fern_io_error, .-__fern_io_error\n    .section .rodata\n.Laioe_empty:\n    .byte 0\n    .text\n");
 
         // __fern_read_file(x0 = path string box) → Result[string,
         // IoError]: [tag@0, payload@8] with tag=0 Ok(contents) on
@@ -5876,15 +5818,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // untouched). Map errno → a real IoError variant box — the payload
         // used to be NULL, so matching the error value segfaulted (#4624,
         // arm64 leg of #4370).
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x24, x0\n");
-        s = s.write("    mov x0, #16\n");           // Result Err box
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");          // tag = Err
-        s = s.write("    str x24, [x0, #8]\n");     // payload = IoError box
+        s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x24, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x24, [x0, #8]\n");
         s = s.write(".Lrdf_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -5973,31 +5907,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // Write failed: preserve -errno (the close would clobber x0), then
         // build the real IoError payload (#4624). x24 (bytes-written) is dead
         // on the error path.
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x24, x0\n");
-        s = s.write("    mov x0, x23\n");
-        s = s.write("    mov x8, #57\n");            // close, ignore result
-        s = s.write("    svc #0\n");
-        s = s.write("    b .Lwf_mkerr\n");
-        s = s.write(".Lwf_err:\n");
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x24, x0\n");
-        s = s.write(".Lwf_mkerr:\n");
+        s = s.write("    neg x0, x0\n    mov x24, x0\n    mov x0, x23\n    mov x8, #57\n    svc #0\n    b .Lwf_mkerr\n.Lwf_err:\n    neg x0, x0\n    mov x24, x0\n.Lwf_mkerr:\n");
         // x21/x22 = the caller's path data + length (untouched since entry):
         // box the path and map errno → variant.
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");
-        s = s.write("    str x22, [x0, #8]\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x24\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x24, x0\n");
-        s = s.write("    mov x0, #16\n");            // Some box
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0]\n");           // tag = Some
-        s = s.write("    str x24, [x0, #8]\n");      // payload = IoError box
+        s = s.write("    mov x0, #16\n    bl __fern_alloc\n    str x21, [x0]\n    str x22, [x0, #8]\n    mov x1, x0\n    mov x0, x24\n    bl __fern_io_error\n    mov x24, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x24, [x0, #8]\n");
         s = s.write(".Lwf_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6189,21 +6102,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // x0 = -errno from mkdirat; x21/x22 = the GENERATED path data +
         // length (the same pair the Ok path boxes). Real IoError payload
         // instead of NULL (#4624).
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x23, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");
-        s = s.write("    str x22, [x0, #8]\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x23\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x21, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");           // Err
-        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
+        s = s.write("    neg x0, x0\n    mov x23, x0\n    mov x0, #16\n    bl __fern_alloc\n    str x21, [x0]\n    str x22, [x0, #8]\n    mov x1, x0\n    mov x0, x23\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Ltd_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6307,15 +6206,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write(".Lstat_err:\n");
         // x0 = -errno from statx; x19 = the ORIGINAL path box (callee-saved,
         // untouched). Real IoError payload instead of NULL (#4624).
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x21, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");           // Err
-        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
+        s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Lstat_ret:\n");
         s = s.write("    add sp, sp, #160\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
@@ -6497,15 +6388,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // x0 = -errno from openat (the only route here — x19 is still the
         // ORIGINAL path box; its dents-scan repurposing happens later). Real
         // IoError payload instead of NULL (#4624).
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x21, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");           // Err
-        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
+        s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Lrd_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6711,21 +6594,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // x0 = -errno from the initial openat (the only route here);
         // x19/x21 = NUL-terminated path copy + length (both live). Real
         // IoError payload instead of NULL (#4624).
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x22, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x19, [x0]\n");
-        s = s.write("    str x21, [x0, #8]\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x22\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x21, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0]\n");           // Some
-        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
+        s = s.write("    neg x0, x0\n    mov x22, x0\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x21, [x0, #8]\n    mov x1, x0\n    mov x0, x22\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Lrda_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6787,15 +6656,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // x0 = -errno from unlinkat; x19 = the ORIGINAL path box
         // (callee-saved, untouched). Real IoError payload instead of NULL
         // (#4624).
-        s = s.write("    neg x0, x0\n");
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    bl __fern_io_error\n");
-        s = s.write("    mov x21, x0\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0]\n");           // Some
-        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
+        s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Lrf_ret:\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
