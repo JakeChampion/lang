@@ -319,7 +319,10 @@ analysis, which is independent, pure, and de-risks the design.
   longer rejects candidates whose arm bindings ESCAPE — the free site skips
   the dec of each moved (variant, field) pair instead
   (`match_moved_rc_payloads` / `emit_enum_variant_drops_moved`), the same
-  dup/dec cancellation with the dup elided. Verified: IR shape tests,
+  dup/dec cancellation with the dup elided. A candidate mixing a guarded
+  arm with a non-empty moved set is rejected (`guarded_move`): a guard
+  could divert execution to an arm that did not move the payload, so the
+  skip is only exact when every arm is unguarded. Verified: IR shape tests,
   multi-backend e2e (underflow-zero unique + shared paths, bounded
   high-water on wasm), and the self-host escaping-binding cases flipped
   from rejected-leak to freed-box + moved payload.

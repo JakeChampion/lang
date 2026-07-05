@@ -116,6 +116,23 @@ function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"enum-escaping-binding-store-moved", 0)
 
+	// GUARD + MOVE mix REJECTED (the #4560 review point): the escaping Word
+	// arm sits behind a guarded sibling — a guard-true run would take the
+	// borrow-only arm while the moved-set skip still suppressed the payload
+	// dec (a per-call leak). Admission rejects the mix (guarded_move), so the
+	// candidate falls back to the exit sweep: values stay correct on both
+	// guard outcomes and the detector stays 0 (no skip fired, no over-release).
+	run(t, `enum Tok { Word(string), Num(i32) }
+function go(pre: string, k: i32): i32 {
+    var out: string = "";
+    var x = Word(pre + "abc");
+    match (x) { Word(s) when k > 0 => { out = s[0:2]; }, Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
+    return out.len();
+}
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre, 1) != 2) { bad = 1; } if (go(pre, 0) != 5) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"enum-guarded-move-mix-rejected", 0)
+
 	// NESTED-if consuming match (the "opt-strpayload" precise-drop kind): the
 	// shape is not admitted by the current precise-drop gates (same as the
 	// pre-existing array-payload behavior — the box leaks soundly), so assert

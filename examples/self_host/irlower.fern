@@ -15666,9 +15666,14 @@ function binding_escapes_arm(arm: parser.MatchArm, name: string, borrowable: str
 // — the dup the Koka transform would insert and the drop's dec cancel
 // statically. Borrow-only bindings stay OUT of the set: their arm is done with
 // the payload by the time the free runs, so the dec both reclaims it and keeps
-// today's behaviour. Guarded arms contribute too — if the guard was true the
-// payload really moved; if it was false the skip merely leaks. Scalar payloads
-// impose nothing (copied, not rc-tracked).
+// today's behaviour. Scalar payloads impose nothing (copied, not rc-tracked).
+//
+// The skip is exact only when the escaping arm ALWAYS runs for its variant — a
+// guard could divert execution to a different arm that did NOT move the
+// payload, turning the skip into a per-call leak. consumed_rcpayload_enum_frees
+// therefore REJECTS any candidate that mixes a non-empty moved set with a
+// guarded arm (match_has_guarded_arm); by emission time a non-empty moved set
+// implies every arm is unguarded, so exactly the escaping arm ran.
 function match_moved_rc_payloads(st: parser.Stmt, structs: parser.StructDecl[]): string[] {
     var moved: string[] = [];
     var none: string[] = [];
@@ -15710,6 +15715,23 @@ function match_moved_rc_payloads(st: parser.Stmt, structs: parser.StructDecl[]):
             return moved;
         },
         _ => { return moved; }
+    }
+}
+
+// match_has_guarded_arm: any arm of match `st` carries a guard — the
+// diversion that would make a moved-payload skip inexact (see
+// match_moved_rc_payloads).
+function match_has_guarded_arm(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
     }
 }
 
@@ -15755,8 +15777,13 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
                         // each moved (variant, field) pair instead — see
                         // match_moved_rc_payloads / emit_enum_variant_drops_moved.
                         // (The nested precise-drop path keeps its reject via
-                        // enum_body_binds_rc_payload.)
-                        if (!arms_use && dead_after && !escapes) {
+                        // enum_body_binds_rc_payload.) EXCEPT when the match also
+                        // has a GUARDED arm: a guard could divert execution to an
+                        // arm that did not move the payload, making the skip a
+                        // per-call leak — such mixes fall back to the exit sweep.
+                        var guarded_move: boolean = match_has_guarded_arm(body[match_idx])
+                            && match_moved_rc_payloads(body[match_idx], structs).len() > 0;
+                        if (!arms_use && dead_after && !escapes && !guarded_move) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
                             enums = enums.append(owner);
@@ -15797,8 +15824,10 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
 // its arm (match_moved_rc_payloads). Ownership of that payload moved to the
 // escapee (the binding was the box's counted reference, handed on), so the
 // deep-drop SKIPS its dec — dropping it would free a value the escapee still
-// holds. When a guard diverted execution to a different arm the skip merely
-// leaks that payload (sound); the box itself is still freed below either way.
+// holds; the box itself is still freed below either way. The skip is exact:
+// admission rejects guard/move mixes (consumed_rcpayload_enum_frees'
+// guarded_move gate), so a non-empty `moved` set implies every arm is
+// unguarded and exactly the escaping arm ran.
 function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
     var vi: i32 = 0;

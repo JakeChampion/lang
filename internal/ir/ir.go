@@ -12387,7 +12387,7 @@ func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupS
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	// Unique: free the box BUFFER only — the bindings inherit the payload
 	// counts. Same shape as the `own`-param shallow free.
@@ -12399,11 +12399,11 @@ func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupS
 	// Shared: dup the counted bindings, then release our box reference.
 	for _, slot := range dupSlots {
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
 	// Dead the param slot: the scrutinee is consumed on this path, so the
