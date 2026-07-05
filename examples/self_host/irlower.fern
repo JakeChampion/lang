@@ -17586,6 +17586,8 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
     var tgts_done: boolean = false;
     var allesc: string[] = [];
     var allesc_done: boolean = false;
+    var sfx: string[] = [];
+    var sfx_done: boolean = false;
     var i: i32 = 0;
     while (i < k) {
         match (body[i]) {
@@ -17597,11 +17599,16 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                 // type (same type, OR — cross-type — an all-scalar struct of
                 // the same box class; structs_reuse_compatible), not a
                 // self-overwrite donor, and not already consumed here.
-                var dtype: string = donor_bind_type(body, dname, structs, fresh_ret);
                 var elig: boolean = dname != c_name
-                    && structs_reuse_compatible(structs, dtype, c_type)
                     && util.index_of_str(so_bases, dname) < 0
                     && util.index_of_str(consumed, dname) < 0;
+                var dtype: string = "";
+                if (elig) {
+                    // donor_bind_type is an O(body) scan — run it only for
+                    // candidates that pass the constant-time checks above.
+                    dtype = donor_bind_type(body, dname, structs, fresh_ret);
+                    elig = structs_reuse_compatible(structs, dtype, c_type);
+                }
                 if (elig) {
                     // never reassigned, never escapes anywhere in the body.
                     if (!tgts_done) { tgts = body_assign_targets(body); tgts_done = true; }
@@ -17621,12 +17628,15 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                 if (elig) {
                     // dead from statement k onward: no mention (incl. d.field) at
                     // index >= k. Covers c's own field values referencing d too.
-                    var m: i32 = k;
-                    while (m < body.len()) {
-                        var none: string[] = [];
-                        if (util.index_of_str(astwalk.collect_idents_stmt(body[m], none), dname) >= 0) { elig = false; }
-                        m = m + 1;
+                    // The suffix ident set depends only on k (fixed per call) —
+                    // collect it once, on the first candidate that reaches this
+                    // gate, instead of re-collecting per statement per candidate.
+                    if (!sfx_done) {
+                        var m: i32 = k;
+                        while (m < body.len()) { sfx = astwalk.collect_idents_stmt(body[m], sfx); m = m + 1; }
+                        sfx_done = true;
                     }
+                    if (util.index_of_str(sfx, dname) >= 0) { elig = false; }
                 }
                 if (elig) { return dname + "|" + dtype; }
             },
@@ -17964,6 +17974,8 @@ function cross_tuple_construction_donor(body: parser.Stmt[], k: i32, arity: i32,
     var tgts_done: boolean = false;
     var allesc: string[] = [];
     var allesc_done: boolean = false;
+    var sfx: string[] = [];
+    var sfx_done: boolean = false;
     var i: i32 = 0;
     while (i < k) {
         match (body[i]) {
@@ -17981,12 +17993,13 @@ function cross_tuple_construction_donor(body: parser.Stmt[], k: i32, arity: i32,
                     if (util.index_of_str(allesc, dname) >= 0) { elig = false; }
                 }
                 if (elig) {
-                    var m: i32 = k;
-                    while (m < body.len()) {
-                        var none: string[] = [];
-                        if (util.index_of_str(astwalk.collect_idents_stmt(body[m], none), dname) >= 0) { elig = false; }
-                        m = m + 1;
+                    // Suffix idents depend only on k — collect once per call.
+                    if (!sfx_done) {
+                        var m: i32 = k;
+                        while (m < body.len()) { sfx = astwalk.collect_idents_stmt(body[m], sfx); m = m + 1; }
+                        sfx_done = true;
                     }
+                    if (util.index_of_str(sfx, dname) >= 0) { elig = false; }
                 }
                 if (elig) { return dname; }
             },
