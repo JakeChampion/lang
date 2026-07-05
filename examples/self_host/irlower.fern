@@ -17158,27 +17158,114 @@ function emit_reuse_recip_prior_release(s: LowerState, cslot: i32, dslot: i32): 
     return st;
 }
 
-// IN-PLACE reuse of donor d's (dead) box (the site found by cross_reuse_sites).
-// `c_name` is the new local; `init` the full no-base struct literal; `donor_name`
-// is d. For each leak-safe ARRAY field it first RELEASES the OLD value in d's box
-// (load box; struct_get; __fern_rc_dec; drop) — c overwrites every field, so the
-// donor's old array would otherwise leak — then writes EVERY field of c into d's
-// box (in decl order), binds c to d's box, and ZEROES d's slot so the exit sweep
-// frees the box exactly once (via c) and harmlessly decs a null for d. When
-// `release_prior` (the loop-body path), the recipient's prior loop-carried box is
-// released before the rebind (emit_reuse_recip_prior_release).
+// RUNTIME-GUARDED in-place reuse of donor d's (dead) box (#4350 slice 2; the
+// site found by cross_reuse_sites; the emit_self_overwrite_reuse token shape).
+// `c_name` is the new local; `init` the full no-base struct literal;
+// `donor_name` is d. reused = __fern_rc_is_unique(d); box =
+// __fern_alloc_reuse(reused ? d : 0, nfields). The reuse arm releases each
+// pointer-kinded OLD field (c overwrites every field, so the donor's old
+// values would otherwise leak); the fresh arm copies the shape word from d's
+// still-live box and decs d's reference (a future escape-walk hole thereby
+// degrades instead of corrupting). Every field of c is then written into the
+// result box (in decl order), c is bound to it, and d's slot is ZEROED so the
+// exit sweep frees the reused box exactly once (via c) and harmlessly decs a
+// null for d. When `release_prior` (the loop-body path), the recipient's
+// prior loop-carried box is released before any of this
+// (emit_reuse_recip_prior_release).
 function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprStructLit(slit) => {
             var st: LowerState = s;
-            // Write every decl field of T into d's box, in decl order. For each
-            // field find the literal value (a full construction sets all fields).
             var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
+            // Bind c's slot up front — both guard arms store the result box there.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_struct_type(cslot, slit.type_name);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // only when the recipient is a RECLAIMABLE (non-escaping) local (an
+            // escaping recipient's box is owned by the container it moved into; a
+            // prior-release would be a UAF). Runs before the guard: it reads only
+            // c's old slot + d's slot, both still untouched.
+            if (release_prior && slot_is_reclaimable_struct(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // Runtime uniqueness guard (#4350 slice 2, the emit_self_overwrite_reuse
+            // token shape): the static walk proves d is sole-owner and DEAD here
+            // (cross_reuse_sites), so no field value below can reference d — the
+            // guard exists so a future hole in the walk degrades (fresh box)
+            // instead of corrupting (in-place write over a shared box).
+            var uname: string = "$sxr_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$sxr_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_end());
+            var bname: string = "$sxr_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(ndecl));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Branch-specific box preparation. REUSE arm (box == d's box): release
+            // each pointer-kinded OLD field before the full overwrite below (or it
+            // leaks) — the same per-kind logic the pre-guard emitter interleaved.
+            // FRESH arm (d's box is SHARED; box is a new rc=1 block): copy the
+            // shape word from d's still-live box, then release d's reference
+            // (rc >= 2 here, so the dec never frees). Every field is written
+            // below, so no carried-field copies exist in this family.
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            var ri: i32 = 0;
+            while (ri < ndecl) {
+                var rty: string = decl_field_type_at(st.structs, slit.type_name, ri);
+                if (is_leaksafe_array_field(rty)) {
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (decl_is_struct(st.structs, rty)) {
+                    // Nested-struct pointer field: FULL freeing drop of the OLD
+                    // inner box (deep-drop its rc fields first when it owns any —
+                    // each self-guarded on rc==1 — then free the inner box header).
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    if (struct_has_reclaim_array_field(st.structs, rty)) {
+                        st = st.emit(ir.op_call_direct("__struct_drop_" + rty, 1));
+                    }
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                }
+                ri = ri + 1;
+            }
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_raw_load_ptr());
+            st = st.emit(ir.op_raw_store_ptr());
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            // Write every decl field of T into the result box, in decl order (a
+            // full construction sets all fields; cross_reuse_sites guarantees no
+            // value references d).
             var di: i32 = 0;
             while (di < ndecl) {
-                // find the literal field whose decl index is di.
                 var jj: i32 = 0;
                 var found: i32 = 0 - 1;
                 while (jj < slit.field_names.len()) {
@@ -17186,69 +17273,28 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     jj = jj + 1;
                 }
                 if (found < 0) { return st.fail(); }
-                var fty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[found]);
-                if (is_leaksafe_array_field(fty)) {
-                    // dec the OLD array value in d's box before overwriting it.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                    // write the new (fresh) array: [box, value] -> struct_set.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[found], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
-                } else if (decl_is_struct(st.structs, fty)) {
-                    // Nested-struct pointer field: FULL freeing drop of d's OLD inner
-                    // box before overwriting it (native's emitFieldDropOnStack). When
-                    // the inner type owns rc fields, __struct_drop_<fty> deep-drops
-                    // them first (each self-guarded on rc==1); then __fern_rc_dec frees
-                    // the inner box header. c's new value is a fresh no-base struct
-                    // literal (cross_reuse_sites gate), so lower_expr allocates a fresh
-                    // rc=1 inner box the reused box then solely owns — balanced against
-                    // this release and freed at exit via c's __struct_drop sweep.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    if (struct_has_reclaim_array_field(st.structs, fty)) {
-                        st = st.emit(ir.op_call_direct("__struct_drop_" + fty, 1));
-                    }
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[found], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
-                } else if (struct_field_is_i64(st.structs, slit.type_name, di)) {
-                    st = st.emit(ir.op_load_local(dslot));
+                if (struct_field_is_i64(st.structs, slit.type_name, di)) {
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_i64(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set_i64(di));
                 } else {
-                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_expr(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
                 }
                 di = di + 1;
             }
-            // Bind c to d's box (the reused box is the construction's result).
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_struct_type(cslot, slit.type_name);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) local. An
-            // ESCAPING recipient's box is owned by the container it was moved into
-            // (structs are not rc-inc'd on escape / left non-reclaimable), so a
-            // prior-release would free a box the container still references — a UAF.
-            // Such a recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_struct(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            // Zero d's slot: c now owns the box; the exit sweep frees it once (via
-            // c) and decs a null for d.
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            // Bind c to the result box and zero d's slot: on the reuse arm the
+            // exit sweep frees the box once (via c) and decs a null for d; on the
+            // fresh arm d's reference was released above and the aliases own the
+            // old box.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
