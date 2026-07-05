@@ -5,11 +5,19 @@
 //   url_parse(s)                    — decompose into a Url struct.
 //   query_parse(s)                  — URL-encoded query → Map.
 //
-// `+` is left alone in both encode and decode (callers handling
-// `application/x-www-form-urlencoded` pre-process). url_parse
-// is best-effort: returns None only on empty input; otherwise
-// fills missing sections with empty strings / port=0. Query
-// duplicates collect into a `string[]` per key.
+//   form_decode(s) / form_encode(s) — the
+//     `application/x-www-form-urlencoded` variants, which map
+//     `+` ↔ space in addition to %-escaping.
+//   query_encode(pairs)             — build a query string from
+//     an ordered `(key, value)[]` (the inverse of query_parse).
+//
+// `url_encode` / `url_decode` follow RFC 3986 and leave `+`
+// literal. The `form_*` pair maps `+` ↔ space, and `query_parse`
+// form-decodes each key/value — a `+` in a query or form body IS
+// an encoded space, so plain `url_decode` there decoded it wrong.
+// url_parse is best-effort: returns None only on empty input;
+// otherwise fills missing sections with empty strings / port=0.
+// Query duplicates collect into a `string[]` per key.
 //
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
@@ -87,7 +95,63 @@ pub function url_decode(s: string): string {
     return out;
 }
 
+// form_decode is url_decode for `application/x-www-form-urlencoded`:
+// identical %-escape handling, but a literal `+` decodes to a space.
+// This is the correct decoder for query strings and form bodies,
+// where `+` is the classic encoding of a space.
+pub function form_decode(s: string): string {
+    var n: i32 = s.len();
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var emit: string = s[i:i+1];
+        var consumed: i32 = 1;
+        if (b == 43) {                        // '+' -> space
+            emit = " ";
+        } else if (b == 37 && i + 2 < n) {    // '%'
+            var h1: i32 = __url_hex_val(s[i+1]);
+            var h2: i32 = __url_hex_val(s[i+2]);
+            if (h1 >= 0 && h2 >= 0) {
+                var byte: u8[] = [((h1 << 4) | h2) as u8];
+                emit = string_from_bytes(byte);
+                consumed = 3;
+            }
+        }
+        out = out + emit;
+        i = i + consumed;
+    }
+    return out;
+}
 
+// form_encode is the inverse of form_decode: url_encode's
+// %-escaping, but a space encodes to `+` rather than `%20`.
+// The encoder to pair with `application/x-www-form-urlencoded`
+// bodies and query strings.
+pub function form_encode(s: string): string {
+    var n: i32 = s.len();
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 32) {                        // space -> '+'
+            out = out + "+";
+        } else if (__url_unreserved(b)) {
+            out = out + s[i:i+1];
+        } else {
+            var hi: i32 = (b >> 4) & 15;
+            var lo: i32 = b & 15;
+            var trip: u8[] = [
+                37 as u8,
+                __url_hex_char(hi) as u8,
+                __url_hex_char(lo) as u8
+            ];
+            out = out + string_from_bytes(trip);
+        }
+        i = i + 1;
+    }
+    return out;
+}
 
 pub function url_parse(s: string): Option[Url] {
     var n: i32 = s.len();
@@ -232,10 +296,10 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
     var key: string = "";
     var val: string = "";
     if (eq >= 0) {
-        key = url_decode(s[start:eq]);
-        val = url_decode(s[eq+1:end]);
+        key = form_decode(s[start:eq]);
+        val = form_decode(s[eq+1:end]);
     } else {
-        key = url_decode(s[start:end]);
+        key = form_decode(s[start:end]);
     }
     // Append-or-create: probe the map; on hit, copy + append;
     // else create a one-element array.
@@ -249,4 +313,22 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
         }
     }
     return m;
+}
+
+// query_encode builds a `key=value&key=value` query string from an
+// ordered list of pairs, form-encoding each key and value (so a
+// space becomes `+` and reserved bytes are %-escaped). Ordered
+// input keeps the output deterministic — the round-trip inverse of
+// query_parse for single-valued keys. An empty list yields "".
+pub function query_encode(pairs: (string, string)[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    var n: i32 = pairs.len();
+    while (i < n) {
+        if (i > 0) { out = out + "&"; }
+        var (k, v) = pairs[i];
+        out = out + form_encode(k) + "=" + form_encode(v);
+        i = i + 1;
+    }
+    return out;
 }
