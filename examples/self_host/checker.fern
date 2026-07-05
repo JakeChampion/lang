@@ -4770,6 +4770,29 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         di = di + 1;
     }
+    // E006: struct redeclared (#4363 item 4 — the func/method/enum forms
+    // below predate it). mod.structs is the FLAT table: enum variant
+    // payloads land there too (tagged with their owning enum via
+    // enum_owner), and desugars synthesize `__`-prefixed entries — both are
+    // skipped so only genuine user struct declarations collide.
+    var sn2: i32 = 0;
+    while (sn2 < mod.structs.len()) {
+        var s2: parser.StructDecl = mod.structs[sn2];
+        var user_struct: boolean = s2.enum_owner.len() == 0
+            && !(s2.name.len() >= 2 && s2.name[0:2] == "__");
+        if (user_struct) {
+            var sdup: boolean = false;
+            var sj2: i32 = 0;
+            while (sj2 < sn2) {
+                if (mod.structs[sj2].enum_owner.len() == 0 && mod.structs[sj2].name == s2.name) { sdup = true; }
+                sj2 = sj2 + 1;
+            }
+            if (sdup) {
+                out = out.append(dg_at("E006", "struct \"" + s2.name + "\" redeclared", s2.line, s2.col));
+            }
+        }
+        sn2 = sn2 + 1;
+    }
     // E006: enum redeclared, and E017: duplicate variant within an enum.
     // These need the enum -> variants grouping the parser preserves in
     // mod.enums (the flat struct table can't tell a variant from a

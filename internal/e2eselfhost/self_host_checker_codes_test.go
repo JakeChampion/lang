@@ -483,6 +483,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-redeclared", "enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"enum-dup-variant", "enum Opt { A, A, B }\nfunction main(): i32 { return 0; }\n", []string{"E017"}},
 		{"enum-clean-ok", "enum Opt { A, B }\nfunction main(): i32 { return 0; }\n", nil},
+		// Struct form (#4363 item 4): the flat struct table also carries enum
+		// variant payloads (enum_owner-tagged), which must not read as user
+		// struct redeclarations — only two genuine `struct X` decls collide.
+		{"struct-redeclared", "struct P { x: i32 }\nstruct P { y: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"struct-beside-enum-payloads-ok", "enum A { X(i32) }\nenum B { Y(i32) }\nstruct S { n: i32 }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-multi-enum-ref", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { var a: A = X; return 0; }\n", []string{"E036"}},
 		{"variant-multi-enum-unref-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-disjoint-ref-ok", "enum A { P, Q }\nenum B { R, S }\nfunction main(): i32 { var a: A = P; return 0; }\n", nil},
