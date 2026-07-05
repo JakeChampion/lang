@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,14 +133,8 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// Every module emitting proves the 12/12 per-module eligibility frontier.
 	var objs []string
 	entryUnits := 0
-	emitUnit := func(t *testing.T, modIdx int, tag string, rangeArgs []string) {
+	writeUnit := func(t *testing.T, modIdx int, tag, unit string) {
 		t.Helper()
-		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(modIdx)}, needArgs...)
-		emitArgs = append(emitArgs, rangeArgs...)
-		unit, err := drive(t, emitArgs...)
-		if err != nil || len(unit) == 0 {
-			t.Fatalf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", modIdx, tag, err, len(unit))
-		}
 		if strings.Contains(unit, "\n_start:\n") || strings.HasPrefix(unit, "_start:\n") {
 			entryUnits++
 		}
@@ -149,20 +144,62 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		}
 		objs = append(objs, p)
 	}
+	// isEmitOOM reports whether an emit sub-process was OOM-killed (exit 137 =
+	// 128+SIGKILL, the leak-mode bump arena hitting its ceiling) rather than
+	// failing for a real reason (a module that is not IR-eligible bails with a
+	// message and a different code). Only an OOM is recoverable by splitting.
+	isEmitOOM := func(err error) bool {
+		var ee *exec.ExitError
+		return errors.As(err, &ee) && ee.ExitCode() == 137
+	}
+	// emitRange emits module modIdx over [lo,hi) of its `count` functions. The
+	// initial window is chosen deterministically by emitWindowSize (function
+	// count + source bytes); emitRange is the SAFETY NET underneath it — if a
+	// window still OOM-kills (the byte/count heuristic under-sharded a module
+	// heavier than 300 KB / 100 funcs predicted), it recursively halves down to
+	// a single function rather than failing the run. When nothing OOMs it splits
+	// nothing, so the emitted unit set is byte-identical to the heuristic's. The
+	// full [0,count) range emits with NO -func-range (byte-identical to the
+	// unsharded emit); any split emits a non-entry sub-unit via -func-range,
+	// linking exactly like the heuristic windows.
+	var emitRange func(t *testing.T, modIdx, lo, hi, count int)
+	emitRange = func(t *testing.T, modIdx, lo, hi, count int) {
+		t.Helper()
+		whole := lo == 0 && hi == count
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(modIdx)}, needArgs...)
+		tag := ""
+		if !whole {
+			emitArgs = append(emitArgs, "-func-range", strconv.Itoa(lo)+":"+strconv.Itoa(hi))
+			tag = "_s" + strconv.Itoa(lo)
+		}
+		unit, err := drive(t, emitArgs...)
+		if isEmitOOM(err) && hi-lo > 1 {
+			mid := (lo + hi) / 2
+			t.Logf("module %d [%d:%d): emit OOM-killed (exit 137) — window under-sharded, splitting into [%d:%d)+[%d:%d)", modIdx, lo, hi, lo, mid, mid, hi)
+			emitRange(t, modIdx, lo, mid, count)
+			emitRange(t, modIdx, mid, hi, count)
+			return
+		}
+		if err != nil || len(unit) == 0 {
+			t.Fatalf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", modIdx, tag, err, len(unit))
+		}
+		writeUnit(t, modIdx, tag, unit)
+	}
 	for i := 0; i < n; i++ {
 		window := emitWindowSize(funcCounts[i], modBytes[i], shardThreshold)
 		if funcCounts[i] <= window {
-			emitUnit(t, i, "", nil)
+			// Emit whole; emitRange self-shards only if this module still OOMs.
+			emitRange(t, i, 0, funcCounts[i], funcCounts[i])
 			continue
 		}
-		// Oversized module: emit in window-sized [lo,hi) function windows.
+		// Oversized module: emit in window-sized [lo,hi) function windows; each
+		// window still self-splits further on OOM.
 		for lo := 0; lo < funcCounts[i]; lo += window {
 			hi := lo + window
 			if hi > funcCounts[i] {
 				hi = funcCounts[i]
 			}
-			rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
-			emitUnit(t, i, "_s"+strconv.Itoa(lo), []string{"-func-range", rng})
+			emitRange(t, i, lo, hi, funcCounts[i])
 		}
 	}
 	if entryUnits == 0 {
