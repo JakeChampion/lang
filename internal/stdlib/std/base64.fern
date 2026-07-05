@@ -100,3 +100,55 @@ pub function base64_decode(s: string): string {
     }
     return string_from_bytes(buf);
 }
+
+// `base64_decode_strict(s)` — like `base64_decode` but returns `None` on
+// malformed input instead of silently truncating at the first bad byte.
+// Decoding an attacker-supplied token/signature with the lenient variant
+// hides tampering (a flipped byte just shortens the output); the strict
+// variant makes malformed input observable (#4384). Rules: the leading run
+// of valid base64 chars may be followed ONLY by `=` padding (at most two, and
+// nothing after it); a run length of n%4==1 is impossible base64; and any
+// padding must align the total to a multiple of 4 (proper RFC 4648). A bare
+// `""` decodes to `Some("")`; `"=="` (padding, no data) is `None`.
+pub function base64_decode_strict(s: string): Option[string] {
+    var sLen: i32 = s.len();
+    var n: i32 = 0;
+    while (n < sLen) {
+        if (__b64_decode_char(s[n]) < 0) { break; }
+        n = n + 1;
+    }
+    // Everything after the data run must be `=` padding — a non-`=` char
+    // (including a valid base64 char after a `=`) means the token is malformed.
+    var p: i32 = n;
+    var pad: i32 = 0;
+    while (p < sLen) {
+        if (s[p] != 61) { return None; }   // 61 = '='
+        pad = pad + 1;
+        p = p + 1;
+    }
+    if (pad > 2) { return None; }
+    if (n == 0) {
+        if (pad > 0) { return None; }
+        return Some("");
+    }
+    if (n % 4 == 1) { return None; }
+    if (pad > 0 && (n + pad) % 4 != 0) { return None; }
+    var out_len: i32 = (n * 3) / 4;
+    if (out_len == 0) { return Some(""); }
+    var buf: u8[] = __alloc_u8(out_len);
+    var i: i32 = 0;
+    var j: i32 = 0;
+    var acc: i32 = 0;
+    var bits: i32 = 0;
+    while (i < n) {
+        acc = (acc << 6) | __b64_decode_char(s[i]);
+        bits = bits + 6;
+        if (bits >= 8) {
+            bits = bits - 8;
+            buf = buf.with(j, ((acc >> bits) & 255) as u8);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return Some(string_from_bytes(buf));
+}

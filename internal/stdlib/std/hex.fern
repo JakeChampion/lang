@@ -57,3 +57,31 @@ pub function hex_decode(s: string): string {
     }
     return string_from_bytes(buf);
 }
+
+// `hex_decode_strict(s)` — like `hex_decode` but returns `None` on malformed
+// input instead of silently truncating at the first non-hex char or an odd
+// tail. Decoding an attacker-supplied signature with the lenient variant
+// hides tampering (a bad nibble just shortens the output); the strict variant
+// makes malformed input observable (#4384). Every character must be a hex
+// digit (either case) and the length must be even (an odd tail can't form a
+// byte). `""` decodes to `Some("")`.
+pub function hex_decode_strict(s: string): Option[string] {
+    var sLen: i32 = s.len();
+    var k: i32 = 0;
+    while (k < sLen) {
+        if (__hex_value(s[k]) < 0) { return None; }
+        k = k + 1;
+    }
+    if (sLen % 2 != 0) { return None; }
+    if (sLen == 0) { return Some(""); }
+    var pairs: i32 = sLen / 2;
+    var buf: u8[] = __alloc_u8(pairs);
+    var i: i32 = 0;
+    while (i < pairs) {
+        var hi: i32 = __hex_value(s[i * 2]);
+        var lo: i32 = __hex_value(s[i * 2 + 1]);
+        buf = buf.with(i, ((hi << 4) | lo) as u8);
+        i = i + 1;
+    }
+    return Some(string_from_bytes(buf));
+}
