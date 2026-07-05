@@ -1603,8 +1603,11 @@ pub function (s: string) reverse_words(): string {
 // (n - len(ellipsis)) bytes followed by `ellipsis`. If
 // len(s) <= n, return s unchanged. If n is smaller than the
 // ellipsis itself, just hard-truncate s to n bytes (the
-// ellipsis would otherwise overflow).
+// ellipsis would otherwise overflow). A non-positive cap yields
+// "" (guarded like the `ellipsis` sibling — otherwise a negative
+// n would fall through to `s[0:n]`, a negative slice bound).
 pub function (s: string) truncate(n: i32, ellipsis: string): string {
+    if (n <= 0) { return ""; }
     var sLen: i32 = s.len();
     if (sLen <= n) { return s; }
     var eLen: i32 = ellipsis.len();

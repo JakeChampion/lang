@@ -210,11 +210,14 @@ pub function (n: i32) is_between(lo: i32, hi: i32): boolean {
 // possible for large values; wraps silently.
 pub function (n: i32) reverse_digits(): i32 {
     var neg: boolean = (n < 0);
-    var mag: i32 = n;
-    if (neg) { mag = n.abs(); }
+    // i64 magnitude so i32::MIN reverses instead of spinning zero times
+    // (abs() can't represent 2147483648). The reversed accumulator stays
+    // i32, so it still wraps silently on overflow, as documented.
+    var mag: i64 = n as i64;
+    if (neg) { mag = 0 - mag; }
     var r: i32 = 0;
     while (mag > 0) {
-        r = r * 10 + (mag % 10);
+        r = r * 10 + ((mag % 10) as i32);
         mag = mag / 10;
     }
     if (neg) { return 0 - r; }
@@ -234,10 +237,13 @@ pub function (n: i32) is_palindrome(): boolean {
 // 123 → 6. Negative numbers use their magnitude. Useful for
 // digital-root puzzles, checksum precomputation.
 pub function (n: i32) sum_of_digits(): i32 {
-    var mag: i32 = n.abs();
+    // i64 magnitude so i32::MIN's digits are summed (abs() wraps it back
+    // negative, which an i32 `while (mag > 0)` loop would skip entirely).
+    var mag: i64 = n as i64;
+    if (mag < 0) { mag = 0 - mag; }
     var s: i32 = 0;
     while (mag > 0) {
-        s = s + (mag % 10);
+        s = s + ((mag % 10) as i32);
         mag = mag / 10;
     }
     return s;
@@ -248,10 +254,13 @@ pub function (n: i32) sum_of_digits(): i32 {
 // magnitude.
 pub function (n: i32) has_digit(d: i32): boolean {
     if (d < 0 || d > 9) { return false; }
-    var mag: i32 = n.abs();
+    // i64 magnitude so i32::MIN's digits are scanned (abs() wraps it back
+    // negative, which an i32 `while (mag > 0)` loop would skip entirely).
+    var mag: i64 = n as i64;
+    if (mag < 0) { mag = 0 - mag; }
     if (mag == 0) { return d == 0; }
     while (mag > 0) {
-        if (mag % 10 == d) { return true; }
+        if ((mag % 10) as i32 == d) { return true; }
         mag = mag / 10;
     }
     return false;
@@ -698,7 +707,11 @@ pub function (n: i32) to_oct(): string {
 // table-column-width math and progress bars.
 pub function (n: i32) digits(): i32 {
     if (n == 0) { return 1; }
-    var u: i32 = n.abs();
+    // Magnitude in i64: |i32::MIN| = 2147483648 doesn't fit in i32 (abs()
+    // wraps it back to i32::MIN, which is < 0, so an i32 `while (u > 0)`
+    // loop would spin zero times and wrongly report 0 digits).
+    var u: i64 = n as i64;
+    if (u < 0) { u = 0 - u; }
     var c: i32 = 0;
     while (u > 0) {
         c = c + 1;
