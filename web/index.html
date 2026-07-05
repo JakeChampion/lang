@@ -682,6 +682,35 @@
 </div>
 
 <script src="wasm_exec.js"></script>
+<script>
+// #4590: boot the wasm runtime in its OWN script, with NO dependency on the
+// CodeMirror ES module below (which statically imports from the esm.sh CDN).
+// The boot used to live inside that module, so a slow or unreachable esm.sh
+// discarded the whole module before the boot ran — and #status hung on
+// "loading runtime…" forever, an opaque failure in CI and offline. Booting
+// here brings the runtime up (and flips #status to "ready") regardless of the
+// CDN; the editor module below consumes this shared boot via
+// window.__fernRuntimeReady instead of instantiating its own.
+(function () {
+  var go = new Go();
+  window.__fernRuntimeReady = WebAssembly
+    .instantiateStreaming(fetch("fern.wasm"), go.importObject)
+    .then(function (result) { go.run(result.instance); return result.instance; });
+  window.__fernRuntimeReady.then(function () {
+    var el = document.getElementById("status");
+    if (!el) return;
+    // Mirror the editor module's embed detection (urlFlag "embed"/"minimal")
+    // so the ready text matches; the module refines it with the key hint once
+    // CodeMirror loads. Either way #status now contains "ready".
+    var q = new URLSearchParams(location.search);
+    var embed = q.has("embed") || q.has("minimal");
+    el.textContent = embed ? "ready" : "ready · Ctrl/Cmd+Enter to run · hover for types";
+  }).catch(function (err) {
+    var el = document.getElementById("status");
+    if (el) el.textContent = "wasm load failed: " + err;
+  });
+})();
+</script>
 <script type="module">
 const examples = {
   hello: `function main(): i32 {
@@ -1921,11 +1950,14 @@ editorView = new EditorView({
   parent: srcMount,
 });
 
-// Boot the wasm runtime.
-const go = new Go();
-WebAssembly.instantiateStreaming(fetch("fern.wasm"), go.importObject)
-  .then(result => {
-    go.run(result.instance);
+// Wire the UI to the wasm runtime booted by the standalone boot script above
+// (window.__fernRuntimeReady) — NOT a second instantiate. #status was already
+// flipped to "ready" there, independent of this CodeMirror module; here we
+// enable the controls, start the LSP, and autorun once the shared boot
+// resolves. Decoupling the boot from this module's esm.sh import is the #4590
+// fix: a CDN stall can no longer strand the runtime at "loading runtime…".
+window.__fernRuntimeReady
+  .then(() => {
     runBtn.disabled = false;
     runWasmBtn.disabled = false;
     viewAsmBtn.disabled = false;
