@@ -21898,6 +21898,268 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[])
     return out;
 }
 
+// --- movedLocals port (#4482, native computeMovedLocals) ---------------------
+//
+// Move-on-alias / move-on-construction pair cancellation: an owned rc LOCAL
+// whose last mention is a bare-ident RHS of a dominating top-level alias
+// (`var b = a` / `b = a` / `var (x, y) = a`) or a bare-ident value in a
+// counted construction slot (struct-lit rc-tracked non-string field, array /
+// tuple literal element) is MOVED — the alias/construction inc and the exit
+// sweep dec cancel, the container frees it once. Ported from
+// internal/ir/rc_analysis.go:1037 with two scoping cuts, both documented in
+// the diff harness: (a) move-on-call (`own` args into `own` callee params +
+// own-param match scrutinees) is not ported — no `own` shapes in the corpus;
+// (b) closure-capture construction moves are not ported. "Last mention" is
+// approximated as: the name occurs exactly ONCE in the site statement and in
+// no later top-level statement — exact for single-mention statements (native
+// keys per ident NODE, which only differs when the same name recurs inside
+// one statement).
+
+// rc_ml_count_in_expr / rc_ml_count_in_stmt: occurrence count of ident `name`
+// in an expression / statement (with duplicates — astwalk's collectors dedupe).
+function rc_ml_count_in_expr(e: parser.Expr, name: string): i32 {
+    match (e) {
+        parser.ExprIdent(id) => { if (id.name == name) { return 1; } return 0; },
+        parser.ExprBinary(b) => { return rc_ml_count_in_expr(b.left, name) + rc_ml_count_in_expr(b.right, name); },
+        parser.ExprUnary(u) => { return rc_ml_count_in_expr(u.operand, name); },
+        parser.ExprIndex(ix) => { return rc_ml_count_in_expr(ix.array, name) + rc_ml_count_in_expr(ix.index, name); },
+        parser.ExprFieldAccess(fa) => { return rc_ml_count_in_expr(fa.obj, name); },
+        parser.ExprSlice(sl) => { return rc_ml_count_in_expr(sl.array, name) + rc_ml_count_in_expr(sl.start, name) + rc_ml_count_in_expr(sl.end, name); },
+        parser.ExprCall(c) => {
+            var n: i32 = rc_ml_count_in_expr(c.callee, name);
+            var i: i32 = 0;
+            while (i < c.args.len()) { n = n + rc_ml_count_in_expr(c.args[i], name); i = i + 1; }
+            return n;
+        },
+        parser.ExprArray(ar) => {
+            var n: i32 = 0;
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { n = n + rc_ml_count_in_expr(ar.elements[i], name); i = i + 1; }
+            return n;
+        },
+        parser.ExprTuple(tu) => {
+            var n: i32 = 0;
+            var i: i32 = 0;
+            while (i < tu.elements.len()) { n = n + rc_ml_count_in_expr(tu.elements[i], name); i = i + 1; }
+            return n;
+        },
+        parser.ExprStructLit(sl) => {
+            var n: i32 = 0;
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { n = n + rc_ml_count_in_expr(sl.field_values[i], name); i = i + 1; }
+            if (sl.has_base) { n = n + rc_ml_count_in_expr(sl.base, name); }
+            return n;
+        },
+        parser.ExprLambda(lam) => { return rc_ml_count_in_stmts(lam.body, name); },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+function rc_ml_count_in_stmt(st: parser.Stmt, name: string): i32 {
+    match (st) {
+        parser.StmtVar(v) => { return rc_ml_count_in_expr(v.init, name); },
+        parser.StmtReturn(r) => { return rc_ml_count_in_expr(r.value, name); },
+        parser.StmtExpr(x) => { return rc_ml_count_in_expr(x.value, name); },
+        parser.StmtAssign(a) => { return rc_ml_count_in_expr(a.value, name); },
+        parser.StmtIf(f) => { return rc_ml_count_in_expr(f.cond, name) + rc_ml_count_in_stmts(f.then_body, name) + rc_ml_count_in_stmts(f.else_body, name); },
+        parser.StmtWhile(w) => { return rc_ml_count_in_expr(w.cond, name) + rc_ml_count_in_stmts(w.body, name); },
+        parser.StmtFor(fr) => { return rc_ml_count_in_expr(fr.iter, name) + rc_ml_count_in_stmts(fr.body, name); },
+        parser.StmtMatch(m) => {
+            var n: i32 = rc_ml_count_in_expr(m.scrutinee, name);
+            var i: i32 = 0;
+            while (i < m.arms.len()) { n = n + rc_ml_count_in_stmts(m.arms[i].body, name); i = i + 1; }
+            return n;
+        },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+function rc_ml_count_in_stmts(stmts: parser.Stmt[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) { n = n + rc_ml_count_in_stmt(stmts[i], name); i = i + 1; }
+    return n;
+}
+
+// rc_ml_stmt_has_return: the statement contains a `return` anywhere (native's
+// stmtContainsReturn) — the moved-site scan stops at the first such statement.
+function rc_ml_stmt_has_return(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtReturn(_) => { return true; },
+        parser.StmtIf(f) => { return rc_ml_stmts_have_return(f.then_body) || rc_ml_stmts_have_return(f.else_body); },
+        parser.StmtWhile(w) => { return rc_ml_stmts_have_return(w.body); },
+        parser.StmtFor(fr) => { return rc_ml_stmts_have_return(fr.body); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) { if (rc_ml_stmts_have_return(m.arms[i].body)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function rc_ml_stmts_have_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (rc_ml_stmt_has_return(stmts[i])) { return true; } i = i + 1; }
+    return false;
+}
+
+// rc_ml_owned_rc_local: `name` is a declared LOCAL (params excluded — native
+// isOwnedRcLocal reads info.Locals) whose type carries an rc box: array /
+// user struct / enum / tuple / string. (Closures are excluded — scoping cut.)
+function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[]): boolean {
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) { if (fn.params[pi].name == name) { return false; } pi = pi + 1; }
+    var i: i32 = 0;
+    while (i < types_n.len()) {
+        if (types_n[i] == name) {
+            var t: string = types_t[i];
+            if (is_array_type_name(t)) { return true; }
+            if (t == "string") { return true; }
+            if (t.len() > 0 && t[0] == 40) { return true; }
+            if (rc_struct_decl_index(structs, t) >= 0) { return true; }
+            if (rc_fe_is_enum_name(structs, t)) { return true; }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// rc_ml_last_use: the single mention of `name` inside top-level statement k is
+// its LAST — exactly once in stmt k, never in a later top-level statement.
+function rc_ml_last_use(body: parser.Stmt[], name: string, k: i32): boolean {
+    if (rc_ml_count_in_stmt(body[k], name) != 1) { return false; }
+    return !name_used_after(body, name, k);
+}
+
+// rc_ml_construction_moves: bare-ident owned rc locals consumed at their last
+// use in a counted construction slot of `val` (struct-lit rc-tracked
+// NON-STRING field / array-literal element / tuple-literal element) — native
+// markConstructionMoves minus the closure-capture arm.
+function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: string[]): string[] {
+    var out: string[] = moved;
+    match (val) {
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                match (sl.field_values[i]) {
+                    parser.ExprIdent(id) => {
+                        // field must be rc-tracked and NOT string (native
+                        // arrElemIsRcTracked excludes strings here).
+                        var ft: string = "";
+                        var si: i32 = rc_struct_decl_index(structs, sl.type_name);
+                        if (si >= 0) {
+                            var fi: i32 = 0;
+                            while (fi < structs[si].fields.len()) {
+                                if (structs[si].fields[fi].name == sl.field_names[i]) { ft = structs[si].fields[fi].type_name; }
+                                fi = fi + 1;
+                            }
+                        }
+                        var rc_field: boolean = is_array_type_name(ft) || (ft.len() > 0 && ft[0] == 40) || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
+                        if (rc_field && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out, id.name) < 0) {
+                            out = out.append(id.name);
+                        }
+                    },
+                    _ => {}
+                }
+                i = i + 1;
+            }
+        },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) {
+                match (ar.elements[i]) {
+                    parser.ExprIdent(id) => {
+                        if (rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out, id.name) < 0) {
+                            out = out.append(id.name);
+                        }
+                    },
+                    _ => {}
+                }
+                i = i + 1;
+            }
+        },
+        parser.ExprTuple(tu) => {
+            var i: i32 = 0;
+            while (i < tu.elements.len()) {
+                match (tu.elements[i]) {
+                    parser.ExprIdent(id) => {
+                        if (rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out, id.name) < 0) {
+                            out = out.append(id.name);
+                        }
+                    },
+                    _ => {}
+                }
+                i = i + 1;
+            }
+        },
+        _ => {}
+    }
+    return out;
+}
+
+// moved_locals_of: the ported analysis — the name set of owned rc locals
+// moved into an alias / destructure / construction at their last use, at a
+// dominating (pre-first-return) top-level statement.
+pub function moved_locals_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    var moved: string[] = [];
+    // local name->type table, reusing the freeEligible collector (params
+    // recorded first so destructure typing can read them, then locals).
+    var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name) };
+        pi = pi + 1;
+    }
+    st = rc_fe_collect_types(fn.body, st, structs);
+    var saw_return: boolean = false;
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        if (!saw_return) {
+            match (fn.body[k]) {
+                parser.StmtVar(v) => {
+                    match (v.init) {
+                        parser.ExprIdent(id) => {
+                            // move-on-alias (`var b = a`) and the destructure
+                            // move (`var (x, y) = a`) share the bare-ident-RHS
+                            // site shape.
+                            if (rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved, id.name) < 0) {
+                                moved = moved.append(id.name);
+                            }
+                        },
+                        _ => {}
+                    }
+                    moved = rc_ml_construction_moves(v.init, fn.body, k, fn, st.types_n, st.types_t, structs, moved);
+                },
+                parser.StmtAssign(a) => {
+                    match (a.value) {
+                        parser.ExprIdent(id) => {
+                            if (rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved, id.name) < 0) {
+                                moved = moved.append(id.name);
+                            }
+                        },
+                        _ => {}
+                    }
+                    moved = rc_ml_construction_moves(a.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved);
+                },
+                parser.StmtReturn(r) => {
+                    // construction moves only (a bare `return x` rides
+                    // move-on-return, a different mechanism/table).
+                    moved = rc_ml_construction_moves(r.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved);
+                },
+                _ => {}
+            }
+        }
+        if (rc_ml_stmt_has_return(fn.body[k])) { saw_return = true; }
+        k = k + 1;
+    }
+    return moved;
+}
+
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
 // string `<` operator), used to sort the name groups in rc_plan_dump the same
 // way native's sort.Strings orders them.
@@ -21977,6 +22239,32 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
             if (fo > 0) { head = head + ","; }
             head = head + fes[fo];
             fo = fo + 1;
+        }
+        head = head + "\n";
+    }
+    // movedLocals (#4482 — after freeEligible, matching native dumpRcPlan's
+    // line order): name-sorted, comma-joined.
+    var ml: string[] = moved_locals_of(fn, structs);
+    if (ml.len() > 0) {
+        var mls: string[] = [];
+        var mi: i32 = 0;
+        while (mi < ml.len()) {
+            var at: i32 = 0;
+            while (at < mls.len() && rc_dump_str_lt(mls[at], ml[mi])) { at = at + 1; }
+            var ns: string[] = [];
+            var q: i32 = 0;
+            while (q < at) { ns = ns.append(mls[q]); q = q + 1; }
+            ns = ns.append(ml[mi]);
+            while (q < mls.len()) { ns = ns.append(mls[q]); q = q + 1; }
+            mls = ns;
+            mi = mi + 1;
+        }
+        head = head + "movedLocals: ";
+        var mo: i32 = 0;
+        while (mo < mls.len()) {
+            if (mo > 0) { head = head + ","; }
+            head = head + mls[mo];
+            mo = mo + 1;
         }
         head = head + "\n";
     }

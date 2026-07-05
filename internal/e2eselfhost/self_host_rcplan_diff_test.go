@@ -28,9 +28,10 @@ import (
 // The diff covers `diffedTables` and widens line-by-line as ports land:
 // preciseDrops landed first, consumedParams second (the consumed_params_of
 // port of native computeConsumedParams), freeEligible third (the
-// free_eligible_of port of native computeFreeEligible, #4482). The self-host
-// dump deliberately OMITS tables it has no counterpart for (movedLocals,
-// moveSites, ...) — a native-only line is a documented port gap, not a
+// free_eligible_of port of native computeFreeEligible, #4482), movedLocals
+// fourth (the moved_locals_of port of native computeMovedLocals). The
+// self-host dump deliberately OMITS tables it has no counterpart for
+// (moveSites, ...) — a native-only line is a documented port gap, not a
 // failure, so the comparison here is per-table, not whole-dump.
 //
 // Known divergences are pinned explicitly (both sides' current output) so
@@ -52,9 +53,10 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
 	// The tables diffed per function; widened line-by-line as ports land
-	// (#4482). movedLocals / moveSites etc. are NOT diffed yet — the
-	// self-host has no counterpart tables, and its dump omits the lines.
-	diffedTables := []string{"consumedParams", "freeEligible", "preciseDrops"}
+	// (#4482). moveSites etc. are NOT diffed yet — the self-host has no
+	// counterpart tables (moveSites is node-position-keyed and waits on
+	// #2857), and its dump omits the lines.
+	diffedTables := []string{"consumedParams", "freeEligible", "movedLocals", "preciseDrops"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -195,6 +197,45 @@ function main(): i32 { return tup(("a", 2)); }`,
 			diverge: map[string]map[string]divergence{
 				"tup": {"freeEligible": {native: "__destruct_3_2,s,t", selfhost: "s,t"}},
 			},
+		},
+		{
+			// MOVE-ON-ALIAS: `var b = a` at a's last mention — the alias inc
+			// and a's exit-sweep dec cancel; b owns the box. movedLocals: a on
+			// both sides.
+			name: "move-on-alias",
+			src: `function mv(): i32 {
+	var a: i32[] = [1, 2];
+	var b: i32[] = a;
+	return b[0];
+}
+function main(): i32 { return mv(); }`,
+			anchor: map[string]map[string]string{"mv": {"movedLocals": "a"}},
+		},
+		{
+			// MOVE-ON-CONSTRUCTION: an owned rc local consumed at last use in
+			// a struct-lit rc-tracked (non-string) field — the field-init inc
+			// and x's sweep dec cancel; the struct's field-drop frees it once.
+			name: "move-on-construction",
+			src: `struct Wrap { items: i32[] }
+function w(): i32 {
+	var x: i32[] = [1, 2];
+	var s: Wrap = Wrap { items: x };
+	return s.items[0];
+}
+function main(): i32 { return w(); }`,
+			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}},
+		},
+		{
+			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last
+			// mention — the destructure's alias inc cancels t's sweep dec.
+			name: "move-on-destructure",
+			src: `function d(): i32 {
+	var t: (i32[], i32) = ([5], 3);
+	var (xs, n) = t;
+	return xs[0] + n;
+}
+function main(): i32 { return d(); }`,
+			anchor: map[string]map[string]string{"d": {"movedLocals": "t"}},
 		},
 	}
 
