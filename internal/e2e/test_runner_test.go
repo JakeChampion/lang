@@ -1536,7 +1536,8 @@ func TestRunnerArrayCombinatorsExample(t *testing.T) {
 		"ok 17 - find none",
 		"ok 18 - enumerate",
 		"ok 20 - map then fold",
-		"# pass 20",
+		"ok 21 - join edges",
+		"# pass 21",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

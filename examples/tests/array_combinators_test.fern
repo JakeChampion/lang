@@ -152,6 +152,22 @@ function test_map_then_fold(): test.TestOutcome {
     return test.assert_eq(total, 20);
 }
 
+// join edge cases — locks in the byte-identical output of the
+// preallocated-buffer rewrite (#4379): empty array, single element,
+// empty separator, empty elements, and multi-byte (UTF-8) content.
+function test_join_edges(): test.TestOutcome {
+    var empty: string[] = [];
+    var one: string[] = ["solo"];
+    var withempty: string[] = ["", "x", ""];
+    var uni: string[] = ["Glóin", "Þórin"];
+    return test.assert_true(
+        empty.join("-") == ""
+        && one.join("-") == "solo"
+        && (["1", "2", "3"]).join("") == "123"
+        && withempty.join("|") == "|x|"
+        && uni.join(" & ") == "Glóin & Þórin");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("array combinators");
     r = r.it("map",                  test_map());
@@ -174,5 +190,6 @@ function main(): i32 {
     r = r.it("enumerate",            test_enumerate());
     r = r.it("enumerate empty",      test_enumerate_empty());
     r = r.it("map then fold",        test_map_then_fold());
+    r = r.it("join edges",           test_join_edges());
     return r.finish();
 }

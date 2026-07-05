@@ -347,14 +347,45 @@ pub function __method_Array_mode(arr: i32[]): Option[i32] {
 // i32[] surface as a clean type error rather than a missing-
 // method one.
 pub function __method_Array_join(arr: string[], sep: string): string {
-    var out: string = "";
+    var n: i32 = arr.len();
+    if (n == 0) { return ""; }
+    if (n == 1) { return arr[0]; }
+    // Size the result once, then fill a single preallocated buffer —
+    // O(total) — instead of the `out = out + …` chain, which recopies
+    // the whole prefix on every step (O(total²), the #4379 hot path).
+    // Byte-for-byte identical output; this is the same preallocated-u8[]
+    // shape hex_encode / base64_encode already use.
+    var total: i32 = 0;
     var i: i32 = 0;
-    while (i < arr.len()) {
-        if (i > 0) { out = out + sep; }
-        out = out + arr[i];
+    while (i < n) {
+        total = total + arr[i].len();
         i = i + 1;
     }
-    return out;
+    total = total + sep.len() * (n - 1);
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    var sl: i32 = sep.len();
+    i = 0;
+    while (i < n) {
+        if (i > 0) {
+            var j: i32 = 0;
+            while (j < sl) {
+                buf = buf.with(pos, sep[j] as u8);
+                pos = pos + 1;
+                j = j + 1;
+            }
+        }
+        var e: string = arr[i];
+        var el: i32 = e.len();
+        var k: i32 = 0;
+        while (k < el) {
+            buf = buf.with(pos, e[k] as u8);
+            pos = pos + 1;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `arr.index_of(s)` — first index of `s` in `arr`, or -1 if
