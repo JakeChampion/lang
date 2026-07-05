@@ -39,6 +39,34 @@ function test_hmac_bytes_len(): test.TestOutcome {
     return test.assert_eq(crypto.hmac_sha256_bytes("key", "msg").len(), 32);
 }
 
+// consteq: equal contents true; a mismatch anywhere (first byte, last byte)
+// and a length mismatch are all false. (#4384 — constant-time MAC compare.)
+function test_consteq(): test.TestOutcome {
+    return test.assert_true(
+        crypto.consteq("abcdef", "abcdef")
+        && !crypto.consteq("abcdef", "abcdeg")
+        && !crypto.consteq("Xbcdef", "abcdef")
+        && !crypto.consteq("abc", "abcd")
+        && crypto.consteq("", ""));
+}
+
+// hmac_verify: the correct MAC verifies; a wrong MAC and a wrong key don't.
+function test_hmac_verify(): test.TestOutcome {
+    var mac: string = crypto.hmac_sha256_bytes("key", "The quick brown fox jumps over the lazy dog");
+    return test.assert_true(
+        crypto.hmac_verify("key", "The quick brown fox jumps over the lazy dog", mac)
+        && !crypto.hmac_verify("wrongkey", "The quick brown fox jumps over the lazy dog", mac));
+}
+
+// hmac_verify_hex against the known vector; a one-char-off hex fails.
+function test_hmac_verify_hex(): test.TestOutcome {
+    return test.assert_true(
+        crypto.hmac_verify_hex("key", "The quick brown fox jumps over the lazy dog",
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+        && !crypto.hmac_verify_hex("key", "The quick brown fox jumps over the lazy dog",
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd9"));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/crypto");
     r = r.it("sha256 empty",       test_sha256_empty());
@@ -47,5 +75,8 @@ function main(): i32 {
     r = r.it("sha256_bytes len",   test_sha256_bytes_len());
     r = r.it("hmac-sha256 vector", test_hmac_sha256());
     r = r.it("hmac_bytes len",     test_hmac_bytes_len());
+    r = r.it("consteq",            test_consteq());
+    r = r.it("hmac_verify",        test_hmac_verify());
+    r = r.it("hmac_verify_hex",    test_hmac_verify_hex());
     return r.finish();
 }

@@ -239,3 +239,40 @@ pub function hmac_sha256_bytes(key: string, msg: string): string {
 pub function hmac_sha256_hex(key: string, msg: string): string {
     return __bytes_to_hex(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
 }
+
+// consteq compares two byte strings in CONSTANT TIME with respect to their
+// contents — it never short-circuits on the first differing byte, so an
+// attacker can't time a MAC/token check to recover the expected value one
+// byte at a time (#4384). A plain `a == b` bails at the first mismatch and
+// leaks that position. Use this to compare a computed MAC against an
+// attacker-supplied one. The lengths themselves are not secret (MACs are
+// fixed-length), so a length mismatch is folded into the accumulator and
+// returns false; equal-length inputs are compared with no data-dependent
+// branch or exit.
+pub function consteq(a: string, b: string): boolean {
+    var la: i32 = a.len();
+    var lb: i32 = b.len();
+    var diff: i32 = la ^ lb;
+    var n: i32 = la;
+    if (lb < n) { n = lb; }
+    var i: i32 = 0;
+    while (i < n) {
+        diff = diff | (a[i] ^ b[i]);
+        i = i + 1;
+    }
+    return diff == 0;
+}
+
+// hmac_verify returns true iff `mac` (raw 32-byte HMAC-SHA256) is the correct
+// MAC for (key, msg). The comparison is constant-time (consteq), so verifying
+// an attacker-supplied MAC is not a timing oracle — this is the safe way to
+// check a MAC, unlike `hmac_sha256_bytes(key, msg) == mac`.
+pub function hmac_verify(key: string, msg: string, mac: string): boolean {
+    return consteq(hmac_sha256_bytes(key, msg), mac);
+}
+
+// hmac_verify_hex is hmac_verify for a hex-encoded MAC (64 lowercase hex
+// chars). The constant-time compare runs over the hex text.
+pub function hmac_verify_hex(key: string, msg: string, mac_hex: string): boolean {
+    return consteq(hmac_sha256_hex(key, msg), mac_hex);
+}

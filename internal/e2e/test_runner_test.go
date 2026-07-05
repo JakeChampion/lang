@@ -514,11 +514,11 @@ func TestRunnerUuidExamplePasses(t *testing.T) {
 
 // `examples/tests/crypto_test.fern` covers std/crypto's SHA-256 +
 // HMAC-SHA256 against the standard NIST (FIPS 180-4) / RFC 4231
-// known-answer vectors (empty / "abc" / pangram, raw-digest length, and an
-// HMAC vector). Interp-gated only: std/crypto crashes the self-hosted
-// compiler at runtime (a u32-path codegen gap distinct from u32.to_string —
-// basic u32 ops + u32[] arrays themselves lower fine; see the audit log), so
-// it is intentionally NOT in selfHostStdTestCases. Passing suite → exit 0.
+// known-answer vectors (empty / "abc" / pangram, raw-digest length, an
+// HMAC vector), plus the constant-time consteq / hmac_verify / hmac_verify_hex
+// MAC-comparison helpers (#4384). This is the interp oracle; std/crypto also
+// rides the self-host IR differential now (selfHostStdTestCases). Passing
+// suite → exit 0.
 func TestRunnerCryptoExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/crypto_test.fern")
@@ -526,7 +526,7 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/crypto", "# pass 6", "# fail 0", "1..6"} {
+	for _, w := range []string{"# Suite: std/crypto", "# pass 9", "# fail 0", "1..9"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
