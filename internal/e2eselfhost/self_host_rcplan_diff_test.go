@@ -228,6 +228,8 @@ function main(): i32 { return w(); }`,
 		{
 			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last
 			// mention — the destructure's alias inc cancels t's sweep dec.
+			// (freeEligible carries the same native-only parse-time
+			// destructure temp pinned on the consumed-tuple case.)
 			name: "move-on-destructure",
 			src: `function d(): i32 {
 	var t: (i32[], i32) = ([5], 3);
@@ -236,6 +238,9 @@ function main(): i32 { return w(); }`,
 }
 function main(): i32 { return d(); }`,
 			anchor: map[string]map[string]string{"d": {"movedLocals": "t"}},
+			diverge: map[string]map[string]divergence{
+				"d": {"freeEligible": {native: "__destruct_3_2,t,xs", selfhost: "t,xs"}},
+			},
 		},
 	}
 
