@@ -113,6 +113,11 @@ pub function is_fern_helper(name: string): boolean {
         // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
         || name == "__fern_map_free"
         || name == "__fern_rc_is_unique"
+        // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
+        // when its cap matches, else freelists it and allocs fresh — so a reuse
+        // site guarded by __fern_rc_is_unique degrades instead of corrupting.
+        // Never user-callable — only irlower's reuse emitters emit it.
+        || name == "__fern_alloc_reuse"
         || name == "__fern_rc_underflow_get"
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
         // stack-arg body under __fn___fern_i32_to_string).
@@ -1034,6 +1039,46 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jne .Lshuniq_ret\n");
     s = s.write("    movq $1, %rax\n");
     s = s.write(".Lshuniq_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_alloc_reuse(token@16(%rsp), slots@8(%rsp)) -> %rax = data — the
+    // FBIP reuse-degrade primitive (#4350), the self-host twin of native's
+    // __fern_alloc_reuse adapted to the arr-box layout (cap@data-16, rc@data-8):
+    // null token -> fresh __fern_arr_box(cap); cap match -> hand the SAME block
+    // back (rc stays 1 — the caller's __fern_rc_is_unique gate guaranteed sole
+    // ownership; len@data+0 is stale but every reuse caller overwrites slot 0
+    // with the shape/tag before any read); cap mismatch -> push the donor block
+    // onto its size-class freelist and alloc fresh — a mispaired reuse is only
+    // ever slower, never unsound. Clobbers rax/rcx/rdx/rsi/rdi/r8 (the same
+    // contract as the other __fn_ rc helpers).
+    s = s.write("__fn___fern_alloc_reuse:\n");
+    s = s.write("    movq 16(%rsp), %rax\n");        // token (donor data ptr, or 0)
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lsarelo_fresh\n");
+    s = s.write("    movq 8(%rsp), %rcx\n");         // slots (total payload words: struct nf+1 incl. shape, tuple arity)
+    s = s.write("    cmpq %rcx, -16(%rax)\n");       // donor cap == wanted slots?
+    s = s.write("    je .Lsarelo_ret\n");            // reuse: return token
+    // Mismatch: return the donor block ((cap+3) words at data-16) to its
+    // freelist class, mirroring __fn___fern_arr_dec's free path; an oversize
+    // block (>= 65536 words, outside the freelist range) is left to leak,
+    // matching __fern_alloc's own no-freelist policy for that range.
+    s = s.write("    movq -16(%rax), %rdx\n");       // donor cap
+    s = s.write("    addq $3, %rdx\n");              // block words = cap + 3
+    s = s.write("    leaq -16(%rax), %rcx\n");       // block base
+    s = s.write("    cmpq $65536, %rdx\n");
+    s = s.write("    jae .Lsarelo_fresh\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rdx,8), %rsi\n");    // old head
+    s = s.write("    movq %rsi, (%rcx)\n");          // *block = head
+    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");    // freelist[words] = block
+    s = s.write(".Lsarelo_fresh:\n");
+    s = s.write("    movq 8(%rsp), %rdi\n");         // slots = arr_box cap
+    // TAIL-jump (not call): arr_box returns straight to OUR caller with the
+    // fresh data ptr in %rax. Besides saving a frame, this keeps the emitted
+    // text free of an extra `call __fern_arr_box` line — the reuse contract
+    // tests count that exact string in the whole asm, and the helper body
+    // must not inflate every program's static count by one.
+    s = s.write("    jmp __fern_arr_box\n");
+    s = s.write(".Lsarelo_ret:\n");
     s = s.write("    ret\n");
     // __fern_snapshot_dec(new, old, snap) -> new — the snapshot-param consume-
     // rebind reclaim (#3456 slice 2). Stack-arg ABI: 24(%rsp)=new, 16=old,
@@ -3442,6 +3487,44 @@ function ir_f2i_sat(width: i32, lb: string): string {
     return s64;
 }
 
+// ir_f2u_sat renders a saturating f64 -> UNSIGNED integer truncation (#4332)
+// — the unsigned sibling of ir_f2i_sat, mirroring native emitFloatToIntSat's
+// unsigned shapes: NaN / x < 0 -> 0, x >= 2^width -> all-ones. `lb` is a
+// per-op-unique label base. width is 32 or 64.
+function ir_f2u_sat(width: i32, lb: string): string {
+    if (width != 64) {
+        // u32: convert with 64-bit headroom (rax covers the whole u32 range
+        // exactly), then clamp against the ORIGINAL float: x < 0 / NaN -> 0
+        // (ucomisd sets CF on less-than AND on unordered, so one jb catches
+        // both), x >= 2^32 -> u32::MAX.
+        var s: string = "    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+        s = s + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jb " + lb + "_zero\n";
+        s = s + "    movabsq $0x41f0000000000000, %rcx\n    movq %rcx, %xmm1\n";   // 2^32 as f64
+        s = s + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_max\n    jmp " + lb + "_done\n";
+        s = s + lb + "_zero:\n    xorl %eax, %eax\n    jmp " + lb + "_done\n";
+        s = s + lb + "_max:\n    movl $0xffffffff, %eax\n";                        // zero-extends into rax
+        s = s + lb + "_done:\n    pushq %rax\n";
+        return s;
+    }
+    // u64: cvttsd2si only covers [0, 2^63); for x >= 2^63 convert x - 2^63 and
+    // set bit 63 back. The original x is saved in xmm2 (the subtraction
+    // mutates xmm0) and the edge clamps compare against it: x < 0 / NaN -> 0,
+    // x >= 2^64 -> u64::MAX.
+    var u: string = "    popq %rax\n    movq %rax, %xmm0\n    movaps %xmm0, %xmm2\n";
+    u = u + "    movabsq $0x43e0000000000000, %rcx\n    movq %rcx, %xmm1\n";       // 2^63 as f64
+    u = u + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_big\n";
+    u = u + "    cvttsd2si %xmm0, %rax\n    jmp " + lb + "_sat\n";
+    u = u + lb + "_big:\n    subsd %xmm1, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+    u = u + "    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, %rax\n";
+    u = u + lb + "_sat:\n    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm2\n    jb " + lb + "_zero\n";
+    u = u + "    movabsq $0x43f0000000000000, %rcx\n    movq %rcx, %xmm1\n";       // 2^64 as f64
+    u = u + "    ucomisd %xmm1, %xmm2\n    jae " + lb + "_umax\n    jmp " + lb + "_done\n";
+    u = u + lb + "_zero:\n    xorl %eax, %eax\n    jmp " + lb + "_done\n";
+    u = u + lb + "_umax:\n    movq $-1, %rax\n";
+    u = u + lb + "_done:\n    pushq %rax\n";
+    return u;
+}
+
 // br_target resolves a `br d` / `br_if d` at op index `i` to its label: a
 // loop scope -> its header label (the loop op's index); a block/if scope ->
 // the label at its matching `end`. Uses irlower's nesting scanners — no
@@ -3529,6 +3612,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
+        "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
         "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
         // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
@@ -4520,11 +4604,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // signed i32 -> f64 (cvtsi2sd); value rides the stack as bits.
             s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 12) {  // f64_to_i32
-            // Saturating f64 -> i32 (#4332); needs a per-op-unique label base.
-            s = s.write(ir_f2i_sat(32, lp + util.i32_to_string(i)));
+            // Saturating f64 -> i32 / u32 (#4332); needs a per-op-unique label base.
+            if (o.unsigned) { s = s.write(ir_f2u_sat(32, lp + util.i32_to_string(i))); }
+            else { s = s.write(ir_f2i_sat(32, lp + util.i32_to_string(i))); }
         } else if (o.kind_tag == 13) {  // f64_to_i64
-            // Saturating f64 -> i64 (#4332).
-            s = s.write(ir_f2i_sat(64, lp + util.i32_to_string(i)));
+            // Saturating f64 -> i64 / u64 (#4332).
+            if (o.unsigned) { s = s.write(ir_f2u_sat(64, lp + util.i32_to_string(i))); }
+            else { s = s.write(ir_f2i_sat(64, lp + util.i32_to_string(i))); }
         } else if (o.kind_tag == 16 || o.kind_tag == 17) {  // f64_bits, f64_from_bits
             // No-op reinterpret: the 8-byte rt-stack slot already holds the
             // IEEE-754 bit pattern, identical to the i64 bits.

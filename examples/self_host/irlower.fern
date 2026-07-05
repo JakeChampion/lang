@@ -581,6 +581,35 @@ pub function (s: LowerState) mark_closure_local(name: string): LowerState {
     return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals.append(name), f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, n_params: s.n_params, ok: s.ok };
 }
 
+// add_clo_cap_kinds (#4354): record a closure local's per-capture kinds
+// ("<name>|<kinds>") in the capture-RC registry — see the field doc.
+pub function (s: LowerState) add_clo_cap_kinds(entry: string): LowerState {
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names.append("CLO:" + entry), aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, n_params: s.n_params, ok: s.ok };
+}
+
+// clo_cap_kinds_of returns the registered capture-kinds string for closure
+// local `name` ("" when not registered / approval never consumed).
+pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > 4 && e[0:4] == "CLO:") {
+            var t: string = e[4 : e.len()];
+            var bar: i32 = 0;
+            while (bar < t.len() && t[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            if (bar < t.len() && t[0:bar] == name) { return t[bar + 1 : t.len()]; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// clo_rc_approved reports whether lower_func approved `name` for capture RC
+// (an "OK:<name>" seed entry — see the clo_cap_kinds field doc).
+pub function (s: LowerState) clo_rc_approved(name: string): boolean {
+    return util.index_of_str(s.reclaimable_names, "CLO:OK:" + name) >= 0;
+}
+
 // is_str_slot / mark_str query and set the string-ness of slot i.
 pub function (s: LowerState) is_str_slot(i: i32): boolean {
     if (i < 0) { return false; }
@@ -1493,30 +1522,19 @@ pub function is_leaksafe_opt_field_d(structs: parser.StructDecl[], t: string): b
     return false;
 }
 
-// tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag
-// (top-level-comma split, so nested brackets don't confuse it), or "" if not a
-// tuple / n is out of range.
+// tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag,
+// or "" if not a tuple / n is out of range. Decodes via the structured TypeRef
+// (SH-021, docs/SELF-HOST-AUDIT.md T2) instead of a hand-rolled depth-tracking
+// top-level-comma scan; parse_type_ref already splits the elements without letting
+// a nested generic's or tuple's inner commas confuse the split. A tuple-ARRAY
+// ("(a, b)[]", array_depth > 0) is a value of array type, not a tuple, so it
+// returns "" — matching the former scan, whose ")"-suffix test failed on the
+// trailing "]".
 pub function tuple_type_elem_tag(t: string, n: i32): string {
-    var len: i32 = t.len();
-    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return ""; }
-    var inner: string = t[1 : len - 1];
-    var depth: i32 = 0;
-    var start: i32 = 0;
-    var idx: i32 = 0;
-    var i: i32 = 0;
-    while (i <= inner.len()) {
-        if (i == inner.len() || (depth == 0 && inner[i] == 44)) {   // end, or top-level ','
-            if (idx == n) { return trim_spaces(inner[start : i]); }
-            idx = idx + 1;
-            start = i + 1;
-        } else {
-            var ch: i32 = inner[i];
-            if (ch == 91 || ch == 40) { depth = depth + 1; }       // '[' '('
-            else if (ch == 93 || ch == 41) { depth = depth - 1; }  // ']' ')'
-        }
-        i = i + 1;
-    }
-    return "";
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth != 0 || !r.is_tuple) { return ""; }
+    if (n < 0 || n >= r.args.len()) { return ""; }
+    return parser.render_type_ref(r.args[n]);
 }
 
 // is_leaksafe_tuple_field: a tuple field "(t0, …)" whose elements are each a
@@ -3892,6 +3910,10 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (expr_is_f64(u.operand, s)) {
                     var fw: LowerState = lower_expr(u.operand, s);
                     if (!fw.ok) { return fw; }
+                    // `f64 as u64` truncates UNSIGNED (#4332): the signed
+                    // f64_to_i64 clamps at INT64_MAX, so 1e19 as u64 read as
+                    // 9223372036854775807 instead of 10^19.
+                    if (u.op == "as_u64") { return fw.emit(ir.op_f64_to_u64()); }
                     return fw.emit(ir.op_f64_to_i64());
                 }
                 match (u.operand) {
@@ -4982,7 +5004,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (expr_is_f64(u.operand, s)) {
                     var fc: LowerState = lower_expr(u.operand, s);
                     if (!fc.ok) { return fc; }
-                    fc = fc.emit(ir.op_f64_to_i32());
+                    // `f64 as u32` truncates UNSIGNED (#4332): the signed
+                    // f64_to_i32 clamps at INT32_MAX, so 3e9 as u32 read as
+                    // 2147483647 instead of 3000000000. Native saturates over
+                    // the full u32 range (fcvtzu / trunc_sat_f64_u).
+                    if (cty == "u32") { fc = fc.emit(ir.op_f64_to_u32()); }
+                    else { fc = fc.emit(ir.op_f64_to_i32()); }
                     return fc.emit(ir.op_int_cast(cty));
                 }
                 if (infer_expr_width(u.operand, s) == 64) {
@@ -8925,13 +8952,54 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => { }
             }
             if (clo_init) {
+                // #4354 capture RC: classify BEFORE lowering — closure_captures
+                // resolves against the locals visible at the env-build site.
+                var clo_kinds: string = "";
+                if (s.clo_rc_approved(v.name)) {
+                    match (v.init) {
+                        parser.ExprLambda(clam) => {
+                            var ccaps: string[] = closure_captures(clam, s);
+                            var cki: i32 = 0;
+                            while (cki < ccaps.len()) {
+                                clo_kinds = clo_kinds + closure_capture_kind(s, ccaps[cki]);
+                                cki = cki + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
                 var cv: LowerState = lower_expr(v.init, s);
                 if (!cv.ok) { return cv; }
                 var cvb: LowerState = cv.add_local(v.name);
                 var cslot: i32 = cvb.slot_of(v.name);
                 cvb = cvb.mark_arr(cslot, true);
                 cvb = cvb.mark_closure_local(v.name);
-                return cvb.emit(ir.op_store_local(cslot));
+                cvb = cvb.emit(ir.op_store_local(cslot));
+                // #4354 build-site retain: for each classifiable capture, read it
+                // back from the stored env box (env[ci+1], the same arr_get the
+                // closure call path uses) and __fern_rc_inc it — the rc-aware inc
+                // (null / literal / immortal-view guarded). Balanced by the exit
+                // sweep's env release, driven by the SAME kinds string. Only
+                // emitted when at least one capture is classifiable, so a
+                // scalar-only closure stays byte-identical.
+                var has_rc_cap: boolean = false;
+                var ckj: i32 = 0;
+                while (ckj < clo_kinds.len()) { if (clo_kinds[ckj] != 46) { has_rc_cap = true; } ckj = ckj + 1; }   // 46 = '.'
+                if (has_rc_cap) {
+                    var ckk: i32 = 0;
+                    while (ckk < clo_kinds.len()) {
+                        if (clo_kinds[ckk] != 46) {
+                            cvb = cvb.emit(ir.op_load_local(cslot));
+                            cvb = cvb.emit(ir.op_const_i32(ckk + 1));
+                            cvb = cvb.emit(ir.op_arr_get(32));
+                            cvb = cvb.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                            cvb = cvb.emit(ir.op_drop());
+                        }
+                        ckk = ckk + 1;
+                    }
+                    cvb = cvb.add_clo_cap_kinds(v.name + "|" + clo_kinds);
+                }
+                return cvb;
             }
             // 2-element tuple destructure `var (a, b) = E` — the parser encodes
             // the name as "a,b". Eval the tuple box into a fresh temp, then bind
@@ -12237,6 +12305,41 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
 // special-casing `for x in name` (a borrow iteration, safe) and recursing into
 // nested control-flow bodies. A reassignment of `name` is handled separately by
 // the body_assign_targets bail, so StmtAssign only checks the RHS here.
+// body_unsafe_for_clo (#4354): body_unsafe_for, except a `var c = <lambda>`
+// init where c is capture-RC APPROVED ("OK:c" in clo_ok) does NOT flag the
+// names the lambda captures — the env-build retain makes the capture a counted
+// reference the env sweep releases. Every other statement defers to the plain
+// walker (a lambda in any other position still escape-flags its captures).
+function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], clo_ok: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var skip: boolean = false;
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprLambda(_) => {
+                        if (util.index_of_str(clo_ok, "OK:" + v.name) >= 0) { skip = true; }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(iff) => {
+                if (!expr_unsafe_for(iff.cond, name, borrowable)
+                    && !body_unsafe_for_clo(iff.then_body, name, borrowable, clo_ok)
+                    && !body_unsafe_for_clo(iff.else_body, name, borrowable, clo_ok)) { skip = true; }
+            },
+            parser.StmtWhile(w) => {
+                if (!expr_unsafe_for(w.cond, name, borrowable)
+                    && !body_unsafe_for_clo(w.body, name, borrowable, clo_ok)) { skip = true; }
+            },
+            _ => {}
+        }
+        if (!skip && stmt_unsafe_for(stmts[i], name, borrowable)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
@@ -12800,6 +12903,40 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
         if (!slot_list_has(keeps, i) && st.is_arr_slot(i)) {
+            // #4354 closure-env capture release: a registered closure local
+            // (bound once from a literal lambda, non-escaping, kinds recorded
+            // at the build site) releases its classifiable captures BEFORE the
+            // box dec — rc==1-gated so a shared env (aliased binding) only
+            // releases via its LAST owner, and a null slot is a no-op. Each
+            // capture is read back from the env box (env[ci+1]) and released by
+            // its kind: 's' string -> __fern_str_free, 'a' scalar array ->
+            // __fern_rc_dec — the exact inverses of the build-site retains.
+            var clk: string = "";
+            if (st.is_closure_local(st.locals[i].slot_name)) { clk = st.clo_cap_kinds_of(st.locals[i].slot_name); }
+            var clk_any: boolean = false;
+            var clki: i32 = 0;
+            while (clki < clk.len()) { if (clk[clki] != 46) { clk_any = true; } clki = clki + 1; }   // 46 = '.'
+            if (clk_any) {
+                st = st.emit(ir.op_load_local(i));
+                st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                st = st.emit(ir.op_if(0));
+                var clkj: i32 = 0;
+                while (clkj < clk.len()) {
+                    if (clk[clkj] != 46) {
+                        st = st.emit(ir.op_load_local(i));
+                        st = st.emit(ir.op_const_i32(clkj + 1));
+                        st = st.emit(ir.op_arr_get(32));
+                        if (clk[clkj] == 115) {   // 's' = string capture
+                            st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+                        } else {
+                            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                        }
+                        st = st.emit(ir.op_drop());
+                    }
+                    clkj = clkj + 1;
+                }
+                st = st.emit(ir.op_end());
+            }
             st = st.emit(ir.op_load_local(i));
             if (slot_is_reclaimable_strarr(st, i)) {
                 // string[] ELEMENT reclaim (#4355): a proven fresh-element string
@@ -12833,6 +12970,29 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_drop());
         }
         j = j + 1;
+    }
+    // Reclaimable dyn-Trait STRUCT-payload locals (#4351) — the dyn local holds
+    // the concrete's rc-headered struct box (structs flow unboxed behind dyn),
+    // so release it exactly like the struct loop above: deep-drop the
+    // concrete's rc fields via __struct_drop_<Concrete> (auto-materialized by
+    // each backend on seeing the call; only emitted when the concrete carries a
+    // reclaimable field), then shallow-dec the box. Slots are zeroed at entry
+    // (arr_slots_of includes reclaimable dyn slots), so an untaken-branch slot
+    // routes a null through the null-guarded helpers.
+    var dj: i32 = st.n_params;
+    while (dj < st.locals.len()) {
+        if (!slot_list_has(keeps, dj) && slot_is_reclaimable_dyn(st, dj)) {
+            var dconc: string = dyn_reclaim_concrete_of(st, st.locals[dj].slot_name);
+            if (struct_has_reclaim_array_field(st.structs, dconc)) {
+                st = st.emit(ir.op_load_local(dj));
+                st = st.emit(ir.op_call_direct("__struct_drop_" + dconc, 1));
+                st = st.emit(ir.op_drop());
+            }
+            st = st.emit(ir.op_load_local(dj));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+        }
+        dj = dj + 1;
     }
     // Reclaimable scalar-tuple locals — a shallow rc-dec of the (now rc-headered)
     // box at scope exit, the tuple sibling of the struct loop above. Only fresh,
@@ -13271,7 +13431,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -14395,6 +14555,157 @@ function stmt_strarr_unsafe_for(st: parser.Stmt, name: string, borrowable: strin
     return false;
 }
 
+// --- closure-env capture RC (#4354, port slice 5) ----------------------------
+//
+// closure_capture_kind classifies capture `name` (a local/param visible at the
+// env-build site) for the capture-RC arc: 's' = a string box (retained via the
+// rc-aware __fern_rc_inc at the build site, released via __fern_str_free by the
+// env sweep), 'a' = a scalar-element array buffer (retained via __fern_rc_inc,
+// released via __fern_rc_dec), '.' = everything else — string[] / struct /
+// enum / map / tuple / nested closure / plain scalars — no inc, no release
+// (scalars are copied; the rest keeps today's sound leak). The SAME kind char
+// drives the build-site inc AND the sweep release, so they balance by
+// construction (the #4354 invariant: incs and drops land together).
+function closure_capture_kind(s: LowerState, name: string): string {
+    var sl: i32 = s.slot_of(name);
+    if (sl < 0 || sl >= s.locals.len()) { return "."; }
+    if (s.locals[sl].is_str) { return "s"; }
+    if (s.locals[sl].is_arr
+        && !s.locals[sl].is_strarr && !s.locals[sl].is_arrarr
+        && !s.locals[sl].is_closurearr && !s.locals[sl].is_fnarr
+        && !s.is_closure_local(name)
+        && s.locals[sl].struct_type == "" && s.locals[sl].opt_type == ""
+        && s.locals[sl].map_type == "" && s.locals[sl].tuple_elems == "") { return "a"; }
+    return ".";
+}
+
+// clo_rc_candidate_names (#4354): closure locals lower_func approves for
+// capture RC — bound ONCE from a LITERAL lambda (`var c = (x) => ...` /
+// `var c = || { ... }`), never reassigned, not shadowed, and clean under
+// body_unsafe_for (no return / container store / non-borrowable call arg —
+// a stored/escaping env may outlive this frame, so its captures must keep
+// the leak). The StmtVar lowering consumes the approval, emits the
+// build-site retains, and registers the kinds the exit sweep releases.
+function clo_rc_candidate_names(body: parser.Stmt[], borrowable: string[]): string[] {
+    var cands: string[] = collect_clo_lambda_names(body, []);
+    var reassigned: string[] = body_assign_targets(body);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < cands.len()) {
+        var nm: string = cands[i];
+        if (nm.len() > 0
+            && util.index_of_str(reassigned, nm) < 0
+            && !body_unsafe_for(body, nm, borrowable)) { out = out.append("OK:" + nm); }
+        i = i + 1;
+    }
+    return out;
+}
+// collect_clo_lambda_names: every `var <name> = <lambda literal>` binding,
+// recursing through nested blocks; a name declared TWICE (shadowed) is
+// recorded as "" so it never qualifies (the two envs' capture sets differ).
+function collect_clo_lambda_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_clo_lambda_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprLambda(_) => {
+                    if (util.index_of_str(acc, v.name) >= 0) {
+                        // shadowed: blank BOTH so neither binding qualifies.
+                        var out: string[] = [];
+                        var i: i32 = 0;
+                        while (i < acc.len()) {
+                            if (acc[i] == v.name) { out = out.append(""); } else { out = out.append(acc[i]); }
+                            i = i + 1;
+                        }
+                        return out.append("");
+                    }
+                    return acc.append(v.name);
+                },
+                _ => { return acc; }
+            }
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_clo_lambda_names(iff.then_body, acc);
+            return collect_clo_lambda_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_clo_lambda_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_clo_lambda_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_clo_lambda_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        _ => { return acc; },
+    }
+}
+
+// collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <C literal>`
+// binding whose concrete struct is leak-safe and scalar-only / deep-drop-ok,
+// as "<name>|<Concrete>" entries (recursing through nested blocks). A name
+// bound twice is blanked (shadow — the concretes may differ).
+function collect_dyn_struct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_dyn_struct_in_stmt(stmts[i], structs, a); i = i + 1; }
+    return a;
+}
+function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn ") {
+                match (v.init) {
+                    parser.ExprStructLit(slz) => {
+                        var cty: string = slz.type_name;
+                        if (!slz.has_base && decl_is_struct(structs, cty) && decl_is_leaksafe(structs, cty)
+                            && (struct_is_scalar_only(structs, cty) || nested_field_deep_drop_ok(structs, cty))) {
+                            // shadow check: a same-named earlier entry blanks both.
+                            var pi: i32 = 0;
+                            while (pi < acc.len()) {
+                                var e: string = acc[pi];
+                                var b2: i32 = 0;
+                                while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
+                                if (b2 <= e.len() && e[0:b2] == v.name) {
+                                    var out: string[] = [];
+                                    var oi: i32 = 0;
+                                    while (oi < acc.len()) {
+                                        if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
+                                        oi = oi + 1;
+                                    }
+                                    return out.append("|");
+                                }
+                                pi = pi + 1;
+                            }
+                            return acc.append(v.name + "|" + cty);
+                        }
+                        return acc;
+                    },
+                    _ => { return acc; }
+                }
+            }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_dyn_struct_names(iff.then_body, structs, acc);
+            return collect_dyn_struct_names(iff.else_body, structs, a);
+        },
+        parser.StmtWhile(w) => { return collect_dyn_struct_names(w.body, structs, acc); },
+        parser.StmtFor(f) => { return collect_dyn_struct_names(f.body, structs, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_dyn_struct_names(m.arms[i].body, structs, a); i = i + 1; }
+            return a;
+        },
+        _ => { return acc; },
+    }
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -14444,9 +14755,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // locals qualify. The reclaim frees the box + data buffer via __fern_str_free
     // (asm) / $__fern_arr_dec (wasm) at the loop-rebind and at scope exit.
     var strs: string[] = collect_fresh_string_names(body, []);
+    // #4354 interlock: a fresh string captured into an APPROVED capture-RC
+    // closure (`var c = <lambda>` — single-bind, non-escaping) is no longer an
+    // escape: the build site retains it (rc 2), this sweep's later string loop
+    // decs the local's ref, and the env release decs the env's — freed exactly
+    // once. Ordering makes a classifier mismatch merely a sound leak: the env
+    // release (array loop) runs BEFORE the string loop, so the env's dec always
+    // precedes the local's free. Lambdas anywhere else still escape-flag.
+    var clo_ok: string[] = clo_rc_candidate_names(body, borrowable);
     var si: i32 = 0;
     while (si < strs.len()) {
-        if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for(body, strs[si], borrowable)) {
+        if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for_clo(body, strs[si], borrowable, clo_ok)) {
             out = out.append("STR:" + strs[si]);
         }
         si = si + 1;
@@ -14511,6 +14830,29 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (sri < sarrs.len()) {
         if (!strarr_unsafe_for(body, sarrs[sri], borrowable)) { out = out.append("SARR:" + sarrs[sri]); }
         sri = sri + 1;
+    }
+    // dyn-Trait STRUCT-payload locals (#4351): `var d: dyn T = C { ... }` — the
+    // struct flows UNBOXED behind the dyn coercion (the local holds the concrete's
+    // rc-headered box), but the coarse "dyn T" slot type kept it out of every
+    // reclaim class, so it leaked. Credited "DYN:<name>|<Concrete>" so the exit
+    // sweep deep-drops the concrete's rc fields (__struct_drop_<Concrete>) and
+    // frees the box. Gates mirror the enum struct-payload path: a FRESH struct
+    // LITERAL init (sole owner, rc==1) of a leak-safe scalar-only or
+    // deep-drop-ok struct, single-bind, never reassigned, non-escaping
+    // (body_unsafe_for — a `d.show()` dispatch is a receiver borrow, safe).
+    // Primitive/string dyn payloads ride a separate HEADERLESS 16-byte cell
+    // (op_dyn_box) that the asm no-op __free can't reclaim — a later slice.
+    var dyns: string[] = collect_dyn_struct_names(body, structs, []);
+    var dyi: i32 = 0;
+    while (dyi < dyns.len()) {
+        var dentry: string = dyns[dyi];
+        var dbar: i32 = 0;
+        while (dbar < dentry.len() && dentry[dbar] != 124) { dbar = dbar + 1; }   // 124 = '|'
+        var dname: string = dentry[0:dbar];
+        if (dname.len() > 0
+            && util.index_of_str(reassigned, dname) < 0
+            && !body_unsafe_for(body, dname, borrowable)) { out = out.append("DYN:" + dentry); }
+        dyi = dyi + 1;
     }
     // Reassigned array-payload ENUM locals: credited "ENUMRE:<E>:<name>" so the StmtAssign
     // deep-drops each superseded box's payload (emit_enum_reclaim_store) instead of the
@@ -15420,6 +15762,84 @@ function binding_escapes_arm(arm: parser.MatchArm, name: string, borrowable: str
     return body_unsafe_for(arm.body, name, borrowable);
 }
 
+// match_moved_rc_payloads: the Koka consuming-match MOVED-payload set (#4400)
+// for the consuming rc-payload enum match `st`: every "<Variant>#<field k>"
+// whose rc-droppable payload field is BOUND (non-`_`) by an arm to a name that
+// ESCAPES its arm (binding_escapes_arm — stored to an outer var, returned,
+// passed to a call). The binding inherits the box's counted reference, so the
+// post-match deep-drop must SKIP that field's dec (emit_enum_variant_drops_moved)
+// — the dup the Koka transform would insert and the drop's dec cancel
+// statically. Borrow-only bindings stay OUT of the set: their arm is done with
+// the payload by the time the free runs, so the dec both reclaims it and keeps
+// today's behaviour. Scalar payloads impose nothing (copied, not rc-tracked).
+//
+// The skip is exact only when the escaping arm ALWAYS runs for its variant — a
+// guard could divert execution to a different arm that did NOT move the
+// payload, turning the skip into a per-call leak. consumed_rcpayload_enum_frees
+// therefore REJECTS any candidate that mixes a non-empty moved set with a
+// guarded arm (match_has_guarded_arm); by emission time a non-empty moved set
+// implies every arm is unguarded, so exactly the escaping arm ran.
+function match_moved_rc_payloads(st: parser.Stmt, structs: parser.StructDecl[]): string[] {
+    var moved: string[] = [];
+    var none: string[] = [];
+    match (st) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        // strip a qualified `Enum.Variant` to the bare variant name
+                        // (same walk as match_arm_binds_rc_payload).
+                        var vname: string = pv.type_name;
+                        var vc: i32 = 0;
+                        while (vc < pv.type_name.len()) {
+                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()]; }
+                            vc = vc + 1;
+                        }
+                        if (pv.binding != "" && pv.binding != "_") {
+                            if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, 0))) {
+                                if (binding_escapes_arm(arm, pv.binding, none)) { moved = moved.append(vname + "#0"); }
+                            }
+                        }
+                        var eb: i32 = 0;
+                        while (eb < pv.extra_bindings.len()) {
+                            var ebn: string = pv.extra_bindings[eb];
+                            if (ebn != "" && ebn != "_") {
+                                if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, eb + 1))) {
+                                    if (binding_escapes_arm(arm, ebn, none)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
+                                }
+                            }
+                            eb = eb + 1;
+                        }
+                    },
+                    _ => {}
+                }
+                ai = ai + 1;
+            }
+            return moved;
+        },
+        _ => { return moved; }
+    }
+}
+
+// match_has_guarded_arm: any arm of match `st` carries a guard — the
+// diversion that would make a moved-payload skip inexact (see
+// match_moved_rc_payloads).
+function match_has_guarded_arm(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
 // RcEnumFrees: parallel arrays for the rc-payload enum free — the consuming match
 // index, the freed local name x, and x's ENUM name (so the deep-drop can iterate
 // the enum's variants at the free site).
@@ -15428,10 +15848,13 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // consumed_rcpayload_enum_frees: the rc-payload analogue of
 // consumed_scalar_enum_frees. Finds every function-local `var x = V(payload...)`
 // of an rc-droppable enum consumed by exactly one `match (x)`, single-owner,
-// dead-after, non-escaping, AND whose arms bind no rc payload that ESCAPES its arm
-// (match_arm_binds_rc_payload — a borrow-only binding is admitted). Each such x's
-// box is deep-dropped + freed right
-// after its match (emit_enum_variant_drops). Same shape as the scalar pass.
+// dead-after, non-escaping. Arm bindings impose NO gate anymore (#4400): a
+// borrow-only rc binding keeps its dec (the free runs after the whole match),
+// and an ESCAPING rc binding puts its (variant, field) into the MOVED set
+// (match_moved_rc_payloads) so the free site skips that field's dec —
+// ownership transferred to the escapee. Each such x's box is deep-dropped +
+// freed right after its match (emit_enum_variant_drops_moved). Same shape as
+// the scalar pass.
 function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): RcEnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
@@ -15454,9 +15877,18 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
-                        // the rc-payload-specific gate: reject if any arm binds an rc payload.
-                        var binds_rc: boolean = match_arm_binds_rc_payload(body[match_idx], structs);
-                        if (!arms_use && dead_after && !escapes && !binds_rc) {
+                        // An arm binding an ESCAPING rc payload no longer rejects
+                        // the candidate (#4400): the free site skips the dec of
+                        // each moved (variant, field) pair instead — see
+                        // match_moved_rc_payloads / emit_enum_variant_drops_moved.
+                        // (The nested precise-drop path keeps its reject via
+                        // enum_body_binds_rc_payload.) EXCEPT when the match also
+                        // has a GUARDED arm: a guard could divert execution to an
+                        // arm that did not move the payload, making the skip a
+                        // per-call leak — such mixes fall back to the exit sweep.
+                        var guarded_move: boolean = match_has_guarded_arm(body[match_idx])
+                            && match_moved_rc_payloads(body[match_idx], structs).len() > 0;
+                        if (!arms_use && dead_after && !escapes && !guarded_move) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
                             enums = enums.append(owner);
@@ -15487,6 +15919,21 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
 // sweep harmlessly decs a null. The payload is therefore dropped BEFORE the box
 // and exactly once.
 function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
+    var no_moved: string[] = [];
+    return emit_enum_variant_drops_moved(s, slot, enum_name, no_moved);
+}
+
+// emit_enum_variant_drops_moved is emit_enum_variant_drops with a MOVED-field
+// set (#4400, the Koka consuming-match dup/dec cancellation): each entry is
+// "<Variant>#<field index>" for an rc payload field whose arm binding ESCAPES
+// its arm (match_moved_rc_payloads). Ownership of that payload moved to the
+// escapee (the binding was the box's counted reference, handed on), so the
+// deep-drop SKIPS its dec — dropping it would free a value the escapee still
+// holds; the box itself is still freed below either way. The skip is exact:
+// admission rejects guard/move mixes (consumed_rcpayload_enum_frees'
+// guarded_move gate), so a non-empty `moved` set implies every arm is
+// unguarded and exactly the escaping arm ran.
+function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
     var vi: i32 = 0;
     while (vi < st.structs.len()) {
@@ -15502,7 +15949,9 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
             var fk: i32 = 0;
             while (fk < n) {
                 var eft: string = decl_field_type_at(st.structs, vname, fk);
-                if (is_leaksafe_array_field(eft)) {
+                if (util.index_of_str(moved, vname + "#" + util.i32_to_string(fk)) >= 0) {
+                    // moved-out payload: the arm's escaping binding owns it now.
+                } else if (is_leaksafe_array_field(eft)) {
                     // scalar-element array payload: one dec frees the buffer (scalar
                     // elements carry no inner pointers to release).
                     st = st.emit(ir.op_load_local(slot));
@@ -16198,7 +16647,12 @@ function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
 function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
-    if (s.struct_type_of_slot(i).len() == 0) { return false; }
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0) { return false; }
+    // a dyn-Trait slot carries the coarse "dyn <T>" tag, not a struct decl —
+    // it is released by the dedicated DYN sweep loop (#4351), never here
+    // (double-firing both loops over-released the concrete's box).
+    if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     return util.index_of_str(s.reclaimable_names, s.locals[i].slot_name) >= 0;
 }
 
@@ -16278,6 +16732,34 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
     return util.index_of_str(s.reclaimable_names, "SARR:" + s.locals[i].slot_name) >= 0;
+}
+
+// dyn_reclaim_concrete_of (#4351): the concrete struct type registered for
+// dyn local `name` under the "DYN:<name>|<Concrete>" reclaim entry, or "".
+function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > 4 && e[0:4] == "DYN:") {
+            var body: string = e[4 : e.len()];
+            var bar: i32 = 0;
+            while (bar < body.len() && body[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            if (bar < body.len() && body[0:bar] == name) { return body[bar + 1 : body.len()]; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// slot_is_reclaimable_dyn: slot `i` is a fresh, non-escaping dyn-Trait local
+// holding a statically-known STRUCT payload (#4351) — credited "DYN:" by
+// reclaimable_names_of. The payload box is the concrete's rc-headered struct
+// box (structs flow unboxed behind dyn), released by the exit sweep like a
+// reclaimable struct: deep-drop the concrete's rc fields, then dec the box.
+function slot_is_reclaimable_dyn(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    return dyn_reclaim_concrete_of(s, s.locals[i].slot_name) != "";
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
@@ -16559,97 +17041,193 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
     return ReuseSites { idxs: idxs, bases: bases };
 }
 
-// emit_self_overwrite_reuse lowers `var c = T { ...d, f: v, ... }` as an
-// IN-PLACE reuse of d's box (the reuse site found by self_overwrite_reuse_sites).
-// `c_name` is the new local; `slit` the struct-update literal; `base_name` is d.
-// For each override field it writes the new value into d's box via struct_set,
-// binds c to d's box (a plain alias — leak-only scalar structs need no rc inc),
-// then ZEROES d's slot so the function-exit dec-sweep frees the box exactly once
-// (through c, which now owns it) and harmlessly decs a null for d. The `slit` is
-// passed as the wrapped parser.Expr (not the unwrapped variant struct) and
-// re-matched here — passing a large unwrapped AST struct by value is avoided.
+// emit_self_overwrite_reuse lowers `var c = T { ...d, f: v, ... }` as a
+// RUNTIME-GUARDED in-place reuse of d's box (#4350, native's token shape;
+// the reuse site found by self_overwrite_reuse_sites). `c_name` is the new
+// local; `slit` the struct-update literal; `base_name` is d.
+//
+// The static escape walk proves d is sole-owner; the __fern_rc_is_unique
+// guard makes any FUTURE hole in that walk degrade instead of corrupting:
+//   1. every override value is evaluated into a temp (reads of d's old
+//      fields complete before any box surgery, on both branches);
+//   2. reused = __fern_rc_is_unique(d); token = reused ? d : 0;
+//   3. box = __fern_alloc_reuse(token, nfields+1 slots) — the SAME block on the
+//      reuse path (same type -> the cap always fits), a fresh rc=1 arr-box
+//      otherwise;
+//   4. reuse arm: release each OVERRIDDEN field's old value (it is about to
+//      be overwritten — or it leaks). Fresh arm: copy the shape word and
+//      every NON-overridden field from d's still-live box (the aliases hold
+//      it), rc-inc'ing pointer-kinded copies, then dec d's own reference
+//      (rc >= 2 here, so the dec never frees);
+//   5. store the override temps, bind c to the box, and ZERO d's slot so
+//      the exit dec-sweep frees the box exactly once (through c) and
+//      harmlessly decs a null for d.
+// The `slit` is passed as the wrapped parser.Expr (not the unwrapped variant
+// struct) and re-matched here — passing a large unwrapped AST struct by
+// value is avoided.
 function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(base_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprStructLit(slit) => {
+            var nf: i32 = decl_field_count(s.structs, slit.type_name);
+            // 1. Evaluate every OVERRIDE value into a temp local FIRST (native
+            //    tryStructReuseOverwrite step 1): the reads of d's old fields all
+            //    complete before any box surgery, on both branches.
             var st: LowerState = s;
-            // Write each override field into d's box. For a leak-safe ARRAY field,
-            // first RELEASE the old array already in d's box (load box; struct_get;
-            // __fern_rc_dec; drop) — or it leaks — then write the new (fresh) array.
-            // For an i64 field, lower via lower_i64 and store 8 bytes (struct_set_i64).
-            // For a plain scalar / f64 field, lower_expr + struct_set(width).
+            var tslots: i32[] = [];
+            var fidxs: i32[] = [];
             var fj: i32 = 0;
             while (fj < slit.field_names.len()) {
                 var fidx: i32 = st.field_index_in(slit.type_name, slit.field_names[fj]);
                 if (fidx < 0) { return st.fail(); }
-                var fty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[fj]);
-                if (is_leaksafe_array_field(fty)) {
-                    // dec the OLD array value in d's box before overwriting it.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                var tname: string = "$sor" + util.i32_to_string(dslot) + "_" + util.i32_to_string(fj);
+                st = st.add_local(tname);
+                var tslot: i32 = st.slot_of(tname);
+                if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
+                    st = lower_i64(slit.field_values[fj], st);
+                } else {
+                    st = lower_expr(slit.field_values[fj], st);
+                }
+                if (!st.ok) { return st; }
+                st = st.emit(ir.op_store_local(tslot));
+                tslots = tslots.append(tslot);
+                fidxs = fidxs.append(fidx);
+                fj = fj + 1;
+            }
+            // Bind c's slot up front — both branches store the result box there.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_struct_type(cslot, slit.type_name);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // only when the recipient is a RECLAIMABLE (non-escaping) local (an
+            // escaping recipient's box is owned by the container it moved into; a
+            // prior-release would be a UAF). Runs before the branch: it reads only
+            // c's old slot + d's slot, both still untouched.
+            if (release_prior && slot_is_reclaimable_struct(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // 2. Runtime uniqueness guard (#4350, native's token shape): the
+            //    static escape walk proves d is sole-owner, and this guard makes a
+            //    future hole in that walk DEGRADE (fresh box) instead of corrupting
+            //    (in-place write over a shared box). reused = __fern_rc_is_unique(d).
+            var uname: string = "$sor_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            // 3. token = reused ? d : 0. (The not-unique branch's release of d's
+            //    own reference happens at the END of the fresh arm below, after
+            //    the carried-field copies read d's box.)
+            var kname: string = "$sor_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_end());
+            // 4. box = __fern_alloc_reuse(token, nfields): the token's block when
+            //    it fits (same type -> always, on the reuse path), else a fresh
+            //    rc=1 arr-box of the same shape struct_make allocates.
+            var bname: string = "$sor_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(nf + 1));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // 5. Branch-specific box preparation.
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            // REUSE arm (box == d's box): release each OVERRIDDEN field's OLD
+            // value before the store below overwrites it (or it leaks). Same
+            // per-kind logic the pre-guard emitter applied unconditionally.
+            var rj: i32 = 0;
+            while (rj < fidxs.len()) {
+                var rfty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[rj]);
+                if (is_leaksafe_array_field(rfty)) {
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                    // write the new (fresh) array: [box, value] -> struct_set.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
-                } else if (decl_is_struct(st.structs, fty)) {
-                    // Nested-struct override field: FULL freeing drop of d's OLD inner
-                    // box before overwriting it (mirrors emit_cross_struct_reuse /
-                    // native's emitFieldDropOnStack). When the inner type owns rc
-                    // fields, __struct_drop_<fty> deep-drops them first (each self-
-                    // guarded on rc==1); then __fern_rc_dec frees the inner box header.
-                    // The override value is a fresh no-base struct literal
-                    // (self_overwrite_reuse_sites gate) that does NOT reference d, so
-                    // lower_expr allocates a fresh rc=1 inner the reused box then solely
-                    // owns — freed once at exit via c's __struct_drop_<T> sweep.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
-                    if (struct_has_reclaim_array_field(st.structs, fty)) {
-                        st = st.emit(ir.op_call_direct("__struct_drop_" + fty, 1));
+                } else if (decl_is_struct(st.structs, rfty)) {
+                    // Nested-struct override: FULL freeing drop of the OLD inner box
+                    // (deep-drop its rc fields first when it owns any — each self-
+                    // guarded on rc==1 — then free the inner box header).
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
+                    if (struct_has_reclaim_array_field(st.structs, rfty)) {
+                        st = st.emit(ir.op_call_direct("__struct_drop_" + rfty, 1));
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
-                } else if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_i64(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set_i64(fidx));
-                } else {
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
                 }
-                fj = fj + 1;
+                rj = rj + 1;
             }
-            // Bind c to d's box (the reused box is the result of the update).
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_struct_type(cslot, slit.type_name);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) local. An
-            // ESCAPING recipient's box is owned by the container it was moved into
-            // (structs are not rc-inc'd on escape / left non-reclaimable), so a
-            // prior-release would free a box the container still references — a UAF.
-            // Such a recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_struct(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            // Zero d's slot: c now owns the box; the exit sweep frees it once (via
-            // c) and decs a null for d. (c is an alias binding, not in the
-            // reclaimable set, so it is itself left to leak — the same shallow
-            // leak the pre-reuse path had for the freshly-allocated box; sound,
-            // no double-free.)
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            st = st.emit(ir.op_else());
+            // FRESH arm (d's box is SHARED; box is a new rc=1 block): the spread's
+            // carried fields don't come along for free — copy the shape word and
+            // every NON-overridden field from d's still-live box (the aliases hold
+            // it), rc-inc'ing pointer-kinded copies (array / nested struct) so the
+            // alias's eventual deep-drop and this box's own release stay balanced.
+            // Then release d's reference: rc >= 2 here, so the dec never frees.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_raw_load_ptr());
+            st = st.emit(ir.op_raw_store_ptr());
+            st = st.emit(ir.op_drop());
+            var di: i32 = 0;
+            while (di < nf) {
+                var over: boolean = false;
+                var oj: i32 = 0;
+                while (oj < fidxs.len()) {
+                    if (fidxs[oj] == di) { over = true; }
+                    oj = oj + 1;
+                }
+                if (!over) {
+                    var cfty: string = decl_field_type_at(st.structs, slit.type_name, di);
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
+                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty)) {
+                        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
+                }
+                di = di + 1;
+            }
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            // 6. Store the override temps into the box (both branches).
+            var wj: i32 = 0;
+            while (wj < fidxs.len()) {
+                st = st.emit(ir.op_load_local(bslot));
+                st = st.emit(ir.op_load_local(tslots[wj]));
+                if (struct_field_is_i64(st.structs, slit.type_name, fidxs[wj])) {
+                    st = st.emit(ir.op_struct_set_i64(fidxs[wj]));
+                } else {
+                    st = st.emit(ir.op_struct_set(fidxs[wj], struct_field_width(st.structs, slit.type_name, fidxs[wj])));
+                }
+                wj = wj + 1;
+            }
+            // 7. Bind c to the result box and zero d's slot: on the reuse arm the
+            //    exit sweep frees the box once (via c) and decs a null for d; on
+            //    the fresh arm d's reference was released above and the aliases
+            //    own the old box. (c stays an alias binding outside the
+            //    reclaimable set — the same shallow-leak policy as the pre-guard
+            //    path and the plain fresh construction.)
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
@@ -16825,27 +17403,114 @@ function emit_reuse_recip_prior_release(s: LowerState, cslot: i32, dslot: i32): 
     return st;
 }
 
-// IN-PLACE reuse of donor d's (dead) box (the site found by cross_reuse_sites).
-// `c_name` is the new local; `init` the full no-base struct literal; `donor_name`
-// is d. For each leak-safe ARRAY field it first RELEASES the OLD value in d's box
-// (load box; struct_get; __fern_rc_dec; drop) — c overwrites every field, so the
-// donor's old array would otherwise leak — then writes EVERY field of c into d's
-// box (in decl order), binds c to d's box, and ZEROES d's slot so the exit sweep
-// frees the box exactly once (via c) and harmlessly decs a null for d. When
-// `release_prior` (the loop-body path), the recipient's prior loop-carried box is
-// released before the rebind (emit_reuse_recip_prior_release).
+// RUNTIME-GUARDED in-place reuse of donor d's (dead) box (#4350 slice 2; the
+// site found by cross_reuse_sites; the emit_self_overwrite_reuse token shape).
+// `c_name` is the new local; `init` the full no-base struct literal;
+// `donor_name` is d. reused = __fern_rc_is_unique(d); box =
+// __fern_alloc_reuse(reused ? d : 0, nfields+1 slots). The reuse arm releases each
+// pointer-kinded OLD field (c overwrites every field, so the donor's old
+// values would otherwise leak); the fresh arm copies the shape word from d's
+// still-live box and decs d's reference (a future escape-walk hole thereby
+// degrades instead of corrupting). Every field of c is then written into the
+// result box (in decl order), c is bound to it, and d's slot is ZEROED so the
+// exit sweep frees the reused box exactly once (via c) and harmlessly decs a
+// null for d. When `release_prior` (the loop-body path), the recipient's
+// prior loop-carried box is released before any of this
+// (emit_reuse_recip_prior_release).
 function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprStructLit(slit) => {
             var st: LowerState = s;
-            // Write every decl field of T into d's box, in decl order. For each
-            // field find the literal value (a full construction sets all fields).
             var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
+            // Bind c's slot up front — both guard arms store the result box there.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_struct_type(cslot, slit.type_name);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // only when the recipient is a RECLAIMABLE (non-escaping) local (an
+            // escaping recipient's box is owned by the container it moved into; a
+            // prior-release would be a UAF). Runs before the guard: it reads only
+            // c's old slot + d's slot, both still untouched.
+            if (release_prior && slot_is_reclaimable_struct(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // Runtime uniqueness guard (#4350 slice 2, the emit_self_overwrite_reuse
+            // token shape): the static walk proves d is sole-owner and DEAD here
+            // (cross_reuse_sites), so no field value below can reference d — the
+            // guard exists so a future hole in the walk degrades (fresh box)
+            // instead of corrupting (in-place write over a shared box).
+            var uname: string = "$sxr_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$sxr_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_end());
+            var bname: string = "$sxr_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(ndecl + 1));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Branch-specific box preparation. REUSE arm (box == d's box): release
+            // each pointer-kinded OLD field before the full overwrite below (or it
+            // leaks) — the same per-kind logic the pre-guard emitter interleaved.
+            // FRESH arm (d's box is SHARED; box is a new rc=1 block): copy the
+            // shape word from d's still-live box, then release d's reference
+            // (rc >= 2 here, so the dec never frees). Every field is written
+            // below, so no carried-field copies exist in this family.
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            var ri: i32 = 0;
+            while (ri < ndecl) {
+                var rty: string = decl_field_type_at(st.structs, slit.type_name, ri);
+                if (is_leaksafe_array_field(rty)) {
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (decl_is_struct(st.structs, rty)) {
+                    // Nested-struct pointer field: FULL freeing drop of the OLD
+                    // inner box (deep-drop its rc fields first when it owns any —
+                    // each self-guarded on rc==1 — then free the inner box header).
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    if (struct_has_reclaim_array_field(st.structs, rty)) {
+                        st = st.emit(ir.op_call_direct("__struct_drop_" + rty, 1));
+                    }
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                }
+                ri = ri + 1;
+            }
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_raw_load_ptr());
+            st = st.emit(ir.op_raw_store_ptr());
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            // Write every decl field of T into the result box, in decl order (a
+            // full construction sets all fields; cross_reuse_sites guarantees no
+            // value references d).
             var di: i32 = 0;
             while (di < ndecl) {
-                // find the literal field whose decl index is di.
                 var jj: i32 = 0;
                 var found: i32 = 0 - 1;
                 while (jj < slit.field_names.len()) {
@@ -16853,69 +17518,28 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     jj = jj + 1;
                 }
                 if (found < 0) { return st.fail(); }
-                var fty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[found]);
-                if (is_leaksafe_array_field(fty)) {
-                    // dec the OLD array value in d's box before overwriting it.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                    // write the new (fresh) array: [box, value] -> struct_set.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[found], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
-                } else if (decl_is_struct(st.structs, fty)) {
-                    // Nested-struct pointer field: FULL freeing drop of d's OLD inner
-                    // box before overwriting it (native's emitFieldDropOnStack). When
-                    // the inner type owns rc fields, __struct_drop_<fty> deep-drops
-                    // them first (each self-guarded on rc==1); then __fern_rc_dec frees
-                    // the inner box header. c's new value is a fresh no-base struct
-                    // literal (cross_reuse_sites gate), so lower_expr allocates a fresh
-                    // rc=1 inner box the reused box then solely owns — balanced against
-                    // this release and freed at exit via c's __struct_drop sweep.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    if (struct_has_reclaim_array_field(st.structs, fty)) {
-                        st = st.emit(ir.op_call_direct("__struct_drop_" + fty, 1));
-                    }
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[found], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
-                } else if (struct_field_is_i64(st.structs, slit.type_name, di)) {
-                    st = st.emit(ir.op_load_local(dslot));
+                if (struct_field_is_i64(st.structs, slit.type_name, di)) {
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_i64(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set_i64(di));
                 } else {
-                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_expr(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
                 }
                 di = di + 1;
             }
-            // Bind c to d's box (the reused box is the construction's result).
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_struct_type(cslot, slit.type_name);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) local. An
-            // ESCAPING recipient's box is owned by the container it was moved into
-            // (structs are not rc-inc'd on escape / left non-reclaimable), so a
-            // prior-release would free a box the container still references — a UAF.
-            // Such a recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_struct(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            // Zero d's slot: c now owns the box; the exit sweep frees it once (via
-            // c) and decs a null for d.
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            // Bind c to the result box and zero d's slot: on the reuse arm the
+            // exit sweep frees the box once (via c) and decs a null for d; on the
+            // fresh arm d's reference was released above and the aliases own the
+            // old box.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
@@ -17067,13 +17691,14 @@ function tuple_lit_ctor_eligible(tup: parser.ExprTuple, s: LowerState): boolean 
     return true;
 }
 
-// emit_cross_tuple_reuse lowers `var c = (…)` as an IN-PLACE reuse of dead donor
-// d's tuple box: overwrite each element slot (op_tuple_set / _w, offset i*8) with
-// c's value at its element WIDTH (i64 lowers via lower_i64 + tuple_set_w(64,i64);
-// f64 via lower_expr + tuple_set_w(64,f64); i32 / pointer via lower_expr +
-// tuple_set — mirroring op_tuple_make_k), bind c to d's box, tag c's slot
-// (mark_tuple_elems), and zero d's slot so the exit sweep frees the box once (via
-// c) and decs a null for d.
+// emit_cross_tuple_reuse lowers `var c = (…)` as a RUNTIME-GUARDED in-place
+// reuse of dead donor d's tuple box (#4350 slice 3; the token shape shared
+// with the struct families): reused = __fern_rc_is_unique(d); box =
+// __fern_alloc_reuse(reused ? d : 0, arity); each element slot of the result
+// box is overwritten at its element WIDTH, c binds to the box (tagged via
+// mark_tuple_elems), and d's slot is zeroed so the exit sweep frees the box
+// once (via c). A shared donor degrades to a fresh box + a dec of d's
+// reference instead of corrupting.
 function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
@@ -17081,13 +17706,70 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
         parser.ExprTuple(tup) => {
             var st: LowerState = s;
             var n: i32 = tup.elements.len();
+            // Element kind tags (the mark_tuple_elems encoding), computed up
+            // front — the write loop below and c's slot tag both consume them.
             var enc: string = "";
+            var pe: i32 = 0;
+            while (pe < n) {
+                var ptek: string = elem_type_tag(iife_leaf_value(tup.elements[pe]), st);
+                if (pe > 0) { enc = enc + ","; }
+                enc = enc + ptek;
+                pe = pe + 1;
+            }
+            // Bind c's slot up front — both guard arms store the result box there.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_tuple_elems(cslot, enc);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // only when the recipient is a RECLAIMABLE (non-escaping) tuple local
+            // (an escaping recipient's box is owned by its container; a prior-
+            // release would be a UAF).
+            if (release_prior && slot_is_reclaimable_tuple(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // Runtime uniqueness guard (#4350 slice 3, the token shape shared with
+            // the struct families): reused = __fern_rc_is_unique(d); box =
+            // __fern_alloc_reuse(reused ? d : 0, arity) — a tuple box has NO shape
+            // word (elements at i*8, arr_box cap = arity = its slots), so the
+            // fresh arm needs no slot-0 copy and no old-element release exists on
+            // the reuse arm (the pre-guard emitter released nothing either: the
+            // cross_tuple_reuse_sites gate admits only non-rc element kinds).
+            // The fresh arm only releases d's reference (rc >= 2 there — the dec
+            // never frees; the aliases own the old box).
+            var uname: string = "$sxt_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$sxt_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            var bname: string = "$sxt_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(n));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Overwrite each element slot of the result box with c's value at its
+            // element WIDTH (i64 via lower_i64 + tuple_set_w(64,i64); f64 via
+            // lower_expr + tuple_set_w(64,f64); i32 / pointer via tuple_set —
+            // mirroring op_tuple_make_k). Element values cannot reference d
+            // (cross_tuple_reuse_sites proves d dead at the construction).
             var i: i32 = 0;
             while (i < n) {
                 var tek: string = elem_type_tag(iife_leaf_value(tup.elements[i]), st);
-                if (i > 0) { enc = enc + ","; }
-                enc = enc + tek;
-                st = st.emit(ir.op_load_local(dslot));
+                st = st.emit(ir.op_load_local(bslot));
                 if (tek == "i64") { st = lower_i64(tup.elements[i], st); }
                 else { st = lower_expr(tup.elements[i], st); }
                 if (!st.ok) { return st; }
@@ -17096,20 +17778,13 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
                 else { st = st.emit(ir.op_tuple_set(i)); }
                 i = i + 1;
             }
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_tuple_elems(cslot, enc);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) tuple local.
-            // An ESCAPING recipient's box is owned by the container it moved into, so
-            // a prior-release would free a still-referenced box (a UAF); such a
-            // recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_tuple(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            // Bind c to the result box; zero d's slot so the exit sweep frees the
+            // reused box once (via c) and harmlessly decs a null for d.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
@@ -17265,26 +17940,74 @@ function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
     return EnumDonorSites { idxs: idxs, recips: recips, donors: donors };
 }
 
-// emit_enum_donor_reuse lowers a full `var y = W { ... }` construction as an IN-PLACE
-// reuse of donor x's (dead, consumed scalar-enum) box. It RE-SHAPES x's box to W
-// (op_struct_set_shape — overwrites the donor variant's shape at offset 0 with W's),
-// writes every field of y into the box (decl order; no old-value dec needed — the
-// donor's old slots are all scalars), binds y to the box, and ZEROES x's slot so the
-// exit sweep frees the box exactly once (via y). Mirrors emit_cross_struct_reuse, but
-// the donor shape differs (enum variant -> struct W), hence the shape rewrite, and
-// there are no leak-safe array OLD values to release (donor payloads are all scalar).
+// emit_enum_donor_reuse lowers a full `var y = W { ... }` construction as a
+// RUNTIME-GUARDED in-place reuse of donor x's (dead, consumed scalar-enum) box
+// (#4350 slice 4; the token shape shared with the other guarded families):
+// reused = __fern_rc_is_unique(x); box = __fern_alloc_reuse(reused ? x : 0,
+// nfields+1 slots). The box is RE-SHAPED to W unconditionally
+// (op_struct_set_shape — overwriting the donor variant's shape on the reuse
+// arm, initialising slot 0 on the fresh arm), every field of y is written
+// (decl order; no old-value dec — the donor's old slots are all scalars), y
+// binds to the box, and x's slot is ZEROED so the exit sweep frees the box
+// exactly once (via y). A shared donor degrades to a fresh box + a dec of x's
+// reference (standing in for the suppressed post-match free) instead of
+// corrupting. Mirrors emit_cross_struct_reuse, minus its old-field releases.
 function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string, donor_name: string, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprStructLit(slit) => {
             var st: LowerState = s;
-            // Re-shape the donor box to W: load box, write W's shape at offset 0.
+            var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
+            // Bind y's slot up front — both guard arms store the result box there.
+            st = st.add_local(y_name);
+            var yslot: i32 = st.slot_of(y_name);
+            st = st.mark_struct_type(yslot, slit.type_name);
+            // Runtime uniqueness guard (#4350 slice 4, the shared token shape):
+            // reused = __fern_rc_is_unique(x); box = __fern_alloc_reuse(reused ?
+            // x : 0, nfields+1 slots) — the donor box's cap (V's payloads + 1)
+            // equals W's nfields + 1 by the site gate (same field count), so the
+            // reuse path always fits. No arm-specific prep beyond the token
+            // select: the donor's old slots are all SCALARS (nothing to release
+            // on the reuse arm) and W's shape is written UNCONDITIONALLY below
+            // (this family re-shapes even on the reuse path), so the fresh arm
+            // needs no slot-0 copy either — it only releases x's reference
+            // (rc >= 2 there; the dec never frees, the aliases keep the box the
+            // suppressed post-match free would otherwise have dec'd).
+            var uname: string = "$sed_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
             st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$sed_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            var bname: string = "$sed_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(ndecl + 1));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Re-shape the result box to W: load box, write W's shape at offset 0
+            // (on the reuse arm this overwrites the donor variant's shape; on the
+            // fresh arm it initialises the fresh box's slot 0).
+            st = st.emit(ir.op_load_local(bslot));
             st = st.emit(ir.op_struct_set_shape(recip));
             st = st.emit(ir.op_drop());
             // Write every decl field of W into the box, in decl order.
-            var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
             var di: i32 = 0;
             while (di < ndecl) {
                 var jj: i32 = 0;
@@ -17295,27 +18018,25 @@ function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string,
                 }
                 if (found < 0) { return st.fail(); }
                 if (struct_field_is_i64(st.structs, slit.type_name, di)) {
-                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_i64(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set_i64(di));
                 } else {
-                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_expr(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
                 }
                 di = di + 1;
             }
-            // Bind y to the box; zero x's slot (y now owns the box).
-            var yb: LowerState = st.add_local(y_name);
-            var yslot: i32 = yb.slot_of(y_name);
-            yb = yb.mark_struct_type(yslot, slit.type_name);
-            yb = yb.emit(ir.op_load_local(dslot));
-            yb = yb.emit(ir.op_store_local(yslot));
-            yb = yb.emit(ir.op_const_i32(0));
-            yb = yb.emit(ir.op_store_local(dslot));
-            return yb;
+            // Bind y to the result box; zero x's slot (y now owns the reused box;
+            // on the fresh arm x's reference was already released above).
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(yslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
@@ -18125,6 +18846,414 @@ function tco_self_tail(ops: ir.Op[], name: string, nparams: i32): ir.Op[] {
     return out;
 }
 
+// --- TRMC: tail recursion modulo cons (#4352 slice 1) -------------------------
+//
+// The native pass (internal/ir/trmc.go) rewrites the canonical list-builder
+//     function f(x: E, ...): E { match (x) { V(h, t) => { return C(g(h), f(t, ...)); },
+//                                            N => { return N; } } }
+// into a hole-passing LOOP: each iteration allocates the result node with its
+// tail slot left as a hole, links the node into the previous hole (or the
+// result), advances the hole to the new node's tail slot, rebinds the params,
+// and continues — O(1) stack instead of one frame per element (deep
+// list-building recursion SIGSEGVs without it, #4352).
+//
+// Port adaptations (v1, deliberately conservative — native's slice-1 gates plus
+// two more):
+//   - the hole is the previous NODE pointer, not a raw field address, and the
+//     link write is a plain op_struct_set at the ctor's tail index — possible
+//     because v1 requires every recursive arm to build the SAME ctor variant
+//     (the canonical Cons shape), so the tail index is one compile-time
+//     constant. This keeps the rewrite fully portable (no raw pointer stores,
+//     which the wasm backend doesn't lower).
+//   - nodes are built by the normal op_struct_make with a 0 dummy tail, so
+//     layout / shape-ptr / rc-header parity with regular construction is
+//     automatic (leak-mode enum boxes, same as the un-rewritten body).
+//   - all payload fields (scrutinee arms and ctor) must be width-0 kinds
+//     (i32 / pointer); i64/f64 payloads keep the plain recursion for now.
+//
+// Consume-safety (native slice 2 — freeing the scrutinee cell per iteration)
+// is deferred; this slice is value- and stack-behavior only.
+
+// trmc_count_self_calls: how many calls to bare `fname` appear in `e`.
+function trmc_count_self_calls(e: parser.Expr, fname: string): i32 {
+    var n: i32 = 0;
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { if (cid.name == fname) { n = n + 1; } },
+                _ => { n = n + trmc_count_self_calls(c.callee, fname); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { n = n + trmc_count_self_calls(c.args[i], fname); i = i + 1; }
+            return n;
+        },
+        parser.ExprBinary(b) => { return trmc_count_self_calls(b.left, fname) + trmc_count_self_calls(b.right, fname); },
+        parser.ExprUnary(u) => { return trmc_count_self_calls(u.operand, fname); },
+        parser.ExprIndex(ix) => { return trmc_count_self_calls(ix.array, fname) + trmc_count_self_calls(ix.index, fname); },
+        parser.ExprFieldAccess(fa) => { return trmc_count_self_calls(fa.obj, fname); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { n = n + trmc_count_self_calls(a.elements[i], fname); i = i + 1; }
+            return n;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { n = n + trmc_count_self_calls(t.elements[i], fname); i = i + 1; }
+            return n;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { n = n + trmc_count_self_calls(sl.base, fname); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { n = n + trmc_count_self_calls(sl.field_values[i], fname); i = i + 1; }
+            return n;
+        },
+        _ => { return 0; }
+    }
+    return n;
+}
+
+// trmc_is_enum_type: `tn` names an enum (some variant struct carries it as owner).
+function trmc_is_enum_type(structs: parser.StructDecl[], tn: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == tn) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// trmc_variant_name strips a qualified `E.V` pattern / ctor name to the bare
+// variant, resolving the mangled `E__V` form when that names the decl.
+function trmc_variant_name(structs: parser.StructDecl[], raw: string): string {
+    var vname: string = raw;
+    var vdot: i32 = 0 - 1;
+    var vc: i32 = 0;
+    while (vc < raw.len()) {
+        if (raw[vc] == 46) { vdot = vc; }   // 46 = '.'
+        vc = vc + 1;
+    }
+    if (vdot >= 0) { vname = raw[vdot + 1 : raw.len()]; }
+    if (!decl_is_struct(structs, vname) && vdot >= 0) {
+        var vm: string = raw[0:vdot] + "__" + raw[vdot + 1 : raw.len()];
+        if (decl_is_struct(structs, vm)) { vname = vm; }
+    }
+    return vname;
+}
+
+// trmc_variant_fields_ok: every payload field of variant `vname` is a width-0
+// kind (i32 / pointer) — the v1 width gate — and the variant is an ENUM-variant
+// decl (synthetic __ev fields), not a union member (whole-box binding differs).
+function trmc_variant_fields_ok(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    if (n > 0 && decl_field_type(structs, vname, "__ev") == "") { return false; }   // union member
+    var i: i32 = 0;
+    while (i < n) {
+        if (struct_field_width(structs, vname, i) != 0) { return false; }
+        var ft: string = decl_field_type_at(structs, vname, i);
+        if (ft == "f32") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// trmc_eligible: fn is the canonical single-hole modulo-cons shape — returns
+// the (single) recursive-arm ctor variant name, or "" when ineligible. Gates
+// mirror native detectTrmc (trmc.go:84-192) plus the v1 same-ctor and width-0
+// restrictions documented above.
+function trmc_eligible(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    if (fn.receiver_type.len() > 0) { return ""; }
+    if (fn.type_params.len() > 0) { return ""; }
+    if (fn.body.len() != 1) { return ""; }
+    if (!trmc_is_enum_type(structs, fn.ret_type)) { return ""; }
+    var m_scrut: string = "";
+    match (fn.body[0]) {
+        parser.StmtMatch(m0) => {
+            match (m0.scrutinee) {
+                parser.ExprIdent(sid) => { m_scrut = sid.name; },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    if (m_scrut.len() == 0) { return ""; }
+    // scrutinee must be a param of enum type.
+    var mp: i32 = 0 - 1;
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        if (fn.params[pi].name == m_scrut) { mp = pi; }
+        pi = pi + 1;
+    }
+    if (mp < 0) { return ""; }
+    if (!trmc_is_enum_type(structs, fn.params[mp].type_name)) { return ""; }
+    var ctor: string = "";
+    var any_rec: boolean = false;
+    match (fn.body[0]) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                if (arm.has_guard) { return ""; }
+                var vname: string = "";
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => { vname = trmc_variant_name(structs, pv.type_name); },
+                    _ => { return ""; }
+                }
+                if (!decl_is_struct(structs, vname)) { return ""; }
+                if (!trmc_variant_fields_ok(structs, vname)) { return ""; }
+                if (arm.body.len() != 1) { return ""; }
+                var rv_ok: boolean = false;
+                match (arm.body[0]) {
+                    parser.StmtReturn(r) => {
+                        rv_ok = true;
+                        var nself: i32 = trmc_count_self_calls(r.value, fn.name);
+                        if (nself > 1) { return ""; }
+                        if (nself == 1) {
+                            // recursive arm: `return C(head..., f(args...))`.
+                            var arm_ctor: string = "";
+                            match (r.value) {
+                                parser.ExprCall(c) => {
+                                    match (c.callee) {
+                                        parser.ExprIdent(cid) => { arm_ctor = trmc_variant_name(structs, cid.name); },
+                                        parser.ExprFieldAccess(cfa) => { arm_ctor = trmc_variant_name(structs, cfa.field); },
+                                        _ => { return ""; }
+                                    }
+                                    if (variant_enum_owner(structs, arm_ctor) != fn.ret_type) { return ""; }
+                                    if (!trmc_variant_fields_ok(structs, arm_ctor)) { return ""; }
+                                    var argc: i32 = c.args.len();
+                                    if (argc == 0) { return ""; }
+                                    if (argc != decl_field_count(structs, arm_ctor)) { return ""; }
+                                    // last arg IS the self call, other args self-free.
+                                    var last_ok: boolean = false;
+                                    match (c.args[argc - 1]) {
+                                        parser.ExprCall(sc) => {
+                                            match (sc.callee) {
+                                                parser.ExprIdent(scid) => {
+                                                    if (scid.name == fn.name && sc.args.len() == fn.params.len()) { last_ok = true; }
+                                                },
+                                                _ => {}
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                    if (!last_ok) { return ""; }
+                                    var hi: i32 = 0;
+                                    while (hi < argc - 1) {
+                                        if (trmc_count_self_calls(c.args[hi], fn.name) != 0) { return ""; }
+                                        hi = hi + 1;
+                                    }
+                                    if (ctor.len() > 0 && ctor != arm_ctor) { return ""; }   // v1: one ctor variant
+                                    ctor = arm_ctor;
+                                    any_rec = true;
+                                },
+                                _ => { return ""; }
+                            }
+                        }
+                    },
+                    _ => { return ""; }
+                }
+                if (!rv_ok) { return ""; }
+                ai = ai + 1;
+            }
+        },
+        _ => { return ""; }
+    }
+    if (!any_rec) { return ""; }
+    return ctor;
+}
+
+// emit_trmc lowers an eligible fn (trmc_eligible returned `ctor`) as the
+// hole-passing loop. Emits the COMPLETE body (including the final return); the
+// caller skips the normal statement loop and the exit machinery — a TRMC body
+// has no swept-class locals (params are borrowed; binds/temps are scalars or
+// enum boxes, leak-mode like the un-rewritten construction).
+//
+// Block shape (br depths from inside an arm block):
+//   block(exit)            // br 2 = break with result
+//     loop                 // br 1 = continue (next iteration)
+//       [per arm] block    // br 0 = skip arm (variant mismatch)
+//         variant_is test; payload binds;
+//         recursive: heads -> temps; node = struct_make(ctor, heads..., 0);
+//                    hole-link(node); hole = node; rebind params; br 1
+//         base:      value -> temp; hole-link(value); br 2
+//       end
+//     end
+//   end
+//   load result; return
+// hole-link(v): if (hole == 0) { result = v } else { hole.tail = v } — the
+// tail index is the ctor's last field (compile-time constant, the v1
+// same-ctor gate), so the link is a plain struct_set.
+function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerState {
+    var s: LowerState = sin;
+    var tail_idx: i32 = decl_field_count(s.structs, ctor) - 1;
+    s = s.add_local("$trmc_hole");
+    var hole: i32 = s.slot_of("$trmc_hole");
+    s = s.add_local("$trmc_res");
+    var res: i32 = s.slot_of("$trmc_res");
+    s = s.emit(ir.op_const_i32(0));
+    s = s.emit(ir.op_store_local(hole));
+    s = s.emit(ir.op_const_i32(0));
+    s = s.emit(ir.op_store_local(res));
+    var mslot: i32 = 0 - 1;
+    match (fn.body[0]) {
+        parser.StmtMatch(m0) => {
+            match (m0.scrutinee) {
+                parser.ExprIdent(sid) => { mslot = s.slot_of(sid.name); },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    s = s.emit(ir.op_block(0));   // exit
+    s = s.emit(ir.op_loop(0));
+    match (fn.body[0]) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                var vname: string = "";
+                var binds: string[] = [];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        vname = trmc_variant_name(s.structs, pv.type_name);
+                        binds = binds.append(pv.binding);
+                        var eb: i32 = 0;
+                        while (eb < pv.extra_bindings.len()) { binds = binds.append(pv.extra_bindings[eb]); eb = eb + 1; }
+                    },
+                    _ => {}
+                }
+                s = s.emit(ir.op_block(0));   // arm
+                s = s.emit(ir.op_load_local(mslot));
+                s = s.emit(ir.op_variant_is(vname));
+                s = s.emit(ir.op_bin("not", 0, false));
+                s = s.emit(ir.op_brif(0));
+                // payload binds (width-0 fields only — the detection gate).
+                var bi: i32 = 0;
+                while (bi < binds.len() && bi < decl_field_count(s.structs, vname)) {
+                    var bname: string = binds[bi];
+                    if (bname.len() > 0 && bname != "_") {
+                        var fname: string = "__ev";
+                        if (bi > 0) { fname = "__ev" + util.i32_to_string(bi); }
+                        var ev_ty: string = decl_field_type(s.structs, vname, fname);
+                        s = s.add_local(bname);
+                        var bslot: i32 = s.slot_of(bname);
+                        s = s.emit(ir.op_load_local(mslot));
+                        s = s.emit(ir.op_struct_get(bi, 0));
+                        s = s.emit(ir.op_store_local(bslot));
+                        if (ev_ty == "string") { s = s.mark_str(bslot, true); }
+                        else if (decl_is_struct(s.structs, ev_ty) || is_enum_like_name(ev_ty, s.structs)) { s = s.mark_struct_type(bslot, ev_ty); }
+                    }
+                    bi = bi + 1;
+                }
+                // arm body: exactly one StmtReturn (detection-guaranteed).
+                match (arm.body[0]) {
+                    parser.StmtReturn(r) => {
+                        var nself: i32 = trmc_count_self_calls(r.value, fn.name);
+                        if (nself == 1) {
+                            match (r.value) {
+                                parser.ExprCall(c) => {
+                                    var argc: i32 = c.args.len();
+                                    // heads -> temps (evaluated BEFORE the node alloc,
+                                    // reading the current bindings).
+                                    var hslots: i32[] = [];
+                                    var hi: i32 = 0;
+                                    while (hi < argc - 1) {
+                                        var htmp: string = "$trmc_h" + util.i32_to_string(ai) + "_" + util.i32_to_string(hi);
+                                        var hl: LowerState = lower_expr(c.args[hi], s);
+                                        if (!hl.ok) { return hl; }
+                                        s = hl.add_local(htmp);
+                                        var hs: i32 = s.slot_of(htmp);
+                                        s = s.emit(ir.op_store_local(hs));
+                                        hslots = hslots.append(hs);
+                                        hi = hi + 1;
+                                    }
+                                    // node = struct_make(ctor, heads..., 0-tail).
+                                    var li: i32 = 0;
+                                    while (li < hslots.len()) { s = s.emit(ir.op_load_local(hslots[li])); li = li + 1; }
+                                    s = s.emit(ir.op_const_i32(0));
+                                    s = s.emit(ir.op_struct_make(ctor, argc));
+                                    var ntmp: string = "$trmc_n" + util.i32_to_string(ai);
+                                    s = s.add_local(ntmp);
+                                    var nslot: i32 = s.slot_of(ntmp);
+                                    s = s.emit(ir.op_store_local(nslot));
+                                    // hole-link(node).
+                                    s = s.emit(ir.op_load_local(hole));
+                                    s = s.emit(ir.op_bin("not", 0, false));
+                                    s = s.emit(ir.op_if(0));
+                                    s = s.emit(ir.op_load_local(nslot));
+                                    s = s.emit(ir.op_store_local(res));
+                                    s = s.emit(ir.op_else());
+                                    s = s.emit(ir.op_load_local(hole));
+                                    s = s.emit(ir.op_load_local(nslot));
+                                    s = s.emit(ir.op_struct_set(tail_idx, 0));
+                                    s = s.emit(ir.op_end());
+                                    // hole = node.
+                                    s = s.emit(ir.op_load_local(nslot));
+                                    s = s.emit(ir.op_store_local(hole));
+                                    // rebind params: eval self args to temps FIRST
+                                    // (they read the current params/binds), then store.
+                                    match (c.args[argc - 1]) {
+                                        parser.ExprCall(sc) => {
+                                            var aslots: i32[] = [];
+                                            var sai: i32 = 0;
+                                            while (sai < sc.args.len()) {
+                                                var atmp: string = "$trmc_a" + util.i32_to_string(ai) + "_" + util.i32_to_string(sai);
+                                                var al: LowerState = lower_expr(sc.args[sai], s);
+                                                if (!al.ok) { return al; }
+                                                s = al.add_local(atmp);
+                                                var aslot: i32 = s.slot_of(atmp);
+                                                s = s.emit(ir.op_store_local(aslot));
+                                                aslots = aslots.append(aslot);
+                                                sai = sai + 1;
+                                            }
+                                            var pj: i32 = 0;
+                                            while (pj < aslots.len()) {
+                                                s = s.emit(ir.op_load_local(aslots[pj]));
+                                                s = s.emit(ir.op_store_local(pj));
+                                                pj = pj + 1;
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                    s = s.emit(ir.op_br(1));   // continue
+                                },
+                                _ => {}
+                            }
+                        } else {
+                            // base arm: value -> temp; hole-link; break.
+                            var vl: LowerState = lower_expr(r.value, s);
+                            if (!vl.ok) { return vl; }
+                            var vtmp: string = "$trmc_v" + util.i32_to_string(ai);
+                            s = vl.add_local(vtmp);
+                            var vslot: i32 = s.slot_of(vtmp);
+                            s = s.emit(ir.op_store_local(vslot));
+                            s = s.emit(ir.op_load_local(hole));
+                            s = s.emit(ir.op_bin("not", 0, false));
+                            s = s.emit(ir.op_if(0));
+                            s = s.emit(ir.op_load_local(vslot));
+                            s = s.emit(ir.op_store_local(res));
+                            s = s.emit(ir.op_else());
+                            s = s.emit(ir.op_load_local(hole));
+                            s = s.emit(ir.op_load_local(vslot));
+                            s = s.emit(ir.op_struct_set(tail_idx, 0));
+                            s = s.emit(ir.op_end());
+                            s = s.emit(ir.op_br(2));   // break with result
+                        }
+                    },
+                    _ => {}
+                }
+                s = s.emit(ir.op_end());   // arm block
+                ai = ai + 1;
+            }
+        },
+        _ => {}
+    }
+    s = s.emit(ir.op_end());   // loop
+    s = s.emit(ir.op_end());   // exit block
+    s = s.emit(ir.op_load_local(res));
+    s = s.emit(ir.op_return());
+    return s;
+}
+
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
     map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[]): LowerResult {
     var empty: ir.Op[] = [];
@@ -18463,6 +19592,19 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi] });
         lzi = lzi + 1;
     }
+    // #4354: approve closure locals for capture RC. The approvals and the
+    // build-site kind registrations both live in reclaimable_names under a
+    // "CLO:" prefix ("CLO:OK:<name>" / "CLO:<name>|<kinds>") rather than a
+    // dedicated LowerState field: the legacy AST x86 backend — which still
+    // builds the bootstrap self-compile (the merged bundle routes `ast`) —
+    // miscompiles 34-field structs (silent field corruption with a pointer
+    // 34th field, segfaults with a scalar one; see the stage-2 fixpoint
+    // break this folding fixed), so LowerState must stay at 33 fields until
+    // that backend bug is fixed. Prefix-tagged entries are the established
+    // reclaimable_names convention ("SNAP:" / "STR:" / "ENUMRE:").
+    var clo_seed: string[] = clo_rc_candidate_names(fn.body, borrowable_params);
+    var clo_si: i32 = 0;
+    while (clo_si < clo_seed.len()) { reclaim = reclaim.append("CLO:" + clo_seed[clo_si]); clo_si = clo_si + 1; }
     var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
@@ -18568,6 +19710,19 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // rcenumfrees / the enum-rcpayload precise drop) is SUPPRESSED below so its box
     // survives to the reuse and is freed exactly once via c.
     var ecross: EnumCrossSites = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon);
+    // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
+    // as a hole-passing loop instead of the recursive body — O(1) stack. The
+    // emission is the complete body (its own return); everything below the
+    // normal statement loop (sweeps, precise drops, TCO) is bypassed — a TRMC
+    // body has no swept locals and no self-tail call pair.
+    var trmc_ctor: string = trmc_eligible(fn, structs);
+    if (trmc_ctor != "") {
+        var ts: LowerState = emit_trmc(fn, trmc_ctor, s);
+        if (ts.ok) {
+            return LowerResult { ok: true, ops: ts.ops, n_locals: ts.locals.len(), n_params: ts.n_params, arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts) };
+        }
+        return LowerResult { ok: false, ops: [], n_locals: 0, n_params: 0, arr_slots: [], i64_slots: [], f64_slots: [] };
+    }
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Slot count before this statement, so a `for` / `match` at function-body
@@ -18672,6 +19827,16 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
                 var dslot: i32 = s.slot_of(pdrops.names[pi]);
+                // Bind the kind through an explicitly-typed `string` local before
+                // any `.len()` / slice: on the per-module bootstrap path this file
+                // is compiled STANDALONE, where a `.len()` directly on the
+                // `string[]`-element `pk` mis-infers the receiver as
+                // i32 and emits an undefined `__fn_i32__len` (a link error — the
+                // same standalone-mis-infer hazard documented at the PatVariant
+                // sites). The typed local pins the receiver type so `.len()` /
+                // indexing dispatch as strings. (Exposed by #4534's native match/
+                // tuple-pattern codegen change shifting this receiver's inference.)
+                var pk: string = pdrops.kinds[pi];
                 // Reclaim any scalar-element array slot (i32[] / i64[] / f64[] are
                 // all is_arr and freed by the exit dec-sweep with the same
                 // __fern_rc_dec); the precise drop just moves that dec earlier and
@@ -18721,7 +19886,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "box-shallow") {
+                } else if (dslot >= s.n_params && pk == "box-shallow") {
                     // Fresh SCALAR Option/Result/enum local, last-used at statement j (a
                     // nested-block match / borrow — precise_drop_names admitted it only
                     // because it has NO top-level consuming match, so it is DISJOINT
@@ -18737,7 +19902,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-rcpayload") {
+                } else if (dslot >= s.n_params && pk == "opt-rcpayload") {
                     // Fresh rc-PAYLOAD OPTION/RESULT (Option/Result of a leak-safe array
                     // or struct), last-used in a nested block — precise_drop_names
                     // admitted it only with NO top-level match (disjoint from
@@ -18750,14 +19915,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-strpayload") {
+                } else if (dslot >= s.n_params && pk == "opt-strpayload") {
                     // Fresh STRING-payload Option/Result (#4355), last-used in a nested
                     // block — same gates as "opt-rcpayload", but the payload at offset 8
                     // is a string box released by the rc-aware __fern_str_free (a plain
                     // rc-dec would free the 24-byte string block by the ARRAY layout's
                     // size class on asm — wrong class, heap corruption).
                     s = emit_opt_str_payload_drop(s, dslot);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi].len() > 15 && pdrops.kinds[pi][0:15] == "enum-rcpayload:"
+                } else if (dslot >= s.n_params && pk.len() > 15 && pk[0:15] == "enum-rcpayload:"
                         && util.index_of_str(ecross.donors, pdrops.names[pi]) < 0) {
                     // Fresh rc-PAYLOAD user-enum (a variant with a leak-safe array /
                     // deep-drop-ok struct payload), last-used in a nested block —
@@ -18772,8 +19937,8 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // recipient c (releasing only the OLD payload arrays, keeping the
                     // box), so freeing the box here would race that reuse — a UAF /
                     // double-free. The box is then freed exactly once via c.
-                    s = emit_enum_variant_drops(s, dslot, pdrops.kinds[pi][15 : pdrops.kinds[pi].len()]);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "map-buffers") {
+                    s = emit_enum_variant_drops(s, dslot, pk[15 : pk.len()]);
+                } else if (dslot >= s.n_params && pk == "map-buffers") {
                     // Fresh MAP local, last-used in a nested block — free its keys +
                     // values buffers (emit_map_buffers_free: rc-guarded __fern_rc_dec via
                     // raw_load_ptr) + zero the slot right after that statement, bounding
@@ -18820,7 +19985,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (rcenumfrees.idxs[rei] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rei]) < 0) {
                 var rxslot: i32 = s.slot_of(rcenumfrees.names[rei]);
                 if (rxslot >= s.n_params) {
-                    s = emit_enum_variant_drops(s, rxslot, rcenumfrees.enums[rei]);
+                    // Skip the dec of payload fields whose arm binding escaped —
+                    // ownership moved to the escapee (#4400).
+                    s = emit_enum_variant_drops_moved(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.structs));
                 }
             }
             rei = rei + 1;
@@ -21017,6 +22184,84 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         }
         else if (o.kind_tag == 149 && o.str == "__fern_rc_underflow_get") {  // call_direct
             stack = stack.with(sp, heap[0]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_rc_is_unique") {  // call_direct
+            // Sole-ownership probe (#4350): 1 iff a live box with rc == 1 (rc at
+            // base-4 in this interpreter's 4-byte model). Null / sub-heap: 0.
+            sp = sp - 1;
+            var qb: i32 = stack[sp];
+            var qr: i32 = 0;
+            if (qb >= 8) {
+                if (heap[(qb - 4) / 4] == 1) { qr = 1; }
+            }
+            stack = stack.with(sp, qr);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_alloc_reuse") {  // call_direct
+            // FBIP reuse-degrade (#4350): pops [token, slots] (slots = total
+            // payload words: struct nf+1 incl. the shape word, tuple arity). A
+            // non-null token is handed straight back (same-shape reuse — the
+            // class always fits); a null token allocates the same [rc, slots…]
+            // block struct_make / tuple_make do (rc=1; any shape word left for
+            // the caller's raw copy).
+            sp = sp - 1;
+            var arnf: i32 = stack[sp];
+            sp = sp - 1;
+            var artok: i32 = stack[sp];
+            var arbase: i32 = artok;
+            if (artok == 0) {
+                var arsize: i32 = (arnf + 1) * 4;
+                var arreuse: i32 = 0;
+                var arcur: i32 = freehead;
+                var arprev: i32 = 0;
+                while (arcur != 0) {
+                    if (heap[arcur / 4 + 1] == arsize) {
+                        var arnxt: i32 = heap[arcur / 4];
+                        if (arprev == 0) { freehead = arnxt; } else { heap = heap.with(arprev / 4, arnxt); }
+                        arreuse = arcur;
+                        arcur = 0;
+                    } else {
+                        arprev = arcur;
+                        arcur = heap[arcur / 4];
+                    }
+                }
+                var arraw: i32 = 0;
+                if (arreuse != 0) {
+                    arraw = arreuse;
+                } else {
+                    arraw = heap.len() * 4;
+                    var arnw: i32 = arsize / 4;
+                    var arq: i32 = 0;
+                    while (arq < arnw) { heap = heap.append(0); arq = arq + 1; }
+                }
+                arbase = arraw + 4;
+                heap = heap.with((arbase - 4) / 4, 1);
+            }
+            stack = stack.with(sp, arbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 85) {  // raw_load_ptr: pops [ptr, off] -> word at ptr+off*4
+            sp = sp - 1;
+            var rlo: i32 = stack[sp];
+            sp = sp - 1;
+            var rlp: i32 = stack[sp];
+            stack = stack.with(sp, heap[(rlp + rlo * 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 84) {  // raw_store_ptr: pops [ptr, off, v] -> v; word store
+            sp = sp - 1;
+            var rsv: i32 = stack[sp];
+            sp = sp - 1;
+            var rso: i32 = stack[sp];
+            sp = sp - 1;
+            var rsp2: i32 = stack[sp];
+            heap = heap.with((rsp2 + rso * 4) / 4, rsv);
+            stack = stack.with(sp, rsv);
             sp = sp + 1;
             pc = pc + 1;
         }

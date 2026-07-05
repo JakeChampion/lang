@@ -2393,6 +2393,177 @@ pub function assignable(want: Ty, got: Ty): boolean {
     return true;
 }
 
+function parse_unknown_error(where: string, kind: string): string {
+    return "error[P001]: " + where + ": parser-side unknown: " + kind + "\n";
+}
+
+function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: string): string {
+    match (e) {
+        parser.ExprIdent(_) => { return errs; },
+        parser.ExprNumber(_) => { return errs; },
+        parser.ExprString(_) => { return errs; },
+        parser.ExprBool(_) => { return errs; },
+        parser.ExprBinary(b) => {
+            errs = collect_expr_unknown_errors(b.left, where, errs);
+            return collect_expr_unknown_errors(b.right, where, errs);
+        },
+        parser.ExprUnary(u) => { return collect_expr_unknown_errors(u.operand, where, errs); },
+        parser.ExprCall(c) => {
+            errs = collect_expr_unknown_errors(c.callee, where, errs);
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                errs = collect_expr_unknown_errors(c.args[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                errs = collect_expr_unknown_errors(a.elements[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                errs = collect_expr_unknown_errors(t.elements[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprIndex(x) => {
+            errs = collect_expr_unknown_errors(x.array, where, errs);
+            return collect_expr_unknown_errors(x.index, where, errs);
+        },
+        parser.ExprSlice(sl) => {
+            errs = collect_expr_unknown_errors(sl.array, where, errs);
+            errs = collect_expr_unknown_errors(sl.start, where, errs);
+            return collect_expr_unknown_errors(sl.end, where, errs);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { errs = collect_expr_unknown_errors(sl.base, where, errs); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                errs = collect_expr_unknown_errors(sl.field_values[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_expr_unknown_errors(fa.obj, where, errs); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                errs = collect_stmt_unknown_errors(lm.body[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprUnknown(u) => { return errs + parse_unknown_error(where, u.kind); }
+    }
+    return errs;
+}
+
+function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: string): string {
+    match (st) {
+        parser.StmtVar(v) => { return collect_expr_unknown_errors(v.init, where, errs); },
+        parser.StmtReturn(r) => {
+            // A bare `return;` is encoded as ExprUnknown("punct:;"). It's a
+            // parser sentinel, not a real unknown expression — later checker
+            // passes validate whether it is legal in context (void vs non-void).
+            match (r.value) {
+                parser.ExprUnknown(u) => {
+                    if (u.kind == "punct:;") { return errs; }
+                },
+                _ => {}
+            }
+            return collect_expr_unknown_errors(r.value, where, errs);
+        },
+        parser.StmtExpr(e) => { return collect_expr_unknown_errors(e.value, where, errs); },
+        parser.StmtIf(i) => {
+            errs = collect_expr_unknown_errors(i.cond, where, errs);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) {
+                errs = collect_stmt_unknown_errors(i.then_body[ti], where, errs);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) {
+                errs = collect_stmt_unknown_errors(i.else_body[ei], where, errs);
+                ei = ei + 1;
+            }
+            return errs;
+        },
+        parser.StmtWhile(w) => {
+            errs = collect_expr_unknown_errors(w.cond, where, errs);
+            var i: i32 = 0;
+            while (i < w.body.len()) {
+                errs = collect_stmt_unknown_errors(w.body[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.StmtAssign(a) => { return collect_expr_unknown_errors(a.value, where, errs); },
+        parser.StmtMatch(m) => {
+            errs = collect_expr_unknown_errors(m.scrutinee, where, errs);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard) {
+                    errs = collect_expr_unknown_errors(m.arms[ai].guard, where, errs);
+                }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) {
+                    errs = collect_stmt_unknown_errors(m.arms[ai].body[bi], where, errs);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return errs;
+        },
+        parser.StmtFor(f) => {
+            errs = collect_expr_unknown_errors(f.iter, where, errs);
+            var i: i32 = 0;
+            while (i < f.body.len()) {
+                errs = collect_stmt_unknown_errors(f.body[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.StmtBreak(_) => { return errs; },
+        parser.StmtContinue(_) => { return errs; },
+        parser.StmtUnknown(u) => { return errs + parse_unknown_error(where, "stmt: " + u.kind); },
+        parser.StmtDefer(d) => { return collect_stmt_unknown_errors(d.action, where, errs); }
+    }
+    return errs;
+}
+
+pub function parse_unknown_errors_module(mod: parser.Module): string {
+    var errs: string = "";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var where: string = "in fn '" + mod.funcs[fi].name + "'";
+        if (mod.funcs[fi].name.len() == 0) {
+            errs = errs + "error[P001]: at "
+                + util.i32_to_string(mod.funcs[fi].line) + ":" + util.i32_to_string(mod.funcs[fi].col)
+                + ": malformed function declaration\n";
+            where = "in malformed function declaration";
+        }
+        var bi: i32 = 0;
+        while (bi < mod.funcs[fi].body.len()) {
+            errs = collect_stmt_unknown_errors(mod.funcs[fi].body[bi], where, errs);
+            bi = bi + 1;
+        }
+        fi = fi + 1;
+    }
+    var ti: i32 = 0;
+    while (ti < mod.top_stmts.len()) {
+        errs = collect_stmt_unknown_errors(mod.top_stmts[ti], "at top level", errs);
+        ti = ti + 1;
+    }
+    return errs;
+}
+
 pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     match (st) {
         parser.StmtReturn(r) => {
@@ -2512,7 +2683,8 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): string {
 }
 
 pub function check_module(mod: parser.Module, s: EmitState): string {
-    var errs: string = "";
+    var errs: string = parse_unknown_errors_module(mod);
+    if (errs.len() > 0) { return errs; }
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         errs = errs + check_func(mod.funcs[fi], s);

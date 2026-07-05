@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -211,7 +210,7 @@ func TestSelfHostLoopReuseIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			boxes := bytes.Count(asm, []byte("call __fern_arr_box"))
+			boxes := countUserArrBoxAllocs(asm)
 			if boxes != tc.boxAssert {
 				t.Errorf("%s: expected %d box allocations (call __fern_arr_box), found %d — loop-reuse emission contract regressed", tc.name, tc.boxAssert, boxes)
 			}

@@ -3709,27 +3709,23 @@ function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
 // parameter (P4c): a sum type whose arm payload(s) are i32/u32. A self-host
 // Option/Result is a heap box `[tag:i32 @0][payload:i32 @4]`; the canonical
 // option/result flattens to (disc, payload).
-function extern_sum_param_supported(t: string): boolean {
-    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
-        var p: string = trim_str(t[7:t.len() - 1]);
+pub function extern_sum_param_supported(t: string): boolean {
+    // Decode via the structured TypeRef (SH-021 — parser.parse_type_ref) instead
+    // of the magic-byte `Option[` / `Result[` prefix + top-level-comma depth scan.
+    // A flat sum param is a NON-array Option[i32|u32] or Result[i32|u32, i32|u32];
+    // an array (array_depth != 0) or any other shape is unsupported. Byte-identical
+    // to the former scan across the whole type grammar (verified old-vs-new over a
+    // corpus incl. arrays, nested-generic payloads, malformed arities, bare names).
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth != 0) { return false; }
+    if (r.base == "Option" && r.args.len() == 1) {
+        var p: string = parser.render_type_ref(r.args[0]);
         return p == "i32" || p == "u32";
     }
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
-        var i: i32 = 0;
-        var depth: i32 = 0;
-        while (i < inner.len()) {
-            var c: i32 = inner[i];
-            if (c == 91) { depth = depth + 1; }
-            else if (c == 93) { depth = depth - 1; }
-            else if (c == 44 && depth == 0) {
-                var ok: string = trim_str(inner[0:i]);
-                var er: string = trim_str(inner[i + 1:inner.len()]);
-                return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
-            }
-            i = i + 1;
-        }
-        return false;
+    if (r.base == "Result" && r.args.len() == 2) {
+        var ok: string = parser.render_type_ref(r.args[0]);
+        var er: string = parser.render_type_ref(r.args[1]);
+        return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
     }
     return false;
 }
@@ -3737,8 +3733,14 @@ function extern_sum_param_supported(t: string): boolean {
 // extern_sum_param_is_option reports whether t is an Option[...] — its
 // discriminant is remapped 1-tag (Fern Some=0/None=1 reverses canonical
 // none=0/some=1; Result's Ok=0/Err=1 already matches, no remap).
-function extern_sum_param_is_option(t: string): boolean {
-    return t.len() > 7 && t[0:7] == "Option[";
+pub function extern_sum_param_is_option(t: string): boolean {
+    // `t` is a bracketed `Option[…]` (incl. an array-of-option `Option[…][]`),
+    // via the structured TypeRef instead of the `t[0:7] == "Option["` prefix scan.
+    // The array_depth arm reproduces the old prefix check's acceptance of a
+    // trailing `[]` (and of the degenerate `Option[]`); a bare `Option` with no
+    // bracket stays false. Byte-identical (verified old-vs-new over a corpus).
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    return r.base == "Option" && (r.args.len() > 0 || r.array_depth > 0);
 }
 
 // tuple_type_elem_count returns the number of top-level elements in a tuple
@@ -4783,55 +4785,32 @@ function method_ret(cx: Ctx, t: string, n: string): string {
     return "";
 }
 
-// parse_option_payload extracts the Some/Ok payload type from an
 // parse_result_err_payload extracts the Err type E from a `Result[T, E]` type
-// spelling (the part after the first top-level comma), or "" for an Option (no
-// Err arm) or a non-Result type. Used to release a Result's Err payload on free.
-function parse_result_err_payload(t: string): string {
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
-        var i: i32 = 0;
-        var depth: i32 = 0;
-        while (i < inner.len()) {
-            var c: i32 = inner[i];
-            if (c == 91) { depth = depth + 1; }
-            else if (c == 93) { depth = depth - 1; }
-            else if (c == 44 && depth == 0) { return trim_str(inner[i + 1:inner.len()]); }
-            i = i + 1;
-        }
+// spelling via the structured TypeRef (SH-021, docs/SELF-HOST-AUDIT.md T2), or ""
+// for an Option (no Err arm), a non-Result type, or an ARRAY of Result
+// (`Result[…, …][]` is an array value, not a Result). Used to release a Result's
+// Err payload on free. Supersedes the former `Result[` prefix + top-level-comma
+// depth scan; on the array case that scan returned garbage (the prefix matched
+// and the trailing `]` passed the last-char test), which this corrects to "".
+pub function parse_result_err_payload(t: string): string {
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth == 0 && r.base == "Result" && r.args.len() >= 2) {
+        return parser.render_type_ref(r.args[1]);
     }
     return "";
 }
 
-// `Option[T]` / `Result[T, E]` type spelling, or "" otherwise.
-function parse_option_payload(t: string): string {
-    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
-        return t[7:t.len() - 1];
-    }
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
-        // First top-level comma separates Ok payload from Err type.
-        var i: i32 = 0;
-        var depth: i32 = 0;
-        while (i < inner.len()) {
-            var c: i32 = inner[i];
-            if (c == 91) { depth = depth + 1; }
-            else if (c == 93) { depth = depth - 1; }
-            else if (c == 44 && depth == 0) { return trim_str(inner[0:i]); }
-            i = i + 1;
-        }
-        return trim_str(inner);
+// parse_option_payload extracts the Some/Ok payload type T from an `Option[T]` /
+// `Result[T, E]` type spelling via the structured TypeRef, or "" for any other
+// type (incl. an ARRAY of option/result — `Option[…][]` is an array, not an
+// Option). Same SH-021 migration as parse_result_err_payload; the former scan
+// returned garbage on the array case, corrected here to "".
+pub function parse_option_payload(t: string): string {
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth == 0 && (r.base == "Option" || r.base == "Result") && r.args.len() >= 1) {
+        return parser.render_type_ref(r.args[0]);
     }
     return "";
-}
-
-// trim_str strips leading/trailing ASCII spaces.
-function trim_str(s: string): string {
-    var a: i32 = 0;
-    var b: i32 = s.len();
-    while (a < b && s[a] == 32) { a = a + 1; }
-    while (b > a && s[b - 1] == 32) { b = b - 1; }
-    return s[a:b];
 }
 
 // A `for (k, v) in m` loop encodes its two binding names as "k,v" in the
@@ -6733,6 +6712,32 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
     o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
     o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
+    // $__fern_alloc_reuse(token, slots) -> box (#4350): the FBIP reuse-
+    // degrade primitive, wasm twin of the asm __fn___fern_alloc_reuse, adapted
+    // to the str_box layout (rc@box-8, bsz@box-4). A struct box for nf fields
+    // is $__fern_str_box(slots*8) — slots counts every payload word (a struct's
+    // type-id slot + fields = nf+1, a tuple's elements = arity) — i.e. block
+    // size 8 + slots*8 (8-byte header; already 8-aligned). null token -> fresh box; size
+    // match -> hand the SAME block back (rc stays 1 — the caller's
+    // $__fern_rc_is_unique gate guaranteed sole ownership; the caller
+    // overwrites the type-id slot before any read); mismatch -> free the donor
+    // block exactly as $__fern_arr_dec's rc==1 path does (rc=0, next parked in
+    // the bsz slot, pushed onto its size class) and alloc fresh — a mispaired
+    // reuse is only ever slower, never unsound.
+    o = o + "  (func $__fern_alloc_reuse (param $t i32) (param $nf i32) (result i32)\n";
+    o = o + "    (local $want i32) (local $base i32) (local $cls i32)\n";
+    o = o + "    (local.set $want (i32.add (i32.const 8) (i32.mul (local.get $nf) (i32.const 8))))\n";
+    o = o + "    (if (i32.eqz (local.get $t)) (then\n";
+    o = o + "      (return (call $__fern_str_box (i32.mul (local.get $nf) (i32.const 8))))))\n";
+    o = o + "    (local.set $base (i32.sub (local.get $t) (i32.const 8)))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
+    o = o + "      (return (local.get $t))))\n";
+    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
+    o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
+    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
+    o = o + "    (call $__fern_str_box (i32.mul (local.get $nf) (i32.const 8))))\n";
     // $__fern_arr_dec(a) -> a: Perceus array release. Same guard chain as
     // the rc helpers (null / SSO low-bit / low-addr / sentinel). rc > 1:
     // decrement. rc <= 0: over-release (detector++), no free. rc == 1:

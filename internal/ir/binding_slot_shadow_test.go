@@ -63,30 +63,32 @@ function main(): i32 {
 	if fn == nil {
 		t.Fatal("walk not lowered")
 	}
-	// Entry zero-store slot: the first `const.i32 0; local.store N` pair.
-	zeroSlot := int32(-1)
+	// Zero-stored slots: every `const.i32 0; local.store N` target. This
+	// covers the entry safety net for rc-tracked locals, the pre-zeroed
+	// consuming-match binding slots (#4400), and the per-arm "param is
+	// dead" stamps — all of which make their slot safe to sweep.
+	zeroed := map[int32]bool{}
 	for i := 0; i+1 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind == ir.OpConstI32 && fn.Ops[i].I32 == 0 &&
 			fn.Ops[i+1].Kind == ir.OpStoreLocal {
-			zeroSlot = fn.Ops[i+1].I32
-			break
+			zeroed[fn.Ops[i+1].I32] = true
 		}
 	}
-	if zeroSlot < 0 {
-		t.Fatal("no entry zero-store found (safety-net layout changed? update the test)")
+	if len(zeroed) == 0 {
+		t.Fatal("no zero-store found (safety-net layout changed? update the test)")
 	}
 	// Every `local.load N; call __fern_rc_dec` sweep must target either a
 	// parameter slot (0..1 — the owned-by-default param dec, always
-	// initialized) or the entry-zeroed shared `a` slot. Without the reuse
-	// fix, the SA arm's fresh binding slot shadows `a`, and the sweeps
-	// lowered after that arm (the SI arm's and the wildcard's returns)
-	// dec THAT slot — unwritten on every path that skips the SA arm.
+	// initialized) or a zero-stored slot. Without the reuse fix, the SA
+	// arm's fresh binding slot shadows `a`, and the sweeps lowered after
+	// that arm (the SI arm's and the wildcard's returns) dec THAT slot —
+	// unwritten (and never zero-inited) on every path that skips the arm.
 	for i := 0; i+1 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind == ir.OpLoadLocal &&
-			fn.Ops[i+1].Kind == ir.OpCallDirect && fn.Ops[i+1].Str == "__fern_rc_dec" {
+			fn.Ops[i+1].Kind == ir.OpRcDec {
 			slot := fn.Ops[i].I32
-			if slot > 1 && slot != zeroSlot {
-				t.Errorf("return sweep decs slot %d (not a param, not the entry-zeroed shared slot %d) — a same-named match binding shadowed the var's slot; that slot is uninitialized stack garbage on paths that skip its arm (heap corruption)", slot, zeroSlot)
+			if slot > 1 && !zeroed[slot] {
+				t.Errorf("return sweep decs slot %d (not a param, not zero-stored) — a same-named match binding shadowed the var's slot; that slot is uninitialized stack garbage on paths that skip its arm (heap corruption)", slot)
 			}
 		}
 	}

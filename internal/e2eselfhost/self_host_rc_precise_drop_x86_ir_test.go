@@ -671,11 +671,12 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// `a[1]`) plus a `.len()` borrow — all reads, no escape. Admitted; value correct,
 		// detector 0 (deep-dropped once at the free).
 		{"rc-enum-arm-binds-payload-borrow-value", `enum E { V(i32[]), N } function go(): i32 { var x = V([10, 20, 30]); var r = 0; match (x) { V(a) => { var n: i32 = a.len(); r = a[0] + a[1] + n; }, N => { r = 0; }, } return r; } function main(): i32 { return go(); }`, 33},
-		// NON-FIRING (arm binds payload that ESCAPES): the `V(a)` arm stores the bound
-		// array into the outer `out`, which is read AFTER the match — the bound payload
-		// outlives the match, so the bind-but-no-escape gate REJECTS it (body_unsafe_for
-		// flags the `out = a` store + later read). Falls back to the exit sweep (which
-		// sweeps the live array exactly once). Value correct, detector 0 (no over-release).
+		// FIRING with a MOVED payload (#4400, Koka consuming match): the `V(a)` arm
+		// stores the bound array into the outer `out`, which is read AFTER the match.
+		// Pre-#4400 this escape REJECTED the whole candidate (box leaked); now the free
+		// site runs with V#0 in the moved set (match_moved_rc_payloads), so the box is
+		// freed while the payload's dec is SKIPPED — ownership moved to `out`, which
+		// reads valid bytes after the free site. Value correct, detector 0.
 		{"rc-enum-arm-binds-payload-escape-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([10, 20, 30]); var out: i32[] = []; match (x) { V(a) => { out = a; }, N => {}, } var r: i32 = out[0]; if (r != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// NON-FIRING (rc payload used after match): x is matched twice, so it is NOT dead
 		// after the first match — the consumed-free never classifies it; the box (and its
@@ -1186,6 +1187,25 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 			}
 		})
 	}
+
+	// #4350 slice 1: the self-overwrite reuse site is RUNTIME-GUARDED — the
+	// emitted asm must carry the uniqueness probe and the token-degrade
+	// allocator (native tryStructReuseOverwrite's shape: reused =
+	// __fern_rc_is_unique(d); box = __fern_alloc_reuse(token, nfields)). The
+	// degrade arm is unreachable from any valid program today (the static
+	// escape walk admits only sole-owner donors), so it is pinned structurally
+	// here — and at scale by the self-compile fixpoints, which run every
+	// self-overwrite site in the compiler's own source through the guard —
+	// rather than by an end-to-end case.
+	t.Run("self-overwrite-guard-emitted", func(t *testing.T) {
+		asm := emit(t, `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`)
+		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+			t.Error("self-overwrite reuse site emitted no __fern_rc_is_unique guard")
+		}
+		if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
+			t.Error("self-overwrite reuse site emitted no __fern_alloc_reuse token-degrade call")
+		}
+	})
 
 	// (The former `field-with-call-stays-ast` negative is now obsolete: a
 	// `.with(i,v)` / `.append(v)` array-field value lowers via IR through the

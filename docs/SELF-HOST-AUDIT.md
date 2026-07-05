@@ -214,12 +214,48 @@ findings. Ranked by leverage.
   / `trim_spaces` helpers). Byte-identical, locked by `type_resolve_run.fern` +
   `TestSelfHostTypeResolve` (a golden — via a new `type_debug` renderer — over
   scalar / struct / union / array / tuple / Map / generic / unknown branches,
-  reasons included) + the bootstrap. _Remaining:_ retarget the four simpler
-  `type_from_name*` variants (`_with_structs` / `_with_struct_names` /
-  `_with_names_and_unions` / the scalar-only base — each only does the `[]`
-  suffix) and wasm onto `parse_type_ref`, then have the parser store `TypeRef`
-  directly so the string becomes render output. Unblocks #4394 lever 1 (symbol
-  interning ripples into this type system).
+  reasons included) + the bootstrap.
+  _Slice 5 landed:_ the three simpler resolvers (`_with_structs` /
+  `_with_struct_names` / `_with_names_and_unions`) now peel their `Elem[]` array
+  suffix via `parse_type_ref`'s `array_depth`, retiring the magic-byte `[`(91)/
+  `]`(93) scan; byte-identical (before/after diff over a 30-entry × 3-resolver
+  corpus), locked by `type_resolve_simple_run.fern` + `TestSelfHostTypeResolveSimple`.
+  The scalar-only base `type_from_name` has no byte-scan, so it is left as-is.
+  _wasm extern-sum slice landed:_ the wasm backend's flat-sum extern checks
+  `extern_sum_param_supported` / `extern_sum_param_is_option` now decode
+  `Option[…]` / `Result[…, …]` via `parse_type_ref` instead of the magic-byte
+  `Option[` / `Result[` prefix + top-level-comma depth scan. Byte-identical
+  (pure boolean fns, so identical output ⇒ unchanged wasm codegen), verified
+  old-vs-new over a 25-input corpus and pinned by `wasm_extern_sum_run.fern` +
+  `TestSelfHostWasmExternSum`.
+  _wasm payload-extractor slice landed:_ `parse_option_payload` /
+  `parse_result_err_payload` now pull the Some/Ok payload `T` and the Err type `E`
+  out of an `Option[T]` / `Result[T, E]` via `parse_type_ref` (`base` / `args` /
+  `array_depth`) instead of the `Option[` / `Result[` prefix + top-level-comma
+  depth scan. Byte-identical on every valid input; the migration additionally
+  corrects the old scan's garbage-on-array edge case (`Option[i32][]` /
+  `Result[…][]` — an array value, for which the prefix + trailing-`]` test wrongly
+  fired — now correctly return "" via the `array_depth == 0` guard). The three x86
+  self-compile fixpoints confirm no such array type reaches these during
+  bootstrap, so the correction leaves the self-compile byte-identical. Pinned by
+  `wasm_option_payload_run.fern` + `TestSelfHostWasmOptionPayload`.
+  _irlower tuple-element slice landed:_ `tuple_type_elem_tag` (extract element `n`
+  of a `(t0, t1, …)` tuple spelling) now decodes via `parse_type_ref` (`is_tuple` /
+  `args` / `array_depth`) instead of its own depth-tracking top-level-comma scan;
+  byte-identical over a corpus exercising nested-generic / nested-tuple / array
+  elements (the inner commas the scan must not split on), single-element tuples,
+  out-of-range and negative indices, non-tuples, and a tuple-array `(a, b)[]`.
+  Pinned by `tuple_elem_tag_run.fern` + `TestSelfHostTupleElemTag`.
+  _Remaining:_ the genuine comma-depth type decoders are now migrated; what's left
+  is lower-value or delicate — the unambiguous `[]`-suffix element-strips
+  (`ft[0:len-2]` / `ty_spelling_is_array`; a trailing `[]` is a structurally
+  unambiguous array marker, so these carry no nested-comma mis-read risk and are
+  not worth routing through a heavier parse) and the parser's `bind_unify`
+  monomorphisation unifier, whose final case matches a generic pattern against a
+  `__`-mangled clone name (not a type spelling `parse_type_ref` can decode), so it
+  stays string-based — byte-identity-critical. The endgame remains having the
+  parser store `TypeRef` directly so the string becomes render output.
+  Unblocks #4394 lever 1 (symbol interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress

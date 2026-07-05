@@ -97,7 +97,12 @@ func LiveFunctionsWithAliases(prog *Program, aliases map[string]string, keepAliv
 		}
 		for _, op := range fn.Ops {
 			switch op.Kind {
-			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect, OpMakeClosure, OpMakeEnv, OpConstFunc:
+			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect, OpMakeClosure, OpMakeEnv, OpConstFunc,
+				OpRcInc, OpRcDec, OpRcIsUnique:
+				// The rc ops (#4402 opt 2) reference runtime helpers,
+				// never IR funcs, so their enqueue is a no-op today —
+				// listed for the invariant that every op carrying a
+				// callee in Str participates in reachability.
 				enqueue(op.Str)
 			}
 			// A closure PAIR (OpMakeClosure) embeds a drop-fn pointer —

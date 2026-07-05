@@ -2877,11 +2877,21 @@ pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 // load_elem / store_elem). The backends don't lower these yet, so the emit
 // path (ssa_emit_run, the CLI's -ssa) skips functions that use memory and
 // falls back to the AST emitter; the interpreter handles them directly.
+// binop_is_cmp reports whether a binary operator yields a boolean (i32 0/1)
+// rather than a value of its operands' width. Comparisons and the logical
+// connectives are width-collapsing (i64 operands still give an i32 result), so
+// compute_widths must NOT propagate 64-bit width through them — only through the
+// arithmetic / bitwise ops whose result rides its operands' width.
+pub function binop_is_cmp(op: string): boolean {
+    return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
+}
+
 // compute_widths returns the bit-width (32 or 64) of every SSA value: 64
 // for pointers (anything that flows from an `alloc`, threaded through copy
-// and phi to a fixpoint), 32 for plain i32 / bool. The backends use this to
-// pick movl/movq (x86) or w/x registers (arm64) per value. load_elem yields
-// an i32 element (32); everything but alloc/copy/phi is 32.
+// and phi to a fixpoint) and i64 values (const_i64, i64 params, i64 widen,
+// and arithmetic with a 64-bit operand), 32 for plain i32 / bool. The backends
+// use this to pick movl/movq (x86) or w/x registers (arm64) per value.
+// load_elem yields an i32 element (32); a comparison is always i32.
 pub function compute_widths(f: SFunc): i32[] {
     var w: i32[] = [];
     var i: i32 = 0;
@@ -2912,6 +2922,10 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "args") { make64 = true; }   // a string[] array pointer
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
+                else if (ins.kind == "const_i64") { make64 = true; }   // a 64-bit integer literal
+                else if (ins.kind == "param" && ins.str == "i64") { make64 = true; }   // i64 param (8-byte)
+                else if (ins.kind == "unary" && (ins.str == "sext_i64" || ins.str == "zext_i64")) { make64 = true; }   // i32 -> i64 widen
+                else if (ins.kind == "binary" && !binop_is_cmp(ins.str) && (w[ins.args[0]] == 64 || w[ins.args[1]] == 64)) { make64 = true; }   // i64 arithmetic: 64-bit operand -> 64-bit result (a comparison stays i32)
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
                 else if (ins.kind == "phi") {
                     var a: i32 = 0;

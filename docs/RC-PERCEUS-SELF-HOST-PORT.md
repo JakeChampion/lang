@@ -3580,3 +3580,91 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   from leak-documenting to firing. Remaining #4355 surface: the general
   "any string anywhere" endpoint (payloads via `?`, string fields of enum
   payload structs, nested shapes) — tracked on the issue.
+- 2026-07-03: **Landed closure-env capture RC on the IR path (#4354, port slice
+  5 — irlower-only, all three backends).** The single-classifier model from the
+  AST path, ported to IR emission: `closure_capture_kind` classifies each
+  capture ('s' string, 'a' scalar array, '.' everything else), and the SAME
+  kinds string drives the build-site retain and the exit-sweep release, so incs
+  and drops land together (the issue's invariant). lower_func approves closure
+  locals via `clo_rc_candidate_names` (single-bind literal-lambda init, never
+  reassigned, not shadowed, body_unsafe_for-clean) seeded as "OK:<name>" into
+  the new `LowerState.clo_cap_kinds` registry; the StmtVar lowering consumes
+  the approval — after storing the env box it reads each classifiable capture
+  back (`env[ci+1]`, the closure-call path's own arr_get) and `__fern_rc_inc`s
+  it, registering "<name>|<kinds>". The exit sweep's array loop releases before
+  the box dec: an rc==1-gated walk (`__fern_rc_is_unique` + if) frees each
+  's' capture via __fern_str_free and each 'a' via __fern_rc_dec. The #4354
+  interlock: a fresh string captured into an APPROVED closure is no longer
+  escape-flagged by the STR: gate (`body_unsafe_for_clo`) — build inc (rc 2) +
+  env release (→1) + string sweep (→0) free it exactly once, with ordering
+  (env release in the array loop, string sweep after) making any classifier
+  mismatch a sound leak instead of a UAF. Unclassified capture kinds (string[]
+  / struct / enum / map / nested closure) and escaping/aliased/reassigned
+  closures keep today's leak. No backend edits (existing rc helpers only).
+  VERIFIED: TestSelfHostClosureEnvRcIRX86_64 (+wasm/arm64 siblings) — string
+  and scalar-array capture churns flat + underflow 0, capture-used-after and
+  param-capture balance. Known pre-existing (NOT this slice): a bare-ident
+  closure alias (`var d = c; d()`) segfaults on the IR path — d is never
+  marked a closure local, so `d()` calls the raw env box; unchanged by this
+  slice and excluded from the RC gates (an aliased env's release is rc==1
+  gated). Remaining for full slice-5 parity: struct/enum/map/string[]/nested
+  capture kinds, closure ARRAYS (`__drop_arr_closure` equivalent), and the
+  escaping-closure drop thunk (native `__closure_drop_<name>` dispatch).
+- 2026-07-05: **Landed dyn-Trait STRUCT-payload reclaim on the IR path (#4351
+  v1 — irlower-only, all three backends).** A `var d: dyn T = C { ... }` local
+  holds the concrete's rc-headered struct box (structs flow UNBOXED behind the
+  dyn coercion), but the coarse "dyn T" slot type kept it out of every reclaim
+  class — every such box leaked. Now `collect_dyn_struct_names` credits
+  "DYN:<name>|<Concrete>" in reclaimable_names (fresh leak-safe struct-LITERAL
+  init, scalar-only or deep-drop-ok, single-bind, never reassigned,
+  body_unsafe_for-clean — a `d.show()` dispatch is a receiver borrow), and the
+  exit sweep's new DYN loop releases it exactly like a reclaimable struct:
+  `__struct_drop_<Concrete>` (auto-materialized per-type by every backend;
+  emitted only when the concrete carries a reclaimable field) then the box dec.
+  Reclaimable dyn slots join the entry zero-init set, and
+  slot_is_reclaimable_struct now REJECTS "dyn "-tagged slots — pre-fix both
+  loops fired and over-released the box (caught by the underflow probe during
+  development). Deliberately NOT covered (documented on the issue): PRIMITIVE
+  and STRING dyn payloads — op_dyn_box allocates a HEADERLESS 16-byte
+  `__fern_alloc` cell the asm no-op `__free` cannot reclaim (needs an
+  allocation-layout slice: rc-header the cell, then a `'s'`-kind release);
+  `dyn T[]` element boxes (needs the genArrDynDropFn analog); enum payloads
+  behind dyn. VERIFIED: TestSelfHostDynStructReclaimIRX86_64 (+wasm/arm64
+  siblings) — churn flat + underflow 0 for array-field and scalar-only
+  concretes; escaping (`return d`) and reassigned dyn locals excluded and
+  balanced. Native reference: buildDynDropHelpers routes through a vtable drop
+  slot because it erases the type; the self-host binding-site registry skips
+  the vtable entirely (the concrete is statically known), mirroring the #4552
+  closure-capture design.
+- 2026-07-05: **Landed TRMC (tail recursion modulo cons) on the self-host IR
+  path (#4352 v1 — irlower-only, all three backends).** The `map`-shaped
+  recursion `Cons(g(h), self(t))` is not a tail call (the constructor wraps
+  it), so pre-port the self-host IR path grew O(n) stack and a ~300k-element
+  list SIGSEGV'd. `trmc_eligible` (conservative v1 detector) accepts a free,
+  non-generic function whose whole body is one `match` on an enum param
+  returning that enum, where every arm is a guard-free `PatVariant` with a
+  single `return`: recursive arms return a constructor of the return enum
+  whose LAST argument is the sole self-call (full argc, self-free heads),
+  base arms are self-free, and — the key v1 restriction — every recursive arm
+  uses the SAME constructor variant, which makes the tail-field index a
+  compile-time constant so the hole write is a plain `op_struct_set`
+  (portable: wasm has no raw pointer stores). `emit_trmc` rewrites the body
+  into the classic hole-passing loop: an outer exit block + `op_loop`; per
+  arm a variant test (`variant_is` / brif past); recursive arms evaluate the
+  heads to temps, build the node via a normal `op_struct_make` with a dummy 0
+  tail (automatic layout + rc parity with ordinary construction), link it
+  into the previous hole (or seed the result), advance the hole, store the
+  self-call args over the param slots, and `op_br` the loop; the base arm
+  lowers its return value normally and links it as the final tail. TRMC'd
+  bodies bypass the RC sweeps and the self-tail-call TCO pair (no swept
+  locals, no self-tail shape left). Deliberately deferred (documented on the
+  issue): consume-safety (native slice 2 shares the reuse-token machinery
+  the #4350 work is building), mixed-variant recursive arms, guards, and
+  nested/multi-statement arm bodies. VERIFIED: TestSelfHostTrmcIRX86_64
+  (value 1275; 300k-deep list exits 0 where the pre-port driver — rebuilt
+  from origin/main — SIGSEGVs; string-head SList; tree-shaped two-self-call
+  negative NOT rewritten), TestSelfHostTrmcWasmIR (value + 200k deep),
+  TestSelfHostTrmcIRArm64 (200k deep under qemu via `asm_ir_run -target
+  arm64`). Native reference: `detectTrmc` / `emitTrmc` (internal/trmc.go) —
+  the self-host detector is stricter (same-ctor restriction) but the emitted
+  loop shape matches.

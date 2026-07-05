@@ -16,6 +16,7 @@ package ir
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -69,7 +70,7 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 		}
 		incs = append(incs,
 			Op{Kind: OpLoadLocal, I32: slot, Pos: pos},
-			Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1, Pos: pos},
+			Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1, Pos: pos},
 			Op{Kind: OpDrop, Pos: pos})
 	}
 	if len(incs) == 0 {
@@ -293,7 +294,7 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.TupleType:
@@ -456,7 +457,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if tt, ok := t.(ast.TupleType); ok && ast.RcFreeEnabled && eligible {
 			offs, size := tupleElemLayout(tt.Elems, b.ptrW)
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for i, et := range tt.Elems {
 				if _, isStr := et.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
@@ -487,7 +488,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 						b.emit(Op{Kind: OpAdd})
 					}
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
@@ -508,7 +509,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 			return
@@ -563,7 +564,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if sdOk && ast.RcFreeEnabled && eligible {
 				offs, size := structFieldLayout(sd.Fields, b.ptrW)
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+				b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				// rc == 1: drop fields, then free the box. The struct is
 				// uniquely owned here, so each field is too — a string
@@ -598,7 +599,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-						b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+						b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 						b.emit(Op{Kind: OpDrop})
 						continue
 					}
@@ -620,7 +621,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				b.emit(Op{Kind: OpElse})
 				// rc > 1: just dec the box.
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				return
@@ -635,7 +636,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				}
 				if len(ptrFields) > 0 {
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+					b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					for _, f := range ptrFields {
 						b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -655,7 +656,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				}
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
@@ -694,7 +695,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			return
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Use b.locals[name] so we only dec slots that user code
@@ -761,6 +762,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	for name := range b.rc.movedLocals {
 		seen[name] = true
 	}
+	// Borrowed-view aliases (#4402 opt 1) were never inc'd — their dec is
+	// the other half of the cancelled pair.
+	for name := range b.rc.borrowedAlias {
+		seen[name] = true
+	}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
 			continue
@@ -791,6 +797,31 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			continue
 		}
 		emitDec(slot, p.Type, true, p.Name)
+	}
+	// Consuming-owned-match bindings (#4400) are counted owners: the per-arm
+	// scrutinee release transferred (unique branch) or dup'd (shared branch)
+	// their payload reference, so the sweep deep-drops them like owned locals.
+	// They live in neither info.Locals nor Params, hence the extra pass. The
+	// prologue pre-zeroed their slots, so a binding whose arm never ran decs a
+	// NULL (inert under the helpers' guards). An escaped binding lost its
+	// freeEligible bit (re-tainted) and is skipped — leak, never a UAF.
+	if len(b.rc.consumingBindings) > 0 {
+		names := make([]string, 0, len(b.rc.consumingBindings))
+		for nm := range b.rc.consumingBindings {
+			names = append(names, nm)
+		}
+		sort.Strings(names)
+		for _, nm := range names {
+			if seen[nm] || !b.rc.freeEligible[nm] {
+				continue
+			}
+			seen[nm] = true
+			slot, ok := b.locals[nm]
+			if !ok {
+				continue
+			}
+			emitDec(slot, b.rc.consumingBindings[nm], true, nm)
+		}
 	}
 }
 
@@ -843,7 +874,7 @@ func (b *builder) emitAliasInc(e ast.Expr) {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		return
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 }
 
 // emitVarReinitDropOld releases the value currently in a var's slot
@@ -923,7 +954,7 @@ func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
 	}
 	_, size := tupleElemLayout(tt.Elems, b.ptrW)
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpConstI32, I32: size})
@@ -931,7 +962,7 @@ func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
 }
@@ -1018,7 +1049,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 	// scalar closure that never forms a pair generates nothing.
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
 	off := int32(0)
@@ -1130,7 +1161,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				// enum / closure capture: flat one-level dec (a union's
 				// variant type isn't statically known; nested closures
 				// keep the env-only drop).
-				ops = append(ops, Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				ops = append(ops, Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			}
 			ops = append(ops, Op{Kind: OpDrop})
 		}
@@ -1466,7 +1497,7 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 	stride := int32(ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		// len = mem[ptr-4]
 		{Kind: OpLoadLocal, I32: 0},
@@ -1529,7 +1560,7 @@ func genArrEnumDropFn(elemName string, ptrW int) *Func {
 	stride := int32(ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: 4},
@@ -1599,7 +1630,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 	dropSig := &ast.FuncType{Result: ast.NumberType{}}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		// len = mem[ptr-4]
 		{Kind: OpLoadLocal, I32: 0},
@@ -1632,7 +1663,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 		// slot is 0 for zero-capture closures (env==0, nothing to free) —
 		// guard it so OpCallIndirect never dispatches through a null slot.
 		{Kind: OpLoadLocal, I32: 3},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 3},
 		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
@@ -1687,7 +1718,7 @@ func genArrTupleDropFn(mangled string, ptrW int) *Func {
 	stride := int32(ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: 4},
@@ -1750,7 +1781,7 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 	outerStride := int32(ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		// len = mem[ptr-4]
 		{Kind: OpLoadLocal, I32: 0},
@@ -1826,7 +1857,7 @@ func genArrArrStrDropFn(ptrW int) *Func {
 	}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: 4},
@@ -1890,7 +1921,7 @@ func genArrOfArrDropFn(perElemDrop string, ptrW int) *Func {
 	outerStride := int32(ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: 4},
@@ -1967,7 +1998,7 @@ func genArrDynDropFn(dynDrop string, ptrW int) *Func {
 	}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: 4},
@@ -2047,7 +2078,7 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 	entryStride := 2 * pw
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		// buf = mem[m]
 		{Kind: OpLoadLocal, I32: 0},
@@ -2166,14 +2197,14 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 			{Kind: OpLoadLocal, I32: 5},
 			{Kind: OpIf, I32: BlockTypeVoid},
 			{Kind: OpLoadLocal, I32: 5},
-			{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+			{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 			{Kind: OpDrop},
 			{Kind: OpEnd},
 		}
 	}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		// buf = mem[m]
 		{Kind: OpLoadLocal, I32: 0},
@@ -2320,7 +2351,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 			Op{Kind: OpDrop})
 	}
 	return append(ops,
-		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		Op{Kind: OpDrop})
 }
 
@@ -2346,7 +2377,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 	offs, size := tupleElemLayout(tt.Elems, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
 	for i, et := range tt.Elems {
@@ -2397,7 +2428,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 		Op{Kind: OpDrop},
 		Op{Kind: OpElse},
 		Op{Kind: OpLoadLocal, I32: 0},
-		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		Op{Kind: OpDrop},
 		Op{Kind: OpEnd},
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -2422,7 +2453,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 	offs, size := structFieldLayout(sd.Fields, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
 	for _, f := range sd.Fields {
@@ -2478,7 +2509,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		Op{Kind: OpDrop},
 		Op{Kind: OpElse},
 		Op{Kind: OpLoadLocal, I32: 0},
-		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		Op{Kind: OpDrop},
 		Op{Kind: OpEnd},
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -2507,7 +2538,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 	}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		// tag = mem[ptr+0] → slot 1 (stashed so arms read it after a
 		// variant's box_free has freed the box).
@@ -2554,7 +2585,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 	ops = append(ops,
 		Op{Kind: OpElse},
 		Op{Kind: OpLoadLocal, I32: 0},
-		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		Op{Kind: OpDrop},
 		Op{Kind: OpEnd},
 		Op{Kind: OpLoadLocal, I32: 0},

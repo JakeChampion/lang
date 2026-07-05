@@ -168,7 +168,7 @@ func TestIfExprYieldSourceFreeEligible(t *testing.T) {
 		if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__drop_arr_") {
 			drops++
 		}
-		if op.Kind == OpCallDirect && op.Str == "__fern_rc_inc" {
+		if op.Kind == OpRcInc {
 			incs++
 		}
 	}
@@ -182,4 +182,78 @@ func TestIfExprYieldSourceFreeEligible(t *testing.T) {
 	if incs < 2 {
 		t.Errorf("want >= 2 arm alias incs, got %d:\n%s", incs, p)
 	}
+}
+
+// #4402 opt 1 — dead-alias dup/drop cancellation: `var y = x` with both
+// proven pure (x never reassigned/moved/matched-on, y never
+// reassigned/returned) elides y's transfer inc AND y's exit-sweep dec as a
+// net-zero pair; x stays exit-sweep-released and precise-drop/reuse-donor
+// excluded.
+func TestDeadAliasPairCancelled(t *testing.T) {
+	p := lowerSource(t, `function work(k: i32): i32 {
+    var x: i32[][] = [[k, k + 1]];
+    var y: i32[][] = x;
+    var e: i32[] = y[0];
+    return e[0] + x[0][1];
+}`)
+	var work *Func
+	for _, f := range p.Funcs {
+		if f.Name == "work" {
+			work = f
+		}
+	}
+	if work == nil {
+		t.Fatalf("work not lowered")
+	}
+	incs, deepDrops := 0, 0
+	for _, op := range work.Ops {
+		if op.Kind == OpRcInc {
+			incs++
+		}
+		if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__drop_arr_") {
+			deepDrops++
+		}
+	}
+	// One inc only (e = y[0], the element alias) — y's transfer inc is
+	// cancelled. Two deep-drop CALL SITES, both x's (its decl-site
+	// reinit drop — a null-guarded static no-op — and its exit sweep);
+	// y contributes neither a reinit drop nor a sweep dec. The tainted
+	// baseline emits 2 incs and 4 deep-drop sites.
+	if incs != 1 {
+		t.Errorf("want 1 rc_inc (element alias only; y's transfer inc cancelled), got %d:\n%s", incs, p)
+	}
+	if deepDrops != 2 {
+		t.Errorf("want 2 deep-drop sites (x reinit + x sweep; y is a borrowed view), got %d:\n%s", deepDrops, p)
+	}
+	// Reassigned alias: cancellation must NOT fire (y is rebound), and
+	// since x is still used after `var y = x`, the move machinery doesn't
+	// claim the site either — y keeps its ordinary transfer inc.
+	p2 := lowerSource(t, `function keep(k: i32): i32 {
+    var x: i32[][] = [[k]];
+    var y: i32[][] = x;
+    y = [[k + 1]];
+    return x[0][0] + y[0][0];
+}`)
+	var keep *Func
+	for _, f := range p2.Funcs {
+		if f.Name == "keep" {
+			keep = f
+		}
+	}
+	if keep == nil {
+		t.Fatalf("keep not lowered")
+	}
+	kIncs := 0
+	for _, op := range keep.Ops {
+		if op.Kind == OpRcInc {
+			kIncs++
+		}
+	}
+	if kIncs < 1 {
+		t.Errorf("reassigned alias must keep its transfer inc, got %d incs:\n%s", kIncs, p2)
+	}
+	// (A returned alias needs no assertion here: `var y = x; return y`
+	// is claimed by move-on-alias + move-on-return — zero incs, zero
+	// sweeps, fully transferred — and the borrowed-alias gates exclude
+	// returned names anyway.)
 }

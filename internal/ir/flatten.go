@@ -302,6 +302,14 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		return 0, 0, true
 	case OpReturnPair:
 		return 2, 0, true
+	// Dedicated rc ops (#4402 opt 2): pass-through shaped, so the
+	// exact effect is (1, 1). Deliberately ok=false for now —
+	// their OpCallDirect ancestors bailed here too (the rc helpers
+	// aren't in the funcSig table), and keeping the bail preserves
+	// byte-identical flatten decisions. Opt 2b may flip this to
+	// `return 1, 1, true` once the change is measured on its own.
+	case OpRcInc, OpRcDec, OpRcIsUnique:
+		return 0, 0, false
 	// Calls: resolve via the funcSig table when possible.
 	case OpCallDirect, OpCallDirectPair:
 		sig, ok := sigs[op.Str]

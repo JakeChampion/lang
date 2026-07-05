@@ -930,6 +930,24 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             out = out.append(65);
             out = leb_i32(out, parse_dec(instrs[i + 1].text));
             i = i + 2;
+        } else if (op == "i64.const") {
+            out = out.append(66);
+            out = leb_i64(out, parse_dec_i64(instrs[i + 1].text));
+            i = i + 2;
+        } else if (op == "f64.const") {
+            // 0x44 then the 8-byte little-endian IEEE-754 double, exactly as
+            // enc_instr encodes the folded form. Without this case the flat
+            // encoder silently DROPPED f64.const (and its literal atom read as
+            // a second unknown), mis-encoding any float-bearing flat body —
+            // surfaced by the #4342 exponent-literal case.
+            out = out.append(68);
+            var fbits: i64 = f64_bits(parse_f64(instrs[i + 1].text));
+            var fk: i32 = 0;
+            while (fk < 8) {
+                out = out.append(((fbits >> (fk * 8)) & 255) as i32);
+                fk = fk + 1;
+            }
+            i = i + 2;
         } else if (op == "local.get") {
             out = out.append(32);
             out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));

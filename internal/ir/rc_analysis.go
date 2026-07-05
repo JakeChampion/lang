@@ -94,10 +94,48 @@ type rcPlan struct {
 	// computeConsumingMatchReuse, which also records the ctor→scrutinee
 	// pairing in reuseSources (#4475).
 	consumingMatchReuse map[*ast.Call]bool
+	// consumingOwnedMatches maps a `match` statement to its scrutinee's param
+	// name when the scrutinee is an OWNED-BY-DEFAULT enum parameter consumed by
+	// the match (#4400 — the Koka-style consuming match for counted owners, the
+	// non-`own` sibling of ownParamEnumScrutinee). The lowering then emits the
+	// drop-specialized per-arm scrutinee release: on the unique branch the box
+	// is shallow-freed (the extracted bindings inherit the box's payload counts
+	// — the dup/dec pairs cancel statically), on the shared branch each pointer
+	// binding in consumingBindings is dup'd (__fern_rc_inc) and the box is
+	// flat-dec'd. Either way the param slot is zeroed so the exit sweep's
+	// deep-drop no-ops (guarded/wildcard arms skip the release and leave the
+	// box to that sweep — no leak). Filled by computeConsumingOwnedMatches.
+	consumingOwnedMatches map[*ast.Match]string
+	// consumingBindings maps an arm-binding name of a consuming owned match to
+	// its (pointer-shaped) payload type, for names that become COUNTED OWNERS:
+	// every binding occurrence of the name in the whole function sits in an
+	// unguarded non-wildcard arm of a consumingOwnedMatches match, the name
+	// shadows no param / declared local / loop var, and its type is a sweepable
+	// box (enum / user struct / tuple) consistent across occurrences. These
+	// names are NOT borrow-tainted in computeFreeEligible (unlike ordinary
+	// match bindings), get a pre-allocated zeroed slot in the prologue, and are
+	// deep-dropped by the exit sweep exactly like owned locals. Every pointer
+	// payload of every releasing arm of a consumingOwnedMatches match is in
+	// this table — a match with an untrackable pointer binding is dropped from
+	// the plan instead (see the fixpoint in computeConsumingOwnedMatches).
+	// Filled by computeConsumingOwnedMatches.
+	consumingBindings map[string]ast.Type
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
 	preciseDrops map[int][]string
+	// Dead-alias dup/drop cancellation (#4402 opt 1): borrowedAlias[y] marks a
+	// `var y = x` alias local proven to be a pure BORROWED VIEW of an owned
+	// local x for its whole life — its transfer inc and its exit-sweep dec are
+	// a guaranteed net-zero pair, so both are elided (the fusion Koka calls
+	// dup/drop cancellation, done in the analysis layer where the emission
+	// sites are known). borrowedAliasSites keys the specific *ast.Var so the
+	// lowering skips exactly that inc; borrowSources[x] pins the source: x
+	// must release ONLY at the exit sweep (never precise-dropped, never a
+	// reuse donor) so the borrow can never outlive the buffer.
+	borrowedAlias      map[string]bool
+	borrowedAliasSites map[ast.Node]bool
+	borrowSources      map[string]bool
 }
 
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
@@ -111,6 +149,10 @@ func (b *builder) computeRcAnalyses() {
 	// (paired with the entry-inc emitted by lowerFunc). Computed before
 	// freeEligible, which consults it (a consumed param is not borrow-tainted).
 	b.rc.consumedParams = b.computeConsumedParams()
+	// Koka-style consuming matches on owned-by-default enum params (#4400).
+	// Computed before freeEligible, which consults consumingBindings (a
+	// qualifying binding becomes a counted owner instead of a tainted borrow).
+	b.rc.consumingOwnedMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
@@ -118,6 +160,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.moveSites = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
 	b.rc.arraySetInc = b.computeArraySetIncs()
+	b.computeBorrowedAliases()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
@@ -428,6 +471,17 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// defeat constructor reuse (TestStructReuseFiresForPointerField).
 	escapeOwned := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok {
+			// A consuming-match binding (#4400) is a COUNTED owner: every
+			// inc-ing sink dups it (needsRcIncOnAlias fires — bindings are
+			// never moveSites, those cover declared locals only) and the
+			// exit-sweep dec balances, so there is no uncounted alias to
+			// strand. Tainting it would skip the sweep and leak the dup —
+			// the shape `Cons(h, t) => return Cons(h + 1, t)` would leak
+			// the whole tail per call. The UNCOUNTED sinks (escape) still
+			// taint these names.
+			if _, owned := b.rc.consumingBindings[id.Name]; owned {
+				return
+			}
 			tainted[id.Name] = true
 		}
 	}
@@ -495,8 +549,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// deep-drop. Match / IfLet / LetElse bindings stay tainted —
 			// they alias enum payloads with no projection dup.
 		case *ast.Match:
+			// Consuming owned match (#4400): a qualifying arm binding is a
+			// COUNTED owner — the per-arm scrutinee release either transfers
+			// the box's payload count to it (unique branch) or dups it
+			// (shared branch) — so it is not borrow-tainted; the exit sweep
+			// deep-drops it like an owned local. consumingBindings names are
+			// by construction bound ONLY in qualifying arms, so the skip is
+			// exact; every other binding keeps the taint.
 			for _, arm := range s.Arms {
-				markBindings(arm.Bindings)
+				for _, nm := range arm.Bindings {
+					if _, owned := b.rc.consumingBindings[nm]; !owned {
+						tainted[nm] = true
+					}
+				}
 			}
 		case *ast.MatchExpr:
 			for _, arm := range s.Arms {
@@ -786,6 +851,17 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			if b.dynReclaim() {
 				elig[p.Name] = true
 			}
+		}
+	}
+	// Consuming-owned-match bindings (#4400) are counted owners — the per-arm
+	// scrutinee release transferred (unique) or dup'd (shared) their payload
+	// reference — so they get the same borrow-aware eligibility as owned
+	// locals. They live in neither info.Locals nor Params, so neither loop
+	// above reaches them. An escaping binding was re-tainted by the walk and
+	// stays out (the transferred count then leaks — sound).
+	for nm := range b.rc.consumingBindings {
+		if !tainted[nm] {
+			elig[nm] = true
 		}
 	}
 	return elig
@@ -1488,6 +1564,12 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			if b.rc.movedLocals[dName] {
 				continue
 			}
+			// A borrow source must stay alive to the exit sweep (a live
+			// borrowed view reads through it — #4402 opt 1); a borrowed
+			// alias owns nothing to donate.
+			if b.rc.borrowSources[dName] || b.rc.borrowedAlias[dName] {
+				continue
+			}
 			if !b.rc.freeEligible[dName] || !b.localNameUnique(dName) {
 				continue
 			}
@@ -1686,6 +1768,12 @@ func (b *builder) computePreciseDrops() map[int][]string {
 	out := map[int][]string{}
 	for name, di := range declIdx {
 		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
+			continue
+		}
+		// #4402 opt 1: a borrow source releases ONLY at the exit sweep (a
+		// live borrowed view reads through its buffer until then); a
+		// borrowed alias is a view and is never dropped at all.
+		if b.rc.borrowSources[name] || b.rc.borrowedAlias[name] {
 			continue
 		}
 		// A local whose box is handed off to a general-FBIP reuse site
@@ -2115,6 +2203,315 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 	return out
 }
 
+// computeConsumingOwnedMatches finds the Koka-style consuming matches (#4400):
+// a `match` statement whose scrutinee is a bare reference to an
+// OWNED-BY-DEFAULT enum parameter at the name's LAST occurrence in the body.
+// Such a match CONSUMES the scrutinee — the lowering releases the box per arm
+// (dup the pointer bindings on the shared branch, shallow-free on the unique
+// branch — emitOwnedConsumingArmDrop) instead of holding it to the exit sweep,
+// and the extracted bindings become counted owners (consumingBindings). This is
+// the counted-model sibling of the `own`-param consuming match: `own` moves its
+// payloads (no rc traffic, E051-guarded), while an owned-by-default scrutinee
+// keeps every reference counted, so the transform is the classic Perceus
+// drop-specialization — dup children, drop box, cancel the pairs statically on
+// the unique branch.
+//
+// Match gates (all conservative — a miss just keeps today's exit-sweep
+// reclamation):
+//   - the function has no defers (their exit paths re-route returned values
+//     through synthetic slots; keep them out of scope);
+//   - the scrutinee is an *ast.Ident naming a non-`own` param with
+//     paramOwnedByDefault (which implies isOwnedByDefaultType: rc-eligible,
+//     string/array-free, uniform-box enum) and no same-named declared local;
+//   - the ident is the name's last occurrence (identOrder.isLast — dead after
+//     the match and unused in arm bodies/guards), so zeroing the slot after the
+//     per-arm release can't strand a later read;
+//   - the match is not inside a loop (a loop re-executes the release on an
+//     already-freed box).
+//
+// Binding gates (per NAME):
+//   - every binding occurrence of the name in the whole function (Match /
+//     MatchExpr / IfLet / LetElse arms) is in an unguarded non-wildcard arm of
+//     a qualifying match;
+//   - the name shadows no param, declared local, or ForEach loop var (those
+//     share slots via b.locals — a double sweep would over-release);
+//   - the binding type is a sweepable box (enum / user struct / tuple —
+//     guaranteed pointer-shaped, single-word) and consistent across arms.
+//
+// The two admissions are mutually dependent: a match qualifies only when every
+// pointer payload of every unguarded non-wildcard arm is an admissible NAMED
+// binding (a `_` discard or an inadmissible name would strand that payload's
+// transferred count — a per-call leak of the whole sub-tree where today's exit
+// sweep reclaims it), and a name qualifies only against the surviving match
+// set. Resolved by a small monotone fixpoint below.
+func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[string]ast.Type) {
+	matches := map[*ast.Match]string{}
+	bindings := map[string]ast.Type{}
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return matches, bindings
+	}
+	declared := map[string]bool{}
+	for _, p := range b.fn.Params {
+		declared[p.Name] = true
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		declared[v.Name] = true
+	}
+	hasDefer := false
+	inLoop := map[*ast.Match]bool{}
+	// rebound[name] — the name is (re)introduced by SOME binding construct
+	// (match / match-expr arm, if-let, let-else). Binding slots are resolved
+	// BY NAME (bindingSlot reuses b.locals[name] — including a param's slot),
+	// so a param whose name is ever rebound may hold a BORROWED payload at
+	// its match, not the caller's transferred argument; consuming it would
+	// free a value the true owner still holds. Any rebinding of a param name
+	// disqualifies that param's matches outright.
+	rebound := map[string]bool{}
+	markRebound := func(names []string) {
+		for _, nm := range names {
+			if nm != "" && nm != "_" {
+				rebound[nm] = true
+			}
+		}
+	}
+	markLoop := func(body ast.Node) {
+		if body == nil {
+			return
+		}
+		ast.Walk(body, func(n ast.Node) bool {
+			if m, ok := n.(*ast.Match); ok {
+				inLoop[m] = true
+			}
+			return true
+		})
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Defer:
+			hasDefer = true
+		case *ast.While:
+			markLoop(x.Body)
+		case *ast.Loop:
+			markLoop(x.Body)
+		case *ast.For:
+			markLoop(x.Body)
+		case *ast.ForEach:
+			declared[x.Var] = true
+			markLoop(x.Body)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				markRebound(arm.Bindings)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range x.Arms {
+				markRebound(arm.Bindings)
+			}
+		case *ast.IfLet:
+			markRebound(x.Bindings)
+		case *ast.LetElse:
+			markRebound(x.Bindings)
+		}
+		return true
+	})
+	if hasDefer {
+		return matches, bindings
+	}
+	order := identOrderOf(b.fn.Body)
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		m, ok := n.(*ast.Match)
+		if !ok || inLoop[m] {
+			return true
+		}
+		id, ok := m.Tag.(*ast.Ident)
+		if !ok || !order.isLast(id) {
+			return true
+		}
+		pi := -1
+		for i, p := range b.fn.Params {
+			if p.Name == id.Name {
+				pi = i
+				break
+			}
+		}
+		if pi < 0 || b.fn.Params[pi].Own || rebound[id.Name] {
+			return true
+		}
+		// A declared local sharing the param's name would make the ident
+		// resolution ambiguous here — skip (params are also in `declared`,
+		// so compare against locals only).
+		for _, v := range b.info.Locals[b.fn] {
+			if v.Name == id.Name {
+				return true
+			}
+		}
+		if !b.paramOwnedByDefault(b.fn.Params[pi].Type, pi) {
+			return true
+		}
+		et, ok := b.fn.Params[pi].Type.(ast.EnumType)
+		if !ok || !b.enumRcPayloadsEligible(et.Name) {
+			return true
+		}
+		ed, ok := b.info.Enums[et.Name]
+		if !ok {
+			return true
+		}
+		if len(et.Args) > 0 {
+			ed = substituteEnumDecl(ed, et.Args)
+		}
+		if _, ok := uniformEnumBoxSize(ed, b.ptrW); !ok {
+			return true
+		}
+		matches[m] = id.Name
+		return true
+	})
+	if len(matches) == 0 {
+		return matches, bindings
+	}
+	// Binding pass, to a fixpoint: a NAME is admissible only when every
+	// binding occurrence in the function is in a qualifying arm (unguarded,
+	// non-wildcard, of a still-candidate match), with a consistent sweepable
+	// box type and no shadowed declaration; a MATCH stays a candidate only
+	// when every pointer payload of every unguarded non-wildcard arm is an
+	// admissible NAMED binding — a release with an untracked pointer payload
+	// (a `_` discard, a shadowed name, an inconsistent type) would strand
+	// that payload's count (a per-call leak of the whole sub-tree where
+	// today's exit sweep reclaims it), so the whole match falls back instead.
+	// Dropping a match demotes its arms to non-qualifying occurrences, which
+	// can invalidate names shared with other matches — hence the fixpoint
+	// (monotone: matches only leave, names only get worse; terminates).
+	sweepable := func(t ast.Type) bool {
+		switch tt := t.(type) {
+		case ast.EnumType:
+			return true
+		case ast.StructType:
+			_, isUser := b.info.Structs[tt.Name]
+			return isUser
+		case ast.TupleType:
+			return true
+		}
+		return false
+	}
+	for {
+		bad := map[string]bool{}
+		cand := map[string]ast.Type{}
+		disqualify := func(names []string) {
+			for _, nm := range names {
+				if nm != "" && nm != "_" {
+					bad[nm] = true
+				}
+			}
+		}
+		admit := func(arm *ast.MatchArm) {
+			for i, nm := range arm.Bindings {
+				if nm == "" || nm == "_" {
+					continue
+				}
+				var bt ast.Type
+				if i < len(arm.BindingTypes) {
+					bt = arm.BindingTypes[i]
+				}
+				if bt == nil || !ast.IsPointerType(bt) {
+					// Scalars need no ownership tracking, but a same-named
+					// pointer binding elsewhere would clash on the shared
+					// slot — the name can never be a counted owner.
+					bad[nm] = true
+					continue
+				}
+				if declared[nm] || !sweepable(bt) {
+					bad[nm] = true
+					continue
+				}
+				if prev, seen := cand[nm]; seen && !ast.Equal(prev, bt) {
+					bad[nm] = true
+					continue
+				}
+				cand[nm] = bt
+			}
+		}
+		ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Match:
+				_, consuming := matches[x]
+				for _, arm := range x.Arms {
+					if consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
+						admit(arm)
+					} else {
+						disqualify(arm.Bindings)
+					}
+				}
+			case *ast.MatchExpr:
+				for _, arm := range x.Arms {
+					disqualify(arm.Bindings)
+				}
+			case *ast.IfLet:
+				disqualify(x.Bindings)
+			case *ast.LetElse:
+				disqualify(x.Bindings)
+			}
+			return true
+		})
+		for nm := range bad {
+			delete(cand, nm)
+		}
+		// Drop candidates with an untracked pointer payload in a releasing arm.
+		removed := false
+		for m := range matches {
+			ok := true
+			for _, arm := range m.Arms {
+				if arm.IsWildcard || arm.Guard != nil || arm.Literal != nil {
+					continue
+				}
+				for i, nm := range arm.Bindings {
+					var bt ast.Type
+					if i < len(arm.BindingTypes) {
+						bt = arm.BindingTypes[i]
+					}
+					if bt == nil || !ast.IsPointerType(bt) {
+						continue
+					}
+					if nm == "" || nm == "_" {
+						ok = false
+						break
+					}
+					if _, tracked := cand[nm]; !tracked {
+						ok = false
+						break
+					}
+				}
+				if !ok {
+					break
+				}
+			}
+			if !ok {
+				delete(matches, m)
+				removed = true
+			}
+		}
+		if !removed {
+			// Keep only names actually bound by a surviving match — a name
+			// whose every occurrence sat in dropped matches has no arm to
+			// transfer it ownership, so sweeping it would over-release.
+			used := map[string]bool{}
+			for m := range matches {
+				for _, arm := range m.Arms {
+					if arm.IsWildcard || arm.Guard != nil || arm.Literal != nil {
+						continue
+					}
+					for _, nm := range arm.Bindings {
+						used[nm] = true
+					}
+				}
+			}
+			for nm, bt := range cand {
+				if used[nm] {
+					bindings[nm] = bt
+				}
+			}
+			return matches, bindings
+		}
+	}
+}
+
 // stmtReferencesName reports whether any *ast.Ident named `name` appears
 // anywhere in the subtree `st` — the shared occurrence predicate behind the
 // last-use / deadness scans (#4480). Previously duplicated verbatim inside
@@ -2165,4 +2562,96 @@ func identOrderOf(body ast.Node) identOrder {
 // of its name — the "last use anywhere in the body" test.
 func (o identOrder) isLast(id *ast.Ident) bool {
 	return o.idx[id] == o.last[id.Name]
+}
+
+// computeBorrowedAliases finds `var y = x` aliases that are pure BORROWED
+// VIEWS (#4402 opt 1 — dead-alias dup/drop cancellation): y's transfer inc
+// and exit-sweep dec are a guaranteed net-zero pair, so both are elided and
+// x is pinned to exit-sweep-only release. Soundness gates (all required):
+//
+//   - x is an owned rc LOCAL (not a param — borrowed params are the
+//     caller's), never reassigned anywhere, not moved (movedLocals covers
+//     move-on-alias/return/destructure AND move-on-consume into `own`
+//     params), and freeEligible (untainted, proven owner);
+//   - y is rc-tracked, never reassigned, not itself moved, freeEligible
+//     (untainted — no container escape), declared with the bare-Ident init
+//     `var y = x` (its ONLY inc site), name-unique in the function (the
+//     slot-sharing hazard), and never referenced under a Return (a returned
+//     borrow would outlive x's sweep — conservative subtree check).
+//
+// x's release stays the exit dec sweep — after every statement, hence after
+// every read through y — enforced by the borrowSources exclusions in
+// computePreciseDrops and computeReuseSources' donor gate.
+func (b *builder) computeBorrowedAliases() {
+	b.rc.borrowedAlias = map[string]bool{}
+	b.rc.borrowedAliasSites = map[ast.Node]bool{}
+	b.rc.borrowSources = map[string]bool{}
+	reassigned := map[string]bool{}
+	returned := map[string]bool{}
+	scrutinee := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
+		case *ast.Return:
+			if x.Value != nil {
+				ast.Walk(x.Value, func(m ast.Node) bool {
+					if id, ok := m.(*ast.Ident); ok {
+						returned[id.Name] = true
+					}
+					return true
+				})
+			}
+		case *ast.Match:
+			// A matched-on local can be reclaimed mid-function
+			// (reclaimableMatchScrutinee frees the box after the match);
+			// a borrow through it would dangle — exclude both roles.
+			if id, ok := x.Tag.(*ast.Ident); ok {
+				scrutinee[id.Name] = true
+			}
+		case *ast.MatchExpr:
+			if id, ok := x.Tag.(*ast.Ident); ok {
+				scrutinee[id.Name] = true
+			}
+		}
+		return true
+	})
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		src, ok := v.Init.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		y, x := v.Name, src.Name
+		if y == x || b.rc.borrowedAlias[y] || b.rc.borrowSources[y] || b.rc.borrowedAlias[x] {
+			return true
+		}
+		if !b.isOwnedRcLocal(x) || !b.isOwnedRcLocal(y) {
+			return true
+		}
+		if reassigned[x] || reassigned[y] || returned[y] || scrutinee[x] || scrutinee[y] {
+			return true
+		}
+		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
+			return true
+		}
+		if !b.rc.freeEligible[x] || !b.rc.freeEligible[y] {
+			return true
+		}
+		if !b.localNameUnique(x) || !b.localNameUnique(y) {
+			return true
+		}
+		if !needsRcIncOnAlias(v.Init, b) {
+			return true // untracked shape: no inc to cancel
+		}
+		b.rc.borrowedAlias[y] = true
+		b.rc.borrowedAliasSites[v] = true
+		b.rc.borrowSources[x] = true
+		return true
+	})
 }

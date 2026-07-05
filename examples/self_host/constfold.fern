@@ -60,7 +60,10 @@ function as_int_lit(e: parser.Expr): OptInt {
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) { return OptInt { ok: false, v: 0 }; }
-            return OptInt { ok: true, v: util.digits_to_i32(n.text) };
+            // lit_to_i32 (hex/binary-aware): digits_to_i32 stopped at the
+            // `x`/`b` prefix and read every `0x`/`0b` operand as 0, so `-O`
+            // mis-folded `0x10 + 1` to 1 (#4341, constfold sibling).
+            return OptInt { ok: true, v: util.lit_to_i32(n.text) };
         },
         _ => { return OptInt { ok: false, v: 0 }; }
     }

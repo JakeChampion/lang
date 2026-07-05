@@ -18,7 +18,7 @@ func incCountInFn(ip *ir.Program, fn string) int {
 	f := funcByName(ip, fn)
 	n := 0
 	for _, op := range f.Ops {
-		if op.Kind == ir.OpCallDirect && strings.Contains(op.Str, "rc_inc") {
+		if (op.Kind == ir.OpRcInc || op.Kind == ir.OpCallDirect) && strings.Contains(op.Str, "rc_inc") {
 			n++
 		}
 	}

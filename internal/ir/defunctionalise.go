@@ -151,13 +151,13 @@ func returnTargetFor(fn *Func) (string, bool) {
 			return "", false
 		}
 		// The return value is pushed before the exit rc dec-sweep
-		// (a run of `OpLoadLocal s; OpCallDirect __fern_rc_dec;
-		// OpDrop` triples inserted just before OpReturn). Skip
-		// those triples backwards to find the op that actually
-		// produces the returned value.
+		// (a run of `OpLoadLocal s; OpRcDec; OpDrop` triples
+		// inserted just before OpReturn). Skip those triples
+		// backwards to find the op that actually produces the
+		// returned value.
 		j := i - 1
 		for j >= 2 && fn.Ops[j].Kind == OpDrop &&
-			fn.Ops[j-1].Kind == OpCallDirect && fn.Ops[j-1].Str == "__fern_rc_dec" &&
+			fn.Ops[j-1].Kind == OpRcDec &&
 			fn.Ops[j-2].Kind == OpLoadLocal {
 			j -= 3
 		}
@@ -241,13 +241,12 @@ func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int3
 				case OpMakeClosure:
 					target = prev.Str
 					resolved = true
-				case OpCallDirect:
-					if prev.Str == "__fern_rc_inc" && i >= 2 && fn.Ops[i-2].Kind == OpLoadLocal {
+				case OpRcInc:
+					if i >= 2 && fn.Ops[i-2].Kind == OpLoadLocal {
 						// rc-tracked alias `b = a` lowers to
-						// `OpLoadLocal a; OpCallDirect __fern_rc_inc;
-						// OpStoreLocal b`. rc_inc returns its
-						// argument unchanged, so look through it to
-						// the slot being aliased.
+						// `OpLoadLocal a; OpRcInc; OpStoreLocal b`.
+						// rc_inc returns its argument unchanged, so
+						// look through it to the slot being aliased.
 						src := fn.Ops[i-2].I32
 						if t, ok := monoSlot[src]; ok {
 							target = t
@@ -258,7 +257,9 @@ func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int3
 							changed = true
 							continue
 						}
-					} else if t, ok := returns[prev.Str]; ok {
+					}
+				case OpCallDirect:
+					if t, ok := returns[prev.Str]; ok {
 						target = t
 						resolved = true
 					}

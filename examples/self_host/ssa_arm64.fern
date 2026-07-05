@@ -121,30 +121,36 @@ function emit_const(imm: i32, reg: string, out: string): string {
     return out;
 }
 
-// emit_binary emits a binary op assuming w9 = lhs and w10 = rhs, leaving
-// the result in w9.
-function emit_binary(op: string, out: string): string {
-    if (op == "+") { return out + "    add w9, w9, w10\n"; }
-    if (op == "-") { return out + "    sub w9, w9, w10\n"; }
-    if (op == "*") { return out + "    mul w9, w9, w10\n"; }
-    if (op == "/") { return out + "    sdiv w9, w9, w10\n"; }
-    if (op == "%") { return out + "    sdiv w11, w9, w10\n    msub w9, w11, w10, w9\n"; }
-    if (op == "&") { return out + "    and w9, w9, w10\n"; }
-    if (op == "|") { return out + "    orr w9, w9, w10\n"; }
-    if (op == "^") { return out + "    eor w9, w9, w10\n"; }
-    if (op == "<<") { return out + "    lsl w9, w9, w10\n"; }
-    if (op == ">>") { return out + "    asr w9, w9, w10\n"; }
-    if (op == "==") { return out + "    cmp w9, w10\n    cset w9, eq\n"; }
-    if (op == "!=") { return out + "    cmp w9, w10\n    cset w9, ne\n"; }
-    if (op == "<") { return out + "    cmp w9, w10\n    cset w9, lt\n"; }
-    if (op == "<=") { return out + "    cmp w9, w10\n    cset w9, le\n"; }
-    if (op == ">") { return out + "    cmp w9, w10\n    cset w9, gt\n"; }
-    if (op == ">=") { return out + "    cmp w9, w10\n    cset w9, ge\n"; }
+// emit_binary emits a binary op assuming the lhs is in w9/x9 and the rhs in
+// w10/x10 (per `width` = the OPERANDS' width), leaving the result in w9/x9. A
+// 64-bit operand width selects the x registers so i64 arithmetic keeps all 64
+// bits; the same mnemonics serve both widths (only the register names change).
+// A comparison compares the full-width operands (cmp x9, x10) but `cset` always
+// writes an i32 0/1 in w9 (the result's own width).
+function emit_binary(op: string, width: i32, out: string): string {
+    var a: string = "w9"; var b: string = "w10"; var t: string = "w11";
+    if (width == 64) { a = "x9"; b = "x10"; t = "x11"; }
+    if (op == "+") { return out + "    add " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "-") { return out + "    sub " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "*") { return out + "    mul " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "/") { return out + "    sdiv " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "%") { return out + "    sdiv " + t + ", " + a + ", " + b + "\n    msub " + a + ", " + t + ", " + b + ", " + a + "\n"; }
+    if (op == "&") { return out + "    and " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "|") { return out + "    orr " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "^") { return out + "    eor " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "<<") { return out + "    lsl " + a + ", " + a + ", " + b + "\n"; }
+    if (op == ">>") { return out + "    asr " + a + ", " + a + ", " + b + "\n"; }
+    if (op == "==") { return out + "    cmp " + a + ", " + b + "\n    cset w9, eq\n"; }
+    if (op == "!=") { return out + "    cmp " + a + ", " + b + "\n    cset w9, ne\n"; }
+    if (op == "<") { return out + "    cmp " + a + ", " + b + "\n    cset w9, lt\n"; }
+    if (op == "<=") { return out + "    cmp " + a + ", " + b + "\n    cset w9, le\n"; }
+    if (op == ">") { return out + "    cmp " + a + ", " + b + "\n    cset w9, gt\n"; }
+    if (op == ">=") { return out + "    cmp " + a + ", " + b + "\n    cset w9, ge\n"; }
     if (op == "&&") {
-        return out + "    cmp w9, #0\n    cset w9, ne\n    cmp w10, #0\n    cset w10, ne\n    and w9, w9, w10\n";
+        return out + "    cmp " + a + ", #0\n    cset w9, ne\n    cmp " + b + ", #0\n    cset w10, ne\n    and w9, w9, w10\n";
     }
     if (op == "||") {
-        return out + "    cmp w9, #0\n    cset w9, ne\n    cmp w10, #0\n    cset w10, ne\n    orr w9, w9, w10\n";
+        return out + "    cmp " + a + ", #0\n    cset w9, ne\n    cmp " + b + ", #0\n    cset w10, ne\n    orr w9, w9, w10\n";
     }
     return out;
 }
@@ -199,6 +205,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = emit_const(ins.imm, "w9", out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
+    if (ins.kind == "const_i64") {
+        // A 64-bit integer literal: `ldr x9, =TEXT` lets the assembler splice
+        // the full-width value into a literal-pool entry (any i64/u64 pattern),
+        // then store at the value's 64-bit home. compute_widths marks it 64-bit.
+        out = out + "    ldr x9, =" + ins.str + "\n";
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
     if (ins.kind == "copy") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         return store_res(reg_of, widths, ins.result, "a", out);
@@ -218,7 +231,9 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         out = load_op(reg_of, widths, ins.args[1], "c", out);
-        out = emit_binary(ins.str, out);
+        // Operand width (not result width) selects w/x registers: an i64
+        // comparison compares 64-bit operands but still yields an i32.
+        out = emit_binary(ins.str, widths[ins.args[0]], out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "unary") {
@@ -244,6 +259,24 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         if (ins.str == "f64_bits" || ins.str == "f64_from_bits") {
             out = out + "    ldr x9, " + slot(ins.args[0]) + "\n";
             return out + "    str x9, " + slot(ins.result) + "\n";
+        }
+        // i32 -> i64 widen: sxtw sign-extends the 32-bit source into x9, uxtw
+        // zero-extends. The i32 operand loads at its width (w9); result 64-bit.
+        if (ins.str == "sext_i64") {
+            out = load_op(reg_of, widths, ins.args[0], "a", out);
+            out = out + "    sxtw x9, w9\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
+        if (ins.str == "zext_i64") {
+            out = load_op(reg_of, widths, ins.args[0], "a", out);
+            out = out + "    uxtw x9, w9\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
+        // i64 -> i32 truncate: load the 64-bit operand (x9), store the low word
+        // at the result's 32-bit home (w9 is the low half of x9).
+        if (ins.str == "wrap_i32") {
+            out = load_op(reg_of, widths, ins.args[0], "a", out);
+            return store_res(reg_of, widths, ins.result, "a", out);
         }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         if (ins.str == "-") { out = out + "    neg w9, w9\n"; }

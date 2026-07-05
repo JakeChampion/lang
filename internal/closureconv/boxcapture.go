@@ -5,12 +5,22 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
-// BoxMutatedScalarCaptures rewrites captured-and-mutated scalar locals
-// (i32-family / bool / f64) into 1-element heap array cells so a closure's
-// write to a captured outer scalar is shared by reference — matching the
-// interpreter, which defines closures-as-counters semantics (mutable scalar
-// captures by reference; #2896). The native pipeline otherwise captures every
-// scalar BY VALUE, so a closure's `x = 42` was lost.
+// BoxMutatedScalarCaptures rewrites captured mutable scalar locals
+// (i32-family / bool / f64) into 1-element heap array cells so a captured outer
+// scalar is shared BY REFERENCE — matching the interpreter, which defines
+// closures-as-counters semantics (#2896). The native pipeline otherwise
+// captures scalars by value, so mutation on either side of the capture was
+// lost: a closure's `x = 42` did not escape, and an outer-scope `i = i + 1` was
+// invisible to a closure that read `i`.
+//
+// A local is boxed iff it is captured by some closure AND assigned somewhere in
+// the function — inside the closure OR in an enclosing scope. Making the box
+// depend on assignment ANYWHERE (rather than only inside the closure) is what
+// makes capture cohesively by-reference: one shared cell, symmetric in both
+// directions, so a loop counter mutated outside is seen by a closure that reads
+// it (#4391 follow-up — before this, that read returned a make-time snapshot,
+// diverging from the interpreter). A captured scalar never assigned anywhere is
+// left unboxed, since by-value and by-reference then coincide.
 //
 // For each top-level function that has at least one such capture, the boxed
 // local's `var x = E` decl becomes `var x: T[] = [E]`, every read/write of `x`
@@ -37,6 +47,18 @@ func BoxMutatedScalarCaptures(prog *ast.Program, info *checker.Info) {
 		boxDecls(fn.Body, boxed, info)
 		rewriteBoxedBlock(fn.Body, boxed)
 		flipCaptures(fn.Body, boxed)
+		// Record the cell names so the IR's index-assign copy-on-write gate
+		// stores through them in place rather than forking the shared cell (a
+		// captured cell always has rc > 1, so CoW would otherwise copy it and
+		// break the by-reference sharing this pass exists to provide).
+		if info != nil {
+			if info.BoxedCells == nil {
+				info.BoxedCells = map[string]bool{}
+			}
+			for name := range boxed {
+				info.BoxedCells[name] = true
+			}
+		}
 	}
 }
 
@@ -68,17 +90,35 @@ func closureParts(n ast.Node) ([]ast.Param, *ast.Block) {
 }
 
 // collectBoxedScalars finds the boxed set for one function body: a name maps to
-// its scalar element type iff some closure both captures it (as a boxable
-// scalar) and writes to it. Returns nil when there is nothing to box.
+// its scalar element type iff some closure captures it (as a boxable scalar),
+// it is assigned SOMEWHERE in the function (inside the closure OR in an
+// enclosing scope), and it is a `var`-declared local. Returns nil when there is
+// nothing to box.
+//
+// The "assigned anywhere" test — not just "assigned inside the closure" — is
+// what gives cohesive BY-REFERENCE capture (#4391 follow-up): a captured
+// mutable scalar is always the same shared cell, so an outer-scope `i = i + 1`
+// is visible to a closure that reads `i`, matching the interpreter. Boxing only
+// closure-written names left read-captured-but-outer-mutated vars captured
+// by-value-at-make-time, so the closure saw a stale snapshot (native returned 0
+// where interp returned 10 for a loop-counter read from a closure). A captured
+// scalar that is never assigned anywhere is left unboxed — by-value and
+// by-reference coincide, so there is no reason to pay the cell indirection.
+//
+// The `var`-declared guard matters because parameters are reassignable in this
+// language but have no `var` decl for boxDecls to turn into a cell; boxing one
+// would rewrite its reads/writes to `p[0]` against a scalar slot. Only locals
+// with a real declaration are boxable.
 func collectBoxedScalars(body *ast.Block) map[string]ast.Type {
 	var boxed map[string]ast.Type
+	writes := assignTargetNames(body)
+	declared := varDeclaredNames(body)
 	forEachClosure(body, func(caps []ast.Param, cbody *ast.Block) {
-		if cbody == nil || len(caps) == 0 {
+		if len(caps) == 0 {
 			return
 		}
-		writes := assignTargetNames(cbody)
 		for _, cap := range caps {
-			if !writes[cap.Name] || !boxableScalar(cap.Type) {
+			if !writes[cap.Name] || !declared[cap.Name] || !boxableScalar(cap.Type) {
 				continue
 			}
 			if boxed == nil {
@@ -88,6 +128,26 @@ func collectBoxedScalars(body *ast.Block) map[string]ast.Type {
 		}
 	})
 	return boxed
+}
+
+// varDeclaredNames collects the names introduced by a `var` declaration
+// anywhere in the function (the outer body and every closure body), so
+// collectBoxedScalars can restrict boxing to locals that boxDecls can actually
+// turn into a cell — never a parameter.
+func varDeclaredNames(body *ast.Block) map[string]bool {
+	names := map[string]bool{}
+	for _, b := range closureBlocks(body) {
+		ast.Walk(b, func(n ast.Node) bool {
+			if v, ok := n.(*ast.Var); ok {
+				names[v.Name] = true
+			}
+			if _, cb := closureParts(n); cb != nil {
+				return false
+			}
+			return true
+		})
+	}
+	return names
 }
 
 // assignTargetNames collects the names that appear as a bare-identifier

@@ -301,6 +301,24 @@ const (
 	// OpCallClosureDirect — the pair's fn_idx field
 	// becomes dead, the pair allocation goes away with it.
 	OpMakeEnv // (cap_0 ... cap_{n-1}) → i32 (env ptr or 0)
+
+	// Dedicated refcount ops (#4402 opt 2). Every rc-inc / rc-dec /
+	// is-unique probe used to be an OpCallDirect to the matching
+	// runtime helper, invisible to IR passes except by Str match.
+	// The dedicated kinds make rc traffic structurally visible
+	// (dup/drop fusion, token threading) and give backends a seam
+	// to inline the fast path (sentinel test + in-place RMW) with
+	// the helper call as the fallback body.
+	//
+	// All three are pass-through-shaped like the helpers they
+	// replace: one pointer popped, one word pushed (rc_inc / rc_dec
+	// return their argument; is_unique returns the 0/1 flag). Str
+	// still carries the runtime-helper symbol and I32 the arg count
+	// (always 1), so helper-reachability scans and the backends'
+	// call-lowering paths stay shared with OpCallDirect.
+	OpRcInc      // (ptr) → ptr (pass-through; bumps rc, sentinel-guarded)
+	OpRcDec      // (ptr) → ptr (pass-through; drops one reference)
+	OpRcIsUnique // (ptr) → i32 (1 iff rc == 1; sentinel/static → 0)
 )
 
 // BlockType describes the type a block / loop / if leaves on the stack
@@ -507,6 +525,12 @@ func (k OpKind) String() string {
 		return "make_closure"
 	case OpMakeEnv:
 		return "make_env"
+	case OpRcInc:
+		return "rc.inc"
+	case OpRcDec:
+		return "rc.dec"
+	case OpRcIsUnique:
+		return "rc.is_unique"
 	}
 	return "<invalid>"
 }
@@ -1571,7 +1595,8 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s", op.Kind, blockTypeName(op.I32))
 	case OpBr, OpBrIf:
 		return fmt.Sprintf("%s %d", op.Kind, op.I32)
-	case OpCallDirect, OpCallClosureDirect, OpCallDirectPair:
+	case OpCallDirect, OpCallClosureDirect, OpCallDirectPair,
+		OpRcInc, OpRcDec, OpRcIsUnique:
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
@@ -4584,6 +4609,26 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
+	// Consuming-owned-match bindings (#4400): pre-allocate each binding's slot
+	// and zero it, so (a) bindingSlot reuses this slot when the arm binds (the
+	// scratchType stamp gives it the right single-word shape), and (b) the
+	// exit-sweep dec added for these names sees a NULL — not stack garbage —
+	// when the binding's arm never ran. Same safety-zero contract as the
+	// rc-tracked local zeroing above; sorted for deterministic slot order.
+	if len(b.rc.consumingBindings) > 0 {
+		names := make([]string, 0, len(b.rc.consumingBindings))
+		for nm := range b.rc.consumingBindings {
+			names = append(names, nm)
+		}
+		sort.Strings(names)
+		for _, nm := range names {
+			slot := b.allocSlot()
+			b.locals[nm] = slot
+			b.scratchType[slot] = b.rc.consumingBindings[nm]
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+	}
 	// Consumed-threaded param entry-incs are no longer emitted here: they are
 	// the first RC insertion converted to true post-lowering []Op insertion
 	// (insertConsumedParamEntryIncs, rc_insert.go — #4393 slice 4), spliced at
@@ -6422,7 +6467,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (computeMovedLocals) — the reference moves to this binding
 		// and the source is excluded from the exit sweep, so the
 		// inc/dec pair is elided.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] {
+		// Dead-alias cancellation (#4402 opt 1): a proven borrowed-view
+		// alias skips the transfer inc — its exit-sweep dec is equally
+		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
+		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] {
 			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this
@@ -6431,7 +6479,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// `var` the zero-init makes it a NULL-guarded no-op. The new value
 		// is on the stack underneath — emitVarReinitDropOld is net-zero —
 		// so it survives for the store below.
-		b.emitVarReinitDropOld(n.Name, idx)
+		//
+		// A borrowed-view alias site (#4402 opt 1) skips this too: the
+		// slot only ever holds the (un-inc'd) borrowed pointer, so a
+		// loop-repeated decl would otherwise dec the source's buffer once
+		// per iteration with no matching inc.
+		if !b.rc.borrowedAliasSites[n] {
+			b.emitVarReinitDropOld(n.Name, idx)
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
 		// Evaluate Init once into the synthesised temp slot,
@@ -6522,9 +6577,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// Native single-word string element: dup via __fern_rc_inc
 				// so the binding co-owns the buffer alongside the tuple
 				// box's later dec.
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			} else if arrElemIsRcTracked(tup.Elems[i]) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
 			// Loop-body reclamation: like the temp above, a binding declared
 			// by a destructure inside a loop reuses one slot per iteration.
@@ -6657,10 +6712,29 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (computeMovedLocals) so the exit sweep doesn't ALSO deep-drop it.
 		var consumeEnum ast.EnumType
 		consumeScrut := false
+		// Consuming owned match (#4400): the scrutinee is an OWNED-BY-DEFAULT
+		// enum parameter at its last use. The arms release the box per arm via
+		// the drop-specialized emitOwnedConsumingArmDrop (unique → shallow
+		// free, payload counts transfer to the bindings; shared → dup the
+		// counted bindings + flat dec) and zero the param slot so the exit
+		// sweep no-ops. Disjoint from the `own`-param path above (that one
+		// MOVES payloads, E051-guarded); guarded / wildcard arms skip the
+		// release and leave the box to the exit sweep.
+		consumeOwnedName := ""
 		if !pairFormScrutinee {
 			consumeEnum, consumeScrut = b.ownParamEnumScrutinee(n.Tag)
 		}
 		if !pairFormScrutinee && !consumeScrut {
+			// computeConsumingOwnedMatches never admits an `own` param, so the
+			// two consuming paths are disjoint by construction.
+			if name, isConsuming := b.rc.consumingOwnedMatches[n]; isConsuming {
+				if et, isEnum := b.exprStaticType(n.Tag).(ast.EnumType); isEnum {
+					consumeEnum = et
+					consumeOwnedName = name
+				}
+			}
+		}
+		if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
 			bts := make([][]ast.Type, 0, len(n.Arms))
 			for _, arm := range n.Arms {
 				bts = append(bts, arm.BindingTypes)
@@ -6776,6 +6850,27 @@ func (b *builder) stmt(s ast.Stmt) error {
 				if reuseCtor := b.consumingReuseCtor(arm, consumeEnum); reuseCtor == nil || !b.rc.consumingMatchReuse[reuseCtor] {
 					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
 				}
+			}
+			// Consuming owned match (#4400): with the bindings copied into
+			// their slots, release the scrutinee box here — the Koka
+			// drop-specialization. Unique: shallow box free (the counted
+			// payload references transfer to the bindings — dup/dec pairs
+			// cancelled statically). Shared: dup each qualifying pointer
+			// binding (it becomes a second counted owner) and flat-dec the
+			// box. Then zero the PARAM slot so the exit sweep's deep-drop
+			// no-ops; guarded arms skip (no release on a fall-through path)
+			// and leave the box to the exit sweep.
+			if consumeOwnedName != "" && !pairFormScrutinee && arm.Guard == nil {
+				var dupSlots []int32
+				for _, bname := range arm.Bindings {
+					if _, owned := b.rc.consumingBindings[bname]; !owned {
+						continue
+					}
+					if slot, ok := b.locals[bname]; ok {
+						dupSlots = append(dupSlots, slot)
+					}
+				}
+				b.emitOwnedConsumingArmDrop(ptrSlot, consumeEnum, dupSlots, consumeOwnedName)
 			}
 			// Optional guard: with bindings now in locals, run
 			// the guard expression. On false, branch out of the
@@ -7537,7 +7632,7 @@ func (b *builder) expr(e ast.Expr) error {
 					// Field / index alias: the container drop below
 					// would otherwise free the forwarded box out from
 					// under the caller. Re-inc so the dec nets out.
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+					b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				}
 				b.emitRcDecLocalsAtExitExcept(sweepExclude)
 				b.emit(Op{Kind: OpReturn})
@@ -8193,7 +8288,7 @@ func (b *builder) expr(e ast.Expr) error {
 					if _, isStr := ft.(ast.StringType); isStr && b.twoWordStrings() {
 						b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 					} else {
-						b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+						b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 					}
 				}
 				b.emit(payloadStoreOpFor(ft, b.ptrW))
@@ -10247,20 +10342,20 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __rc_inc / __rc_dec — refcount helpers exposed as Lang
-	// builtins. Lower to OpCallDirect with the runtime-side
-	// name so backends pick up the matching gate flag. Both
-	// accept a u8[] today; Phase 1e will widen to strings /
-	// structs / enums / closures. See docs/RC-PERCEUS-PLAN.md.
+	// builtins. Lower to the dedicated rc ops (#4402 opt 2) with
+	// the runtime-side name so backends pick up the matching gate
+	// flag. Both accept a u8[] today; Phase 1e will widen to
+	// strings / structs / enums / closures. See docs/RC-PERCEUS-PLAN.md.
 	if (id.Name == "__rc_inc" || id.Name == "__rc_dec") && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if err := b.expr(n.Args[0]); err != nil {
 				return err
 			}
-			target := "__fern_rc_inc"
+			kind, target := OpRcInc, "__fern_rc_inc"
 			if id.Name == "__rc_dec" {
-				target = "__fern_rc_dec"
+				kind, target = OpRcDec, "__fern_rc_dec"
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: target, I32: 1})
+			b.emit(Op{Kind: kind, Str: target, I32: 1})
 			return nil
 		}
 	}
@@ -10490,7 +10585,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		if err := b.expr(n.Args[2]); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
@@ -10531,7 +10626,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.expr(n.Args[2]); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		}
@@ -10573,7 +10668,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.expr(n.Args[1]); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		}
@@ -10673,7 +10768,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 		}
@@ -10704,7 +10799,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			return nil
 		}
 	}
@@ -10744,7 +10839,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// drop doesn't free it from under the caller.
 			if _, isStr := n.TypeArgs[1].(ast.StringType); isStr &&
 				b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
 			return nil
 		}
@@ -10823,7 +10918,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 		b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		return nil
 	}
 	// MapIter.value() / MapIter.key() on native single-word string K/V:
@@ -10856,7 +10951,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			return nil
 		}
 	}
@@ -11258,7 +11353,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 	tokenSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_src_tok_%d", tokenSlot)] = tokenSlot
@@ -11270,7 +11365,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
@@ -11406,7 +11501,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 
 	tokenSlot := b.allocSlot()
@@ -11419,7 +11514,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
@@ -11499,7 +11594,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 				// Retain the carried pointer for the fresh box's own
 				// reference (the reuse branch keeps the box's existing one).
 				b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
@@ -11675,7 +11770,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__ereuse_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 
 	tokenSlot := b.allocSlot()
@@ -11688,7 +11783,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
@@ -11970,7 +12065,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// ptr; __fern_rc_dec it (inline-tag / sentinel guards keep all sources
 	// safe). arm64 / wasm two-word ABIs take the two-word str_dec branch above.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -12004,7 +12099,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// __fern_rc_dec is a void-returning runtime helper but OpCallDirect's
 	// codegen always pushes the call's return-value register onto the operand
 	// stack; drop the bogus push to keep the stack balanced.
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12029,7 +12124,7 @@ func (b *builder) dropStructField(t ast.Type) {
 	// ptr via payloadLoadOpFor; __fern_rc_dec it. SSO inline-tag low-bit guard
 	// + literal sentinel keep all sources safe.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -12119,7 +12214,7 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12234,7 +12329,7 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	// Unique: free the box BUFFER only — NO per-payload deep-drop (they were
 	// moved into the bindings). __fern_box_free(data, size) internally frees
@@ -12247,9 +12342,74 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 	b.emit(Op{Kind: OpElse})
 	// Shared / sentinel: just dec (an alias keeps it; a sentinel dec no-ops).
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
+}
+
+// emitOwnedConsumingArmDrop releases an OWNED-BY-DEFAULT enum scrutinee's box
+// inside a consuming-match arm (#4400) — the Koka drop-specialization for the
+// COUNTED ownership model, the sibling of emitConsumingMatchBoxFree's move
+// model. After the arm's bindings are extracted:
+//
+//	if __fern_rc_is_unique(box):
+//	    __fern_box_free(box, size)      // shallow — the box's counted payload
+//	                                    // references transfer to the bindings
+//	                                    // (dup + child-dec cancelled statically)
+//	else:
+//	    __fern_rc_inc(binding) …        // dup: each qualifying pointer binding
+//	                                    // becomes a second counted owner
+//	    __fern_rc_dec(box)              // release our reference; the box (and
+//	                                    // its payload counts) stays with the
+//	                                    // other owners
+//
+// then the PARAM's slot is zeroed so the exit sweep's deep-drop no-ops (the
+// helpers' null / low-address guards make a zeroed slot inert). dupSlots holds
+// the slots of this arm's consumingBindings — single-word box pointers by
+// construction (enum / user struct / tuple; string / array payloads are
+// excluded by the isOwnedByDefaultType gate). Uniform-box enums only; anything
+// else keeps the box for the exit sweep (safe, and excluded by the analysis
+// gates anyway).
+func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupSlots []int32, paramName string) {
+	paramSlot, ok := b.locals[paramName]
+	if !ok {
+		return
+	}
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	size, ok := uniformEnumBoxSize(ed, b.ptrW)
+	if !ok {
+		return
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	// Unique: free the box BUFFER only — the bindings inherit the payload
+	// counts. Same shape as the `own`-param shallow free.
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpElse})
+	// Shared: dup the counted bindings, then release our box reference.
+	for _, slot := range dupSlots {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+	// Dead the param slot: the scrutinee is consumed on this path, so the
+	// exit sweep (which still visits the param) must see a null.
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: paramSlot})
 }
 
 // ownParamEnumScrutinee reports the enum type when `tag` is a bare reference to
@@ -12329,7 +12489,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// where each arm knows its exact type.
 		if loadsOk && sizeOk && !enumHasPointerPayload(ed) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for _, ld := range loads {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -12346,7 +12506,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 			return
@@ -12365,7 +12525,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// __drop_enum_ route handles the per-iteration loop-var reinit drop.
 		if plan, ok := enumVariantDropPlan(ed, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			// One shared per-function tag stash (#4476): allocated on first
 			// use, reused by every later inline enum slot-drop. Sound because
@@ -12417,7 +12577,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			}
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 			return
@@ -12426,7 +12586,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	if edOk {
 		if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for _, ld := range loads {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -12441,7 +12601,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		}
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12468,7 +12628,7 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -12700,7 +12860,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpNe})                      // cow copied?
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
@@ -12776,7 +12936,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emitStructEnumSlotDrop(idx, sety)
 			} else {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
@@ -12823,7 +12983,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		} else if tt, isTup := tupleTypeOfLocal(t.Name, b); isTup && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
@@ -12921,7 +13081,14 @@ func (b *builder) assign(n *ast.Assign) error {
 		// See docs/RC-PERCEUS-PLAN.md "Phase 2".
 		if !t.IsSlice {
 			if arrIdent, ok := t.Array.(*ast.Ident); ok {
-				if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
+				// A boxcapture cell is a shared mutable reference (a closure and
+				// the outer scope alias it deliberately), so its `cell[0] = v`
+				// write must store IN PLACE — never CoW, which would fork the
+				// cell whenever a closure also holds it (rc > 1) and silently
+				// drop the sharing. Fall through to the direct in-place store.
+				if b.info != nil && b.info.BoxedCells[arrIdent.Name] {
+					// (skip the CoW dispatch below)
+				} else if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
 					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
 				}
 			}
@@ -14488,7 +14655,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// copy is rc 1.) A move receiver (last use / reassign-self / temp)
 	// skips this and keeps the rc==1 in-place fast path.
 	if b.rc.arraySetInc[n] {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	cowHelper := "__fern_arr_cow_inplace"
@@ -14597,7 +14764,7 @@ func cellElemOf(t ast.Type) ast.Type {
 // array's). Net-zero on the operand stack.
 func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 	if !ast.RcFreeEnabled || !eligible {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14696,7 +14863,7 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		} else if b.ptrW == 8 {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		}
 	}
 	return nil
@@ -14737,7 +14904,7 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 		} else {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		}
 		b.emit(Op{Kind: OpDrop})
 	}
@@ -15137,7 +15304,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		// strings under TwoWordOverride) is excluded since map values
 		// are stored as cell pointers and rc_inc on a cell pointer
 		// would bump the cell's rc, not the string's.
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
 	// Non-boxed: the payload IS the V value (an i32 in the low
 	// bits, or a pointer-shaped V address). payloadStoreOpFor

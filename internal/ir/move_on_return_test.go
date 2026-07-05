@@ -36,7 +36,7 @@ func lowerForTest(t *testing.T, src string) *ir.Program {
 func incCount(fn *ir.Func) int {
 	n := 0
 	for _, op := range fn.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == "__fern_rc_inc" {
+		if op.Kind == ir.OpRcInc {
 			n++
 		}
 	}
