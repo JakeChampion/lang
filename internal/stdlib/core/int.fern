@@ -145,6 +145,11 @@ pub function parse_int_radix(s: string, base: i32): Option[i32] {
     return Some(v);
 }
 
+// `int_to_string_radix(n, base)` — render `n` in `base` (2..36), digits
+// 0-9a-z, signed (a negative `n` gets a leading '-'). An out-of-range base
+// (< 2 or > 36) returns "" as the "undefined" sentinel — the string-side
+// mirror of `parse_int_radix`'s `None` on the same bad base. Callers passing
+// a fixed valid base (`to_binary`/`to_hex`/… always do) never observe it.
 pub function int_to_string_radix(n: i32, base: i32): string {
     if (base < 2 || base > 36) { return ""; }
     if (n == 0) { return "0"; }

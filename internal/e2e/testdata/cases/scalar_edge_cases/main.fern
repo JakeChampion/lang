@@ -1,0 +1,36 @@
+import "std/i32";
+import "std/string";
+import "core/int";
+
+// #4390: readable-by-inspection scalar edge cases that once silently
+// misbehaved, pinned across every backend.
+//
+//  - i32::MIN poisoned the whole digit family (digits / sum_of_digits /
+//    has_digit / reverse_digits): abs() wraps at INT_MIN, so an i32
+//    `while (u > 0)` magnitude loop spun zero times and reported 0/false.
+//    The fixed versions operate on the i64 magnitude.
+//  - string.truncate now guards a non-positive cap (a negative `n` would
+//    otherwise fall through to `s[0:n]`, a negative slice bound), matching
+//    its `ellipsis` sibling.
+//  - divmod(0) and int_to_string_radix(bad base) return their documented
+//    sentinels ((0,0) and "" respectively).
+function d(n: i32): string { return int.int_to_string_radix(n, 10); }
+
+function main(): i32 {
+    var mn: i32 = 0 - 2147483647 - 1;   // i32::MIN = -2147483648
+    print(d(mn.digits()));               // 10
+    print(d(mn.sum_of_digits()));        // 47 = 2+1+4+7+4+8+3+6+4+8
+    if (mn.has_digit(8)) { print("has8"); } else { print("no8"); }
+    print(d((0 - 1234).reverse_digits()));   // -4321 (sign preserved)
+    // string.truncate: a non-positive cap yields "" instead of slicing
+    // with a negative bound.
+    print("[" + "hello".truncate(0 - 3, "..") + "]");   // []
+    print("[" + "hello".truncate(0, "..") + "]");       // []
+    // documented sentinels
+    var dm = (10).divmod(0);
+    print(d(dm.0) + "," + d(dm.1));      // 0,0
+    print("[" + int.int_to_string_radix(42, 99) + "]");   // []  base > 36
+    print("[" + int.int_to_string_radix(42, 1) + "]");    // []  base < 2
+    print(int.int_to_string_radix(0 - 255, 16));          // -ff (valid base)
+    return 0;
+}
