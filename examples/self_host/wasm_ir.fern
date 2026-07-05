@@ -972,9 +972,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // Saturating truncation: NaN -> 0, overflow -> clamp (#4332). The
             // non-saturating i32.trunc_f64_s TRAPS on NaN/overflow, aborting the
             // module; the contract (docs/FLOAT-SEMANTICS.md) is total-saturating.
-            out = out + "    i32.trunc_sat_f64_s\n";
+            // Unsigned (`f64 as u32`) saturates over the full u32 range.
+            if (o.unsigned) { out = out + "    i32.trunc_sat_f64_u\n"; }
+            else { out = out + "    i32.trunc_sat_f64_s\n"; }
         } else if (o.kind_tag == 13) {  // f64_to_i64
-            out = out + "    i64.trunc_sat_f64_s\n";
+            if (o.unsigned) { out = out + "    i64.trunc_sat_f64_u\n"; }
+            else { out = out + "    i64.trunc_sat_f64_s\n"; }
         } else if (o.kind_tag == 16) {  // f64_bits
             // f64 -> i64 bit reinterpret (typed stack flips f64 -> i64).
             out = out + "    i64.reinterpret_f64\n";

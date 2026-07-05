@@ -1109,12 +1109,24 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // out-of-range clamps to INT32_MIN/MAX), then sign-extend into the
             // 64-bit slot. The old `fcvtzs x0, d0` saturated to i64 and kept the
             // low 32 bits, so e.g. 1e12 wrapped instead of clamping (#4332).
-            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs w0, d0\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
+            // Unsigned (`f64 as u32`): fcvtzu w0 saturates over [0, u32::MAX]
+            // (NaN / negative -> 0), and the w-dest zero-extends into x0 — no
+            // sxtw, a u32 rides zero-extended.
+            if (o.unsigned) {
+                s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzu w0, d0\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs w0, d0\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 13) {  // f64_to_i64
             // f64 -> signed i64, truncating toward zero. fcvtzs x0, d0 already
             // produces the full 64-bit result, so it is the same instruction as
-            // f64_to_i32 (which only keeps the low 32 bits).
-            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+            // f64_to_i32 (which only keeps the low 32 bits). Unsigned
+            // (`f64 as u64`): fcvtzu x0 saturates over [0, u64::MAX].
+            if (o.unsigned) {
+                s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzu x0, d0\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 16 || o.kind_tag == 17) {  // f64_bits, f64_from_bits
             // No-op reinterpret: the 8-byte rt-stack slot already holds the
             // IEEE-754 bit pattern, identical to the i64 bits.

@@ -3921,6 +3921,10 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (expr_is_f64(u.operand, s)) {
                     var fw: LowerState = lower_expr(u.operand, s);
                     if (!fw.ok) { return fw; }
+                    // `f64 as u64` truncates UNSIGNED (#4332): the signed
+                    // f64_to_i64 clamps at INT64_MAX, so 1e19 as u64 read as
+                    // 9223372036854775807 instead of 10^19.
+                    if (u.op == "as_u64") { return fw.emit(ir.op_f64_to_u64()); }
                     return fw.emit(ir.op_f64_to_i64());
                 }
                 match (u.operand) {
@@ -5011,7 +5015,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (expr_is_f64(u.operand, s)) {
                     var fc: LowerState = lower_expr(u.operand, s);
                     if (!fc.ok) { return fc; }
-                    fc = fc.emit(ir.op_f64_to_i32());
+                    // `f64 as u32` truncates UNSIGNED (#4332): the signed
+                    // f64_to_i32 clamps at INT32_MAX, so 3e9 as u32 read as
+                    // 2147483647 instead of 3000000000. Native saturates over
+                    // the full u32 range (fcvtzu / trunc_sat_f64_u).
+                    if (cty == "u32") { fc = fc.emit(ir.op_f64_to_u32()); }
+                    else { fc = fc.emit(ir.op_f64_to_i32()); }
                     return fc.emit(ir.op_int_cast(cty));
                 }
                 if (infer_expr_width(u.operand, s) == 64) {
