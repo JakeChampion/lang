@@ -5704,8 +5704,12 @@ func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatE
 
 // tupleMatchBindArm extracts the arm's binder elements from the tuple
 // box into their binding slots (same load shape as the enum-match
-// heap-form payload binds — borrowed, no inc).
-func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, ptrSlot int32, offs []int32) {
+// heap-form payload binds — borrowed, no inc). The returned restore
+// undoes any cross-shape temporary name remaps (#4510, see
+// bindingSlotScoped) — callers invoke it right after lowering the arm
+// body.
+func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, ptrSlot int32, offs []int32) func() {
+	restores := []func(){}
 	for k, el := range tupleElems {
 		if el.Name == "" || k >= len(offs) {
 			continue
@@ -5714,12 +5718,18 @@ func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes 
 		if k < len(bindingTypes) && bindingTypes[k] != nil {
 			bt = bindingTypes[k]
 		}
-		slot := b.bindingSlot(el.Name, bt)
+		slot, restore := b.bindingSlotScoped(el.Name, bt)
+		restores = append(restores, restore)
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(payloadLoadOpFor(bt, b.ptrW))
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
+	return func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
 	}
 }
 
@@ -5767,7 +5777,7 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 			b.openIf(BlockTypeVoid)
 		}
 		// Bind BEFORE the guard so the guard sees the arm's names.
-		b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
 		if arm.Guard != nil {
 			if err := b.expr(arm.Guard); err != nil {
 				return err
@@ -5777,6 +5787,7 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 		if err := b.stmt(arm.Body); err != nil {
 			return err
 		}
+		restoreBinds()
 		b.brTo(exitDepth, false)
 		if arm.Guard != nil {
 			b.closeScope()
@@ -5857,7 +5868,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 			}
 			b.openIf(BlockTypeVoid)
 		}
-		b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
 		if arm.Guard != nil {
 			if err := b.expr(arm.Guard); err != nil {
 				return err
@@ -5867,6 +5878,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 		if err := b.emitCountedYield(arm.Body); err != nil {
 			return err
 		}
+		restoreBinds()
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 		b.brTo(exitDepth, false)
 		if arm.Guard != nil {
@@ -5931,19 +5943,46 @@ func bindingSlotTwoWord(t ast.Type, ptrW int) bool {
 // Slot-shape guard: a two-word logical slot (wasm strings / inline dyn)
 // cannot share an index with a single-word one — the backend sizes
 // physical slots from the declared param / local / scratch type. Mixed
-// shapes fall back to a fresh slot (the pre-fix behavior) — the
-// shadowing hazard remains only for that rare cross-shape collision.
+// shapes fall back to a fresh slot; on the SCOPED variant below the
+// name remap is temporary (restored when the binding's scope ends), so
+// the shadowing hazard the fresh slot used to introduce (#4510 — reads,
+// the entry zero-init, and later-lowered exit sweeps splitting one name
+// across two slots, observed as the self-host interp's ExprTuple loop
+// trapping its own arm64 bounds check) cannot outlive the arm.
 func (b *builder) bindingSlot(name string, bt ast.Type) int32 {
+	slot, _ := b.bindingSlotScoped(name, bt)
+	return slot
+}
+
+// bindingSlotScoped is bindingSlot plus a restore closure for bindings
+// whose visibility ends with their arm / Then body (match arms, if-let,
+// tuple-match binds). On the same-shape reuse path and for a first-sight
+// name the restore is a no-op — those mappings are deliberately
+// permanent (sibling arms share the slot; the exit sweep resolves the
+// name through it). On the CROSS-SHAPE fresh-slot path (#4510: a
+// two-word string/dyn var vs a one-word binding, arm64/wasm) the remap
+// is temporary: callers invoke restore right after lowering the arm
+// body, reinstating the shadowed slot so everything lowered afterwards
+// — reads of the outer name, the exit dec sweep at later returns —
+// resolves the var's own (entry-zeroed) slot again. Let-else bindings
+// outlive their statement and keep the plain bindingSlot (permanent
+// remap IS their semantics).
+func (b *builder) bindingSlotScoped(name string, bt ast.Type) (int32, func()) {
 	if slot, ok := b.locals[name]; ok {
 		if bindingSlotTwoWord(b.slotShapeType(slot), b.ptrW) == bindingSlotTwoWord(bt, b.ptrW) {
 			b.scratchType[slot] = bt
-			return slot
+			return slot, func() {}
 		}
+		prev := slot
+		fresh := b.allocSlot()
+		b.locals[name] = fresh
+		b.scratchType[fresh] = bt
+		return fresh, func() { b.locals[name] = prev }
 	}
 	slot := b.allocSlot()
 	b.locals[name] = slot
 	b.scratchType[slot] = bt
-	return slot
+	return slot, func() {}
 }
 
 // slotShapeType returns the type that sizes `slot`'s physical storage in
@@ -6123,17 +6162,24 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.openIf(BlockTypeVoid)
 			// Pair-form is scoped to Option[i32] today; there's
 			// always exactly one binding (the payload).
+			pairRestores := []func(){}
 			for i, name := range n.Bindings {
 				bt := ast.Type(ast.NumberType{})
 				if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
 					bt = n.BindingTypes[i]
 				}
-				slot := b.bindingSlot(name, bt)
+				slot, restore := b.bindingSlotScoped(name, bt)
+				pairRestores = append(pairRestores, restore)
 				b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 			if err := b.stmt(n.Then); err != nil {
 				return err
+			}
+			// Bindings are scoped to Then — undo any cross-shape
+			// temporary remaps (#4510) before Else / following code.
+			for i := len(pairRestores) - 1; i >= 0; i-- {
+				pairRestores[i]()
 			}
 			if n.Else != nil {
 				b.elseBranch()
@@ -6158,12 +6204,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.openIf(BlockTypeVoid)
 		// Match: bind payloads, run Then.
 		offsets, _ := payloadLayout(n.BindingTypes, len(n.Bindings), b.ptrW)
+		ifletRestores := []func(){}
 		for i, name := range n.Bindings {
 			bt := ast.Type(ast.NumberType{})
 			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
 				bt = n.BindingTypes[i]
 			}
-			slot := b.bindingSlot(name, bt)
+			slot, restore := b.bindingSlotScoped(name, bt)
+			ifletRestores = append(ifletRestores, restore)
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 			b.emit(Op{Kind: OpAdd})
@@ -6172,6 +6220,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		if err := b.stmt(n.Then); err != nil {
 			return err
+		}
+		// Bindings are scoped to Then — undo any cross-shape temporary
+		// remaps (#4510) before the Else branch / following code lowers.
+		for i := len(ifletRestores) - 1; i >= 0; i-- {
+			ifletRestores[i]()
 		}
 		if n.Else != nil {
 			b.elseBranch()
@@ -6812,12 +6865,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// payload local directly (no heap load); heap-form
 			// scrutinees load from `[ptr+offset]`.
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
+			armRestores := []func(){}
 			for i, name := range arm.Bindings {
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
-				slot := b.bindingSlot(name, bt)
+				slot, restore := b.bindingSlotScoped(name, bt)
+				armRestores = append(armRestores, restore)
 				if pairFormScrutinee {
 					b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 				} else {
@@ -6886,13 +6941,19 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.stmt(arm.Body); err != nil {
 				return err
 			}
-			// Bindings stay in b.locals after the arm finishes:
-			// the IR only cares about slot indices (already
-			// stamped into emitted ops), and `scratchCount` at
-			// the end of lowerFunc must reflect every slot we
-			// ever wrote. Two arms with overlapping binding names
-			// won't clash at runtime — at most one arm body runs
-			// per match.
+			// SAME-shape bindings stay in b.locals after the arm
+			// finishes: the IR only cares about slot indices
+			// (already stamped into emitted ops), and
+			// `scratchCount` at the end of lowerFunc must reflect
+			// every slot we ever wrote. Two arms with overlapping
+			// binding names won't clash at runtime — at most one
+			// arm body runs per match. CROSS-shape bindings undo
+			// their temporary remap here (#4510) so the outer
+			// name's own slot is visible again to everything
+			// lowered after this arm.
+			for i := len(armRestores) - 1; i >= 0; i-- {
+				armRestores[i]()
+			}
 			b.brTo(matchEndD, false) // jump past remaining arms
 			b.closeScope()           // end outer per-arm block
 		}
@@ -7486,12 +7547,14 @@ func (b *builder) expr(e ast.Expr) error {
 			b.brTo(outerArmD, false)
 			b.closeScope() // matched path lands here
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
+			exprArmRestores := []func(){}
 			for i, name := range arm.Bindings {
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
-				slot := b.bindingSlot(name, bt)
+				slot, restore := b.bindingSlotScoped(name, bt)
+				exprArmRestores = append(exprArmRestores, restore)
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 				b.emit(Op{Kind: OpAdd})
@@ -7507,6 +7570,11 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
+			}
+			// Undo cross-shape temporary remaps (#4510) once the arm
+			// body is lowered; same-shape mappings persist as before.
+			for i := len(exprArmRestores) - 1; i >= 0; i-- {
+				exprArmRestores[i]()
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 			b.brTo(matchEndD, false)

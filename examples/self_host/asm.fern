@@ -3119,19 +3119,35 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 if (s.struct_decls[lfi].name == sl.type_name) { lit_fields = s.struct_decls[lfi].fields; }
                 lfi = lfi + 1;
             }
-            var slot_of: i32[] = [];
-            var so: i32 = 0;
-            while (so < n_fields) {
-                var so_idx: i32 = so;
-                if (lit_fields.len() > 0 && so < sl.field_names.len()) {
-                    var sd: i32 = 0;
-                    while (sd < lit_fields.len()) {
-                        if (lit_fields[sd].name == sl.field_names[so]) { so_idx = sd; }
-                        sd = sd + 1;
-                    }
+            // Allocation-free fast path: virtually every literal already lists
+            // its fields in decl order, and this emitter runs on the
+            // leak-everything bump heap — building a slot_of array per literal
+            // across a whole self-compile is real heap pressure (the arm64
+            // stage-2 self-compile sits near its arena limit, #3425). Only
+            // build the mapping when a name is actually out of place.
+            var lit_in_order: boolean = true;
+            var oc: i32 = 0;
+            while (oc < n_fields) {
+                if (lit_fields.len() > 0 && oc < sl.field_names.len() && oc < lit_fields.len()) {
+                    if (lit_fields[oc].name != sl.field_names[oc]) { lit_in_order = false; }
                 }
-                slot_of = slot_of.append(so_idx);
-                so = so + 1;
+                oc = oc + 1;
+            }
+            var slot_of: i32[] = [];
+            if (!lit_in_order) {
+                var so: i32 = 0;
+                while (so < n_fields) {
+                    var so_idx: i32 = so;
+                    if (lit_fields.len() > 0 && so < sl.field_names.len()) {
+                        var sd: i32 = 0;
+                        while (sd < lit_fields.len()) {
+                            if (lit_fields[sd].name == sl.field_names[so]) { so_idx = sd; }
+                            sd = sd + 1;
+                        }
+                    }
+                    slot_of = slot_of.append(so_idx);
+                    so = so + 1;
+                }
             }
             var i: i32 = 0;
             while (i < n_fields) {
@@ -3171,7 +3187,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %rcx\n");       // value (helper returns the ptr)
                     s = s.write("    popq %rax\n");             // restore box ptr
                 }
-                s = s.write("    movq %rcx, " + util.i32_to_string((slot_of[j] + 1) * 8) + "(%rax)\n");
+                var st_idx: i32 = j;
+                if (!lit_in_order) { st_idx = slot_of[j]; }
+                s = s.write("    movq %rcx, " + util.i32_to_string((st_idx + 1) * 8) + "(%rax)\n");
                 j = j - 1;
             }
             s = s.write("    pushq %rax\n");
