@@ -13,6 +13,7 @@ import "std/io";
 import "./lexer";
 import "./parser";
 import "./util";
+import "./asmcore";
 import "./wasm";
 import "./wasm_ir";
 
@@ -26,6 +27,15 @@ function main(): i32 {
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
+    // must reject before either the IR or the AST-fallback emit runs, not
+    // miscompile. Checked on a default-filled COPY (the emit input is
+    // untouched; both emit paths fill defaults themselves).
+    var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    if (arity_errs.len() > 0) {
+        eprint(arity_errs);
+        return 1;
+    }
     var emitted: string = "";
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
     // Eligibility must be judged with the builtin structs/enums injected
