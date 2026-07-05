@@ -187,6 +187,69 @@ function test_depth_limit(): test.TestOutcome {
     }
 }
 
+// ---- float accessor + integer overflow signalling (#4384 item 4) ----
+
+// json_get_f64 extracts a fractional number the integer getters reject.
+function test_get_f64(): test.TestOutcome {
+    match (json.json_parse("{\"x\":3.5}")) {
+        Some(v) => {
+            match (json.json_get_f64(v, "x")) {
+                Some(f) => {
+                    var d: f64 = f - 3.5;
+                    if (d < 0.0) { d = 0.0 - d; }
+                    return test.assert_true(d < 0.0001);
+                },
+                None => { return test.fail("expected Some(f64)"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+// json_get_f64 also decodes exponent form.
+function test_get_f64_exp(): test.TestOutcome {
+    match (json.json_parse("{\"x\":1.5e3}")) {
+        Some(v) => {
+            match (json.json_get_f64(v, "x")) {
+                Some(f) => {
+                    var d: f64 = f - 1500.0;
+                    if (d < 0.0) { d = 0.0 - d; }
+                    return test.assert_true(d < 0.001);
+                },
+                None => { return test.fail("expected Some(f64)"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+// json_get_i32 signals overflow as None instead of wrapping:
+// 2147483648 = i32 max + 1.
+function test_get_i32_overflow(): test.TestOutcome {
+    match (json.json_parse("{\"x\":2147483648}")) {
+        Some(v) => {
+            match (json.json_get_i32(v, "x")) {
+                Some(x) => { return test.fail("expected None on i32 overflow"); },
+                None => { return test.pass(); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+// json_get_i64 signals overflow as None: a 20-digit body can't fit i64.
+function test_get_i64_overflow(): test.TestOutcome {
+    match (json.json_parse("{\"x\":99999999999999999999}")) {
+        Some(v) => {
+            match (json.json_get_i64(v, "x")) {
+                Some(x) => { return test.fail("expected None on i64 overflow"); },
+                None => { return test.pass(); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/json roundtrip");
     r = r.it("get_string",        test_get_string());
@@ -202,5 +265,9 @@ function main(): i32 {
     r = r.it("parse invalid",     test_parse_invalid());
     r = r.it("depth ok",          test_depth_ok());
     r = r.it("depth limit",       test_depth_limit());
+    r = r.it("get_f64",           test_get_f64());
+    r = r.it("get_f64 exp",       test_get_f64_exp());
+    r = r.it("get_i32 overflow",  test_get_i32_overflow());
+    r = r.it("get_i64 overflow",  test_get_i64_overflow());
     return r.finish();
 }
