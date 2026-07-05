@@ -52,6 +52,13 @@ var reuseDifferentialCases = []struct {
 	// `var c = P { ...d, x: v }` path.
 	{"self-overwrite-callret-base", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var c: P = P { ...d, x: 10 }; return c.x + c.y; }`, 14, "call __fn___fern_alloc_reuse"},
 	{"self-overwrite-callret-base-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var c: P = P { ...d, x: 10 }; var s: i32 = c.x + c.y; if (s != 14) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 2c — cross-statement struct reuse with an ENUM field (#4356
+	// divergence 1): both the donor's and the recipient's enum values are
+	// fresh variant ctors (donor_enum_fields_fresh + the recipient walk), so
+	// the reuse arm's flat rc-gated dec of the donor's old enum box is
+	// alias-free and the recycled box solely owns the new payload box.
+	{"cross-struct-enum-field", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: Off }; var r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u; } } return r; }`, 8, "call __fn___fern_alloc_reuse"},
+	{"cross-struct-enum-field-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: Off }; var r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u; } } if (r != 8) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).

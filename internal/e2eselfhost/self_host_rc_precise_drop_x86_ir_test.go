@@ -220,6 +220,23 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// receiver approximation), so the donor is not admitted. Sound leak-free
 		// fallback: value correct, detector 0.
 		{"struct-cross-no-reuse-unannotated-callret-detector", `struct Point { x: i32, y: i32 } function mk(a: i32): Point { return Point { x: a, y: a + 1 }; } function main(): i32 { var d = mk(3); var u = d.x + d.y; var c = Point { x: 10, y: 20 }; var s = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0},
+		// ENUM-field cross-reuse (#4356 divergence 1): the donor's old payload-
+		// carrying enum box is flat-dec-freed on the reuse arm and the recycled
+		// struct box solely owns the recipient's fresh ctor value; the sentinel
+		// (payloadless Off) round-trips too. Value correct, detector 0.
+		{"struct-cross-reuse-enum-field-value", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: On(10) }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + u; }, Off => { r = 0; } } return r; }`, 18},
+		{"struct-cross-reuse-enum-field-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: On(10) }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + u; }, Off => { r = 0; } } if (r != 18) { return 99; } return __rc_underflow(); }`, 0},
+		// ENUM-field corruption probe: a fresh array allocated AFTER the enum-field
+		// reuse reads back intact (the old enum box was freed exactly once; the
+		// recycled struct box was not double-released).
+		{"struct-cross-reuse-enum-field-corruption-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v; }, Off => { u = 0; } } var c = M { tag: 2, st: Off }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; var r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag; } } if (u != 5) { return 90; } if (s != 66) { return 91; } if (r != 2) { return 92; } return __rc_underflow(); }`, 0},
+		// NON-firing: the donor's enum field value is an ALIAS (a bare ident, not
+		// a fresh ctor) — donor_enum_fields_fresh rejects, so the flat dec can
+		// never free a box the alias still holds. Value + detector 0.
+		{"struct-cross-no-reuse-aliased-enum-donor-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var e0: St = On(7); var d = M { tag: 1, st: e0 }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: Off }; var w: i32 = 0; match (e0) { On(v) => { w = v; }, Off => { w = 0; } } var r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u + w; } } if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: the RECIPIENT's enum value is an alias — the recipient walk
+		// rejects, fresh box, nothing double-frees. Value + detector 0.
+		{"struct-cross-no-reuse-aliased-enum-recipient-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var e1: St = On(9); var c = M { tag: 2, st: e1 }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + u; }, Off => { r = 0; } } if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
 		// NON-firing cross case: the donor d is used AFTER the full construction
 		// (`d.x` in the return), so d is NOT dead at the construction — reuse must NOT
 		// fire and c gets a fresh box. Value still correct, detector 0.

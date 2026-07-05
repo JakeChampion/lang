@@ -17014,6 +17014,36 @@ function struct_fields_reusable(structs: parser.StructDecl[], struct_name: strin
     return false;
 }
 
+// struct_fields_reusable_cross widens struct_fields_reusable for the
+// CROSS-STATEMENT reuse family only (#4356 divergence 1): ENUM-typed fields
+// are additionally admitted. Sound there because the donor is DEAD and every
+// field is rewritten — the reuse arm releases the OLD enum field with a flat
+// rc-gated `__fern_rc_dec` (a payloadless sentinel is guard-skipped, an
+// aliased box just decs, a sole-owned box frees — payloads leak, the same
+// safe-leak model the exit sweep applies to non-reclaimable enum slots), and
+// the recipient's enum field VALUES are gated FRESH variant-constructor
+// calls (cross_reuse_sites), so the reused box solely owns the new payload
+// box. The self-overwrite family keeps the narrower predicate (carried
+// fields would need per-field retain/release balancing — a later slice).
+function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name: string): boolean {
+    if (struct_fields_reusable(structs, struct_name)) { return true; }
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            if (structs[i].fields.len() == 0) { return false; }
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                var t: string = structs[i].fields[fi].type_name;
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs)) { return false; }
+                fi = fi + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // ReuseSites: parallel arrays — for each self-overwrite reuse site, the
 // top-level body-statement index and the base local name d whose box is reused
 // in place. A flat pair (not string[][]) for the same self-host nested-array
@@ -17056,6 +17086,60 @@ function fresh_struct_lit_type(body: parser.Stmt[], name: string): string {
 // `: T` annotation — it is both the donor-type source and the receiver-type
 // approximation is_fresh_ret_binding's method key needs. Returns "" when the
 // binding is neither form.
+// struct_has_enum_field: struct `name` declares at least one enum-typed field.
+function struct_has_enum_field(structs: parser.StructDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (is_enum_like_name(structs[i].fields[fi].type_name, structs)) { return true; }
+                fi = fi + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// donor_enum_fields_fresh: the donor's LITERAL bind sets every enum-typed
+// field from a fresh variant-constructor call of that enum — so the donor's
+// box solely owns each enum payload box and the reuse arm's flat dec can
+// never free a box a live alias still holds (#4356 divergence 1). A donor
+// bound from a call (strict-fresh registry constrains only array fields) or
+// a literal with an aliased / non-ctor enum value is REJECTED when the type
+// carries enum fields. True when the type has no enum fields at all.
+function donor_enum_fields_fresh(body: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprStructLit(sl) => {
+                            if (sl.has_base) { return false; }
+                            var fk: i32 = 0;
+                            while (fk < sl.field_names.len()) {
+                                var fkt: string = decl_field_type(structs, sl.type_name, sl.field_names[fk]);
+                                if (is_enum_like_name(fkt, structs)) {
+                                    if (variant_ctor_enum_owner(sl.field_values[fk], structs) != fkt) { return false; }
+                                }
+                                fk = fk + 1;
+                            }
+                            return true;
+                        },
+                        _ => { return false; }
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function donor_bind_type(body: parser.Stmt[], name: string, structs: parser.StructDecl[], fresh_ret: string[]): string {
     var lit: string = fresh_struct_lit_type(body, name);
     if (lit != "") { return lit; }
@@ -17445,6 +17529,12 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                     // never reassigned, never escapes anywhere in the body.
                     if (util.index_of_str(body_assign_targets(body), dname) >= 0) { elig = false; }
                 }
+                if (elig && struct_has_enum_field(structs, c_type)) {
+                    // Enum-field types pair same-type only (the cross-type case
+                    // is all-scalar), so the donor's enum values must be fresh
+                    // ctors for the reuse arm's flat dec to be alias-free.
+                    if (!donor_enum_fields_fresh(body, dname, structs)) { elig = false; }
+                }
                 if (elig) {
                     var allesc: string[] = walk_stmts_escapes(body, []);
                     if (util.index_of_str(allesc, dname) >= 0) { elig = false; }
@@ -17488,13 +17578,17 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
-                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
+                            if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)) {
                                 // every leak-safe array field VALUE must be a fresh
                                 // array literal (the reused box then owns it); likewise
                                 // a nested-struct field value must be a fresh (no-base)
                                 // struct literal, so the reused box solely owns the new
                                 // inner box (rc=1, no alias-inc) once the old inner is
-                                // full-freeing-dropped in emit_cross_struct_reuse.
+                                // full-freeing-dropped in emit_cross_struct_reuse; an
+                                // ENUM field value (#4356 divergence 1) must be a fresh
+                                // variant-constructor call of that enum, so the reused
+                                // box solely owns the new payload box (a payloadless
+                                // ctor yields a guard-skipped sentinel — also safe).
                                 var ok: boolean = true;
                                 var fk: i32 = 0;
                                 while (fk < slit.field_names.len()) {
@@ -17509,6 +17603,8 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                                             parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
                                             _ => { ok = false; }
                                         }
+                                    } else if (is_enum_like_name(fkt, structs)) {
+                                        if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { ok = false; }
                                     }
                                     fk = fk + 1;
                                 }
@@ -17639,6 +17735,18 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     if (struct_has_reclaim_array_field(st.structs, rty)) {
                         st = st.emit(ir.op_call_direct("__struct_drop_" + rty, 1));
                     }
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (is_enum_like_name(rty, st.structs)) {
+                    // ENUM field (#4356 divergence 1): flat rc-gated box dec of
+                    // the OLD value — a payloadless sentinel is guard-skipped, a
+                    // sole-owned box frees (payloads leak, the exit sweep's
+                    // safe-leak model for enum slots), an aliased box just decs.
+                    // Admission gates both sides' enum values to fresh variant
+                    // ctors (donor_enum_fields_fresh / the recipient walk), so
+                    // the freed box can never be a still-live alias.
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
                 }
