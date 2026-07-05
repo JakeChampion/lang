@@ -237,6 +237,17 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing: the RECIPIENT's enum value is an alias — the recipient walk
 		// rejects, fresh box, nothing double-frees. Value + detector 0.
 		{"struct-cross-no-reuse-aliased-enum-recipient-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var e1: St = On(9); var c = M { tag: 2, st: e1 }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + u; }, Off => { r = 0; } } if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
+		// SELF-OVERWRITE enum override (#4356 divergence 1): the base's old On(5)
+		// box is flat-dec-freed on the reuse arm before On(9) overwrites; the
+		// carried variant moves with the box. Values + detector 0.
+		{"struct-selfoverwrite-enum-override-value", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var c = M { ...d, st: On(9) }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag; }, Off => { r = 0; } } return r; }`, 10},
+		{"struct-selfoverwrite-enum-override-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var c = M { ...d, st: On(9) }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag; }, Off => { r = 0; } } if (r != 10) { return 99; } return __rc_underflow(); }`, 0},
+		// SELF-OVERWRITE carried enum field: not in the override list — moves
+		// with the reused box; the payload survives the rebuild. Detector 0.
+		{"struct-selfoverwrite-enum-carried-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var c = M { ...d, tag: 2 }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag; }, Off => { r = 0; } } if (r != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: the base's enum field value is an ALIAS — donor_enum_fields_fresh
+		// rejects the base, normal has-base lowering, nothing double-frees.
+		{"struct-selfoverwrite-no-reuse-aliased-enum-base-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var e0: St = On(7); var d = M { tag: 1, st: e0 }; var c = M { ...d, st: On(9) }; var w: i32 = 0; match (e0) { On(v) => { w = v; }, Off => { w = 0; } } var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + w; }, Off => { r = 0; } } if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
 		// CROSS-TYPE class pairing (#4356 divergence 2): donor A and recipient B
 		// share only the box class (same field count, slot-uniform boxes); field
 		// kinds are position-SWAPPED, so the reuse arm's release must walk A's

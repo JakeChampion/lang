@@ -69,6 +69,14 @@ var reuseDifferentialCases = []struct {
 	// pointer — heap corruption the detector/values would catch).
 	{"cross-type-class-pairing", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = B { ys: [7, 8, 9], m: 2 }; return c.ys[2] + c.m + u; }`, 24, "call __fn___fern_alloc_reuse"},
 	{"cross-type-class-pairing-detector", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = B { ys: [7, 8, 9], m: 2 }; var s: i32 = c.ys[2] + c.m + u; if (s != 24) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 1c — self-overwrite with an ENUM field (#4356 divergence 1,
+	// self-overwrite family): an OVERRIDDEN enum field's old box is flat-dec
+	// released on the reuse arm (base's enum values fresh-ctor gated); a
+	// CARRIED enum field moves with the box (fresh arm copies + rc-incs it,
+	// sentinel-guarded).
+	{"self-overwrite-enum-override", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var c = M { ...d, st: On(9) }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag; }, Off => { r = 0; } } return r; }`, 10, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-enum-override-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var c = M { ...d, st: On(9) }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag; }, Off => { r = 0; } } if (r != 10) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-enum-carried-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var c = M { ...d, tag: 2 }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag; }, Off => { r = 0; } } if (r != 7) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).
