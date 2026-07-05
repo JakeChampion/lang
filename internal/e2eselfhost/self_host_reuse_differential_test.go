@@ -59,6 +59,16 @@ var reuseDifferentialCases = []struct {
 	// alias-free and the recycled box solely owns the new payload box.
 	{"cross-struct-enum-field", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: Off }; var r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u; } } return r; }`, 8, "call __fn___fern_alloc_reuse"},
 	{"cross-struct-enum-field-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var c = M { tag: 2, st: Off }; var r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u; } } if (r != 8) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 2d — CROSS-TYPE class pairing (#4356 divergence 2): donor A and
+	// recipient B share only the box class (same field count; boxes are
+	// slot-uniform), with per-position field KINDS swapped (scalar/array vs
+	// array/scalar) — previously rejected by the position-wise identity rule.
+	// The reuse arm releases A's old array at A's OWN slot (donor-layout
+	// walk), then B's fields overwrite. Values + detector prove the release
+	// hit the right slot (a recipient-layout walk would dec a scalar as a
+	// pointer — heap corruption the detector/values would catch).
+	{"cross-type-class-pairing", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = B { ys: [7, 8, 9], m: 2 }; return c.ys[2] + c.m + u; }`, 24, "call __fn___fern_alloc_reuse"},
+	{"cross-type-class-pairing-detector", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = B { ys: [7, 8, 9], m: 2 }; var s: i32 = c.ys[2] + c.m + u; if (s != 24) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).

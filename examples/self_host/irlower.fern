@@ -13307,8 +13307,11 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                         if (!slit.has_base && struct_fields_reusable(structs, slit.type_name) && xblock_struct_arrays_fresh(slit, structs)) {
                             var donor: string = cross_construction_donor(b_stmts, structs, k, slit.type_name, rv.name, so_bases, cons, fresh_ret);
                             if (donor.len() > 0) {
+                                // "dname|dtype" — keep the pair 3-part, consume the bare name.
+                                var xbar: i32 = 0;
+                                while (xbar < donor.len() && donor[xbar] != 124) { xbar = xbar + 1; }
                                 pairs = pairs.append(rv.name + "|" + donor);
-                                cons = cons.append(donor);
+                                cons = cons.append(donor[0 : xbar]);
                             }
                         }
                     },
@@ -13320,7 +13323,7 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                     parser.ExprTuple(tl) => {
                         var tdonor: string = cross_tuple_construction_donor(b_stmts, k, tl.elements.len(), rv.name, cons);
                         if (tdonor.len() > 0) {
-                            pairs = pairs.append(rv.name + "|" + tdonor);
+                            pairs = pairs.append(rv.name + "|" + tdonor + "|");
                             cons = cons.append(tdonor);
                         }
                     },
@@ -13399,7 +13402,7 @@ function xblock_without(pending: string[], recip: string): string[] {
 pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     var base: i32 = s.locals.len();
     var so: ReuseSites = ReuseSites { idxs: [], bases: [] };
-    var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [] };
+    var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [], dtypes: [] };
     var xtuple: CrossTupleReuseSites = CrossTupleReuseSites { idxs: [], donors: [] };
     if (!reuse_layer_disabled()) {
         so = self_overwrite_reuse_sites(stmts, s.structs, s.return_fresh_struct_ret_fns);
@@ -13438,7 +13441,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             }
         } else if (xri >= 0) {
             match (stmts[i]) {
-                parser.StmtVar(rv) => { st = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xri], true, st); },
+                parser.StmtVar(rv) => { st = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xri], xreuse.dtypes[xri], true, st); },
                 _ => { st = lower_stmt(stmts[i], st); },
             }
         } else if (xti >= 0) {
@@ -13475,15 +13478,23 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             var xbd: string = "";
             if (xb_kind > 0) { xbd = xblock_donor_for(st.xblock_pending, xbname); }
             if (xbd.len() > 0) {
+                // xbd is "dname|dtype" (struct donor; dtype = the donor's own
+                // layout type for the old-field release, #4356 divergence 2)
+                // or "dname|" (tuple donor). Split before dispatching.
+                var xdbar: i32 = 0;
+                while (xdbar < xbd.len() && xbd[xdbar] != 124) { xdbar = xdbar + 1; }
+                var xbd_name: string = xbd[0 : xdbar];
+                var xbd_type: string = "";
+                if (xdbar < xbd.len()) { xbd_type = xbd[xdbar + 1 : xbd.len()]; }
                 // Reuse the donor's box in place (release_prior, reclaimable-gated in
                 // the emitter). Dispatch by the recipient's construction kind; a tuple
                 // whose elements aren't ctor-eligible falls back to normal lowering.
                 match (stmts[i]) {
                     parser.StmtVar(rv) => {
                         match (rv.init) {
-                            parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd, true, st); },
+                            parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd_name, xbd_type, true, st); },
                             parser.ExprTuple(tup) => {
-                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.init, xbd, true, st); }
+                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.init, xbd_name, true, st); }
                                 else { st = lower_stmt(stmts[i], st); }
                             },
                             _ => { st = lower_stmt(stmts[i], st); },
@@ -16952,22 +16963,20 @@ function reuse_field_is_scalar(t: string): boolean {
 function structs_reuse_compatible(structs: parser.StructDecl[], dt: string, rt: string): boolean {
     if (dt == rt) { return dt.len() > 0; }
     if (!decl_is_struct(structs, dt) || !decl_is_struct(structs, rt)) { return false; }
+    // Class pairing (#4356 divergence 2): boxes are slot-uniform — every
+    // field occupies one 8-byte slot and the box is (nfields+1) words — so
+    // SAME FIELD COUNT means same allocation class (native's freelist-class
+    // rule specialised to this allocator). Position-wise kind/width identity
+    // is no longer needed: the reuse arm releases the donor's old fields by
+    // walking the DONOR's OWN field types at the donor's slots
+    // (emit_cross_struct_reuse), and the recipient's writes use the
+    // recipient's types as always. Each side independently needs reusable
+    // field kinds (struct_fields_reusable_cross); the donor's enum values
+    // are separately freshness-gated in cross_construction_donor.
     var dn: i32 = decl_field_count(structs, dt);
     var rn: i32 = decl_field_count(structs, rt);
     if (dn != rn || dn == 0) { return false; }
-    var i: i32 = 0;
-    while (i < dn) {
-        var dft: string = decl_field_type_at(structs, dt, i);
-        var rft: string = decl_field_type_at(structs, rt, i);
-        var d_arr: boolean = is_leaksafe_array_field(dft);
-        var r_arr: boolean = is_leaksafe_array_field(rft);
-        if (!reuse_field_is_scalar(dft) && !d_arr) { return false; }
-        if (!reuse_field_is_scalar(rft) && !r_arr) { return false; }
-        if (d_arr != r_arr) { return false; }   // kinds must match (emit dispatches on recipient kind)
-        if (struct_field_width(structs, dt, i) != struct_field_width(structs, rt, i)) { return false; }
-        i = i + 1;
-    }
-    return true;
+    return struct_fields_reusable_cross(structs, dt) && struct_fields_reusable_cross(structs, rt);
 }
 
 // inarm_reuse_payload_type_ok: a payload field type the in-arm match-reuse lowering
@@ -17499,7 +17508,7 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
 // CrossReuseSites: parallel arrays — for each cross-statement reuse site, the
 // construction's body-statement index and the donor local name d whose box it
 // reuses. A flat pair (not string[][]) for the self-host nested-array limitation.
-struct CrossReuseSites { idxs: i32[], donors: string[] }
+struct CrossReuseSites { idxs: i32[], donors: string[], dtypes: string[] }
 
 // stmt_is_full_struct_lit reports whether statement i is `var c = T { ... }` with
 // a full (no-base) struct literal of a struct type, returning the bound name and
@@ -17521,18 +17530,20 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                 // type (same type, OR — cross-type — an all-scalar struct of
                 // the same box class; structs_reuse_compatible), not a
                 // self-overwrite donor, and not already consumed here.
+                var dtype: string = donor_bind_type(body, dname, structs, fresh_ret);
                 var elig: boolean = dname != c_name
-                    && structs_reuse_compatible(structs, donor_bind_type(body, dname, structs, fresh_ret), c_type)
+                    && structs_reuse_compatible(structs, dtype, c_type)
                     && util.index_of_str(so_bases, dname) < 0
                     && util.index_of_str(consumed, dname) < 0;
                 if (elig) {
                     // never reassigned, never escapes anywhere in the body.
                     if (util.index_of_str(body_assign_targets(body), dname) >= 0) { elig = false; }
                 }
-                if (elig && struct_has_enum_field(structs, c_type)) {
-                    // Enum-field types pair same-type only (the cross-type case
-                    // is all-scalar), so the donor's enum values must be fresh
-                    // ctors for the reuse arm's flat dec to be alias-free.
+                if (elig && struct_has_enum_field(structs, dtype)) {
+                    // The DONOR's enum values must be fresh ctors for the reuse
+                    // arm's flat dec of its old enum boxes to be alias-free
+                    // (keyed on the donor type — with class pairing, #4356
+                    // divergence 2, donor and recipient types may differ).
                     if (!donor_enum_fields_fresh(body, dname, structs)) { elig = false; }
                 }
                 if (elig) {
@@ -17549,7 +17560,7 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                         m = m + 1;
                     }
                 }
-                if (elig) { return dname; }
+                if (elig) { return dname + "|" + dtype; }
             },
             _ => {}
         }
@@ -17567,6 +17578,7 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
     var so: ReuseSites = self_overwrite_reuse_sites(body, structs, fresh_ret);
     var idxs: i32[] = [];
     var donors: string[] = [];
+    var dtypes: string[] = [];
     var k: i32 = 0;
     while (k < body.len()) {
         // skip a statement that is itself a self-overwrite reuse site.
@@ -17611,8 +17623,11 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                                 if (ok) {
                                     var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors, fresh_ret);
                                     if (donor.len() > 0) {
+                                        var dbar: i32 = 0;
+                                        while (dbar < donor.len() && donor[dbar] != 124) { dbar = dbar + 1; }
                                         idxs = idxs.append(k);
-                                        donors = donors.append(donor);
+                                        donors = donors.append(donor[0 : dbar]);
+                                        dtypes = dtypes.append(donor[dbar + 1 : donor.len()]);
                                     }
                                 }
                             }
@@ -17625,7 +17640,7 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
         }
         k = k + 1;
     }
-    return CrossReuseSites { idxs: idxs, donors: donors };
+    return CrossReuseSites { idxs: idxs, donors: donors, dtypes: dtypes };
 }
 
 // emit_cross_struct_reuse lowers a full `var c = T { ... }` construction as an
@@ -17663,7 +17678,7 @@ function emit_reuse_recip_prior_release(s: LowerState, cslot: i32, dslot: i32): 
 // null for d. When `release_prior` (the loop-body path), the recipient's
 // prior loop-carried box is released before any of this
 // (emit_reuse_recip_prior_release).
-function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
+function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: string, donor_type: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -17718,12 +17733,17 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
             // below, so no carried-field copies exist in this family.
             st = st.emit(ir.op_load_local(uslot));
             st = st.emit(ir.op_if(0));
+            // The release walks the DONOR's OWN field types at the donor's
+            // slots (#4356 divergence 2): with class pairing the donor's
+            // layout may differ from the recipient's, and the old values in
+            // the box are the donor's. Slot count is identical (same class).
+            var nrel: i32 = decl_field_count(st.structs, donor_type);
             var ri: i32 = 0;
-            while (ri < ndecl) {
-                var rty: string = decl_field_type_at(st.structs, slit.type_name, ri);
+            while (ri < nrel) {
+                var rty: string = decl_field_type_at(st.structs, donor_type, ri);
                 if (is_leaksafe_array_field(rty)) {
                     st = st.emit(ir.op_load_local(bslot));
-                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
                 } else if (decl_is_struct(st.structs, rty)) {
@@ -17731,7 +17751,7 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     // inner box (deep-drop its rc fields first when it owns any —
                     // each self-guarded on rc==1 — then free the inner box header).
                     st = st.emit(ir.op_load_local(bslot));
-                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
                     if (struct_has_reclaim_array_field(st.structs, rty)) {
                         st = st.emit(ir.op_call_direct("__struct_drop_" + rty, 1));
                     }
@@ -17746,7 +17766,7 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     // ctors (donor_enum_fields_fresh / the recipient walk), so
                     // the freed box can never be a still-live alias.
                     st = st.emit(ir.op_load_local(bslot));
-                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, slit.type_name, ri)));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
                 }
@@ -20074,7 +20094,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // Cross-statement full-construction reuse sites: `var c = T { ... }` reusing an
     // earlier dead same-type donor's box (see cross_reuse_sites). Disjoint from the
     // self-overwrite sites by construction (it skips those indices + donors).
-    var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [] };
+    var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [], dtypes: [] };
     if (!no_reuse) { xreuse = cross_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns); }
     // Tuple cross-reuse (FBIP): `var c = (…)` reusing an earlier dead same-arity
     // donor tuple's box (see cross_tuple_reuse_sites). Structural pairing; the
@@ -20209,7 +20229,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             }
         } else if (xreuse_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], false, s); },
+                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], xreuse.dtypes[xreuse_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xtuple_i >= 0) {
