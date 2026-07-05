@@ -27,9 +27,10 @@ import (
 //
 // The diff covers `diffedTables` and widens line-by-line as ports land:
 // preciseDrops landed first, consumedParams second (the consumed_params_of
-// port of native computeConsumedParams). The self-host dump deliberately
-// OMITS tables it has no counterpart for (movedLocals, moveSites,
-// freeEligible, ...) — a native-only line is a documented port gap, not a
+// port of native computeConsumedParams), freeEligible third (the
+// free_eligible_of port of native computeFreeEligible, #4482). The self-host
+// dump deliberately OMITS tables it has no counterpart for (movedLocals,
+// moveSites, ...) — a native-only line is a documented port gap, not a
 // failure, so the comparison here is per-table, not whole-dump.
 //
 // Known divergences are pinned explicitly (both sides' current output) so
@@ -51,8 +52,8 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
 	// The tables diffed per function; widened line-by-line as ports land
-	// (#4482). movedLocals / moveSites / freeEligible etc. are NOT diffed yet
-	// — the self-host has no counterpart tables, and its dump omits the lines.
+	// (#4482). movedLocals / moveSites etc. are NOT diffed yet — the
+	// self-host has no counterpart tables, and its dump omits the lines.
 	diffedTables := []string{"consumedParams", "freeEligible", "preciseDrops"}
 
 	type divergence struct {
@@ -78,7 +79,7 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	return s + 1;
 }
 function main(): i32 { return dropper(); }`,
-			anchor: map[string]map[string]string{"dropper": {"preciseDrops": "1=big"}},
+			anchor: map[string]map[string]string{"dropper": {"preciseDrops": "1=big", "freeEligible": "big"}},
 		},
 		{
 			// Two disjoint literal locals, dropped at their own last uses.
@@ -91,7 +92,7 @@ function main(): i32 { return dropper(); }`,
 	return x + y;
 }
 function main(): i32 { return two(); }`,
-			anchor: map[string]map[string]string{"two": {"preciseDrops": "1=a,3=b"}},
+			anchor: map[string]map[string]string{"two": {"preciseDrops": "1=a,3=b", "freeEligible": "a,b"}},
 		},
 		{
 			// Both locals last-used in ONE statement: a shared index group,
@@ -104,7 +105,7 @@ function main(): i32 { return two(); }`,
 	return s;
 }
 function main(): i32 { return pair(); }`,
-			anchor: map[string]map[string]string{"pair": {"preciseDrops": "2=a+b"}},
+			anchor: map[string]map[string]string{"pair": {"preciseDrops": "2=a+b", "freeEligible": "a,b"}},
 		},
 		{
 			// The local escapes by return: no precise drop on either side in
@@ -120,7 +121,7 @@ function main(): i32 { return pair(); }`,
 	return a;
 }
 function main(): i32 { var m: i32[] = make(); return m[0]; }`,
-			anchor: map[string]map[string]string{"make": {"preciseDrops": ""}},
+			anchor: map[string]map[string]string{"make": {"preciseDrops": "", "freeEligible": "a"}, "main": {"freeEligible": "m"}},
 			diverge: map[string]map[string]divergence{
 				"main": {"preciseDrops": {native: "", selfhost: "1=m"}},
 			},
@@ -136,13 +137,13 @@ function main(): i32 { var m: i32[] = make(); return m[0]; }`,
 	return r;
 }
 function main(): i32 { return pick(1); }`,
-			anchor: map[string]map[string]string{"pick": {"preciseDrops": "2=a"}},
+			anchor: map[string]map[string]string{"pick": {"preciseDrops": "2=a", "freeEligible": "a"}},
 		},
 		{
 			// The pinned TestRcPlanDumpFormat consumed-threading shape: a
 			// string-bearing struct param reassigned in the body is promoted
-			// consumed-threaded. Native also marks it freeEligible — a table
-			// the self-host doesn't compute yet, outside diffedTables.
+			// consumed-threaded, and both sides mark it freeEligible (the
+			// consumed promotion un-taints it; user-struct type eligible).
 			name: "consumed-thread",
 			src: `struct Ctx { name: string, n: i32 }
 function thread(c: Ctx): i32 {
@@ -150,7 +151,7 @@ function thread(c: Ctx): i32 {
 	return c.n;
 }
 function main(): i32 { return thread(Ctx { name: "a", n: 1 }); }`,
-			anchor: map[string]map[string]string{"thread": {"consumedParams": "c"}},
+			anchor: map[string]map[string]string{"thread": {"consumedParams": "c", "freeEligible": "c"}},
 		},
 		{
 			// A string/array-FREE struct param stays on the owned-by-default
@@ -174,6 +175,12 @@ function main(): i32 { return read(S { name: "a", n: 3 }); }`,
 		},
 		{
 			// Tuple params take the same promotion: string-bearing + reassigned.
+			// KNOWN freeEligible DIVERGENCE: native synthesizes a destructure
+			// temp local (`__destruct_<line>_<col>`) that is itself eligible;
+			// the self-host's destructure temps are synthesized at LOWER time
+			// (not parse time), so they never appear in its AST-level table.
+			// The real bindings agree: s (string, counted destructure owner)
+			// and t (consumed tuple param) are eligible on both sides.
 			name: "consumed-tuple",
 			src: `function tup(t: (string, i32)): i32 {
 	t = ("x", 1);
@@ -182,6 +189,9 @@ function main(): i32 { return read(S { name: "a", n: 3 }); }`,
 }
 function main(): i32 { return tup(("a", 2)); }`,
 			anchor: map[string]map[string]string{"tup": {"consumedParams": "t"}},
+			diverge: map[string]map[string]divergence{
+				"tup": {"freeEligible": {native: "__destruct_3_2,s,t", selfhost: "s,t"}},
+			},
 		},
 	}
 

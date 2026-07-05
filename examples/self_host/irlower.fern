@@ -21533,11 +21533,12 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (v.name.len() > 0 && v.name[0] == 40) {
-                    // destructure: names inside "(a, b)"; element types from the
-                    // RHS ident's recorded tuple type, split at top-level commas.
+                if (rc_fe_is_destructure(v.name)) {
+                    // destructure (`var (a, b) = t` — parsed as a comma-joined
+                    // name "a,b"): element types from the RHS ident's recorded
+                    // tuple type, split at top-level commas.
                     var tt: string = rc_fe_expr_type(v.init, st.types_n, st.types_t, structs);
-                    var names: string[] = rc_fe_split_csv(v.name[1:v.name.len() - 1]);
+                    var names: string[] = rc_fe_split_csv(v.name);
                     var tys: string[] = [];
                     if (tt.len() > 2 && tt[0] == 40) { tys = rc_fe_split_csv(tt[1:tt.len() - 1]); }
                     var d: i32 = 0;
@@ -21573,6 +21574,17 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
         i = i + 1;
     }
     return st;
+}
+
+// rc_fe_is_destructure: a StmtVar name carrying a tuple destructure — the
+// parser encodes `var (a, b) = t` as the comma-joined name "a,b".
+function rc_fe_is_destructure(name: string): boolean {
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 44) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // rc_fe_split_csv splits "a, b, c" at top-level commas (tuple-type aware:
@@ -21709,7 +21721,7 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
             parser.StmtVar(v) => {
                 // A destructure's bindings are counted owners (each extracted
                 // element is dup'd) — neither tainted nor recorded as assigns.
-                if (!(v.name.len() > 0 && v.name[0] == 40)) {
+                if (!rc_fe_is_destructure(v.name)) {
                     st = FeState { tainted: st.tainted, an: st.an.append(v.name), av: st.av.append(v.init), types_n: st.types_n, types_t: st.types_t };
                 }
                 st = rc_fe_walk_expr(v.init, st, structs);
