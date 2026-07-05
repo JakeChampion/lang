@@ -19,9 +19,10 @@
 //   var rest: string[] = a.operands();
 //
 // Flags are queried by their LONG name (the canonical key) whether
-// the caller passed `-n` or `--name`. Short flags match a single
-// character exactly (`-o`, `-o VALUE`); glued (`-oVALUE`) and
-// bundled (`-abc`) short forms are a documented follow-up.
+// the caller passed `-n` or `--name`. Short aliases are single
+// characters and support the usual clustering: bundled booleans
+// (`-abc` == `-a -b -c`), a glued value (`-n5` == `-n 5`), and a
+// bundle ending in a valued option (`-vn5` == `-v -n 5`).
 
 import "std/string";
 import "core/map";
@@ -159,23 +160,38 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
             }
             i = i + 1;
         } else if (a.len() >= 2 && a[0] == 45) {
-            // Short flag `-x` (a lone "-" falls through to positionals).
-            var name: string = a[1:a.len()];
-            match (__cli_find_short(s, name)) {
-                Some(f) => {
-                    if (f.takes_value) {
-                        if (i + 1 < argv.len()) {
-                            opts = opts.insert(f.long, argv[i + 1]);
-                            i = i + 1;
+            // Short cluster `-abc` (a lone "-" falls through to
+            // positionals). Each character is a single-char short
+            // flag: a boolean flag continues the cluster, and a
+            // valued option consumes the rest of the token as its
+            // value (`-n5`) or, when it's the last character, the
+            // next argv token (`-n 5`).
+            var cluster: string = a[1:a.len()];
+            var j: i32 = 0;
+            while (j < cluster.len()) {
+                var cname: string = cluster[j:j + 1];
+                match (__cli_find_short(s, cname)) {
+                    Some(f) => {
+                        if (f.takes_value) {
+                            var glued: string = cluster[j + 1:cluster.len()];
+                            if (glued.len() > 0) {
+                                opts = opts.insert(f.long, glued);
+                            } else if (i + 1 < argv.len()) {
+                                opts = opts.insert(f.long, argv[i + 1]);
+                                i = i + 1;
+                            } else {
+                                return __cli_err(positionals, "option -" + cname + " requires a value");
+                            }
+                            // A valued option swallows the token tail; end the cluster.
+                            j = cluster.len();
                         } else {
-                            return __cli_err(positionals, "option -" + name + " requires a value");
+                            opts = opts.insert(f.long, "true");
+                            j = j + 1;
                         }
-                    } else {
-                        opts = opts.insert(f.long, "true");
+                    },
+                    None => {
+                        return __cli_err(positionals, "unknown option -" + cname);
                     }
-                },
-                None => {
-                    return __cli_err(positionals, "unknown option -" + name);
                 }
             }
             i = i + 1;
