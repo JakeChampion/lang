@@ -1242,6 +1242,16 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"map-field-reuse-cross-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; return c.m.get_or(1, 0) + c.id + u; }`, 20},
 		{"map-field-reuse-cross-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; var s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow(); }`, 0},
 		{"map-field-reuse-corruption-probe-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.m.get_or(1, 0) + c.id != 40) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); }`, 0},
+		// TUPLE / OPTION struct fields in box reuse (#4356 slice 9): both are
+		// leak-only boxes like maps — the reuse arms release/inc nothing, and
+		// the value contract is intact reads through the reused box (carried,
+		// override, cross) with clean detectors and an unpoisoned fresh array.
+		{"tuple-field-reuse-carried-value", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var c = P { ...d, id: 2 }; return c.pr.0 + c.pr.1 + c.id; }`, 32},
+		{"tuple-field-reuse-override-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var c = P { ...d, pr: (7, 8) }; var s: i32 = c.pr.0 + c.pr.1 + c.id; if (s != 16) { return 99; } return __rc_underflow(); }`, 0},
+		{"tuple-field-reuse-cross-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var u: i32 = d.pr.0 + d.id; var c = P { id: 2, pr: (7, 8) }; var s: i32 = c.pr.0 + c.pr.1 + c.id + u; if (s != 28) { return 99; } return __rc_underflow(); }`, 0},
+		{"tuple-field-reuse-corruption-probe-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var c = P { ...d, pr: (7, 8) }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.pr.0 + c.pr.1 + c.id != 16) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); }`, 0},
+		{"option-field-reuse-carried-value", `struct Q { id: i32, o: Option[i32] } function main(): i32 { var d = Q { id: 1, o: Some(10) }; var c = Q { ...d, id: 2 }; var r: i32 = 0; match (c.o) { Some(v) => { r = v + c.id; }, None => { r = 0; } } return r; }`, 12},
+		{"option-field-reuse-override-detector", `struct Q { id: i32, o: Option[i32] } function main(): i32 { var d = Q { id: 1, o: Some(10) }; var c = Q { ...d, o: Some(30) }; var r: i32 = 0; match (c.o) { Some(v) => { r = v + c.id; }, None => { r = 0; } } if (r != 31) { return 99; } return __rc_underflow(); }`, 0},
 		// IN-PLACE enum self-reassign reuse (FBIP, native parity): a loop-carried
 		// array-payload enum `var b = V0([..]); while(..) { b = V1([..]); b = V2([..]); }`
 		// whose enum has UNIFORM variant layout (every variant one array field) reuses
