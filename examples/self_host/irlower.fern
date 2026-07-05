@@ -13168,6 +13168,22 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
                 fi = fi + 1;
             }
         },
+        parser.ExprTuple(tl) => {
+            // `return (…, a, …)` — every bare array-local element MOVES into the
+            // returned tuple box, exactly like an enum payload (#3720): tuple
+            // construction (op_tuple_make_k) stores the buffer pointer with NO
+            // alias-inc and the box is leak-mode (never deep-dropped), so sweeping
+            // the element here frees the buffer out from under the caller — the
+            // #4598 UAF (surfaced by the frontend bundle once a later allocation
+            // recycled the freed block). Recurse per element so the ident /
+            // `.append` / enum-ctor / reclaimable-struct/-string shapes are all
+            // kept from their sweeps, matching the single-value return paths.
+            var tli: i32 = 0;
+            while (tli < tl.elements.len()) {
+                out = returned_moved_arr_slots(tl.elements[tli], s, out);
+                tli = tli + 1;
+            }
+        },
         _ => {}
     }
     return out;
