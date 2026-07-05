@@ -1,5 +1,6 @@
 import "std/test";
 import "std/url" as url;
+import "core/map";
 // examples/tests/url_test.fern — pure-Fern coverage of std/url's
 // RFC 3986 percent-encoding (url_encode / url_decode) and the
 // best-effort url_parse decomposition. Covers unreserved pass-through,
@@ -68,6 +69,46 @@ function test_parse_empty(): test.TestOutcome {
     }
 }
 
+// ---- application/x-www-form-urlencoded (#4384 item 5) ----
+
+// form_decode maps '+' to a space and still handles %-escapes.
+function test_form_decode_plus(): test.TestOutcome {
+    return test.assert_eq(url.form_decode("a+b%20c"), "a b c");
+}
+
+// The RFC-3986 url_decode leaves '+' literal — the contrast that
+// makes form_decode necessary for query/form bodies.
+function test_url_decode_keeps_plus(): test.TestOutcome {
+    return test.assert_eq(url.url_decode("a+b"), "a+b");
+}
+
+// form_encode maps a space to '+' (not %20) and %-escapes the rest.
+function test_form_encode_space(): test.TestOutcome {
+    return test.assert_eq(url.form_encode("a b/c"), "a+b%2Fc");
+}
+
+// form_encode / form_decode round-trip.
+function test_form_roundtrip(): test.TestOutcome {
+    return test.assert_eq(url.form_decode(url.form_encode("hello world & q=1")),
+        "hello world & q=1");
+}
+
+// query_encode builds a deterministic ordered query string,
+// form-encoding each key/value.
+function test_query_encode(): test.TestOutcome {
+    var pairs: (string, string)[] = [("q", "a b"), ("n", "1")];
+    return test.assert_eq(url.query_encode(pairs), "q=a+b&n=1");
+}
+
+// query_parse now form-decodes, so a '+' value is a space.
+function test_query_parse_plus(): test.TestOutcome {
+    var m: Map[string, string[]] = url.query_parse("q=a+b");
+    match (m.get("q")) {
+        Some(arr) => { return test.assert_eq(arr[0], "a b"); },
+        None => { return test.fail("expected key q"); }
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/url");
     r = r.it("encode space",            test_encode_space());
@@ -80,5 +121,11 @@ function main(): i32 {
     r = r.it("parse full URL",          test_parse_full());
     r = r.it("parse minimal URL",       test_parse_minimal());
     r = r.it("parse empty is None",     test_parse_empty());
+    r = r.it("form_decode plus",        test_form_decode_plus());
+    r = r.it("url_decode keeps plus",   test_url_decode_keeps_plus());
+    r = r.it("form_encode space",       test_form_encode_space());
+    r = r.it("form round-trip",         test_form_roundtrip());
+    r = r.it("query_encode",            test_query_encode());
+    r = r.it("query_parse plus",        test_query_parse_plus());
     return r.finish();
 }
