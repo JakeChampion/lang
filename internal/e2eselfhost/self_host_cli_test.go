@@ -384,6 +384,27 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("opt-folds-hex-constants", func(t *testing.T) {
+		// A hex operand in a folded binop must carry its value (#4341):
+		// as_int_lit used the decimal-only digits_to_i32, which stops at the
+		// `x` and reads every `0x` literal as 0, so `-O` folded `0x10 + 1`
+		// to 1 — a silent value corruption, not just a missed optimisation.
+		srcPath := filepath.Join(dir, "foldhex.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 0x10 + 1; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
+		if code != 0 {
+			t.Fatalf("-O emit exited %d, want 0", code)
+		}
+		progBin := buildBin(t, gcc, dir, "foldhex", string(optAsm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 17 {
+			t.Errorf("-O hex-folded program exited %d, want 17", c)
+		}
+	})
+
 	t.Run("check-ok", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ok.fern")
 		if err := os.WriteFile(srcPath, []byte("function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }\n"), 0o644); err != nil {
