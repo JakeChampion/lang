@@ -49,7 +49,19 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 	}
 	var incs []Op
 	for _, p := range b.fn.Params {
-		if !b.rc.consumedParams[p.Name] || !b.rc.freeEligible[p.Name] {
+		// The entry inc must fire for EVERY consumed param, not just the
+		// freeEligible ones: the reassignment-overwrite dec is emitted
+		// unconditionally (the Assign catch-all), so a consumed param that
+		// borrow-taint kept out of freeEligible would otherwise dec the
+		// caller's borrowed box without ever having retained it — the
+		// count-steal that let a caller-side is_unique-gated drop (e.g. a
+		// destructure temp's deep drop) free a still-referenced box (the
+		// self-host `(Stmt, Par)` cursor loops crashed exactly this way).
+		// A consumed-but-not-eligible param is NOT swept at exit (the
+		// sweep stays freeEligible-gated), so its final value carries one
+		// extra count out — a bounded safe leak, matching the existing
+		// leak-over-UAF stance elsewhere in this file.
+		if !b.rc.consumedParams[p.Name] {
 			continue
 		}
 		slot, ok := b.locals[p.Name]

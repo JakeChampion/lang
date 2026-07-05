@@ -104,3 +104,10 @@ avoids changing every helper's result type to `Result`.
   move is unpacking an incoming pair can take it destructured directly —
   `function step((v, c): (T, Cur)): (T, Cur) { … }` — instead of a named
   param + `let (v, c) = p;`.
+- The self-host parser adopted the idiom wholesale (#4406): all 22 of
+  parser.fern's one-off `*Result { par: Par, … }` structs are gone —
+  every `parse_*` returns `(value…, Par)` and call sites destructure
+  `var (v, p2) = parse_x(p); p = p2;` (the json.fern shape). Multi-value
+  results are N-tuples with the cursor last. The two mutable-accumulator
+  loops (the precedence climber, the chained-assign collector) keep a
+  plain mutable value local instead of rebuilding a result struct.

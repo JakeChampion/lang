@@ -153,16 +153,19 @@ function main(): i32 { return thread(Ctx { name: "a", n: 1 }); }`,
 			anchor: map[string]map[string]string{"thread": {"consumedParams": "c"}},
 		},
 		{
-			// A string/array-FREE struct param stays on the owned-by-default
-			// baseline even when reassigned — no consumed promotion.
-			name: "consumed-skips-scalar-struct",
+			// A string/array-FREE struct param that is reassigned and does
+			// NOT escape: borrow inference demotes it to borrowed, and the
+			// consumed promotion must fire so the reassignment's overwrite
+			// dec is balanced by the entry inc (the borrowed-param
+			// over-release fix — without it the caller's box double-freed).
+			name: "consumed-includes-borrow-demoted-scalar-struct",
 			src: `struct P { x: i32, y: i32 }
 function bump(p: P): i32 {
 	p = P { x: p.x + 1, y: p.y };
 	return p.x;
 }
 function main(): i32 { return bump(P { x: 1, y: 2 }); }`,
-			anchor: map[string]map[string]string{"bump": {"consumedParams": ""}},
+			anchor: map[string]map[string]string{"bump": {"consumedParams": "p"}},
 		},
 		{
 			// A read-only (never reassigned) param is not consumed-threaded.
