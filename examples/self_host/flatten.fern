@@ -52,7 +52,25 @@ import "./parser";
 // TestOutcome). The self-host compiler's own modules sidestep this by
 // always qualifying (`parser.ExprIdent`), so this only widens what
 // downstream code can spell, never changing existing resolution.
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+// declnames_mangled is the precomputed `prefix + "__" + declnames[i]` parallel to
+// declnames, so a bare own-decl reference resolves to a SHARED string instance
+// (like ivar_mangled) instead of re-concatenating `prefix + "__" + name` on every
+// occurrence. This reduces the allocation the mangle pass performs at its dominant
+// churn site (#4394 lever 1 names mangle_bare as such a site — see
+// docs/SELFHOST-SYMBOL-INTERNING.md); the emitted bytes are unchanged.
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+
+// build_mangled_names precomputes `prefix + "__" + names[i]` for each name — the
+// shared mangled instances a bare own-decl reference resolves to.
+function build_mangled_names(prefix: string, names: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        out = out.append(prefix + "__" + names[i]);
+        i = i + 1;
+    }
+    return out;
+}
 
 // resolve_prefix maps a qualifier (`io` in `io.foo`) to the mangle prefix the
 // module's decls actually carry (`io_buffered`). For a plain `import "std/x"` the
@@ -181,7 +199,13 @@ pub function mod_prefixes(mod: parser.Module): string[] {
 // mangle_bare maps a bare reference name to its own-module mangled
 // form when it names one of this module's top-level decls.
 function mangle_bare(name: string, ctx: RewriteCtx): string {
-    if (is_in(name, ctx.declnames)) { return ctx.prefix + "__" + name; }
+    // Own decl → its precomputed shared mangled instance (declnames_mangled is
+    // `prefix + "__" + declnames[i]`), avoiding a fresh concat per occurrence.
+    var di: i32 = 0;
+    while (di < ctx.declnames.len()) {
+        if (ctx.declnames[di] == name) { return ctx.declnames_mangled[di]; }
+        di = di + 1;
+    }
     // A bare reference to one of this module's imported enum variants
     // resolves to its bundled (prefix-mangled) struct name. Checked
     // after own decls so a same-named local decl still wins.
@@ -572,7 +596,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         // bindings, so a local shadowing a module decl is left unmangled.
         var bctx: RewriteCtx = RewriteCtx {
             modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
-            declnames: ctx.declnames, locals: collect_local_names(fd),
+            declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: collect_local_names(fd),
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
@@ -626,6 +650,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         imports: mod.imports,
         top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
             modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames,
+            declnames_mangled: ctx.declnames_mangled,
             locals: collect_locals_stmts(mod.top_stmts, []),
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
@@ -672,7 +697,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, declnames_mangled: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -720,11 +745,13 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
 pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
+    var decls: string[] = collect_decl_names(mod);
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
         modprefixes: mod_prefixes(mod),
         prefix: prefix,
-        declnames: collect_decl_names(mod),
+        declnames: decls,
+        declnames_mangled: build_mangled_names(prefix, decls),
         locals: [],
         ivar_names: ivar_names,
         ivar_mangled: ivar_mangled,
@@ -1081,7 +1108,7 @@ function main(): i32 {
     ivm = ivm.append("test__Fail");
     var rxk: string[] = [];
     var rxt: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
@@ -1109,7 +1136,7 @@ function main(): i32 {
     rxk2 = rxk2.append("lexer__Token");
     var rxt2: string[] = [];
     rxt2 = rxt2.append("orig__Token");
-    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
     if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") { return 97; }
     if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") { return 98; }
     // A non-re-exported qualified type still mangles normally.
