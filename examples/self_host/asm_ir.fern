@@ -1040,7 +1040,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $1, %rax\n");
     s = s.write(".Lshuniq_ret:\n");
     s = s.write("    ret\n");
-    // __fern_alloc_reuse(token@16(%rsp), nfields@8(%rsp)) -> %rax = data — the
+    // __fern_alloc_reuse(token@16(%rsp), slots@8(%rsp)) -> %rax = data — the
     // FBIP reuse-degrade primitive (#4350), the self-host twin of native's
     // __fern_alloc_reuse adapted to the arr-box layout (cap@data-16, rc@data-8):
     // null token -> fresh __fern_arr_box(cap); cap match -> hand the SAME block
@@ -1054,9 +1054,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq 16(%rsp), %rax\n");        // token (donor data ptr, or 0)
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Lsarelo_fresh\n");
-    s = s.write("    movq 8(%rsp), %rcx\n");         // nfields
-    s = s.write("    incq %rcx\n");                  // wanted cap = nfields + 1 (struct_make's arr_box cap)
-    s = s.write("    cmpq %rcx, -16(%rax)\n");       // donor cap == wanted?
+    s = s.write("    movq 8(%rsp), %rcx\n");         // slots (total payload words: struct nf+1 incl. shape, tuple arity)
+    s = s.write("    cmpq %rcx, -16(%rax)\n");       // donor cap == wanted slots?
     s = s.write("    je .Lsarelo_ret\n");            // reuse: return token
     // Mismatch: return the donor block ((cap+3) words at data-16) to its
     // freelist class, mirroring __fn___fern_arr_dec's free path; an oversize
@@ -1072,8 +1071,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, (%rcx)\n");          // *block = head
     s = s.write("    movq %rcx, (%r8,%rdx,8)\n");    // freelist[words] = block
     s = s.write(".Lsarelo_fresh:\n");
-    s = s.write("    movq 8(%rsp), %rdi\n");         // nfields
-    s = s.write("    incq %rdi\n");                  // cap = nfields + 1
+    s = s.write("    movq 8(%rsp), %rdi\n");         // slots = arr_box cap
     // TAIL-jump (not call): arr_box returns straight to OUR caller with the
     // fresh data ptr in %rax. Besides saving a frame, this keeps the emitted
     // text free of an extra `call __fern_arr_box` line — the reuse contract
