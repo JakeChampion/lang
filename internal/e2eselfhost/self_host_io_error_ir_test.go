@@ -39,6 +39,9 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		// write_file success still returns None (the error-path rework touched
 		// the shared epilogue on both backends).
 		{"writefile-ok-control", `function main(): i32 { match (write_file("` + filepath.Join(t.TempDir(), "out.txt") + `", "hi")) { Some(_) => { return 90; }, None => { return 1; } } return 0; }`, 1},
+		// stat / remove_file error payloads (the same NULL-payload class).
+		{"stat-notfound-payload-len", `function main(): i32 { match (stat("/nonexistent-fern-probe")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, 23},
+		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
 	}
 }
 
