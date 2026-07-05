@@ -163,21 +163,30 @@ function __str_to_bytes(s: string): u8[] {
     return b;
 }
 
-// __hex_digit renders a nibble (0-15) as a lowercase hex character.
-function __hex_digit(n: i32): string {
-    return "0123456789abcdef"[n : n + 1];
+// __hex_char renders a nibble (0-15) as its lowercase hex character
+// byte value ('0'..'9' / 'a'..'f').
+function __hex_char(d: i32): i32 {
+    if (d < 10) { return 48 + d; }   // '0'..'9'
+    return 87 + d;                    // 10 -> 'a' (97)
 }
 
 // __bytes_to_hex renders a byte array as a lowercase hex string.
+// Output is exactly 2·len bytes, so fill one preallocated buffer
+// (O(n)) rather than the `out = out + …` concat chain, which recopied
+// the whole prefix each step (O(n²) — the #4379 hot path). Same
+// preallocated-u8[] shape hex_encode uses; byte-for-byte identical.
 function __bytes_to_hex(b: u8[]): string {
-    var out: string = "";
+    var n: i32 = b.len();
+    if (n == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(n * 2);
     var i: i32 = 0;
-    while (i < b.len()) {
+    while (i < n) {
         var v: i32 = b[i] as i32;
-        out = out + __hex_digit((v >> 4) & 15) + __hex_digit(v & 15);
+        buf = buf.with(i * 2, __hex_char((v >> 4) & 15) as u8);
+        buf = buf.with(i * 2 + 1, __hex_char(v & 15) as u8);
         i = i + 1;
     }
-    return out;
+    return string_from_bytes(buf);
 }
 
 // sha256_bytes returns the raw 32-byte SHA-256 digest of `s` as a
