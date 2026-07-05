@@ -13258,7 +13258,7 @@ struct XbScan { pairs: string[], cons: string[] }
 // `b_stmts` before k (cross_construction_donor — its dead-from-k check walks into
 // the nested statement k, so a donor mentioned anywhere in k, including this arm,
 // is excluded). Each donor is consumed at most once (threaded via `cons`).
-function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, structs: parser.StructDecl[], so_bases: string[], acc: XbScan): XbScan {
+function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, structs: parser.StructDecl[], so_bases: string[], acc: XbScan, fresh_ret: string[]): XbScan {
     var pairs: string[] = acc.pairs;
     var cons: string[] = acc.cons;
     var si: i32 = 0;
@@ -13268,7 +13268,7 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                 match (rv.init) {
                     parser.ExprStructLit(slit) => {
                         if (!slit.has_base && struct_fields_reusable(structs, slit.type_name) && xblock_struct_arrays_fresh(slit, structs)) {
-                            var donor: string = cross_construction_donor(b_stmts, structs, k, slit.type_name, rv.name, so_bases, cons);
+                            var donor: string = cross_construction_donor(b_stmts, structs, k, slit.type_name, rv.name, so_bases, cons, fresh_ret);
                             if (donor.len() > 0) {
                                 pairs = pairs.append(rv.name + "|" + donor);
                                 cons = cons.append(donor);
@@ -13300,12 +13300,12 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
 // xblock_pairings_for returns the "recip|donor" cross-block pairings for statement
 // k of block `b_stmts` — only when k is an IF (then / else arms scanned). `consumed`
 // is the set of donors a same-block reuse already claimed, so the two never collide.
-function xblock_pairings_for(b_stmts: parser.Stmt[], structs: parser.StructDecl[], k: i32, so_bases: string[], consumed: string[]): string[] {
+function xblock_pairings_for(b_stmts: parser.Stmt[], structs: parser.StructDecl[], k: i32, so_bases: string[], consumed: string[], fresh_ret: string[]): string[] {
     var acc: XbScan = XbScan { pairs: [], cons: consumed };
     match (b_stmts[k]) {
         parser.StmtIf(iff) => {
-            acc = xblock_scan_body(iff.then_body, b_stmts, k, structs, so_bases, acc);
-            acc = xblock_scan_body(iff.else_body, b_stmts, k, structs, so_bases, acc);
+            acc = xblock_scan_body(iff.then_body, b_stmts, k, structs, so_bases, acc, fresh_ret);
+            acc = xblock_scan_body(iff.else_body, b_stmts, k, structs, so_bases, acc, fresh_ret);
         },
         _ => {}
     }
@@ -13365,8 +13365,8 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [] };
     var xtuple: CrossTupleReuseSites = CrossTupleReuseSites { idxs: [], donors: [] };
     if (!reuse_layer_disabled()) {
-        so = self_overwrite_reuse_sites(stmts, s.structs);
-        xreuse = cross_reuse_sites(stmts, s.structs);
+        so = self_overwrite_reuse_sites(stmts, s.structs, s.return_fresh_struct_ret_fns);
+        xreuse = cross_reuse_sites(stmts, s.structs, s.return_fresh_struct_ret_fns);
         xtuple = cross_tuple_reuse_sites(stmts);
     }
     var st: LowerState = s;
@@ -13464,7 +13464,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 var xbcons: string[] = xreuse.donors;
                 var xtc: i32 = 0;
                 while (xtc < xtuple.donors.len()) { xbcons = xbcons.append(xtuple.donors[xtc]); xtc = xtc + 1; }
-                var pairings: string[] = xblock_pairings_for(stmts, st.structs, i, so.bases, xbcons);
+                var pairings: string[] = xblock_pairings_for(stmts, st.structs, i, so.bases, xbcons, st.return_fresh_struct_ret_fns);
                 var prev: string[] = st.xblock_pending;
                 st = st.with_xblock_pending(pairings);
                 st = lower_stmt(stmts[i], st);
@@ -17005,6 +17005,39 @@ function fresh_struct_lit_type(body: parser.Stmt[], name: string): string {
     return "";
 }
 
+// donor_bind_type: the struct type a reuse-donor candidate `name` was bound
+// from — a direct fresh `T { ... }` literal (fresh_struct_lit_type), OR
+// (#4356 divergence 3) a call to a STRICT fresh-returning function
+// (`var d: T = mk(..)`, is_fresh_ret_binding against
+// return_fresh_struct_ret_fns). A strict-fresh call result is the unambiguous
+// SOLE owner of its box and every field buffer (every return is a no-base
+// literal whose array fields are fresh scalar/string literals), so the reuse
+// paths may deep-drop its old fields and hand its box on exactly like a
+// literal-bound donor; the other donor gates (never reassigned, never
+// escaping, dead after the reuse) are checked by the callers and carry the
+// rest of the soundness unchanged. The call form requires the var's explicit
+// `: T` annotation — it is both the donor-type source and the receiver-type
+// approximation is_fresh_ret_binding's method key needs. Returns "" when the
+// binding is neither form.
+function donor_bind_type(body: parser.Stmt[], name: string, structs: parser.StructDecl[], fresh_ret: string[]): string {
+    var lit: string = fresh_struct_lit_type(body, name);
+    if (lit != "") { return lit; }
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (decl_is_struct(structs, v.type_name) && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)) { return v.type_name; }
+                    return "";
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // name_escapes_outside_stmt reports whether `name` escapes anywhere in `body`
 // except statement `skip` — used to confirm d's ONLY escaping use is the
 // struct-update base at the reuse statement (which is the consuming use the
@@ -17036,7 +17069,7 @@ function name_escapes_outside_stmt(body: parser.Stmt[], name: string, skip: i32)
 //   - d is referenced nowhere in statements i+1.., i.e. dead after this update.
 // d is never reassigned (a fresh single binding; a reassignment of d before i
 // would make it escape via the RHS walk, caught by name_escapes_outside_stmt).
-function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): ReuseSites {
+function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[]): ReuseSites {
     var idxs: i32[] = [];
     var bases: string[] = [];
     var i: i32 = 0;
@@ -17049,7 +17082,7 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                             match (slit.base) {
                                 parser.ExprIdent(bid) => {
                                     var ok: boolean = struct_fields_reusable(structs, slit.type_name)
-                                        && fresh_struct_lit_type(body, bid.name) == slit.type_name
+                                        && donor_bind_type(body, bid.name, structs, fresh_ret) == slit.type_name
                                         && v.name != bid.name
                                         && util.index_of_str(body_assign_targets(body), bid.name) < 0
                                         && !name_escapes_outside_stmt(body, bid.name, i);
@@ -17355,18 +17388,20 @@ struct CrossReuseSites { idxs: i32[], donors: string[] }
 // cross_construction_donor finds the donor name for a full-construction at index k
 // given the already-computed self-overwrite reuse sites and the set of donors
 // already consumed by earlier cross pairings. Returns "" if none is eligible.
-function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDecl[], k: i32, c_type: string, c_name: string, so_bases: string[], consumed: string[]): string {
+function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDecl[], k: i32, c_type: string, c_name: string, so_bases: string[], consumed: string[], fresh_ret: string[]): string {
     var i: i32 = 0;
     while (i < k) {
         match (body[i]) {
             parser.StmtVar(dv) => {
                 var dname: string = dv.name;
-                // donor must differ from c, be a fresh full T{...} whose box is
-                // reuse-compatible with c's type (same type, OR — cross-type — an
-                // all-scalar struct of the same box class; structs_reuse_compatible),
-                // not a self-overwrite donor, and not already consumed here.
+                // donor must differ from c, be bound from a fresh full T{...}
+                // literal OR a strict-fresh-returning call (donor_bind_type,
+                // #4356 divergence 3) whose box is reuse-compatible with c's
+                // type (same type, OR — cross-type — an all-scalar struct of
+                // the same box class; structs_reuse_compatible), not a
+                // self-overwrite donor, and not already consumed here.
                 var elig: boolean = dname != c_name
-                    && structs_reuse_compatible(structs, fresh_struct_lit_type(body, dname), c_type)
+                    && structs_reuse_compatible(structs, donor_bind_type(body, dname, structs, fresh_ret), c_type)
                     && util.index_of_str(so_bases, dname) < 0
                     && util.index_of_str(consumed, dname) < 0;
                 if (elig) {
@@ -17401,8 +17436,8 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
 // construction those already own), then scans full no-base constructions of a
 // reusable struct type in index order, pairing each with the nearest eligible
 // earlier dead donor of the same type. Each donor is consumed at most once.
-function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): CrossReuseSites {
-    var so: ReuseSites = self_overwrite_reuse_sites(body, structs);
+function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[]): CrossReuseSites {
+    var so: ReuseSites = self_overwrite_reuse_sites(body, structs, fresh_ret);
     var idxs: i32[] = [];
     var donors: string[] = [];
     var k: i32 = 0;
@@ -17441,7 +17476,7 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): C
                                     fk = fk + 1;
                                 }
                                 if (ok) {
-                                    var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors);
+                                    var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors, fresh_ret);
                                     if (donor.len() > 0) {
                                         idxs = idxs.append(k);
                                         donors = donors.append(donor);
@@ -19890,12 +19925,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // self_overwrite_reuse_sites). Each such statement is lowered by
     // emit_self_overwrite_reuse instead of lower_stmt.
     var reuse: ReuseSites = ReuseSites { idxs: [], bases: [] };
-    if (!no_reuse) { reuse = self_overwrite_reuse_sites(fn.body, structs); }
+    if (!no_reuse) { reuse = self_overwrite_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns); }
     // Cross-statement full-construction reuse sites: `var c = T { ... }` reusing an
     // earlier dead same-type donor's box (see cross_reuse_sites). Disjoint from the
     // self-overwrite sites by construction (it skips those indices + donors).
     var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [] };
-    if (!no_reuse) { xreuse = cross_reuse_sites(fn.body, structs); }
+    if (!no_reuse) { xreuse = cross_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns); }
     // Tuple cross-reuse (FBIP): `var c = (…)` reusing an earlier dead same-arity
     // donor tuple's box (see cross_tuple_reuse_sites). Structural pairing; the
     // constructor-element eligibility (tuple_lit_ctor_eligible) is checked at the
