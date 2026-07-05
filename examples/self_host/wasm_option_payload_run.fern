@@ -1,0 +1,50 @@
+// examples/self_host/wasm_option_payload_run.fern — behaviour guard for the wasm
+// backend's Option/Result payload extractors (wasm.fern's parse_option_payload /
+// parse_result_err_payload, SH-021 slice — docs/SELF-HOST-AUDIT.md T2).
+//
+// Both now decode an `Option[T]` / `Result[T, E]` type spelling via the structured
+// TypeRef (parser.parse_type_ref) instead of a magic-byte `Option[` / `Result[`
+// prefix + top-level-comma depth scan. On every VALID input the two agree with the
+// former scan byte-for-byte; they DIVERGE, on purpose, only on the two cases the
+// old scan mishandled:
+//
+//   - an ARRAY of option/result (`Option[i32][]`, `Result[i32, u32][]`): the old
+//     scan's `Option[`/`Result[` prefix matched and the trailing `]` passed its
+//     last-char test, so it returned garbage (`i32][`, `i32, u32][`); the TypeRef
+//     decode peels the trailing `[]` into array_depth and correctly returns "" —
+//     an array value is not an Option/Result.
+//   - a malformed 3-arg `Result[T, E, F]`: not valid Fern; never produced by the
+//     front end. (The Ok/Err payloads of a well-formed 2-arg Result are unchanged.)
+//
+// This driver runs the REAL (imported) functions over a corpus spanning every
+// branch and prints `opt=<ok-payload> err=<err-payload>` for each, so the golden
+// in TestSelfHostWasmOptionPayload pins the exact decode. The two array rows show
+// the corrected "" (the old garbage would have failed the golden), which the three
+// x86 self-compile fixpoints confirm is unreachable during bootstrap.
+
+import "./wasm";
+
+function show(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
+
+function main(): i32 {
+    var corpus: string[] = [
+        "Option[i32]", "Option[u32]", "Option[string]", "Option[Foo]",
+        "Option[Map[a, b]]", "Option[(string, string)]", "Option[i32][]",
+        "Option[]", "Option",
+        "Result[i32, u32]", "Result[string, IoError]", "Result[i32]",
+        "Result[Map[a, b], i32]", "Result[i32, u32][]", "Result[i32, u32, x]",
+        "Result",
+        "i32", "string", "Foo", "u8[]", "", "Map[string, i32]"
+    ];
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var t: string = corpus[i];
+        var opt: string = wasm.parse_option_payload(t);
+        var err: string = wasm.parse_result_err_payload(t);
+        out = out + show(t) + " opt=" + show(opt) + " err=" + show(err) + "\n";
+        i = i + 1;
+    }
+    write(out);
+    return 0;
+}
