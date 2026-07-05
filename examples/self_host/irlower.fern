@@ -15657,6 +15657,84 @@ function binding_escapes_arm(arm: parser.MatchArm, name: string, borrowable: str
     return body_unsafe_for(arm.body, name, borrowable);
 }
 
+// match_moved_rc_payloads: the Koka consuming-match MOVED-payload set (#4400)
+// for the consuming rc-payload enum match `st`: every "<Variant>#<field k>"
+// whose rc-droppable payload field is BOUND (non-`_`) by an arm to a name that
+// ESCAPES its arm (binding_escapes_arm — stored to an outer var, returned,
+// passed to a call). The binding inherits the box's counted reference, so the
+// post-match deep-drop must SKIP that field's dec (emit_enum_variant_drops_moved)
+// — the dup the Koka transform would insert and the drop's dec cancel
+// statically. Borrow-only bindings stay OUT of the set: their arm is done with
+// the payload by the time the free runs, so the dec both reclaims it and keeps
+// today's behaviour. Scalar payloads impose nothing (copied, not rc-tracked).
+//
+// The skip is exact only when the escaping arm ALWAYS runs for its variant — a
+// guard could divert execution to a different arm that did NOT move the
+// payload, turning the skip into a per-call leak. consumed_rcpayload_enum_frees
+// therefore REJECTS any candidate that mixes a non-empty moved set with a
+// guarded arm (match_has_guarded_arm); by emission time a non-empty moved set
+// implies every arm is unguarded, so exactly the escaping arm ran.
+function match_moved_rc_payloads(st: parser.Stmt, structs: parser.StructDecl[]): string[] {
+    var moved: string[] = [];
+    var none: string[] = [];
+    match (st) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        // strip a qualified `Enum.Variant` to the bare variant name
+                        // (same walk as match_arm_binds_rc_payload).
+                        var vname: string = pv.type_name;
+                        var vc: i32 = 0;
+                        while (vc < pv.type_name.len()) {
+                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()]; }
+                            vc = vc + 1;
+                        }
+                        if (pv.binding != "" && pv.binding != "_") {
+                            if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, 0))) {
+                                if (binding_escapes_arm(arm, pv.binding, none)) { moved = moved.append(vname + "#0"); }
+                            }
+                        }
+                        var eb: i32 = 0;
+                        while (eb < pv.extra_bindings.len()) {
+                            var ebn: string = pv.extra_bindings[eb];
+                            if (ebn != "" && ebn != "_") {
+                                if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, eb + 1))) {
+                                    if (binding_escapes_arm(arm, ebn, none)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
+                                }
+                            }
+                            eb = eb + 1;
+                        }
+                    },
+                    _ => {}
+                }
+                ai = ai + 1;
+            }
+            return moved;
+        },
+        _ => { return moved; }
+    }
+}
+
+// match_has_guarded_arm: any arm of match `st` carries a guard — the
+// diversion that would make a moved-payload skip inexact (see
+// match_moved_rc_payloads).
+function match_has_guarded_arm(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
 // RcEnumFrees: parallel arrays for the rc-payload enum free — the consuming match
 // index, the freed local name x, and x's ENUM name (so the deep-drop can iterate
 // the enum's variants at the free site).
@@ -15665,10 +15743,13 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // consumed_rcpayload_enum_frees: the rc-payload analogue of
 // consumed_scalar_enum_frees. Finds every function-local `var x = V(payload...)`
 // of an rc-droppable enum consumed by exactly one `match (x)`, single-owner,
-// dead-after, non-escaping, AND whose arms bind no rc payload that ESCAPES its arm
-// (match_arm_binds_rc_payload — a borrow-only binding is admitted). Each such x's
-// box is deep-dropped + freed right
-// after its match (emit_enum_variant_drops). Same shape as the scalar pass.
+// dead-after, non-escaping. Arm bindings impose NO gate anymore (#4400): a
+// borrow-only rc binding keeps its dec (the free runs after the whole match),
+// and an ESCAPING rc binding puts its (variant, field) into the MOVED set
+// (match_moved_rc_payloads) so the free site skips that field's dec —
+// ownership transferred to the escapee. Each such x's box is deep-dropped +
+// freed right after its match (emit_enum_variant_drops_moved). Same shape as
+// the scalar pass.
 function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): RcEnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
@@ -15691,9 +15772,18 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
-                        // the rc-payload-specific gate: reject if any arm binds an rc payload.
-                        var binds_rc: boolean = match_arm_binds_rc_payload(body[match_idx], structs);
-                        if (!arms_use && dead_after && !escapes && !binds_rc) {
+                        // An arm binding an ESCAPING rc payload no longer rejects
+                        // the candidate (#4400): the free site skips the dec of
+                        // each moved (variant, field) pair instead — see
+                        // match_moved_rc_payloads / emit_enum_variant_drops_moved.
+                        // (The nested precise-drop path keeps its reject via
+                        // enum_body_binds_rc_payload.) EXCEPT when the match also
+                        // has a GUARDED arm: a guard could divert execution to an
+                        // arm that did not move the payload, making the skip a
+                        // per-call leak — such mixes fall back to the exit sweep.
+                        var guarded_move: boolean = match_has_guarded_arm(body[match_idx])
+                            && match_moved_rc_payloads(body[match_idx], structs).len() > 0;
+                        if (!arms_use && dead_after && !escapes && !guarded_move) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
                             enums = enums.append(owner);
@@ -15724,6 +15814,21 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
 // sweep harmlessly decs a null. The payload is therefore dropped BEFORE the box
 // and exactly once.
 function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
+    var no_moved: string[] = [];
+    return emit_enum_variant_drops_moved(s, slot, enum_name, no_moved);
+}
+
+// emit_enum_variant_drops_moved is emit_enum_variant_drops with a MOVED-field
+// set (#4400, the Koka consuming-match dup/dec cancellation): each entry is
+// "<Variant>#<field index>" for an rc payload field whose arm binding ESCAPES
+// its arm (match_moved_rc_payloads). Ownership of that payload moved to the
+// escapee (the binding was the box's counted reference, handed on), so the
+// deep-drop SKIPS its dec — dropping it would free a value the escapee still
+// holds; the box itself is still freed below either way. The skip is exact:
+// admission rejects guard/move mixes (consumed_rcpayload_enum_frees'
+// guarded_move gate), so a non-empty `moved` set implies every arm is
+// unguarded and exactly the escaping arm ran.
+function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
     var vi: i32 = 0;
     while (vi < st.structs.len()) {
@@ -15739,7 +15844,9 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
             var fk: i32 = 0;
             while (fk < n) {
                 var eft: string = decl_field_type_at(st.structs, vname, fk);
-                if (is_leaksafe_array_field(eft)) {
+                if (util.index_of_str(moved, vname + "#" + util.i32_to_string(fk)) >= 0) {
+                    // moved-out payload: the arm's escaping binding owns it now.
+                } else if (is_leaksafe_array_field(eft)) {
                     // scalar-element array payload: one dec frees the buffer (scalar
                     // elements carry no inner pointers to release).
                     st = st.emit(ir.op_load_local(slot));
@@ -19222,7 +19329,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (rcenumfrees.idxs[rei] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rei]) < 0) {
                 var rxslot: i32 = s.slot_of(rcenumfrees.names[rei]);
                 if (rxslot >= s.n_params) {
-                    s = emit_enum_variant_drops(s, rxslot, rcenumfrees.enums[rei]);
+                    // Skip the dec of payload fields whose arm binding escaped —
+                    // ownership moved to the escapee (#4400).
+                    s = emit_enum_variant_drops_moved(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.structs));
                 }
             }
             rei = rei + 1;

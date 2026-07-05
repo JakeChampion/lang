@@ -87,14 +87,51 @@ function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"option-aliased-str-payload-excluded", 0)
 
-	// ESCAPING arm binding excluded: `Word(s) => return s` hands the payload to
-	// the caller — match_arm_binds_rc_payload rejects the candidate, so the
-	// returned string stays valid. len 5 over 2000 calls, detector 0.
+	// ESCAPING arm binding via RETURN — ADMITTED under the Koka consuming-match
+	// lift (#4400): `Word(s) => return s` hands the payload to the caller, so
+	// the candidate is now accepted and the free site SKIPS the Word payload's
+	// dec (match_moved_rc_payloads / emit_enum_variant_drops_moved — ownership
+	// moved to the returned value). The returned string must stay valid and
+	// nothing may double-free. len 5 over 2000 calls, detector 0.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): string { var x = Word(pre + "abc"); match (x) { Word(s) => { return s; }, Num(n) => { return "n"; }, } return ""; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre).len() != 5) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"enum-escaping-binding-excluded", 0)
+		"enum-escaping-binding-return-moved", 0)
+
+	// ESCAPING arm binding via OUTER-VAR STORE — the shape the pre-#4400 gate
+	// rejected outright (box + payload both leaked per call). Now the candidate
+	// is admitted: the box is deep-drop-freed right after the match with the
+	// Word payload's dec SKIPPED, so `out` (which aliases the payload) reads
+	// valid bytes AFTER the free site. A skipped-dec mistake here shows up as
+	// 99 (the str_free/dec underflow detector) or a corrupted length.
+	run(t, `enum Tok { Word(string), Num(i32) }
+function go(pre: string): i32 {
+    var out: string = "";
+    var x = Word(pre + "abc");
+    match (x) { Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
+    return out.len();
+}
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"enum-escaping-binding-store-moved", 0)
+
+	// GUARD + MOVE mix REJECTED (the #4560 review point): the escaping Word
+	// arm sits behind a guarded sibling — a guard-true run would take the
+	// borrow-only arm while the moved-set skip still suppressed the payload
+	// dec (a per-call leak). Admission rejects the mix (guarded_move), so the
+	// candidate falls back to the exit sweep: values stay correct on both
+	// guard outcomes and the detector stays 0 (no skip fired, no over-release).
+	run(t, `enum Tok { Word(string), Num(i32) }
+function go(pre: string, k: i32): i32 {
+    var out: string = "";
+    var x = Word(pre + "abc");
+    match (x) { Word(s) when k > 0 => { out = s[0:2]; }, Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
+    return out.len();
+}
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre, 1) != 2) { bad = 1; } if (go(pre, 0) != 5) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"enum-guarded-move-mix-rejected", 0)
 
 	// NESTED-if consuming match (the "opt-strpayload" precise-drop kind): the
 	// shape is not admitted by the current precise-drop gates (same as the
