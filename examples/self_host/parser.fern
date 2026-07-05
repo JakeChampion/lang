@@ -4301,7 +4301,15 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     structs = add_builtin_variant(structs, "InvalidUtf8", "string", "IoError");
     structs = add_builtin_variant(structs, "Interrupted", "", "IoError");
     structs = add_builtin_variant(structs, "Unsupported", "", "IoError");
-    structs = add_builtin_variant(structs, "Other", "string", "IoError");
+    // Other carries TWO payloads (path, message) like native's declaration
+    // (#4370) — open-coded because add_builtin_variant takes one payload.
+    // Field naming matches the user-enum desugar: `__ev`, `__ev1`.
+    if (!struct_declared(structs, "Other")) {
+        var otf: StructFieldDecl[] = [];
+        otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string" });
+        otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string" });
+        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], line: 0, col: 0, enum_owner: "IoError" });
+    }
     // FileStat: the builtin struct returned by stat(path). Injected so
     // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
     // size@24]) — the __fern_stat runtime helper builds a struct whose

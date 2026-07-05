@@ -46,7 +46,9 @@ enum IoError {
     InvalidUtf8(string),
     Interrupted,
     Unsupported,
-    Other(string),
+    // Two payloads (path, message), matching native's declaration — the
+    // self-host copy carried one string (#4370).
+    Other(string, string),
 }
 
 // FileStat — returned by stat(path). The emitter resolves

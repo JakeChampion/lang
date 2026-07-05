@@ -1327,6 +1327,92 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
     }
+    // __fern_io_error: %rdi = errno, %rsi = path string box → IoError enum box.
+    // The self-host analogue of native's __fern_io_error (x86_64.go
+    // emitIoErrorRuntime), adapted to the self-host enum representation: a
+    // variant box is [interned-shape-ptr@0, payload@8, …] (the SAME .S labels
+    // variant_is compares by pointer), not native's numeric tags. errno →
+    // variant mapping matches native: ENOENT(2) → NotFound(path), EACCES(13)
+    // → PermissionDenied(path), EEXIST(17) → AlreadyExists(path), EINTR(4) →
+    // Interrupted, default → Other(path, ""). Before this, every fs helper's
+    // error path boxed Err/Some with a NULL payload, so a program that
+    // matched the IoError value segfaulted (#4370).
+    // Gate: the union of every fs helper that calls it (the manual
+    // dependency-marking fragility #2649 tracks — keep this in sync with
+    // the call sites below).
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file")
+            || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")
+            || s.has_need("temp_dir")) {
+        var sh_nf: ShapeRefOut = shape_ref(s, "NotFound");
+        s = sh_nf.state;
+        var sh_pd: ShapeRefOut = shape_ref(s, "PermissionDenied");
+        s = sh_pd.state;
+        var sh_ae: ShapeRefOut = shape_ref(s, "AlreadyExists");
+        s = sh_ae.state;
+        var sh_in: ShapeRefOut = shape_ref(s, "Interrupted");
+        s = sh_in.state;
+        var sh_ot: ShapeRefOut = shape_ref(s, "Other");
+        s = sh_ot.state;
+        s = s.write("__fern_io_error:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq %rsi, %r12\n");
+        s = s.write("    cmpq $2, %rbx\n");
+        s = s.write("    je .Lioe_nf\n");
+        s = s.write("    cmpq $13, %rbx\n");
+        s = s.write("    je .Lioe_pd\n");
+        s = s.write("    cmpq $17, %rbx\n");
+        s = s.write("    je .Lioe_ae\n");
+        s = s.write("    cmpq $4, %rbx\n");
+        s = s.write("    je .Lioe_intr\n");
+        // Other(path, ""): [shape@0, path box@8, empty string box@16].
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    leaq .Lioe_empty(%rip), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $24, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    leaq " + sh_ot.label + "(%rip), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write("    movq %rbx, 16(%rax)\n");
+        s = s.write("    jmp .Lioe_done\n");
+        s = s.write(".Lioe_nf:\n");
+        s = s.write("    leaq " + sh_nf.label + "(%rip), %rbx\n");
+        s = s.write("    jmp .Lioe_withpath\n");
+        s = s.write(".Lioe_pd:\n");
+        s = s.write("    leaq " + sh_pd.label + "(%rip), %rbx\n");
+        s = s.write("    jmp .Lioe_withpath\n");
+        s = s.write(".Lioe_ae:\n");
+        s = s.write("    leaq " + sh_ae.label + "(%rip), %rbx\n");
+        s = s.write("    jmp .Lioe_withpath\n");
+        s = s.write(".Lioe_intr:\n");
+        s = s.write("    movq $8, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    leaq " + sh_in.label + "(%rip), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    jmp .Lioe_done\n");
+        s = s.write(".Lioe_withpath:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rbx, (%rax)\n");
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write(".Lioe_done:\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // Zero-length NUL-terminated data blob for Other's empty message box.
+        s = s.write("    .section .rodata\n");
+        s = s.write(".Lioe_empty:\n");
+        s = s.write("    .byte 0\n");
+        s = s.write("    .text\n");
+    }
     // __fern_read_file: %rdi = path string box → Result[string, IoError] box
     // [tag@0, payload@8] (tag=0 Ok(contents) / tag=1 Err(_)). NUL-terminates the
     // path, openat(AT_FDCWD, path, O_RDONLY=0)=257, lseek-sizes the file (=8),
@@ -1409,10 +1495,26 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    jmp .Lrdf_ret\n");
         s = s.write(".Lrdf_err:\n");
+        // %rax = -errno from openat; %r13 = NUL-terminated path data copy,
+        // %r15 = path length (both still live — the error branch is taken
+        // before they're repurposed). Box the path, map errno → IoError via
+        // __fern_io_error, and wrap it as the Err payload — the old path
+        // stored a NULL payload here, so matching the error value segfaulted
+        // (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r15, 8(%rax)\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Lrdf_ret:\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
@@ -1437,6 +1539,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r13\n");
         s = s.write("    pushq %r14\n");
         s = s.write("    pushq %r15\n");
+        // A 16-byte slot holding the ORIGINAL path box: the error paths need
+        // it as the IoError payload, and every register it starts in is
+        // repurposed by the write loop (#4370). Popped at .Lwf_ret.
+        s = s.write("    subq $16, %rsp\n");
+        s = s.write("    movq %rdi, (%rsp)\n");
         s = s.write("    movq (%rsi), %r12\n");
         s = s.write("    movq 8(%rsi), %r14\n");
         s = s.write("    movq (%rdi), %rbx\n");
@@ -1486,15 +1593,28 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $1, (%rax)\n");
         s = s.write("    jmp .Lwf_ret\n");
         s = s.write(".Lwf_err_close:\n");
+        // Write failed: preserve -errno across the close (whose return
+        // clobbers %rax), then build the real IoError payload (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %r14\n");
         s = s.write("    movq %r13, %rdi\n");
         s = s.write("    movq $3, %rax\n");
         s = s.write("    syscall\n");
+        s = s.write("    jmp .Lwf_mkerr\n");
         s = s.write(".Lwf_err:\n");
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %r14\n");
+        s = s.write(".Lwf_mkerr:\n");
+        s = s.write("    movq %r14, %rdi\n");
+        s = s.write("    movq (%rsp), %rsi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Lwf_ret:\n");
+        s = s.write("    addq $16, %rsp\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
@@ -1663,10 +1783,24 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $0, 8(%rax)\n");
         s = s.write("    jmp .Lrda_ret\n");
         s = s.write(".Lrda_some:\n");
+        // %rax = -errno from the initial openat (the only route here);
+        // %rbx/%r13 = NUL-terminated path copy + length (both live). Box the
+        // path and build the real Some(IoError) payload — this used to be
+        // NULL (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %r12\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rbx, (%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Lrda_ret:\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
@@ -1717,10 +1851,23 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $0, 8(%rax)\n");
         s = s.write("    jmp .Lrf_ret\n");
         s = s.write(".Lrf_err:\n");
+        // %rax = -errno from unlinkat; %r13/%r12 = NUL-terminated path copy +
+        // length (both live). Box the path and build the real Some(IoError)
+        // payload — this used to be NULL (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Lrf_ret:\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
@@ -1815,10 +1962,23 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    jmp .Ltd_ret\n");
         s = s.write(".Ltd_err:\n");
+        // %rax = -errno from mkdirat; %r13/%r14 = the generated
+        // NUL-terminated path + length (both live). Box the path and build
+        // the real Err(IoError) payload — this used to be NULL (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r14, 8(%rax)\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Ltd_ret:\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
@@ -1961,10 +2121,23 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r12, 8(%rax)\n");
         s = s.write("    jmp .Lrd_ret\n");
         s = s.write(".Lrd_err:\n");
+        // %rax = -errno from openat (the only route here); %r12/%r15 =
+        // NUL-terminated path copy + length (both live). Box the path and
+        // build the real Err(IoError) payload — this used to be NULL (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r12, (%rax)\n");
+        s = s.write("    movq %r15, 8(%rax)\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Lrd_ret:\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
@@ -2122,10 +2295,23 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    jmp .Lstat_ret\n");
         s = s.write(".Lstat_err:\n");
+        // %rax = -errno from statx; %r13/%r15 = NUL-terminated path copy +
+        // length (both live). Box the path and build the real Err(IoError)
+        // payload — this used to be NULL (#4370).
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r15, 8(%rax)\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    call __fern_io_error\n");
+        s = s.write("    movq %rax, %r13\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write(".Lstat_ret:\n");
         s = s.write("    addq $160, %rsp\n");
         s = s.write("    popq %r15\n");
@@ -5511,6 +5697,23 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("subprocess")) {
         var prPre: ShapeRefOut = shape_ref(s, "ProcessResult");
         s = prPre.state;
+    }
+    // Pre-intern the IoError variant shapes for __fern_io_error (#4370) —
+    // same reasoning as FileStat above; keep the gate in sync with the
+    // helper's own (the union of the fs needs).
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file")
+            || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")
+            || s.has_need("temp_dir")) {
+        var ioePre1: ShapeRefOut = shape_ref(s, "NotFound");
+        s = ioePre1.state;
+        var ioePre2: ShapeRefOut = shape_ref(s, "PermissionDenied");
+        s = ioePre2.state;
+        var ioePre3: ShapeRefOut = shape_ref(s, "AlreadyExists");
+        s = ioePre3.state;
+        var ioePre4: ShapeRefOut = shape_ref(s, "Interrupted");
+        s = ioePre4.state;
+        var ioePre5: ShapeRefOut = shape_ref(s, "Other");
+        s = ioePre5.state;
     }
     // .rodata: each interned string literal as a labelled `.ascii` directive
     // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
