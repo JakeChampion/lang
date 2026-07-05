@@ -85,6 +85,16 @@ var reuseDifferentialCases = []struct {
 	{"self-overwrite-string-override-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var c = N { ...d, name: "wxyz" + "q" }; var s: i32 = c.name.len() as i32 + c.id; if (s != 6) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"self-overwrite-string-carried-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var c = N { ...d, id: 2 }; var s: i32 = c.name.len() as i32 + c.id; if (s != 5) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"cross-struct-string-field-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32 + d.id; var c = N { id: 2, name: "wxyz" + "q" }; var s: i32 = c.name.len() as i32 + c.id + u; if (s != 11) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 1e/2f — MAP fields (#4356 divergence 1): maps are leak-only on
+	// the IR path (a map box is never freed anywhere), so the reuse arms
+	// carry NO release, NO carried-copy inc, and NO freshness gate for a map
+	// field — overwriting one leaks it exactly as the normal drop path would,
+	// and a copied map pointer can never dangle. Covers the self-overwrite
+	// carried copy, the override, and the cross family.
+	{"self-overwrite-map-carried-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 12) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-map-override", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-map-override-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"cross-struct-map-field-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; var s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).

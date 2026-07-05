@@ -1229,6 +1229,19 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// map's precise buffer-free read back intact (the buffers were freed soundly,
 		// exactly once — no still-live buffer freed early that the alloc could recycle).
 		{"map-precise-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var c = 0; var i = 0; while (i < 1) { c = m.get_or(1, 0) + m.get_or(2, 0); i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// MAP-typed struct fields in box reuse (#4356 slice 8): maps are
+		// leak-only, so the reuse arms release/inc NOTHING for a map field —
+		// the value contract is that the map read through the reused box (a
+		// carried copy, a fresh override, and the cross-family recipient) is
+		// intact, the detector stays clean (nothing over-released), and a
+		// fresh array allocated next to the reuse reads back unpoisoned.
+		{"map-field-reuse-carried-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; return c.m.get_or(1, 0) + c.id; }`, 12},
+		{"map-field-reuse-carried-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 12) { return 99; } return __rc_underflow(); }`, 0},
+		{"map-field-reuse-override-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40},
+		{"map-field-reuse-override-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow(); }`, 0},
+		{"map-field-reuse-cross-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; return c.m.get_or(1, 0) + c.id + u; }`, 20},
+		{"map-field-reuse-cross-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; var s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow(); }`, 0},
+		{"map-field-reuse-corruption-probe-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.m.get_or(1, 0) + c.id != 40) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); }`, 0},
 		// IN-PLACE enum self-reassign reuse (FBIP, native parity): a loop-carried
 		// array-payload enum `var b = V0([..]); while(..) { b = V1([..]); b = V2([..]); }`
 		// whose enum has UNIFORM variant layout (every variant one array field) reuses

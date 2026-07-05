@@ -17080,7 +17080,15 @@ function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name:
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string") { return false; }
+                // Map[K,V] fields (#4356 divergence 1) are admitted with NO
+                // release, NO carried-copy inc, and NO freshness gate: maps are
+                // leak-only on the IR path (is_map_type_name — a map box is
+                // never freed anywhere), so overwriting one in a reused box
+                // leaks it exactly like the normal drop path would have, and a
+                // copied map pointer can never dangle. Both emitters' release /
+                // carried-copy walks are per-type allowlists, so a map field
+                // already takes their skip branch.
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && !is_map_type_name(t)) { return false; }
                 fi = fi + 1;
             }
             return true;
