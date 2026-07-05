@@ -95,6 +95,16 @@ var reuseDifferentialCases = []struct {
 	{"self-overwrite-map-override", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40, "call __fn___fern_alloc_reuse"},
 	{"self-overwrite-map-override-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"cross-struct-map-field-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; var s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 1f/2g — TUPLE and OPTION fields (#4356 divergence 1): both are
+	// leak-only boxes (a tuple box is exit-swept only as a fresh non-escaping
+	// scalar-literal local; an Option box never), so like maps the reuse arms
+	// carry no release / inc / gate — the value contract is intact reads
+	// through the reused box and clean detectors.
+	{"self-overwrite-tuple-carried-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var c = P { ...d, id: 2 }; var s: i32 = c.pr.0 + c.pr.1 + c.id; if (s != 32) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-tuple-override-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var c = P { ...d, pr: (7, 8) }; var s: i32 = c.pr.0 + c.pr.1 + c.id; if (s != 16) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"cross-struct-tuple-field-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var u: i32 = d.pr.0 + d.id; var c = P { id: 2, pr: (7, 8) }; var s: i32 = c.pr.0 + c.pr.1 + c.id + u; if (s != 28) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-option-carried-detector", `struct Q { id: i32, o: Option[i32] } function main(): i32 { var d = Q { id: 1, o: Some(10) }; var c = Q { ...d, id: 2 }; var r: i32 = 0; match (c.o) { Some(v) => { r = v + c.id; }, None => { r = 0; } } if (r != 12) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-option-override-detector", `struct Q { id: i32, o: Option[i32] } function main(): i32 { var d = Q { id: 1, o: Some(10) }; var c = Q { ...d, o: Some(30) }; var r: i32 = 0; match (c.o) { Some(v) => { r = v + c.id; }, None => { r = 0; } } if (r != 31) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).

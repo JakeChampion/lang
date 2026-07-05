@@ -17080,15 +17080,20 @@ function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name:
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                // Map[K,V] fields (#4356 divergence 1) are admitted with NO
-                // release, NO carried-copy inc, and NO freshness gate: maps are
-                // leak-only on the IR path (is_map_type_name — a map box is
-                // never freed anywhere), so overwriting one in a reused box
-                // leaks it exactly like the normal drop path would have, and a
-                // copied map pointer can never dangle. Both emitters' release /
-                // carried-copy walks are per-type allowlists, so a map field
-                // already takes their skip branch.
-                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && !is_map_type_name(t)) { return false; }
+                // Map[K,V] / tuple / Option-Result fields (#4356 divergence 1)
+                // are admitted with NO release, NO carried-copy inc, and NO
+                // freshness gate: all three are leak-only boxes on the IR path
+                // (a map or Option box is never freed anywhere; a tuple box is
+                // exit-swept ONLY as a fresh scalar-literal local that never
+                // escapes, and binding one into a struct-lit field IS an
+                // escape), so overwriting one in a reused box leaks it exactly
+                // like the normal drop path would have, and a copied pointer
+                // can never dangle. Both emitters' release / carried-copy walks
+                // are per-type allowlists, so these fields already take their
+                // skip branch. (is_enum_like_name excludes bracketed generics
+                // and "(...)" spellings, so none of the three ever routes into
+                // the enum flat-dec release by accident.)
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
                 fi = fi + 1;
             }
             return true;
