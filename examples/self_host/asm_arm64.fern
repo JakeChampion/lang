@@ -4879,6 +4879,18 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = fsPre.state;
         var prPre: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "ProcessResult");
         s = prPre.state;
+        // IoError variant shapes for __fern_io_error (#4624, the arm64 leg
+        // of #4370) — interned early for the same reason as FileStat above.
+        var ioe1: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "NotFound");
+        s = ioe1.state;
+        var ioe2: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "PermissionDenied");
+        s = ioe2.state;
+        var ioe3: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "AlreadyExists");
+        s = ioe3.state;
+        var ioe4: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Interrupted");
+        s = ioe4.state;
+        var ioe5: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Other");
+        s = ioe5.state;
     }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
@@ -5683,6 +5695,89 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ret\n");
         s = s.write(".size __fern_reader_close, .-__fern_reader_close\n");
 
+        // __fern_io_error(x0 = errno, x1 = path string box) → IoError enum
+        // box — the arm64 sibling of the x86 IR helper (#4624, the arm64 leg
+        // of #4370). Variant box = [interned-shape-ptr@0, payload@8, …] (the
+        // same string-lit labels variant matching compares by pointer).
+        // errno → variant matches native: ENOENT(2) → NotFound(path),
+        // EACCES(13) → PermissionDenied(path), EEXIST(17) →
+        // AlreadyExists(path), EINTR(4) → Interrupted, default →
+        // Other(path, ""). Shapes pre-interned in the heap block above.
+        var ashNf: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "NotFound");
+        s = ashNf.state;
+        var ashPd: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "PermissionDenied");
+        s = ashPd.state;
+        var ashAe: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "AlreadyExists");
+        s = ashAe.state;
+        var ashIn: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Interrupted");
+        s = ashIn.state;
+        var ashOt: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Other");
+        s = ashOt.state;
+        s = s.write(".globl __fern_io_error\n");
+        s = s.write(".type __fern_io_error, %function\n");
+        s = s.write("__fern_io_error:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    cmp x19, #2\n");
+        s = s.write("    b.eq .Laioe_nf\n");
+        s = s.write("    cmp x19, #13\n");
+        s = s.write("    b.eq .Laioe_pd\n");
+        s = s.write("    cmp x19, #17\n");
+        s = s.write("    b.eq .Laioe_ae\n");
+        s = s.write("    cmp x19, #4\n");
+        s = s.write("    b.eq .Laioe_intr\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    adrp x9, .Laioe_empty\n");
+        s = s.write("    add x9, x9, :lo12:.Laioe_empty\n");
+        s = s.write("    str x9, [x0]\n");
+        s = s.write("    str xzr, [x0, #8]\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x0, #24\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    adrp x9, " + ashOt.label + "\n");
+        s = s.write("    add x9, x9, :lo12:" + ashOt.label + "\n");
+        s = s.write("    str x9, [x0]\n");
+        s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    str x19, [x0, #16]\n");
+        s = s.write("    b .Laioe_done\n");
+        s = s.write(".Laioe_nf:\n");
+        s = s.write("    adrp x19, " + ashNf.label + "\n");
+        s = s.write("    add x19, x19, :lo12:" + ashNf.label + "\n");
+        s = s.write("    b .Laioe_withpath\n");
+        s = s.write(".Laioe_pd:\n");
+        s = s.write("    adrp x19, " + ashPd.label + "\n");
+        s = s.write("    add x19, x19, :lo12:" + ashPd.label + "\n");
+        s = s.write("    b .Laioe_withpath\n");
+        s = s.write(".Laioe_ae:\n");
+        s = s.write("    adrp x19, " + ashAe.label + "\n");
+        s = s.write("    add x19, x19, :lo12:" + ashAe.label + "\n");
+        s = s.write("    b .Laioe_withpath\n");
+        s = s.write(".Laioe_intr:\n");
+        s = s.write("    mov x0, #8\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    adrp x9, " + ashIn.label + "\n");
+        s = s.write("    add x9, x9, :lo12:" + ashIn.label + "\n");
+        s = s.write("    str x9, [x0]\n");
+        s = s.write("    b .Laioe_done\n");
+        s = s.write(".Laioe_withpath:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x19, [x0]\n");
+        s = s.write("    str x20, [x0, #8]\n");
+        s = s.write(".Laioe_done:\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_io_error, .-__fern_io_error\n");
+        s = s.write("    .section .rodata\n");
+        s = s.write(".Laioe_empty:\n");
+        s = s.write("    .byte 0\n");
+        s = s.write("    .text\n");
+
         // __fern_read_file(x0 = path string box) → Result[string,
         // IoError]: [tag@0, payload@8] with tag=0 Ok(contents) on
         // success, tag=1 Err(_) on any I/O error (payload 0). Copies
@@ -5777,12 +5872,19 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x24, [x0, #8]\n");     // payload = string
         s = s.write("    b .Lrdf_ret\n");
         s = s.write(".Lrdf_err:\n");
+        // x0 = -errno from openat; x19 = the ORIGINAL path box (callee-saved,
+        // untouched). Map errno → a real IoError variant box — the payload
+        // used to be NULL, so matching the error value segfaulted (#4624,
+        // arm64 leg of #4370).
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x24, x0\n");
         s = s.write("    mov x0, #16\n");           // Result Err box
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x0]\n");          // tag = Err
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");      // payload (unused)
+        s = s.write("    str x24, [x0, #8]\n");     // payload = IoError box
         s = s.write(".Lrdf_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -5868,16 +5970,34 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x1, [x0]\n");           // tag = None
         s = s.write("    b .Lwf_ret\n");
         s = s.write(".Lwf_err_close:\n");
+        // Write failed: preserve -errno (the close would clobber x0), then
+        // build the real IoError payload (#4624). x24 (bytes-written) is dead
+        // on the error path.
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x24, x0\n");
         s = s.write("    mov x0, x23\n");
         s = s.write("    mov x8, #57\n");            // close, ignore result
         s = s.write("    svc #0\n");
+        s = s.write("    b .Lwf_mkerr\n");
         s = s.write(".Lwf_err:\n");
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x24, x0\n");
+        s = s.write(".Lwf_mkerr:\n");
+        // x21/x22 = the caller's path data + length (untouched since entry):
+        // box the path and map errno → variant.
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x21, [x0]\n");
+        s = s.write("    str x22, [x0, #8]\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x24\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x24, x0\n");
         s = s.write("    mov x0, #16\n");            // Some box
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #0\n");
         s = s.write("    str x1, [x0]\n");           // tag = Some
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");        // payload 0
+        s = s.write("    str x24, [x0, #8]\n");      // payload = IoError box
         s = s.write(".Lwf_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
