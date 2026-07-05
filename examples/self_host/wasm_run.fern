@@ -13,11 +13,21 @@
 import "std/io";
 import "./lexer";
 import "./parser";
+import "./asmcore";
 import "./wasm";
 
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // Call-arity gate (#4360): an arg-count mismatch used to sail through the
+    // wasm emitter and miscompile where the Go compiler rejects with E004.
+    // Checked on a default-filled COPY so omitted defaulted args don't read
+    // as mismatches; the emit input stays untouched.
+    var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    if (arity_errs.len() > 0) {
+        eprint(arity_errs);
+        return 1;
+    }
     var emitted: string = wasm.emit_module(parser.module_with_builtins(mod));
     write(emitted);
     return 0;

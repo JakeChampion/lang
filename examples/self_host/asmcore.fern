@@ -2693,4 +2693,228 @@ pub function check_module(mod: parser.Module, s: EmitState): string {
     return errs;
 }
 
+// ==== call-arity slice (#4360) ====
+//
+// check_call_arity: a standalone, false-positive-safe arity pass (native
+// E004) for driver paths that run no full checker gate — first consumer is
+// the wasm drivers, where an arg-count mismatch used to sail through the
+// emitter and miscompile while the Go compiler rejects at check time.
+//
+// Only DIRECT calls to module-level FREE functions are checked: the callee
+// must be a bare identifier that names a receiverless module function AND is
+// not shadowed by any binding in the enclosing function (params, receiver,
+// vars, for/match bindings, lambda params — collected function-wide, which
+// can only SKIP a check, never invent one). Method calls, fn-value calls,
+// builtins, and any construct the walk doesn't recognise are skipped.
+// Callers pass a fill_default_args_module'd module so omitted defaulted
+// arguments don't read as mismatches.
+
+function arity_name_in(names: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (names[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arity_bound_names collects every name bound anywhere in a body
+// (function-wide, all scopes flattened — see the shadowing note above).
+function arity_bound_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { acc = acc.append(v.name); },
+            parser.StmtIf(f) => {
+                acc = arity_bound_names(f.then_body, acc);
+                acc = arity_bound_names(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = arity_bound_names(w.body, acc); },
+            parser.StmtFor(fo) => {
+                acc = acc.append(fo.var_name);
+                acc = arity_bound_names(fo.body, acc);
+            },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    match (m.arms[ai].pattern) {
+                        parser.PatVariant(pv) => {
+                            if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
+                            var bi: i32 = 0;
+                            while (bi < pv.extra_bindings.len()) {
+                                acc = acc.append(pv.extra_bindings[bi]);
+                                bi = bi + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                    acc = arity_bound_names(m.arms[ai].body, acc);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { acc = arity_bound_names([d.action], acc); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// arity_check_expr walks one expression, appending an E004 line for each
+// mis-arity direct call. `argc` is the free-function arity table (parallel
+// to `names`); `bound` is the enclosing function's shadow set.
+function arity_check_expr(e: parser.Expr, names: string[], argc: i32[], bound: string[], errs: string): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (!arity_name_in(bound, id.name)) {
+                        var ti: i32 = 0;
+                        while (ti < names.len()) {
+                            if (names[ti] == id.name) {
+                                if (c.args.len() != argc[ti]) {
+                                    errs = errs + "error[E004]: function '" + id.name
+                                        + "' expects " + util.i32_to_string(argc[ti])
+                                        + " argument(s), got " + util.i32_to_string(c.args.len()) + "\n";
+                                }
+                                ti = names.len();
+                            } else { ti = ti + 1; }
+                        }
+                    }
+                },
+                _ => { errs = arity_check_expr(c.callee, names, argc, bound, errs); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                errs = arity_check_expr(c.args[i], names, argc, bound, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprBinary(b) => {
+            errs = arity_check_expr(b.left, names, argc, bound, errs);
+            return arity_check_expr(b.right, names, argc, bound, errs);
+        },
+        parser.ExprUnary(u) => { return arity_check_expr(u.operand, names, argc, bound, errs); },
+        parser.ExprIndex(x) => {
+            errs = arity_check_expr(x.array, names, argc, bound, errs);
+            return arity_check_expr(x.index, names, argc, bound, errs);
+        },
+        parser.ExprSlice(sl) => {
+            errs = arity_check_expr(sl.array, names, argc, bound, errs);
+            errs = arity_check_expr(sl.start, names, argc, bound, errs);
+            return arity_check_expr(sl.end, names, argc, bound, errs);
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                errs = arity_check_expr(a.elements[i], names, argc, bound, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                errs = arity_check_expr(t.elements[i], names, argc, bound, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                errs = arity_check_expr(sl.field_values[i], names, argc, bound, errs);
+                i = i + 1;
+            }
+            if (sl.has_base) { errs = arity_check_expr(sl.base, names, argc, bound, errs); }
+            return errs;
+        },
+        parser.ExprFieldAccess(fa) => { return arity_check_expr(fa.obj, names, argc, bound, errs); },
+        parser.ExprLambda(lm) => {
+            // Lambda params shadow inside its body only; extend a body-local
+            // copy of the shadow set.
+            var lb: string[] = bound;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                lb = lb.append(lm.params[pi].name);
+                pi = pi + 1;
+            }
+            lb = arity_bound_names(lm.body, lb);
+            return arity_check_stmts(lm.body, names, argc, lb, errs);
+        },
+        _ => { return errs; }
+    }
+    return errs;
+}
+
+function arity_check_stmts(stmts: parser.Stmt[], names: string[], argc: i32[], bound: string[], errs: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { errs = arity_check_expr(v.init, names, argc, bound, errs); },
+            parser.StmtReturn(r) => { errs = arity_check_expr(r.value, names, argc, bound, errs); },
+            parser.StmtExpr(x) => { errs = arity_check_expr(x.value, names, argc, bound, errs); },
+            parser.StmtAssign(a) => { errs = arity_check_expr(a.value, names, argc, bound, errs); },
+            parser.StmtIf(f) => {
+                errs = arity_check_expr(f.cond, names, argc, bound, errs);
+                errs = arity_check_stmts(f.then_body, names, argc, bound, errs);
+                errs = arity_check_stmts(f.else_body, names, argc, bound, errs);
+            },
+            parser.StmtWhile(w) => {
+                errs = arity_check_expr(w.cond, names, argc, bound, errs);
+                errs = arity_check_stmts(w.body, names, argc, bound, errs);
+            },
+            parser.StmtFor(fo) => {
+                errs = arity_check_expr(fo.iter, names, argc, bound, errs);
+                errs = arity_check_stmts(fo.body, names, argc, bound, errs);
+            },
+            parser.StmtMatch(m) => {
+                errs = arity_check_expr(m.scrutinee, names, argc, bound, errs);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { errs = arity_check_expr(m.arms[ai].guard, names, argc, bound, errs); }
+                    errs = arity_check_stmts(m.arms[ai].body, names, argc, bound, errs);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { errs = arity_check_stmts([d.action], names, argc, bound, errs); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return errs;
+}
+
+pub function check_call_arity(mod: parser.Module): string {
+    // Free-function arity table (receiver methods dispatch by field access,
+    // never by bare name — excluded).
+    var names: string[] = [];
+    var argc: i32[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        if (mod.funcs[fi].receiver_type.len() == 0) {
+            names = names.append(mod.funcs[fi].name);
+            argc = argc.append(mod.funcs[fi].params.len());
+        }
+        fi = fi + 1;
+    }
+    var errs: string = "";
+    fi = 0;
+    while (fi < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[fi];
+        var bound: string[] = [];
+        if (fd.receiver_type.len() > 0) { bound = bound.append(fd.receiver_name); }
+        var pi: i32 = 0;
+        while (pi < fd.params.len()) {
+            bound = bound.append(fd.params[pi].name);
+            pi = pi + 1;
+        }
+        bound = arity_bound_names(fd.body, bound);
+        errs = arity_check_stmts(fd.body, names, argc, bound, errs);
+        fi = fi + 1;
+    }
+    return errs;
+}
+
 // contains -> util.contains (SH-020).
