@@ -1,0 +1,58 @@
+// Regression: a recursive `(T, Cur)`-tuple reader threading its
+// scalar-only struct cursor with `c = c2;` in a loop. Borrow
+// inference demotes the non-escaping `c` param; before the
+// computeConsumedParams fix the reassignment's overwrite dec
+// released the caller's reference, the caller's tuple-temp deep
+// drop then freed the cursor box early, and the still-live
+// aliases double-freed it — corrupting the freelist (the crash
+// appeared as __fern_alloc walking a next-link overwritten by a
+// reused block's rc header). Scalar-only cursors are the exact
+// gap: string/array-bearing cursors (json.fern's __JsonParser)
+// were already consumed-promoted.
+struct Leaf { x: i32 }
+struct Node { kids: T[] }
+type T = Leaf | Node;
+struct Cur { pos: i32 }
+
+function build(c: Cur, depth: i32): (T, Cur) {
+    if (depth == 0) {
+        return (Leaf { x: 1 }, Cur { pos: c.pos + 1 });
+    }
+    var kids: T[] = [];
+    var i = 0;
+    while (i < 3) {
+        var (k, c2) = build(c, depth - 1);
+        c = c2;
+        kids = kids.append(k);
+        i = i + 1;
+    }
+    return (Node { kids: kids }, Cur { pos: c.pos + 1 });
+}
+
+function count(t: T): i32 {
+    match (t) {
+        Leaf(l) => { return l.x; },
+        Node(n) => {
+            var s = 0;
+            var i = 0;
+            while (i < n.kids.len()) {
+                s = s + count(n.kids[i]);
+                i = i + 1;
+            }
+            return s;
+        }
+    }
+    return 0;
+}
+
+function main(): i32 {
+    var total = 0;
+    var r = 0;
+    while (r < 20) {
+        var (t, c2) = build(Cur { pos: 0 }, 5);
+        total = total + count(t);
+        r = r + 1;
+    }
+    // 3^5 = 243 → 243 % 100 = 43; minus 1 → 42, plus underflows (0)
+    return (total / 20) % 100 - 1 + __rc_underflow_count();
+}

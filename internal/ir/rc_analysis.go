@@ -289,7 +289,22 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// is off; promoting it here would diverge the OwnedByDefault-vs-borrow
 		// differential gate. consumedDropWired keeps Map / slice / unwired
 		// shapes out (their deep drop is incomplete).
-		if b.typeIsStringArrayFree(p.Type, map[string]bool{}) {
+		//
+		// EXCEPT when borrow inference DEMOTED the param (verdict Borrowed):
+		// the caller then passes without an inc, and the reassignment's
+		// overwrite dec releases a reference the callee never owned — the
+		// caller's box rc undercounts, its own later is_unique-gated drop
+		// frees early, and the still-live aliases double-free (the
+		// `c = c2;` cursor-threading loop in a recursive `(T, Cur)`-tuple
+		// reader was the repro: freelist link clobbered by a reused block's
+		// rc header). String/array-BEARING params never hit this because
+		// this very promotion already covered them; the scalar-only shape
+		// needs it exactly when the borrow demotion applies. The
+		// OwnedByDefault-vs-borrow differential gate is unaffected: with
+		// the flag off the verdict is NotOwnedType, not Borrowed, and the
+		// skip below still fires.
+		if b.typeIsStringArrayFree(p.Type, map[string]bool{}) &&
+			b.paramVerdict(b.fn.Name, p.Type, i) != paramVerdictBorrowed {
 			continue
 		}
 		if !consumedDropWired(p.Type, b.info, map[string]bool{}) {

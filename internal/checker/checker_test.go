@@ -2709,6 +2709,29 @@ func TestTupleReturnStillRejectsElementMismatch(t *testing.T) {
 	}
 }
 
+// A union-member struct literal in a tuple-literal return widens
+// (wraps) to the declared union element — `return (A { … }, cur);`
+// from a function declared `(AB, Cur)`. maybeWrapForUnion recurses
+// into TupleLit elements; the *Result-struct → tuple-return migration
+// of the self-host tree (#4406) leans on this.
+func TestTupleReturnWrapsUnionElement(t *testing.T) {
+	src := `struct A { x: i32 }
+struct B { y: i32 }
+type AB = A | B;
+struct Cur { pos: i32 }
+function mk(k: i32, c: Cur): (AB, Cur) {
+    if (k == 0) { return (A { x: 1 }, c); }
+    return (B { y: 2 }, c);
+}
+function main(): i32 {
+    var (v, c2) = mk(0, Cur { pos: 0 });
+    match (v) { A(a) => { return a.x; }, B(b) => { return b.y + c2.pos; } }
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // A struct that implements all of a trait's methods with matching
 // signatures type-checks, and the impl is recorded in Info.Impls.
 // See docs/TRAITS.md.

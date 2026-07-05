@@ -6147,6 +6147,26 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 		}
 		return srcType
 	}
+	// Tuple literal against a tuple destination: recurse per element so
+	// a union-member element widens (wraps) inside a multi-return —
+	// `return (PatVariant { … }, p);` from a function declared
+	// `(Pattern, Par)`. The element wrap rewrites the TupleLit slot in
+	// place (same holder mechanics as every other site); the returned
+	// type carries the widened element types so the caller's
+	// assignable() check sees the post-wrap tuple.
+	if dtup, dok := dst.(ast.TupleType); dok {
+		tl, isLit := (*holder).(*ast.TupleLit)
+		stup, isTup := srcType.(ast.TupleType)
+		if isLit && isTup && len(tl.Elems) == len(dtup.Elems) && len(stup.Elems) == len(dtup.Elems) {
+			out := make([]ast.Type, len(stup.Elems))
+			copy(out, stup.Elems)
+			for i := range tl.Elems {
+				out[i] = c.maybeWrapForUnion(dtup.Elems[i], &tl.Elems[i], stup.Elems[i], s)
+			}
+			return ast.TupleType{Elems: out}
+		}
+		return srcType
+	}
 	du, dok := dst.(ast.EnumType)
 	if !dok {
 		return srcType
