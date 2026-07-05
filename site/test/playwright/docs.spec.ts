@@ -104,10 +104,16 @@ test("embedded playground actually boots — the staged bundle is complete", asy
   const frame = page.frameLocator(
     "figure.fern-playground[data-fern-minimal='1'] iframe",
   );
-  // Boot sentinel: status flips to a "ready" prefix once wasm + LSP
-  // init complete (mirrors web/test/playwright).
+  // Boot sentinel: status flips to a "ready" prefix once the wasm runtime is
+  // up. Since #4590 the boot runs in its own script, decoupled from the
+  // esm.sh CodeMirror import, so a CDN stall can no longer strand this at
+  // "loading runtime…". The remaining variable is the ~19 MB fern.wasm
+  // streaming-compile, which grows with every compiler feature and can spike
+  // on a loaded shared runner — hence 90 s, not 30 s (a genuine boot failure
+  // surfaces as "wasm load failed: …", so the longer window costs nothing on
+  // the failure path).
   await expect(frame.locator("#status")).toContainText("ready", {
-    timeout: 30_000,
+    timeout: 90_000,
   });
   // The minimal embed autoruns, so its output renders with no click.
   await expect(frame.locator("#out")).toContainText("hello, world", {
