@@ -8,11 +8,14 @@ import "std/cli" as cli;
 // value_or default, the error paths (unknown option, missing
 // value, value on a bool), and the auto-usage string.
 
-// Shared spec: one valued option (--name/-n) and one bool (--shout/-s).
+// Shared spec: a valued option (--name/-n) and two bools
+// (--shout/-s, --verbose/-v). Two bools let the short-cluster
+// tests exercise bundling.
 function spec(): cli.CliSpec {
     var s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
     s = s.option("name", "n", "who to greet");
     s = s.flag("shout", "s", "upper-case the greeting");
+    s = s.flag("verbose", "v", "explain what is happening");
     return s;
 }
 
@@ -74,6 +77,40 @@ function test_usage_lists_flags(): test.TestOutcome {
         u.contains("--name") && u.contains("--shout") && u.contains("greet"));
 }
 
+// ---- short-flag clustering ----
+
+// -n5 : a valued short option with its value glued to the token.
+function test_short_glued_value(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-n5"]);
+    return test.assert_eq(a.value_or("name", "x"), "5");
+}
+
+// -vs : two boolean short flags bundled in one token.
+function test_short_bundled_bools(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-vs"]);
+    return test.assert_true(a.is_set("verbose") && a.is_set("shout"));
+}
+
+// -vn5 : a bundle ending in a valued option that swallows the tail.
+function test_short_bundle_ending_valued(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-vn5"]);
+    return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5");
+}
+
+// -vn 5 : same, but the value is the next token (nothing glued).
+function test_short_bundle_next_token_value(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-vn", "5"]);
+    return test.assert_true(
+        a.is_set("verbose") && a.value_or("name", "x") == "5"
+        && a.operands().len() == 0);
+}
+
+// A lone "-" is a positional (stdin convention), not a flag cluster.
+function test_short_lone_dash_is_positional(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-"]);
+    return test.assert_true(a.operands().len() == 1 && !a.is_error());
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/cli");
     r = r.it("option --long V",        test_option_long());
@@ -87,5 +124,10 @@ function main(): i32 {
     r = r.it("missing value errors",   test_missing_value_errors());
     r = r.it("value on bool errors",   test_value_on_bool_errors());
     r = r.it("usage lists flags",      test_usage_lists_flags());
+    r = r.it("short glued value -n5",  test_short_glued_value());
+    r = r.it("short bundled bools -vs", test_short_bundled_bools());
+    r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued());
+    r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value());
+    r = r.it("lone dash is positional", test_short_lone_dash_is_positional());
     return r.finish();
 }
