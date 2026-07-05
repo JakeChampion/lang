@@ -6186,12 +6186,24 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x21, [x0, #8]\n");
         s = s.write("    b .Ltd_ret\n");
         s = s.write(".Ltd_err:\n");
+        // x0 = -errno from mkdirat; x21/x22 = the GENERATED path data +
+        // length (the same pair the Ok path boxes). Real IoError payload
+        // instead of NULL (#4624).
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x23, x0\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x21, [x0]\n");
+        s = s.write("    str x22, [x0, #8]\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x23\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x21, x0\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x0]\n");           // Err
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
         s = s.write(".Ltd_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6293,12 +6305,17 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x21, [x0, #8]\n");
         s = s.write("    b .Lstat_ret\n");
         s = s.write(".Lstat_err:\n");
+        // x0 = -errno from statx; x19 = the ORIGINAL path box (callee-saved,
+        // untouched). Real IoError payload instead of NULL (#4624).
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x21, x0\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x0]\n");           // Err
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
         s = s.write(".Lstat_ret:\n");
         s = s.write("    add sp, sp, #160\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
@@ -6477,12 +6494,18 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x20, [x0, #8]\n");
         s = s.write("    b .Lrd_ret\n");
         s = s.write(".Lrd_err:\n");
+        // x0 = -errno from openat (the only route here — x19 is still the
+        // ORIGINAL path box; its dents-scan repurposing happens later). Real
+        // IoError payload instead of NULL (#4624).
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x21, x0\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x0]\n");           // Err
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
         s = s.write(".Lrd_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6685,12 +6708,24 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x1, [x0, #8]\n");
         s = s.write("    b .Lrda_ret\n");
         s = s.write(".Lrda_some:\n");
+        // x0 = -errno from the initial openat (the only route here);
+        // x19/x21 = NUL-terminated path copy + length (both live). Real
+        // IoError payload instead of NULL (#4624).
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x22, x0\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x19, [x0]\n");
+        s = s.write("    str x21, [x0, #8]\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x22\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x21, x0\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #0\n");
         s = s.write("    str x1, [x0]\n");           // Some
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
         s = s.write(".Lrda_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -6749,12 +6784,18 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x1, [x0, #8]\n");
         s = s.write("    b .Lrf_ret\n");
         s = s.write(".Lrf_err:\n");
+        // x0 = -errno from unlinkat; x19 = the ORIGINAL path box
+        // (callee-saved, untouched). Real IoError payload instead of NULL
+        // (#4624).
+        s = s.write("    neg x0, x0\n");
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    bl __fern_io_error\n");
+        s = s.write("    mov x21, x0\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x1, #0\n");
         s = s.write("    str x1, [x0]\n");           // Some
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str x21, [x0, #8]\n");      // payload = IoError box
         s = s.write(".Lrf_ret:\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
