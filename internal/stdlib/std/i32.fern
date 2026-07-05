@@ -271,12 +271,13 @@ pub function (n: i32) has_digit(d: i32): boolean {
 // `(n: i32) percent_of(total)` — what percentage of `total`
 // is `n`? Returns `(n * 100) / total`, integer-truncated.
 // `total <= 0` returns 0 (sentinel for "undefined"; a
-// caller wanting `None` should check first). Beware
-// overflow: `n * 100` should fit in i32, so `n` must be
-// in roughly ±21M for the multiplication not to wrap.
+// caller wanting `None` should check first). The `n * 100`
+// is computed in i64 so it can't wrap for large |n| (the old
+// i32 multiply silently wrapped for |n| beyond ~21M); the
+// quotient is correct whenever the true percentage fits i32.
 pub function (n: i32) percent_of(total: i32): i32 {
     if (total <= 0) { return 0; }
-    return (n * 100) / total;
+    return ((n as i64) * 100 / (total as i64)) as i32;
 }
 
 // `(n: i32) is_multiple_of(d)` — true if d divides n

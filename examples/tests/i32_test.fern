@@ -70,6 +70,23 @@ function test_is_between(): test.TestOutcome {
 
 function test_min(): test.TestOutcome { return test.assert_eq((10).min(3), 3); }
 
+function test_percent_of(): test.TestOutcome {
+    // Basic ratios + the total<=0 guard (returns 0).
+    return test.assert_true(
+        (50).percent_of(200) == 25
+        && (100).percent_of(100) == 100
+        && (0).percent_of(100) == 0
+        && (5).percent_of(0) == 0);
+}
+
+function test_percent_of_large(): test.TestOutcome {
+    // n * 100 overflows i32 for |n| beyond ~21M; the i64 path keeps
+    // the ratio correct (30M of 60M is 50%, 25M of 100M is 25%).
+    return test.assert_true(
+        (30000000).percent_of(60000000) == 50
+        && (25000000).percent_of(100000000) == 25);
+}
+
 // i32::MIN (-2147483648) edge cases (#4390): abs() wraps it back to i32::MIN
 // (still negative), so the digit family — which loops on the magnitude — used
 // to spin zero times and silently return 0 / false. The magnitude is now
@@ -115,6 +132,8 @@ function main(): i32 {
     r = r.it("is_in_range",         test_is_in_range());
     r = r.it("is_between",          test_is_between());
     r = r.it("min",                 test_min());
+    r = r.it("percent_of",          test_percent_of());
+    r = r.it("percent_of large",    test_percent_of_large());
     r = r.it("digits basic",        test_digits_basic());
     r = r.it("digits i32::MIN",     test_digits_min());
     r = r.it("sum_of_digits MIN",   test_sum_of_digits_min());
