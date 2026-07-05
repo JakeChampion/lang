@@ -3636,3 +3636,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   slot because it erases the type; the self-host binding-site registry skips
   the vtable entirely (the concrete is statically known), mirroring the #4552
   closure-capture design.
+- 2026-07-05: **Landed TRMC (tail recursion modulo cons) on the self-host IR
+  path (#4352 v1 — irlower-only, all three backends).** The `map`-shaped
+  recursion `Cons(g(h), self(t))` is not a tail call (the constructor wraps
+  it), so pre-port the self-host IR path grew O(n) stack and a ~300k-element
+  list SIGSEGV'd. `trmc_eligible` (conservative v1 detector) accepts a free,
+  non-generic function whose whole body is one `match` on an enum param
+  returning that enum, where every arm is a guard-free `PatVariant` with a
+  single `return`: recursive arms return a constructor of the return enum
+  whose LAST argument is the sole self-call (full argc, self-free heads),
+  base arms are self-free, and — the key v1 restriction — every recursive arm
+  uses the SAME constructor variant, which makes the tail-field index a
+  compile-time constant so the hole write is a plain `op_struct_set`
+  (portable: wasm has no raw pointer stores). `emit_trmc` rewrites the body
+  into the classic hole-passing loop: an outer exit block + `op_loop`; per
+  arm a variant test (`variant_is` / brif past); recursive arms evaluate the
+  heads to temps, build the node via a normal `op_struct_make` with a dummy 0
+  tail (automatic layout + rc parity with ordinary construction), link it
+  into the previous hole (or seed the result), advance the hole, store the
+  self-call args over the param slots, and `op_br` the loop; the base arm
+  lowers its return value normally and links it as the final tail. TRMC'd
+  bodies bypass the RC sweeps and the self-tail-call TCO pair (no swept
+  locals, no self-tail shape left). Deliberately deferred (documented on the
+  issue): consume-safety (native slice 2 shares the reuse-token machinery
+  the #4350 work is building), mixed-variant recursive arms, guards, and
+  nested/multi-statement arm bodies. VERIFIED: TestSelfHostTrmcIRX86_64
+  (value 1275; 300k-deep list exits 0 where the pre-port driver — rebuilt
+  from origin/main — SIGSEGVs; string-head SList; tree-shaped two-self-call
+  negative NOT rewritten), TestSelfHostTrmcWasmIR (value + 200k deep),
+  TestSelfHostTrmcIRArm64 (200k deep under qemu via `asm_ir_run -target
+  arm64`). Native reference: `detectTrmc` / `emitTrmc` (internal/trmc.go) —
+  the self-host detector is stricter (same-ctor restriction) but the emitted
+  loop shape matches.
