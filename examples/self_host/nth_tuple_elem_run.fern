@@ -1,0 +1,48 @@
+// examples/self_host/nth_tuple_elem_run.fern — golden driver for the wasm
+// backend's tuple-element decoder (wasm.fern's nth_tuple_type_elem, SH-021 slice —
+// docs/SELF-HOST-AUDIT.md T2).
+//
+// nth_tuple_type_elem returns the idx-th element type of a tuple spelling
+// "(A, B, …)", or "" when the spelling isn't a tuple / idx is out of range. It now
+// decodes via the structured TypeRef (parser.parse_type_ref) instead of a
+// hand-rolled bracket/paren depth scan. This driver prints its result over a
+// corpus × indices spanning every branch — plain tuples, tuples with nested-
+// generic / nested-tuple elements (whose inner commas the scan must not split on),
+// two-element extern-style tuples, non-tuples, and a tuple-array "(i32, i32)[]".
+// The companion Go test pins the exact mapping.
+//
+// On every non-array spelling the result matches the former depth scan exactly.
+// The tuple-array row resolves to "" (array_depth > 0 is a value of array type,
+// not a tuple) — the former scan keyed only off a leading "(" and mis-read the
+// trailing "[]" as tuple content, wrongly reporting `(i32, i32)[]` as a flat
+// extern tuple param; the three x86 self-compile fixpoints confirm no such
+// tuple-array spelling reaches this on the self-host sources, so the extern-param
+// codegen is unchanged.
+
+import "./wasm";
+import "./util";
+
+function show(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
+
+function main(): i32 {
+    var corpus: string[] = [
+        "(i32, i32)", "(i32, u32, string)", "(Map[K, V], c)",
+        "((a, b), c)", "(Option[i32], Result[i32, u32])", "(x)",
+        "(i32, i32)[]", "i32", "Map[a, b]", "", "(a, (b, c), d)"
+    ];
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var t: string = corpus[i];
+        var label: string = t;
+        if (label.len() == 0) { label = "<empty>"; }
+        var n: i32 = 0;
+        while (n <= 3) {
+            out = out + label + "[" + util.i32_to_string(n) + "]=" + show(wasm.nth_tuple_type_elem(t, n)) + "\n";
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    write(out);
+    return 0;
+}

@@ -5008,34 +5008,21 @@ function str_trim_spaces(s: string): string {
     return s[a:b];
 }
 
-// nth_tuple_type_elem parses a tuple-type spelling "(A, B, …)" and returns
-// the idx-th element type (trimmed), honouring bracket / paren nesting so a
-// comma inside a generic arg (Map[K, V]) or nested tuple doesn't split.
-// "" when the spelling isn't a parenthesised tuple or idx is out of range.
-function nth_tuple_type_elem(spelling: string, idx: i32): string {
-    if (spelling.len() < 2 || spelling[0] != 40) { return ""; }  // 40 = '('
-    var depth: i32 = 0;
-    var cur: i32 = 0;
-    var start: i32 = 1;
-    var i: i32 = 1;
-    while (i < spelling.len()) {
-        var ch: i32 = spelling[i];
-        if (ch == 91 || ch == 40) { depth = depth + 1; }         // '[' '('
-        else if (ch == 93) { depth = depth - 1; }                // ']'
-        else if (ch == 41) {                                     // ')'
-            if (depth == 0) {
-                if (cur == idx) { return str_trim_spaces(spelling[start:i]); }
-                return "";
-            }
-            depth = depth - 1;
-        } else if (ch == 44 && depth == 0) {                     // top-level ','
-            if (cur == idx) { return str_trim_spaces(spelling[start:i]); }
-            cur = cur + 1;
-            start = i + 1;
-        }
-        i = i + 1;
-    }
-    return "";
+// nth_tuple_type_elem parses a tuple-type spelling "(A, B, …)" and returns the
+// idx-th element type, or "" when the spelling isn't a tuple or idx is out of
+// range. Decodes via the structured TypeRef (SH-021, docs/SELF-HOST-AUDIT.md T2)
+// instead of a hand-rolled bracket/paren depth scan; parse_type_ref already splits
+// the elements without letting a nested generic's (Map[K, V]) or tuple's inner
+// commas confuse the split. A tuple-ARRAY ("(A, B)[]", array_depth > 0) is a value
+// of array type, not a tuple, so it returns "" — the former scan keyed only off a
+// leading "(" and so mis-read the trailing "[]" as tuple content, wrongly reporting
+// e.g. `(i32, i32)[]` as a flat extern tuple param; the fixpoints confirm no such
+// tuple-array spelling reaches this on the self-host sources.
+pub function nth_tuple_type_elem(spelling: string, idx: i32): string {
+    var r: parser.TypeRef = parser.parse_type_ref(spelling);
+    if (r.array_depth != 0 || !r.is_tuple) { return ""; }
+    if (idx < 0 || idx >= r.args.len()) { return ""; }
+    return parser.render_type_ref(r.args[idx]);
 }
 
 // nth_csv_elem returns the idx-th comma-separated field of `csv` (used for
