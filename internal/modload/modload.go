@@ -126,12 +126,18 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	srcs := map[string]string{}         // path → source text (for diag formatting)
 	lit := map[string]*LiterateModule{} // path → literate provenance (tangled imports)
 	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit); err != nil {
-		return nil, nil, nil, err
+		// Return the partial source map (loadRecursive stamps srcs[path]
+		// BEFORE parsing each file, so the failing file's source is already
+		// captured) so the CLI/LSP formatter can render the offending line +
+		// caret. Discarding it here left every parse error rendering a blank
+		// source line while checker errors — reached only after a clean parse,
+		// with srcs intact — rendered correctly.
+		return nil, srcs, lit, err
 	}
 	resolveCyclicImports(loaded)
 	prog, err := combine(loaded, entryAbs)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, srcs, lit, err
 	}
 	return prog, srcs, lit, nil
 }
