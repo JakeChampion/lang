@@ -1,0 +1,41 @@
+// examples/self_host/count_type_args_run.fern — golden driver for the checker's
+// generic-arity counter (checker.fern's count_type_args, SH-021 slice —
+// docs/SELF-HOST-AUDIT.md T2).
+//
+// count_type_args returns how many top-level type args a `Name[A, B, …]`
+// annotation supplies to its head generic, or -1 when the annotation is not a
+// top-level generic instantiation. It now decodes via the structured TypeRef
+// (parser.parse_type_ref, through the checker) instead of a first-`[` + trailing-
+// `]` window with a depth-tracking top-level-comma count.
+//
+// This driver prints count_type_args for a corpus spanning every branch — plain
+// generics of 1/2/3 args, nested generics and tuples whose inner commas must NOT
+// be counted at top level, bare names, tuples, and arrays. The companion Go test
+// pins the exact mapping. Arrays and tuples resolve to -1 (not a generic head);
+// the former scan returned a garbage count on a trailing `[]`, but that value only
+// ever fed the E019 struct-arity check on a struct's OWN generic head (never an
+// array), so the arity diagnostics are unchanged — confirmed by the three x86
+// self-compile fixpoints.
+
+import "./checker";
+import "./util";
+
+function main(): i32 {
+    var corpus: string[] = [
+        "Box[i32]", "Map[K, V]", "Triple[a, b, c]",
+        "Pair[Map[a, b], c]", "Wrap[(a, b)]", "Nest[Box[Box[i32]]]",
+        "Foo", "i32", "(a, b)", "(Map[a, b], c)",
+        "Box[i32][]", "i32[]", "Foo[]", "Map[K, V][]", ""
+    ];
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var t: string = corpus[i];
+        var label: string = t;
+        if (label.len() == 0) { label = "<empty>"; }
+        out = out + label + " -> " + util.i32_to_string(checker.count_type_args(t)) + "\n";
+        i = i + 1;
+    }
+    write(out);
+    return 0;
+}
