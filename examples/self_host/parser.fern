@@ -7897,12 +7897,26 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
         body = body.append(s_var("__dfa" + dl_itoa(i), "", e_number("0", "", false)));
         i = i + 1;
     }
+    // `?`-edge cleanup markers (#4334): the try operator is lowered long after
+    // this parse-time pass (irlower's lower_try), so its implicit early return
+    // can't be expanded here like a StmtReturn. Instead, embed both cleanup
+    // lists in the body behind never-true guards; lower_try recognises the
+    // guard idents and replays the guarded statements at the `?` failure edge
+    // (plain defers first, then errdefers — native's TryOp order). The guards
+    // are ordinary always-0 flags, so on every backend that does NOT know the
+    // markers (the legacy AST emitters) these blocks are dead code and the
+    // lowering is behaviourally unchanged.
+    body = body.append(s_var("__dfa_tryall", "", e_number("0", "", false)));
+    body = body.append(s_var("__dfa_tryerr", "", e_number("0", "", false)));
     var k: i32 = 0;
     while (k < expanded.len()) { body = body.append(expanded[k]); k = k + 1; }
     // Falloff cleanup (a function that returns on every path leaves this
     // unreachable; a void function that falls off runs it).
     var c: i32 = 0;
     while (c < cleanup.len()) { body = body.append(cleanup[c]); c = c + 1; }
+    var noelse: Stmt[] = [];
+    body = body.append(s_if(e_ident("__dfa_tryall"), cleanup, noelse));
+    body = body.append(s_if(e_ident("__dfa_tryerr"), cleanup_err, noelse));
     return FuncDecl {
         name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
         type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body, line: fn.line, col: fn.col,
