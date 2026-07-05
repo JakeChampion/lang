@@ -11228,7 +11228,17 @@ func (b *builder) fieldCarriedFrom(val ast.Expr, targetName, fieldName string) b
 
 func structReuseEligible(sd *ast.StructDecl) bool {
 	for _, f := range sd.Fields {
-		if nt, ok := f.Type.(ast.NumberType); ok && nt.NormalWidth() <= 32 {
+		// Scalars of EVERY width are admitted (#4356 divergence 1): wide
+		// i64/u64 and f32/f64 fields ride width-correct temp slots in the
+		// self-overwrite path (the scratchType stamp sizes the slot and
+		// payloadStoreOpFor picks the 8-byte store), and the general reuse
+		// path stores fields width-correctly with no temps at all. Only the
+		// two-word string shape stays out (its retain/release is per-ABI and
+		// its slot fans into two words — a separate slice).
+		if _, ok := f.Type.(ast.NumberType); ok {
+			continue
+		}
+		if _, ok := f.Type.(ast.FloatType); ok {
 			continue
 		}
 		if arrElemIsRcTracked(f.Type) {
@@ -11240,16 +11250,19 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 }
 
 // tupleReuseEligible is the tuple analogue of structReuseEligible: every
-// element is an i32-class scalar OR a single-word rc-tracked pointer (array /
-// struct / Map / enum / closure / tuple). Strings (two-word) and wide/float
-// scalars are excluded, exactly as for structs — single-word temps only, and
-// the old-element release rides emitFieldDropOnStack.
+// element is a scalar of any width (i32-class, i64/u64, f32/f64 — #4356
+// divergence 1) OR a single-word rc-tracked pointer (array / struct / Map /
+// enum / closure / tuple). Strings (two-word) stay excluded, exactly as for
+// structs; the old-element release rides emitFieldDropOnStack.
 func tupleReuseEligible(elems []ast.Type) bool {
 	if len(elems) == 0 {
 		return false
 	}
 	for _, e := range elems {
-		if nt, ok := e.(ast.NumberType); ok && nt.NormalWidth() <= 32 {
+		if _, ok := e.(ast.NumberType); ok {
+			continue
+		}
+		if _, ok := e.(ast.FloatType); ok {
 			continue
 		}
 		if arrElemIsRcTracked(e) {
@@ -11487,6 +11500,12 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		}
 		ts := b.allocSlot()
 		b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
+		// Stamp the temp with the field's declared type so the backends
+		// size the slot correctly — a wide i64/u64/f32/f64 field (#4356)
+		// needs an 8-byte slot and width-matched load/store; the default
+		// un-stamped slot is i32 and would truncate (natives) or fail
+		// validation (wasm).
+		b.scratchType[ts] = fieldType(sd.Fields, f.Name)
 		b.emit(Op{Kind: OpStoreLocal, I32: ts})
 		temps = append(temps, fieldTemp{f.Name, ts, isPtr, carried})
 		hasPtr = hasPtr || isPtr
