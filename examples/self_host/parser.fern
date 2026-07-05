@@ -59,7 +59,7 @@ pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[] }
 // fixed-arity / heterogeneous; arrays are homogeneous and
 // dynamic. Field access in Fern uses `.0`, `.1`, etc. but
 // that's a later milestone — this slice only adds parsing.
-pub struct ExprTuple { elements: Expr[] }
+pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 // Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
 // an array; `i` must type-check to i32. Out-of-range access at
 // runtime surfaces as VErr from the interp.
@@ -309,7 +309,8 @@ function e_unary_at(op: string, operand: Expr, line: i32, col: i32): Expr { retu
 function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0, type_argc: 0 }; }
 function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col, type_argc: 0 }; }
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
-function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements }; }
+function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements, line: 0, col: 0 }; }
+function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
@@ -1570,6 +1571,8 @@ function parse_primary(p: Par): ExprResult {
                 // parenthesized expression. Either way the
                 // result feeds through the postfix loop so
                 // `(a, b).0` and `(f(x)).y` both work.
+                var tpl: i32 = p.peek_line();
+                var tpc: i32 = p.peek_col();
                 p = p.advance();
                 var inner = parse_expr(p);
                 p = inner.par;
@@ -1584,7 +1587,7 @@ function parse_primary(p: Par): ExprResult {
                         elems = elems.append(er.expr);
                     }
                     if (p.peek_punct() == ")") { p = p.advance(); }
-                    return parse_postfix(p, e_tuple(elems));
+                    return parse_postfix(p, e_tuple_at(elems, tpl, tpc));
                 }
                 if (p.peek_punct() == ")") { p = p.advance(); }
                 return parse_postfix(p, inner.expr);
@@ -5238,7 +5241,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                 els = els.append(re.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprTuple { elements: els }, rins: cur };
+            return RExpr { rexpr: ExprTuple { elements: els, line: t.line, col: t.col }, rins: cur };
         },
         ExprIndex(ix) => {
             var ar: RExpr = mono_expr(ix.array, env, funcs, ins);
@@ -5538,7 +5541,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
             var ne: Expr[] = [];
             var ti: i32 = 0;
             while (ti < t.elements.len()) { ne = ne.append(retarget_self_lit_expr(t.elements[ti], base, mang)); ti = ti + 1; }
-            return ExprTuple { elements: ne };
+            return ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         ExprArray(a) => {
             var ne2: Expr[] = [];
@@ -6130,7 +6133,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                 els = els.append(re.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprTuple { elements: els }, rins: cur };
+            return RExpr { rexpr: ExprTuple { elements: els, line: t.line, col: t.col }, rins: cur };
         },
         ExprIndex(ix) => {
             var ar: RExpr = ms_expr(ix.array, env, gstructs, funcs, ins);
@@ -6883,7 +6886,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                 nels = nels.append(re.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprTuple { elements: nels }, rins: cur };
+            return RExpr { rexpr: ExprTuple { elements: nels, line: t.line, col: t.col }, rins: cur };
         },
         ExprIndex(ix) => {
             var ar: RExpr = me_expr(ix.array, "", env, enums, structs, funcs, ins);
@@ -7676,7 +7679,7 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
             var els: Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) { els = els.append(rw_call_expr(t.elements[i], fname, caps)); i = i + 1; }
-            return e_tuple(els);
+            return e_tuple_at(els, t.line, t.col);
         },
         ExprIndex(ix) => { return e_index(rw_call_expr(ix.array, fname, caps), rw_call_expr(ix.index, fname, caps)); },
         ExprSlice(sl) => { return e_slice(rw_call_expr(sl.array, fname, caps), rw_call_expr(sl.start, fname, caps), rw_call_expr(sl.end, fname, caps)); },
@@ -8591,7 +8594,7 @@ function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
             var els: Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) { els = els.append(fda_expr(t.elements[i], funcs)); i = i + 1; }
-            return e_tuple(els);
+            return e_tuple_at(els, t.line, t.col);
         },
         ExprIndex(ix) => { return e_index(fda_expr(ix.array, funcs), fda_expr(ix.index, funcs)); },
         ExprSlice(sl) => { return e_slice(fda_expr(sl.array, funcs), fda_expr(sl.start, funcs), fda_expr(sl.end, funcs)); },
@@ -8981,7 +8984,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             var ne: Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) { ne = ne.append(cf_rw_expr(t.elements[i], f, target)); i = i + 1; }
-            return ExprTuple { elements: ne };
+            return ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target) }; },
         ExprSlice(sl) => { return ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target) }; },

@@ -22518,6 +22518,80 @@ pub function array_set_incs_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
     return out;
 }
 
+// --- reuseSources / reuseConsumed port (#4482, native computeReuseSources) --
+//
+// The general-FBIP pairing: construction site C reuses dead owned donor D's
+// box. The SELF-HOST's own pairing lives in cross_reuse_sites (struct) and
+// cross_tuple_reuse_sites (tuple); this dump renders THOSE — divergences from
+// native's class-based pairing (which also admits same-class cross-kind
+// donors, gates on freeEligible/movedLocals, and adds consuming-match ctor
+// entries) are pinned per-case in the harness, documenting where the two
+// pairing algorithms differ. Keyed on the recipient's construction-literal
+// node position, matching native nodePos of the StructLit / TupleLit. Only
+// FUNCTION-BODY top-level pairings are rendered (lower_block recomputes
+// per nested block at lowering time; nested pairings are a documented
+// omission until the dump threads block context).
+
+// reuse_sources_of: "line:col<-donor" per top-level cross-struct /
+// cross-tuple pairing; empty when the reuse layer is disabled (native's
+// RcReuseEnabled gate).
+pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    if (reuse_layer_disabled()) { return out; }
+    var xr: CrossReuseSites = cross_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs));
+    var i: i32 = 0;
+    while (i < xr.idxs.len()) {
+        match (fn.body[xr.idxs[i]]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprStructLit(sl) => {
+                        out = out.append(util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col) + "<-" + xr.donors[i]);
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
+    var j: i32 = 0;
+    while (j < xt.idxs.len()) {
+        match (fn.body[xt.idxs[j]]) {
+            parser.StmtVar(v2) => {
+                match (v2.init) {
+                    parser.ExprTuple(tu) => {
+                        out = out.append(util.i32_to_string(tu.line) + ":" + util.i32_to_string(tu.col) + "<-" + xt.donors[j]);
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        j = j + 1;
+    }
+    return out;
+}
+
+// reuse_consumed_of: the donor-name set of the same pairings.
+pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    if (reuse_layer_disabled()) { return out; }
+    var xr: CrossReuseSites = cross_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs));
+    var i: i32 = 0;
+    while (i < xr.idxs.len()) {
+        if (util.index_of_str(out, xr.donors[i]) < 0) { out = out.append(xr.donors[i]); }
+        i = i + 1;
+    }
+    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
+    var j: i32 = 0;
+    while (j < xt.idxs.len()) {
+        if (util.index_of_str(out, xt.donors[j]) < 0) { out = out.append(xt.donors[j]); }
+        j = j + 1;
+    }
+    return out;
+}
+
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
 // string `<` operator), used to sort the name groups in rc_plan_dump the same
 // way native's sort.Strings orders them.
@@ -22683,6 +22757,59 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         }
         head = head + "\n";
     }
+    // reuseSources / reuseConsumed (#4482 — after arraySetInc, native
+    // dumpRcPlan's order): "pos<-donor" entries and donor names, each
+    // string-sorted and comma-joined.
+    var rsx: string[] = reuse_sources_of(fn, structs, funcs);
+    if (rsx.len() > 0) {
+        var rss: string[] = [];
+        var ri: i32 = 0;
+        while (ri < rsx.len()) {
+            if (util.index_of_str(rss, rsx[ri]) < 0) {
+                var at: i32 = 0;
+                while (at < rss.len() && rc_dump_str_lt(rss[at], rsx[ri])) { at = at + 1; }
+                var ns: string[] = [];
+                var q: i32 = 0;
+                while (q < at) { ns = ns.append(rss[q]); q = q + 1; }
+                ns = ns.append(rsx[ri]);
+                while (q < rss.len()) { ns = ns.append(rss[q]); q = q + 1; }
+                rss = ns;
+            }
+            ri = ri + 1;
+        }
+        head = head + "reuseSources: ";
+        var ro: i32 = 0;
+        while (ro < rss.len()) {
+            if (ro > 0) { head = head + ","; }
+            head = head + rss[ro];
+            ro = ro + 1;
+        }
+        head = head + "\n";
+    }
+    var rcx: string[] = reuse_consumed_of(fn, structs, funcs);
+    if (rcx.len() > 0) {
+        var rcs: string[] = [];
+        var ci2: i32 = 0;
+        while (ci2 < rcx.len()) {
+            var at: i32 = 0;
+            while (at < rcs.len() && rc_dump_str_lt(rcs[at], rcx[ci2])) { at = at + 1; }
+            var ns: string[] = [];
+            var q: i32 = 0;
+            while (q < at) { ns = ns.append(rcs[q]); q = q + 1; }
+            ns = ns.append(rcx[ci2]);
+            while (q < rcs.len()) { ns = ns.append(rcs[q]); q = q + 1; }
+            rcs = ns;
+            ci2 = ci2 + 1;
+        }
+        head = head + "reuseConsumed: ";
+        var co2: i32 = 0;
+        while (co2 < rcs.len()) {
+            if (co2 > 0) { head = head + ","; }
+            head = head + rcs[co2];
+            co2 = co2 + 1;
+        }
+        head = head + "\n";
+    }
     var arr_ret: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
@@ -22690,6 +22817,26 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         k = k + 1;
     }
     var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs));
+    // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
+    // as a reuse donor (its box survives into the recipient); the dump must
+    // mirror that or it over-reports drops the lowering never emits (native's
+    // computePreciseDrops excludes reuseConsumed the same way).
+    var rc_donors: string[] = reuse_consumed_of(fn, structs, funcs);
+    if (rc_donors.len() > 0) {
+        var fidx: i32[] = [];
+        var fnames: string[] = [];
+        var fkinds: string[] = [];
+        var fi2: i32 = 0;
+        while (fi2 < pd.idxs.len()) {
+            if (util.index_of_str(rc_donors, pd.names[fi2]) < 0) {
+                fidx = fidx.append(pd.idxs[fi2]);
+                fnames = fnames.append(pd.names[fi2]);
+                fkinds = fkinds.append(pd.kinds[fi2]);
+            }
+            fi2 = fi2 + 1;
+        }
+        pd = PreciseDrops { idxs: fidx, names: fnames, kinds: fkinds };
+    }
     if (pd.idxs.len() == 0) { return head; }
     // Distinct drop indices, insertion-sorted ascending (numeric — the native
     // renderer orders by parsed index, so "10" must sort after "9").
@@ -23988,7 +24135,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
                 nte = nte.append(ter.expr);
                 ti = ti + 1;
             }
-            return LiftExpr { expr: parser.ExprTuple { elements: nte }, acc: ta };
+            return LiftExpr { expr: parser.ExprTuple { elements: nte, line: tu.line, col: tu.col }, acc: ta };
         },
         // An array literal of NO-CAPTURE lambdas (`var fs = [function(x){...}, ...]`):
         // hoist each lambda element to a top-level `__lam_N` (the same lift a
@@ -25282,7 +25429,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[]): parser.Expr {
             var ne: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) { ne = ne.append(box_rewrite_expr(t.elements[i], boxed)); i = i + 1; }
-            return parser.ExprTuple { elements: ne };
+            return parser.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed), index: box_rewrite_expr(x.index, boxed) }; },
         parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed), start: box_rewrite_expr(sl.start, boxed), end: box_rewrite_expr(sl.end, boxed) }; },

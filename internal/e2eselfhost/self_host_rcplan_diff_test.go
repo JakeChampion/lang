@@ -54,9 +54,9 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
 	// The tables diffed per function; widened line-by-line as ports land
-	// (#4482). reuseSources / consumingMatchReuse are NOT diffed yet — the
-	// self-host has no counterpart tables, and its dump omits the lines.
-	diffedTables := []string{"arraySetInc", "consumedParams", "freeEligible", "movedLocals", "moveSites", "preciseDrops"}
+	// (#4482). consumingMatchReuse is NOT diffed yet — the self-host has no
+	// counterpart table, and its dump omits the line.
+	diffedTables := []string{"arraySetInc", "consumedParams", "freeEligible", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -289,6 +289,44 @@ function main(): i32 { var a: i32[] = [1, 2]; return h(a); }`,
 			anchor: map[string]map[string]string{"h": {"arraySetInc": "2:24=true"}},
 			diverge: map[string]map[string]divergence{
 				"main": {"preciseDrops": {native: "", selfhost: "1=a"}},
+			},
+		},
+		{
+			// REUSE PAIRING, struct: dead donor `a` paired with recipient `b`
+			// (same type, same block) — both pairing algorithms agree here.
+			// reuseSources/reuseConsumed agree exactly (lit position + donor).
+			// The donor's precise drop is suppressed on both sides (the dump
+			// mirrors lower_func's donor suppression); the RECIPIENT's
+			// last-use-at-return drop is the KNOWN self-host-only placement
+			// class pinned on escape-and-call-returned.
+			name: "reuse-sources-struct",
+			src: `struct P { x: i32, y: i32 }
+function r(): i32 {
+	var a: P = P { x: 1, y: 2 };
+	var s: i32 = a.x;
+	var b: P = P { x: 3, y: 4 };
+	return s + b.x;
+}
+function main(): i32 { return r(); }`,
+			anchor: map[string]map[string]string{"r": {"reuseSources": "5:13<-a", "reuseConsumed": "a"}},
+			diverge: map[string]map[string]divergence{
+				"r": {"preciseDrops": {native: "", selfhost: "3=b"}},
+			},
+		},
+		{
+			// REUSE PAIRING, tuple: same shape over tuple literals (the
+			// ExprTuple position addition).
+			name: "reuse-sources-tuple",
+			src: `function q(): i32 {
+	var t1: (i32, i32) = (1, 2);
+	var s: i32 = t1.0;
+	var t2: (i32, i32) = (3, 4);
+	return s + t2.1;
+}
+function main(): i32 { return q(); }`,
+			anchor: map[string]map[string]string{"q": {"reuseSources": "4:23<-t1", "reuseConsumed": "t1"}},
+			diverge: map[string]map[string]divergence{
+				"q": {"preciseDrops": {native: "", selfhost: "3=t2"}},
 			},
 		},
 	}
