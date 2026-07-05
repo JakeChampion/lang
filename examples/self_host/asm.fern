@@ -7132,12 +7132,27 @@ pub function emit_module(mod: parser.Module): string {
         exit(1);
         return "";
     }
+    // Type-check before codegen — BEFORE the IR fast-path below, so an
+    // ill-typed module aborts instead of returning IR-emitted assembly that
+    // miscompiles silently (#4327: the fused gate+emit used to return ahead
+    // of this check, so every IR-eligible module skipped it entirely). The
+    // arm64 driver (asm_arm64.emit_module) already orders the gate ahead of
+    // its IR branch; this mirrors it. The checker state seeds the same
+    // struct-decl/funcs tables the AST-path state below does.
+    var chk: asmcore.EmitState = asmcore.new_state();
+    chk = asmcore.EmitState { ...chk, struct_decls: mod.structs, funcs: mod.funcs };
+    var check_errs: string = asmcore.check_module(mod, chk);
+    if (check_errs.len() > 0) {
+        eprint(check_errs);
+        exit(1);
+        return "";
+    }
     // IR code path (parallel-path migration, docs/RC-PERCEUS-SELF-HOST-IR-
     // REBUILD.md §3): when use_ir is set AND the whole module is in the IR
     // subset, lower it AST -> stack IR -> asm via asm_ir.emit_module_ir
     // (proven behaviour-equivalent to the AST emit below). use_ir defaults
-    // false, so this is inert until a follow-up flips the default; the import
-    // already brings the IR path into asm.fern's world (and the bootstrap).
+    // TRUE (asmcore.new_state), so the IR route is the production path and
+    // the pre-codegen gate above is load-bearing for it.
     // Hoist no-capture lambda arguments to top-level functions first (closures
     // slice 2a) so a callback-style lambda rides the slice-1 function-value path.
     // A lambda-free module is returned unchanged, so this is inert for them.
@@ -7160,14 +7175,6 @@ pub function emit_module(mod: parser.Module): string {
     // injection (JsonValue / IoError) happens in the driver via
     // parser.module_with_builtins, so emit_module stays pure.
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    // Type-check before codegen. On any diagnostic, report and abort —
-    // emitting assembly for ill-typed input would miscompile silently.
-    var check_errs: string = asmcore.check_module(mod, s);
-    if (check_errs.len() > 0) {
-        eprint(check_errs);
-        exit(1);
-        return "";
-    }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     // Emit each function body first. Each gets its own label
