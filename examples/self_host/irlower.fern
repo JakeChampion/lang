@@ -17942,26 +17942,74 @@ function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
     return EnumDonorSites { idxs: idxs, recips: recips, donors: donors };
 }
 
-// emit_enum_donor_reuse lowers a full `var y = W { ... }` construction as an IN-PLACE
-// reuse of donor x's (dead, consumed scalar-enum) box. It RE-SHAPES x's box to W
-// (op_struct_set_shape — overwrites the donor variant's shape at offset 0 with W's),
-// writes every field of y into the box (decl order; no old-value dec needed — the
-// donor's old slots are all scalars), binds y to the box, and ZEROES x's slot so the
-// exit sweep frees the box exactly once (via y). Mirrors emit_cross_struct_reuse, but
-// the donor shape differs (enum variant -> struct W), hence the shape rewrite, and
-// there are no leak-safe array OLD values to release (donor payloads are all scalar).
+// emit_enum_donor_reuse lowers a full `var y = W { ... }` construction as a
+// RUNTIME-GUARDED in-place reuse of donor x's (dead, consumed scalar-enum) box
+// (#4350 slice 4; the token shape shared with the other guarded families):
+// reused = __fern_rc_is_unique(x); box = __fern_alloc_reuse(reused ? x : 0,
+// nfields+1 slots). The box is RE-SHAPED to W unconditionally
+// (op_struct_set_shape — overwriting the donor variant's shape on the reuse
+// arm, initialising slot 0 on the fresh arm), every field of y is written
+// (decl order; no old-value dec — the donor's old slots are all scalars), y
+// binds to the box, and x's slot is ZEROED so the exit sweep frees the box
+// exactly once (via y). A shared donor degrades to a fresh box + a dec of x's
+// reference (standing in for the suppressed post-match free) instead of
+// corrupting. Mirrors emit_cross_struct_reuse, minus its old-field releases.
 function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string, donor_name: string, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprStructLit(slit) => {
             var st: LowerState = s;
-            // Re-shape the donor box to W: load box, write W's shape at offset 0.
+            var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
+            // Bind y's slot up front — both guard arms store the result box there.
+            st = st.add_local(y_name);
+            var yslot: i32 = st.slot_of(y_name);
+            st = st.mark_struct_type(yslot, slit.type_name);
+            // Runtime uniqueness guard (#4350 slice 4, the shared token shape):
+            // reused = __fern_rc_is_unique(x); box = __fern_alloc_reuse(reused ?
+            // x : 0, nfields+1 slots) — the donor box's cap (V's payloads + 1)
+            // equals W's nfields + 1 by the site gate (same field count), so the
+            // reuse path always fits. No arm-specific prep beyond the token
+            // select: the donor's old slots are all SCALARS (nothing to release
+            // on the reuse arm) and W's shape is written UNCONDITIONALLY below
+            // (this family re-shapes even on the reuse path), so the fresh arm
+            // needs no slot-0 copy either — it only releases x's reference
+            // (rc >= 2 there; the dec never frees, the aliases keep the box the
+            // suppressed post-match free would otherwise have dec'd).
+            var uname: string = "$sed_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
             st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$sed_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            var bname: string = "$sed_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(ndecl + 1));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Re-shape the result box to W: load box, write W's shape at offset 0
+            // (on the reuse arm this overwrites the donor variant's shape; on the
+            // fresh arm it initialises the fresh box's slot 0).
+            st = st.emit(ir.op_load_local(bslot));
             st = st.emit(ir.op_struct_set_shape(recip));
             st = st.emit(ir.op_drop());
             // Write every decl field of W into the box, in decl order.
-            var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
             var di: i32 = 0;
             while (di < ndecl) {
                 var jj: i32 = 0;
@@ -17972,27 +18020,25 @@ function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string,
                 }
                 if (found < 0) { return st.fail(); }
                 if (struct_field_is_i64(st.structs, slit.type_name, di)) {
-                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_i64(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set_i64(di));
                 } else {
-                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_load_local(bslot));
                     st = lower_expr(slit.field_values[found], st);
                     if (!st.ok) { return st; }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
                 }
                 di = di + 1;
             }
-            // Bind y to the box; zero x's slot (y now owns the box).
-            var yb: LowerState = st.add_local(y_name);
-            var yslot: i32 = yb.slot_of(y_name);
-            yb = yb.mark_struct_type(yslot, slit.type_name);
-            yb = yb.emit(ir.op_load_local(dslot));
-            yb = yb.emit(ir.op_store_local(yslot));
-            yb = yb.emit(ir.op_const_i32(0));
-            yb = yb.emit(ir.op_store_local(dslot));
-            return yb;
+            // Bind y to the result box; zero x's slot (y now owns the reused box;
+            // on the fresh arm x's reference was already released above).
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(yslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
