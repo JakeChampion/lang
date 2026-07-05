@@ -167,6 +167,35 @@ representation is chosen (the call-target name space — module function names p
 the fixed runtime-helper set — is known before lowering, so no table need thread
 through the lowering/emit recursion), which is why the `SymTab` foundation stays a
 useful building block.
+
+### Measuring peak RSS — methodology (learned the hard way)
+
+Any of the residual-reclamation work is gated on a trustworthy peak-RSS number for
+the self-host compiler compiling a fixed module. Getting one is harder than it
+looks; the traps, so the next attempt skips them:
+
+- **`getrusage`/`ru_maxrss` is USELESS for this runtime.** The self-host runtime's
+  bump allocator pre-reserves a large fixed arena, and `ru_maxrss` (via Go's
+  `cmd.ProcessState.SysUsage()` or otherwise) comes back at ~the arena size
+  (~7.2 GB here) **independent of the workload** — 100×20 and 1000×20 both report
+  the same number. It measures the reservation, not touched pages. Do not use it.
+- **Sampled `/proc/<pid>/status:VmHWM` under-reports.** VmHWM is the true peak-RSS
+  high-water mark, but the compile is sub-second, so even a tight busy-loop poll
+  misses the transient peak (1000×20 sampled *lower* than 500×20 — impossible for
+  a real peak). Usable only as a rough lower bound.
+- **`cgroup v2 memory.peak` is the right tool but was unavailable here** (`/sys/fs/cgroup`
+  is a bare tmpfs, no delegated sub-cgroup, no `systemd-run`). On a host with
+  cgroup2 delegation, run the driver in a scratch cgroup and read `memory.peak` —
+  that is kernel-tracked, not sampled, and ignores the untouched arena.
+- Rough IR-path data point from the (unreliable, lower-bound) VmHWM samples:
+  `asm_ir_run` compiling a single-module 500-fn × 20-stmt arithmetic program peaks
+  around **~190 MB** touched, ~48 MB at 100×20 — same order as the OOM findings'
+  `asm_run` (AST path) 484 MB at 500×20, which used `getrusage` on a runtime build
+  where the arena did not dominate the reading. Treat these as indicative, not
+  authoritative, until a `memory.peak`-based harness exists.
+- Generator note: function names cannot be `f32`/`f64` (float type keywords → P001);
+  and a deep `fn_i → fn_{i+1}` call CHAIN is not representative (superlinear compile
+  cost) — use independent functions calling one shared leaf.
 4. **Intern at the lexer (`scan_ident`).** The deepest change and the largest
    churn source; do it last, once the id plumbing exists, so identifiers are ids
    from birth. Needs care that the functionally-threaded `Lex` state does not
