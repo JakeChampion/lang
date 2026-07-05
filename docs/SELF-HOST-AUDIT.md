@@ -221,10 +221,20 @@ findings. Ranked by leverage.
   `]`(93) scan; byte-identical (before/after diff over a 30-entry × 3-resolver
   corpus), locked by `type_resolve_simple_run.fern` + `TestSelfHostTypeResolveSimple`.
   The scalar-only base `type_from_name` has no byte-scan, so it is left as-is.
-  _Remaining:_ retarget wasm's type decode (`wasm.fern`) and the parser's own
-  `type_from_name`-style substring surgery (`parser.fern`) onto `parse_type_ref`,
-  then have the parser store `TypeRef` directly so the string becomes render
-  output. Unblocks #4394 lever 1 (symbol interning ripples into this type system).
+  _wasm extern-sum slice landed:_ the wasm backend's flat-sum extern checks
+  `extern_sum_param_supported` / `extern_sum_param_is_option` now decode
+  `Option[…]` / `Result[…, …]` via `parse_type_ref` instead of the magic-byte
+  `Option[` / `Result[` prefix + top-level-comma depth scan. Byte-identical
+  (pure boolean fns, so identical output ⇒ unchanged wasm codegen), verified
+  old-vs-new over a 25-input corpus and pinned by `wasm_extern_sum_run.fern` +
+  `TestSelfHostWasmExternSum`.
+  _Remaining:_ the rest of wasm's scattered type decode (the `ft[0:len-2]`
+  element-strips and the `parse_option_payload` / `parse_result_err_payload`
+  extractors — the latter need care around their garbage-on-array edge case) and
+  the parser's own `type_from_name`-style substring surgery (`parser.fern`,
+  monomorphisation-mangling — byte-identity-critical), then have the parser store
+  `TypeRef` directly so the string becomes render output. Unblocks #4394 lever 1
+  (symbol interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress

@@ -3709,27 +3709,23 @@ function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
 // parameter (P4c): a sum type whose arm payload(s) are i32/u32. A self-host
 // Option/Result is a heap box `[tag:i32 @0][payload:i32 @4]`; the canonical
 // option/result flattens to (disc, payload).
-function extern_sum_param_supported(t: string): boolean {
-    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
-        var p: string = trim_str(t[7:t.len() - 1]);
+pub function extern_sum_param_supported(t: string): boolean {
+    // Decode via the structured TypeRef (SH-021 — parser.parse_type_ref) instead
+    // of the magic-byte `Option[` / `Result[` prefix + top-level-comma depth scan.
+    // A flat sum param is a NON-array Option[i32|u32] or Result[i32|u32, i32|u32];
+    // an array (array_depth != 0) or any other shape is unsupported. Byte-identical
+    // to the former scan across the whole type grammar (verified old-vs-new over a
+    // corpus incl. arrays, nested-generic payloads, malformed arities, bare names).
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth != 0) { return false; }
+    if (r.base == "Option" && r.args.len() == 1) {
+        var p: string = parser.render_type_ref(r.args[0]);
         return p == "i32" || p == "u32";
     }
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
-        var i: i32 = 0;
-        var depth: i32 = 0;
-        while (i < inner.len()) {
-            var c: i32 = inner[i];
-            if (c == 91) { depth = depth + 1; }
-            else if (c == 93) { depth = depth - 1; }
-            else if (c == 44 && depth == 0) {
-                var ok: string = trim_str(inner[0:i]);
-                var er: string = trim_str(inner[i + 1:inner.len()]);
-                return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
-            }
-            i = i + 1;
-        }
-        return false;
+    if (r.base == "Result" && r.args.len() == 2) {
+        var ok: string = parser.render_type_ref(r.args[0]);
+        var er: string = parser.render_type_ref(r.args[1]);
+        return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
     }
     return false;
 }
@@ -3737,8 +3733,14 @@ function extern_sum_param_supported(t: string): boolean {
 // extern_sum_param_is_option reports whether t is an Option[...] — its
 // discriminant is remapped 1-tag (Fern Some=0/None=1 reverses canonical
 // none=0/some=1; Result's Ok=0/Err=1 already matches, no remap).
-function extern_sum_param_is_option(t: string): boolean {
-    return t.len() > 7 && t[0:7] == "Option[";
+pub function extern_sum_param_is_option(t: string): boolean {
+    // `t` is a bracketed `Option[…]` (incl. an array-of-option `Option[…][]`),
+    // via the structured TypeRef instead of the `t[0:7] == "Option["` prefix scan.
+    // The array_depth arm reproduces the old prefix check's acceptance of a
+    // trailing `[]` (and of the degenerate `Option[]`); a bare `Option` with no
+    // bracket stays false. Byte-identical (verified old-vs-new over a corpus).
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    return r.base == "Option" && (r.args.len() > 0 || r.array_depth > 0);
 }
 
 // tuple_type_elem_count returns the number of top-level elements in a tuple
