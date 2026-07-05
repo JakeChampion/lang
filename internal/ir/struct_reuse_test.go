@@ -123,10 +123,11 @@ function main(): i32 { return bump(Point { x: 1, y: 2 }).x; }`
 	}
 }
 
-// Wide / float scalar fields need width-correct temp slots the first
-// cut doesn't emit (the reuse temps are i32), so an i64 field falls
-// back to the normal fresh-alloc path.
-func TestStructReuseSkipsWideScalarField(t *testing.T) {
+// Wide / float scalar fields now reuse in place (#4356 divergence 1): the
+// self-overwrite temps carry a scratchType stamp so the backends size them
+// 8 bytes and payloadStoreOpFor picks the width-matched store — the reason
+// for the original exclusion ("the reuse temps are i32") is gone.
+func TestStructReuseFiresForWideScalarField(t *testing.T) {
 	ip := lowerForTest(t, `struct Wide { x: i64, y: i32 }
 function churn(n: i32): i64 {
     var p: Wide = Wide { x: 0, y: 0 };
@@ -142,7 +143,7 @@ function main(): i32 { return 0; }`)
 	if f == nil {
 		t.Fatal("no func churn")
 	}
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("wide-scalar (i64) field must not reuse yet, got %d", got)
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("wide-scalar (i64) field self-overwrite should reuse in place, got %d", got)
 	}
 }

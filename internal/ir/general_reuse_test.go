@@ -372,8 +372,12 @@ function main(): i32 {
 	}
 }
 
-// Skips: a WIDE scalar field (i64) is excluded by structReuseEligible.
-func TestGeneralReuseSkipsWideScalarField(t *testing.T) {
+// Fires: a WIDE scalar field (i64) is admitted by structReuseEligible
+// (#4356 divergence 1 — the self-overwrite temps are width-stamped and the
+// general path stores fields width-correctly, so nothing needed the old
+// exclusion). Closes the native side of the field-kind gap: the self-host
+// already admitted i64/f64.
+func TestGeneralReuseFiresForWideScalarField(t *testing.T) {
 	ip := lowerForTest(t, `struct Wide { id: i32, big: i64 }
 function main(): i32 {
     var a: Wide = Wide { id: 1, big: 2 };
@@ -382,7 +386,22 @@ function main(): i32 {
     return b.id;
 }`)
 	f := funcByName(ip, "main")
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("wide-scalar-field struct is excluded, got %d", got)
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("wide-scalar-field struct should reuse the dead donor's box, got %d", got)
+	}
+}
+
+// Fires: an f64 float field is admitted the same way.
+func TestGeneralReuseFiresForFloatField(t *testing.T) {
+	ip := lowerForTest(t, `struct FWide { id: i32, v: f64 }
+function main(): i32 {
+    var a: FWide = FWide { id: 1, v: 2.5 };
+    var s: i32 = a.id;
+    var b: FWide = FWide { id: s, v: 3.5 };
+    return b.id;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("f64-field struct should reuse the dead donor's box, got %d", got)
 	}
 }
