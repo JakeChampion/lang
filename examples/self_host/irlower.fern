@@ -18180,14 +18180,18 @@ function enum_cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
 }
 
 // emit_enum_cross_reuse lowers `var c = V([..])` (V a variant of array-payload enum
-// `enum_name`) as an IN-PLACE reuse of dead donor `donor_name`'s box — the enum analog
-// of emit_cross_struct_reuse, built on the self-reassign primitives. It (1) releases
-// the donor's OLD variant payload arrays (emit_enum_variant_payload_drops — box kept),
-// (2) re-shapes the donor box to V and writes V's fresh array-literal payloads into it
-// (the write loop copied from emit_enum_inplace_reassign), (3) binds c to the donor box
-// (marked enum E, like a normal enum-ctor decl), loads donor->stores c, and ZEROES the
-// donor slot so the box is freed exactly once via c. SIZE-SAFE by enum_all_variants_
-// same_field_count (enforced at the site). Returns fail() on any non-`V([..])` shape.
+// `enum_name`) as a RUNTIME-GUARDED in-place reuse of dead donor `donor_name`'s box —
+// the enum analog of emit_cross_struct_reuse, built on the self-reassign primitives.
+// The #4350 token shape: reused = __fern_rc_is_unique(a); on the reuse arm the token
+// is a's box and the donor's OLD variant payload arrays are released (emit_enum_
+// variant_payload_drops — box kept, solely owned); on the fresh arm the token is 0
+// and a's box reference is dec'd instead (rc >= 2 there, so the dec never frees and
+// the surviving aliases keep the box AND its payload arrays — releasing the payloads
+// would corrupt the other owners' view). Then box = __fern_alloc_reuse(token, nf+1)
+// (a's cap is nf+1 by the same-field-count site gate, so the reuse path always fits),
+// the RESULT box is re-shaped to V and V's fresh array-literal payloads are written
+// into it, c binds the result box (marked enum E), and the donor slot is ZEROED so
+// the box is freed exactly once via c. Returns fail() on any non-`V([..])` shape.
 function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: string, enum_name: string, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
@@ -18198,33 +18202,71 @@ function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: s
                     var vname: string = vid.name;
                     if (variant_enum_owner(s.structs, vname) != enum_name) { return s.fail(); }
                     if (decl_field_count(s.structs, vname) != c.args.len()) { return s.fail(); }
-                    // 1. release the donor's old variant payload arrays (box kept).
-                    var st: LowerState = emit_enum_variant_payload_drops(s, dslot, enum_name);
-                    // 2. re-shape the donor box to V.
+                    var st: LowerState = s;
+                    var nf: i32 = decl_field_count(st.structs, vname);
+                    // Runtime uniqueness guard (#4350 slice 5, the shared token
+                    // shape): reused = __fern_rc_is_unique(a).
+                    var uname: string = "$exr_uniq" + util.i32_to_string(dslot);
+                    st = st.add_local(uname);
+                    var uslot: i32 = st.slot_of(uname);
                     st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                    st = st.emit(ir.op_store_local(uslot));
+                    // Token select + arm-specific donor release: reuse arm takes
+                    // the donor box as token and releases its OLD payload arrays
+                    // (solely owned, box kept for alloc_reuse); fresh arm takes a
+                    // null token and releases only a's box REFERENCE (rc >= 2 —
+                    // never frees; the aliases still own box + payload arrays).
+                    var kname: string = "$exr_tok" + util.i32_to_string(dslot);
+                    st = st.add_local(kname);
+                    var kslot: i32 = st.slot_of(kname);
+                    st = st.emit(ir.op_load_local(uslot));
+                    st = st.emit(ir.op_if(0));
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_store_local(kslot));
+                    st = emit_enum_variant_payload_drops(st, dslot, enum_name);
+                    st = st.emit(ir.op_else());
+                    st = st.emit(ir.op_const_i32(0));
+                    st = st.emit(ir.op_store_local(kslot));
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                    st = st.emit(ir.op_end());
+                    // box = __fern_alloc_reuse(token, nf+1): the donor box on the
+                    // reuse arm (cap nf+1 always matches), a fresh box otherwise.
+                    var bname: string = "$exr_box" + util.i32_to_string(dslot);
+                    st = st.add_local(bname);
+                    var bslot: i32 = st.slot_of(bname);
+                    st = st.emit(ir.op_load_local(kslot));
+                    st = st.emit(ir.op_const_i32(nf + 1));
+                    st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+                    st = st.emit(ir.op_store_local(bslot));
+                    // Re-shape the result box to V (overwrites the donor variant's
+                    // shape on the reuse arm; initialises slot 0 on the fresh arm).
+                    st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_set_shape(vname));
                     st = st.emit(ir.op_drop());
-                    // 3. write V's fresh payloads into the donor box, in decl order.
+                    // Write V's fresh payloads into the result box, in decl order.
                     var di: i32 = 0;
                     while (di < c.args.len()) {
                         if (struct_field_is_i64(st.structs, vname, di)) {
-                            st = st.emit(ir.op_load_local(dslot));
+                            st = st.emit(ir.op_load_local(bslot));
                             st = lower_i64(c.args[di], st);
                             if (!st.ok) { return st; }
                             st = st.emit(ir.op_struct_set_i64(di));
                         } else {
-                            st = st.emit(ir.op_load_local(dslot));
+                            st = st.emit(ir.op_load_local(bslot));
                             st = lower_expr(c.args[di], st);
                             if (!st.ok) { return st; }
                             st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, vname, di)));
                         }
                         di = di + 1;
                     }
-                    // 4. bind c to the donor box; zero the donor slot.
+                    // Bind c to the result box; zero the donor slot.
                     var cb: LowerState = st.add_local(c_name);
                     var cslot: i32 = cb.slot_of(c_name);
                     cb = cb.mark_struct_type(cslot, enum_name);
-                    cb = cb.emit(ir.op_load_local(dslot));
+                    cb = cb.emit(ir.op_load_local(bslot));
                     cb = cb.emit(ir.op_store_local(cslot));
                     cb = cb.emit(ir.op_const_i32(0));
                     cb = cb.emit(ir.op_store_local(dslot));
@@ -18267,7 +18309,20 @@ function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: s
 //      sweeps enum slots anyway) can't double-free via x.
 //   5. Old rc-field drop. Restricted to ALL-SCALAR-payload enums (donor + every
 //      constructed variant), so x's old box fields hold no rc value to release
-//      before the overwrite. Widening to rc payloads is deferred.
+//      before the overwrite. Widening to rc payloads is deferred. (Leak-safe
+//      SCALAR-ARRAY payloads were later admitted with a cow-guarded per-slot
+//      drop — see inarm_reuse_match_ok's per-position move/replace gate.)
+//   6. Runtime uniqueness guard (#4350). The static gates are backstopped by the
+//      shared token shape: reused = __fern_rc_is_unique(x); token = reused ? x : 0
+//      (x's box reference dec'd on the fresh arm — rc >= 2 there, so the dec never
+//      frees and the arms' payload reads stay valid); per arm, box =
+//      __fern_alloc_reuse(token, nf+1) sized by the MATCHED variant (cap always
+//      matches on the reuse arm via the same-size gate), and the re-shape + field
+//      writes + y-bind all target the RESULT box. The array cow-guard splits per
+//      guard arm: reuse -> dec the replaced old array; fresh -> never dec (the
+//      aliases own it), and a same-slot MOVE retains (rc_inc) the array instead,
+//      since the fresh box takes a second counted reference to x's still-owned
+//      payload.
 
 // inarm_iife_match: if `e` is the value-position IIFE wrapping a match-EXPRESSION
 // (an ExprCall of a 0-param ExprLambda whose single body statement is a StmtMatch),
@@ -18580,15 +18635,18 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 }
 
 // emit_inarm_match_reuse lowers a firing `var y = match (x) { ... }` (the site found
-// by consumed_inarm_reuse_sites) with IN-PLACE reuse of x's box. It emits the same
-// block/br dispatch as the generic enum match, but each arm — after reading its
-// scalar payloads into temps at their width (i32 / u32 / boolean via struct_get,
-// i64 via struct_get_i64, f64 via struct_get width-64) — re-shapes x's box to the
-// arm's constructed variant (op_struct_set_shape), writes the constructed fields at
-// their width (i64 via lower_i64+struct_set_i64, else lower_expr+struct_set), binds
-// y to x's box, zeroes x's slot, then br's out. Every arm reuses the box, so y owns
-// it on every path and it is freed exactly once at y's reclamation (no post-match
-// free exists for an in-arm scrutinee). Restricted to the inarm_reuse_match_ok shape
+// by consumed_inarm_reuse_sites) with RUNTIME-GUARDED in-place reuse of x's box (the
+// #4350 token shape — see soundness part 6 above). It emits the same block/br
+// dispatch as the generic enum match, but each arm — after reading its scalar
+// payloads into temps at their width (i32 / u32 / boolean via struct_get, i64 via
+// struct_get_i64, f64 via struct_get width-64) — obtains the result box via
+// __fern_alloc_reuse(token, nf+1) (x's own box when unique, fresh otherwise),
+// re-shapes IT to the arm's constructed variant (op_struct_set_shape), writes the
+// constructed fields at their width (i64 via lower_i64+struct_set_i64, else
+// lower_expr+struct_set), binds y to the result box, zeroes x's slot, then br's
+// out. Every arm binds y to a box it owns, so y is freed exactly once at y's
+// reclamation (no post-match free exists for an in-arm scrutinee). Restricted to
+// the inarm_reuse_match_ok shape
 // (scalar enum, i32/u32/boolean/i64/f64 payloads, same-size scalar-variant results,
 // no guards/wildcards; u64 excluded — see inarm_reuse_payload_type_ok).
 function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
@@ -18609,6 +18667,33 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
     var st: LowerState = s.add_local(y_name);
     var yslot: i32 = st.slot_of(y_name);
     st = st.mark_struct_type(yslot, enum_name);
+    // Runtime uniqueness guard (#4350 slice 5, the shared token shape), hoisted
+    // BEFORE the arm dispatch: reused = __fern_rc_is_unique(x); token = reused ?
+    // x : 0. On the fresh arm x's box reference is dec'd here (rc >= 2 — the dec
+    // never frees, so the arms' payload READS from x's box below stay valid; the
+    // surviving aliases own the box and its payloads). __fern_alloc_reuse is
+    // called PER ARM (below), because the required box size is the matched
+    // variant's field count, only known after the variant test.
+    var uname: string = "$iam_uniq" + util.i32_to_string(xslot);
+    st = st.add_local(uname);
+    var uslot: i32 = st.slot_of(uname);
+    st = st.emit(ir.op_load_local(xslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(uslot));
+    var kname: string = "$iam_tok" + util.i32_to_string(xslot);
+    st = st.add_local(kname);
+    var kslot: i32 = st.slot_of(kname);
+    st = st.emit(ir.op_load_local(uslot));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(xslot));
+    st = st.emit(ir.op_store_local(kslot));
+    st = st.emit(ir.op_else());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(kslot));
+    st = st.emit(ir.op_load_local(xslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
     st = st.emit(ir.op_block(0));   // outer block: arms br out of it
     var i: i32 = 0;
     while (i < arms.len()) {
@@ -18663,7 +18748,20 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
                     },
                     _ => { return s.fail(); }
                 }
-                st = st.emit(ir.op_load_local(xslot));
+                // box = __fern_alloc_reuse(token, nf+1): x's own box on the reuse
+                // arm (its cap is this variant's nf+1, and the constructed variant
+                // has the SAME field count by the site gate, so the cap always
+                // matches), a fresh right-sized box on the fresh arm. Called after
+                // the payload reads (which must see x's box untouched) and before
+                // the re-shape + writes, which all target the RESULT box.
+                var bxname: string = "$iam_box" + util.i32_to_string(st.locals.len());
+                st = st.add_local(bxname);
+                var bxslot: i32 = st.slot_of(bxname);
+                st = st.emit(ir.op_load_local(kslot));
+                st = st.emit(ir.op_const_i32(decl_field_count(st.structs, vname) + 1));
+                st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+                st = st.emit(ir.op_store_local(bxslot));
+                st = st.emit(ir.op_load_local(bxslot));
                 st = st.emit(ir.op_struct_set_shape(rvariant));
                 st = st.emit(ir.op_drop());
                 var di: i32 = 0;
@@ -18675,21 +18773,30 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
                     // struct_set_i64; an f64 / i32-shaped field via lower_expr +
                     // struct_set (width 64 for f64, 0 otherwise).
                     if (is_leaksafe_array_field(decl_field_type_at(st.structs, rvariant, di))) {
-                        // Stash the NEW array value in a scratch local (read 3x:
-                        // cow-compare, dec-guard test, final store). The donor slot di
-                        // still holds the OLD array (reshape doesn't touch payload
-                        // slots; earlier fields wrote di' < di only). For the MOVE
-                        // (arg is the same-slot binding temp) old==new -> no dec, the
-                        // array is reused in place; for a FRESH literal old!=new ->
-                        // the old array is dropped and the fresh one written. Mirrors
-                        // emit_arr_store / emit_cross_struct_reuse's cow-guard.
+                        // Stash the NEW array value in a scratch local. The DONOR
+                        // slot di (read from x's box, valid on both guard arms —
+                        // the fresh arm's dec never frees) still holds the OLD
+                        // array; the RESULT box's slot di is written below. The
+                        // old-vs-new compare dispatches the arm-specific fixup:
+                        //   reuse arm — if (old != new) arr_dec(old): a FRESH
+                        //     literal replaces the solely-owned old array (drop
+                        //     it); the same-slot MOVE (old==new) keeps it, now
+                        //     owned by the result box (== x's box).
+                        //   fresh arm — if (old == new) arr_inc(new): the MOVE
+                        //     stores an alias of x's still-owned array into the
+                        //     fresh box (a second counted reference, so retain);
+                        //     a fresh literal (old != new) is solely the fresh
+                        //     box's — no fixup. Never dec on this arm: x's
+                        //     surviving aliases own the old arrays.
                         var scratch: string = "$iar" + util.i32_to_string(st.locals.len());
                         st = st.add_local(scratch);
                         var tmp: i32 = st.slot_of(scratch);
                         st = lower_expr(ctor_args[di], st);
                         if (!st.ok) { return st; }
                         st = st.emit(ir.op_store_local(tmp));
-                        // if (old != new) arr_dec(old)
+                        st = st.emit(ir.op_load_local(uslot));
+                        st = st.emit(ir.op_if(0));
+                        // reuse arm: if (old != new) arr_dec(old)
                         st = st.emit(ir.op_load_local(xslot));
                         st = st.emit(ir.op_struct_get(di, 0));     // OLD array ptr
                         st = st.emit(ir.op_load_local(tmp));       // NEW array ptr
@@ -18700,26 +18807,38 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
                         st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                         st = st.emit(ir.op_drop());
                         st = st.emit(ir.op_end());
-                        // store NEW into slot di
+                        st = st.emit(ir.op_else());
+                        // fresh arm: if (old == new) arr_inc(new)
                         st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_struct_get(di, 0));
+                        st = st.emit(ir.op_load_local(tmp));
+                        st = st.emit(ir.op_bin("eq", 0, false));
+                        st = st.emit(ir.op_if(0));
+                        st = st.emit(ir.op_load_local(tmp));
+                        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        st = st.emit(ir.op_drop());
+                        st = st.emit(ir.op_end());
+                        st = st.emit(ir.op_end());
+                        // store NEW into the result box's slot di
+                        st = st.emit(ir.op_load_local(bxslot));
                         st = st.emit(ir.op_load_local(tmp));
                         st = st.emit(ir.op_struct_set(di, 0));
                     } else if (struct_field_is_i64(st.structs, rvariant, di)) {
-                        st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_load_local(bxslot));
                         st = lower_i64(ctor_args[di], st);
                         if (!st.ok) { return st; }
                         st = st.emit(ir.op_struct_set_i64(di));
                     } else {
-                        st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_load_local(bxslot));
                         st = lower_expr(ctor_args[di], st);
                         if (!st.ok) { return st; }
                         st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, rvariant, di)));
                     }
                     di = di + 1;
                 }
-                // Bind y to the reused box; zero x's slot (y now owns the box, freed
+                // Bind y to the result box; zero x's slot (y now owns the box, freed
                 // once at y's reclamation; the exit sweep never sweeps enum slots).
-                st = st.emit(ir.op_load_local(xslot));
+                st = st.emit(ir.op_load_local(bxslot));
                 st = st.emit(ir.op_store_local(yslot));
                 st = st.emit(ir.op_br(1));      // matched -> exit the match
                 st = st.emit(ir.op_end());      // end arm block
