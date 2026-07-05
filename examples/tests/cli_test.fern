@@ -1,0 +1,91 @@
+import "std/test";
+import "std/cli" as cli;
+
+// examples/tests/cli_test.fern — pure-Fern coverage of std/cli's
+// spec-driven argument parser (#4385 item 1): valued options in
+// `--long V` / `--long=V` / `-short V` forms, boolean flags,
+// positional operands, the `--` end-of-options terminator, the
+// value_or default, the error paths (unknown option, missing
+// value, value on a bool), and the auto-usage string.
+
+// Shared spec: one valued option (--name/-n) and one bool (--shout/-s).
+function spec(): cli.CliSpec {
+    var s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+    s = s.option("name", "n", "who to greet");
+    s = s.flag("shout", "s", "upper-case the greeting");
+    return s;
+}
+
+function test_option_long(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada"]);
+    return test.assert_eq(a.value_or("name", "world"), "Ada");
+}
+
+function test_option_equals(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "--name=Bob"]);
+    return test.assert_eq(a.value_or("name", "world"), "Bob");
+}
+
+function test_option_short(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-n", "Cy"]);
+    return test.assert_eq(a.value_or("name", "world"), "Cy");
+}
+
+function test_bool_flag(): test.TestOutcome {
+    // Both the long and the short spelling set the same canonical key.
+    var a: cli.CliArgs = spec().parse(["greet", "--shout"]);
+    var b: cli.CliArgs = spec().parse(["greet", "-s"]);
+    return test.assert_true(a.is_set("shout") && b.is_set("shout"));
+}
+
+function test_positionals(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada", "one", "two"]);
+    return test.assert_eq_array(a.operands(), ["one", "two"]);
+}
+
+function test_end_of_options(): test.TestOutcome {
+    // After `--`, dash-prefixed tokens are operands, not flags.
+    var a: cli.CliArgs = spec().parse(["greet", "--", "--name", "-s"]);
+    return test.assert_true(
+        a.operands().len() == 2 && !a.is_set("name") && !a.is_set("shout"));
+}
+
+function test_value_or_default(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet"]);
+    return test.assert_true(
+        a.value_or("name", "world") == "world" && !a.is_set("shout"));
+}
+
+function test_unknown_option_errors(): test.TestOutcome {
+    return test.assert_true(spec().parse(["greet", "--nope"]).is_error());
+}
+
+function test_missing_value_errors(): test.TestOutcome {
+    return test.assert_true(spec().parse(["greet", "--name"]).is_error());
+}
+
+function test_value_on_bool_errors(): test.TestOutcome {
+    return test.assert_true(spec().parse(["greet", "--shout=1"]).is_error());
+}
+
+function test_usage_lists_flags(): test.TestOutcome {
+    var u: string = spec().usage();
+    return test.assert_true(
+        u.contains("--name") && u.contains("--shout") && u.contains("greet"));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/cli");
+    r = r.it("option --long V",        test_option_long());
+    r = r.it("option --long=V",        test_option_equals());
+    r = r.it("option -short V",        test_option_short());
+    r = r.it("boolean flag",           test_bool_flag());
+    r = r.it("positional operands",    test_positionals());
+    r = r.it("-- ends options",        test_end_of_options());
+    r = r.it("value_or default",       test_value_or_default());
+    r = r.it("unknown option errors",  test_unknown_option_errors());
+    r = r.it("missing value errors",   test_missing_value_errors());
+    r = r.it("value on bool errors",   test_value_on_bool_errors());
+    r = r.it("usage lists flags",      test_usage_lists_flags());
+    return r.finish();
+}

@@ -1,0 +1,262 @@
+// std/cli — command-line argument parsing.
+//
+// A small, spec-driven parser for the shape the examples/cli tools
+// hand-roll today (grep, head, …): valued options (`--output F`,
+// `--output=F`, `-o F`), boolean flags (`--verbose` / `-v`),
+// positional operands, the `--` end-of-options terminator, and an
+// auto-generated usage string. Pure library — no compiler changes.
+//
+// Build a spec, parse argv, query the result:
+//
+//   import "std/cli" as cli;
+//   var spec: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+//   spec = spec.option("name", "n", "who to greet");
+//   spec = spec.flag("shout", "s", "upper-case the greeting");
+//   var a: cli.CliArgs = spec.parse(args());
+//   if (a.is_error()) { print(a.error_text()); print(spec.usage()); return 2; }
+//   var who: string = a.value_or("name", "world");
+//   if (a.is_set("shout")) { ... }
+//   var rest: string[] = a.operands();
+//
+// Flags are queried by their LONG name (the canonical key) whether
+// the caller passed `-n` or `--name`. Short flags match a single
+// character exactly (`-o`, `-o VALUE`); glued (`-oVALUE`) and
+// bundled (`-abc`) short forms are a documented follow-up.
+
+import "std/string";
+import "core/map";
+
+// A single declared flag. `takes_value` distinguishes a valued
+// option (`--output F`) from a boolean flag (`--verbose`). `short`
+// is "" when the flag has no single-character alias.
+struct CliFlag {
+    long: string,
+    short: string,
+    takes_value: boolean,
+    help: string,
+}
+
+// The parser spec: a program name + one-line description for the
+// usage text, plus the declared flags. Built up immutably via
+// `.option` / `.flag` (each returns an updated spec to rebind).
+pub struct CliSpec {
+    name: string,
+    about: string,
+    flags: CliFlag[],
+}
+
+// The parse result. `opts` maps each set flag's long name to its
+// value (a valued option's argument, or "true" for a boolean flag
+// that appeared); `positionals` is the operand list in order;
+// `error` is "" on success or a human-readable message on failure.
+pub struct CliArgs {
+    opts: Map[string, string],
+    positionals: string[],
+    error: string,
+}
+
+// `cli_new(name, about)` — start a spec with no flags.
+pub function cli_new(name: string, about: string): CliSpec {
+    var fs: CliFlag[] = [];
+    return CliSpec { name: name, about: about, flags: fs };
+}
+
+// `.option(long, short, help)` — declare a valued option, matched
+// as `--long V`, `--long=V`, or `-short V`. Pass "" for `short` to
+// give it no single-character alias.
+pub function (s: CliSpec) option(long: string, short: string, help: string): CliSpec {
+    return CliSpec {
+        ...s,
+        flags: s.flags.append(CliFlag { long: long, short: short, takes_value: true, help: help }),
+    };
+}
+
+// `.flag(long, short, help)` — declare a boolean flag, matched as
+// `--long` or `-short`. Its presence is queried with `is_set`.
+pub function (s: CliSpec) flag(long: string, short: string, help: string): CliSpec {
+    return CliSpec {
+        ...s,
+        flags: s.flags.append(CliFlag { long: long, short: short, takes_value: false, help: help }),
+    };
+}
+
+// Find a declared flag by its long name.
+function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
+    var i: i32 = 0;
+    while (i < s.flags.len()) {
+        if (s.flags[i].long == name) { return Some(s.flags[i]); }
+        i = i + 1;
+    }
+    return None;
+}
+
+// Find a declared flag by its (non-empty) short alias.
+function __cli_find_short(s: CliSpec, name: string): Option[CliFlag] {
+    var i: i32 = 0;
+    while (i < s.flags.len()) {
+        if (s.flags[i].short.len() > 0 && s.flags[i].short == name) { return Some(s.flags[i]); }
+        i = i + 1;
+    }
+    return None;
+}
+
+// Build a failed CliArgs, preserving the operands parsed so far.
+function __cli_err(positionals: string[], msg: string): CliArgs {
+    var empty: Map[string, string] = map_new(1);
+    return CliArgs { opts: empty, positionals: positionals, error: msg };
+}
+
+// `.parse(argv)` — parse `argv` (argv[0] is the program name and is
+// skipped) against this spec. On the first malformed token the
+// result carries a non-empty `error`; otherwise `opts` / operands
+// are populated.
+pub function (s: CliSpec) parse(argv: string[]): CliArgs {
+    var opts: Map[string, string] = map_new(8);
+    var positionals: string[] = [];
+    var i: i32 = 1;
+    var no_more: boolean = false;
+    while (i < argv.len()) {
+        var a: string = argv[i];
+        if (no_more) {
+            positionals = positionals.append(a);
+            i = i + 1;
+        } else if (a == "--") {
+            // Everything after `--` is a positional, even `-`-prefixed.
+            no_more = true;
+            i = i + 1;
+        } else if (a.starts_with("--")) {
+            var body: string = a[2:a.len()];
+            var eq: i32 = body.index_of("=");
+            var name: string = body;
+            var inline_val: string = "";
+            var has_inline: boolean = false;
+            if (eq >= 0) {
+                name = body[0:eq];
+                inline_val = body[eq + 1:body.len()];
+                has_inline = true;
+            }
+            match (__cli_find_long(s, name)) {
+                Some(f) => {
+                    if (f.takes_value) {
+                        if (has_inline) {
+                            opts = opts.insert(f.long, inline_val);
+                        } else if (i + 1 < argv.len()) {
+                            opts = opts.insert(f.long, argv[i + 1]);
+                            i = i + 1;
+                        } else {
+                            return __cli_err(positionals, "option --" + name + " requires a value");
+                        }
+                    } else {
+                        if (has_inline) {
+                            return __cli_err(positionals, "flag --" + name + " takes no value");
+                        }
+                        opts = opts.insert(f.long, "true");
+                    }
+                },
+                None => {
+                    return __cli_err(positionals, "unknown option --" + name);
+                }
+            }
+            i = i + 1;
+        } else if (a.len() >= 2 && a[0] == 45) {
+            // Short flag `-x` (a lone "-" falls through to positionals).
+            var name: string = a[1:a.len()];
+            match (__cli_find_short(s, name)) {
+                Some(f) => {
+                    if (f.takes_value) {
+                        if (i + 1 < argv.len()) {
+                            opts = opts.insert(f.long, argv[i + 1]);
+                            i = i + 1;
+                        } else {
+                            return __cli_err(positionals, "option -" + name + " requires a value");
+                        }
+                    } else {
+                        opts = opts.insert(f.long, "true");
+                    }
+                },
+                None => {
+                    return __cli_err(positionals, "unknown option -" + name);
+                }
+            }
+            i = i + 1;
+        } else {
+            positionals = positionals.append(a);
+            i = i + 1;
+        }
+    }
+    return CliArgs { opts: opts, positionals: positionals, error: "" };
+}
+
+// `.is_error()` — true when parsing failed.
+pub function (a: CliArgs) is_error(): boolean {
+    return a.error.len() > 0;
+}
+
+// `.error_text()` — the failure message, or "" on success.
+pub function (a: CliArgs) error_text(): string {
+    return a.error;
+}
+
+// `.value(name)` — the value of a valued option by its long name,
+// or None if it wasn't set.
+pub function (a: CliArgs) value(name: string): Option[string] {
+    return a.opts.get(name);
+}
+
+// `.value_or(name, fallback)` — the value of a valued option, or
+// `fallback` when it wasn't set.
+pub function (a: CliArgs) value_or(name: string, fallback: string): string {
+    match (a.opts.get(name)) {
+        Some(v) => { return v; },
+        None => { return fallback; }
+    }
+}
+
+// `.is_set(name)` — true if the flag (bool or valued) appeared,
+// queried by its long name.
+pub function (a: CliArgs) is_set(name: string): boolean {
+    return a.opts.has(name);
+}
+
+// `.operands()` — the positional arguments in order.
+pub function (a: CliArgs) operands(): string[] {
+    return a.positionals;
+}
+
+// `.operand(idx)` — the positional at `idx`, or None if out of range.
+pub function (a: CliArgs) operand(idx: i32): Option[string] {
+    if (idx < 0 || idx >= a.positionals.len()) { return None; }
+    return Some(a.positionals[idx]);
+}
+
+// `.usage()` — a formatted help string: a usage line, the optional
+// description, and an aligned list of the declared flags.
+pub function (s: CliSpec) usage(): string {
+    var out: string = "Usage: " + s.name + " [options] [args]\n";
+    if (s.about.len() > 0) {
+        out = out + "\n" + s.about + "\n";
+    }
+    if (s.flags.len() > 0) {
+        out = out + "\nOptions:\n";
+        var i: i32 = 0;
+        while (i < s.flags.len()) {
+            var f: CliFlag = s.flags[i];
+            var line: string = "  ";
+            if (f.short.len() > 0) {
+                line = line + "-" + f.short + ", ";
+            } else {
+                line = line + "    ";
+            }
+            line = line + "--" + f.long;
+            if (f.takes_value) {
+                line = line + " <value>";
+            }
+            out = out + line + "\n";
+            if (f.help.len() > 0) {
+                out = out + "      " + f.help + "\n";
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
