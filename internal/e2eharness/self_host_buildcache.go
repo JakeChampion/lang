@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -220,25 +221,20 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 			}
 		}
 		// Cold: emit (held in memory — no disk `.s`), link, publish the binary.
-		prog, _, err := modload.Load(filepath.Join(dir, fernName))
-		if err != nil {
-			return "", fmt.Errorf("modload %s: %w", fernName, err)
-		}
-		if err := constfold.Fold(prog); err != nil {
-			return "", fmt.Errorf("constfold %s: %w", fernName, err)
-		}
-		info, err := checker.Check(prog)
-		if err != nil {
-			return "", fmt.Errorf("check %s: %w", fernName, err)
-		}
-		asm, err := x86_64.Emit(prog, info)
-		if err != nil {
-			return "", fmt.Errorf("emit %s: %w", fernName, err)
-		}
 		asmPath := binPath + ".s" // scratch in the process-local link dir only
-		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		if err := emitDriverAsm(dir, fernName, asmPath); err != nil {
 			return "", err
 		}
+		// The emit's working set (the front-end AST + checker tables + the
+		// ~680 MB asm string) is unreachable once emitDriverAsm returns, but
+		// the Go runtime keeps the spans resident. gcc's `as` pass on the
+		// driver `.s` alone spikes to ~8 GB; overlapping that with the ~7 GB
+		// emit residue crossed the 16 GB CI runners' RAM and the OOM killed
+		// the runner agent mid-link ("The runner has received a shutdown
+		// signal" / exit 143 on the x86_64 wasm + warm-driver jobs). Hand the
+		// dead spans back to the OS before spawning the assembler so the two
+		// peaks never stack.
+		debug.FreeOSMemory()
 		if out, lerr := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); lerr != nil {
 			return "", fmt.Errorf("gcc %s: %w\n%s", fernName, lerr, out)
 		}
@@ -261,6 +257,30 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// emitDriverAsm compiles dir/fernName with the Go x86-64 backend and writes
+// the emitted asm to asmPath. It exists as a separate function so the emit's
+// multi-GB working set (AST, checker info, the asm string) goes out of scope
+// on return — CachedDriverBin frees it (debug.FreeOSMemory) before spawning
+// the memory-heavy assembler on the `.s`.
+func emitDriverAsm(dir, fernName, asmPath string) error {
+	prog, _, err := modload.Load(filepath.Join(dir, fernName))
+	if err != nil {
+		return fmt.Errorf("modload %s: %w", fernName, err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		return fmt.Errorf("constfold %s: %w", fernName, err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", fernName, err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		return fmt.Errorf("emit %s: %w", fernName, err)
+	}
+	return os.WriteFile(asmPath, []byte(asm), 0o644)
 }
 
 var fastLinkOnce sync.Once
