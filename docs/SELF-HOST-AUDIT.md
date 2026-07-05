@@ -239,10 +239,22 @@ findings. Ranked by leverage.
   self-compile fixpoints confirm no such array type reaches these during
   bootstrap, so the correction leaves the self-compile byte-identical. Pinned by
   `wasm_option_payload_run.fern` + `TestSelfHostWasmOptionPayload`.
-  _Remaining:_ the rest of wasm's scattered type decode (the `ft[0:len-2]`
-  element-strips) and the parser's own `type_from_name`-style substring surgery
-  (`parser.fern`, monomorphisation-mangling — byte-identity-critical), then have
-  the parser store `TypeRef` directly so the string becomes render output.
+  _irlower tuple-element slice landed:_ `tuple_type_elem_tag` (extract element `n`
+  of a `(t0, t1, …)` tuple spelling) now decodes via `parse_type_ref` (`is_tuple` /
+  `args` / `array_depth`) instead of its own depth-tracking top-level-comma scan;
+  byte-identical over a corpus exercising nested-generic / nested-tuple / array
+  elements (the inner commas the scan must not split on), single-element tuples,
+  out-of-range and negative indices, non-tuples, and a tuple-array `(a, b)[]`.
+  Pinned by `tuple_elem_tag_run.fern` + `TestSelfHostTupleElemTag`.
+  _Remaining:_ the genuine comma-depth type decoders are now migrated; what's left
+  is lower-value or delicate — the unambiguous `[]`-suffix element-strips
+  (`ft[0:len-2]` / `ty_spelling_is_array`; a trailing `[]` is a structurally
+  unambiguous array marker, so these carry no nested-comma mis-read risk and are
+  not worth routing through a heavier parse) and the parser's `bind_unify`
+  monomorphisation unifier, whose final case matches a generic pattern against a
+  `__`-mangled clone name (not a type spelling `parse_type_ref` can decode), so it
+  stays string-based — byte-identity-critical. The endgame remains having the
+  parser store `TypeRef` directly so the string becomes render output.
   Unblocks #4394 lever 1 (symbol interning ripples into this type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
