@@ -230,17 +230,21 @@ staying green (the self-compile must remain byte-identical).
   **byte-for-byte**; (c) **both fixpoint suites must still converge** — reuse
   changes the emitted asm, so `TestSelfHostLoadFixpointX86_64` /
   `TestSelfHostModloadFixpointX86_64` prove the self-compiled compiler is still
-  self-consistent; (d) slices land **gated off** and flip on only after green.
+  self-consistent; (d) the whole reuse layer can be switched off
+  (`FERN_SELFHOST_NO_REUSE=1` → `irlower.reuse_layer_disabled()`, §6.5), and
+  `TestSelfHostReuseDifferentialX86_64` asserts reuse-on vs reuse-off are
+  observationally identical on firing shapes from every family.
 - **Analysis divergence from native.** The self-host pairing must be *no more
   aggressive* than native's (conservative is safe — it only forgoes an
   optimisation). Reuse-on-self-host vs reuse-off-self-host must be
   observationally identical, exactly as native's reuse-on vs reuse-off gate
   asserts.
-- **Fixpoint sensitivity.** Because the self-hosted compiler's own source will
-  be compiled *with* reuse once enabled, a subtle bug surfaces as a fixpoint
-  divergence (or a crash compiling the compiler). Keep the flag off through
-  Slices 0–4; enable in a final, isolated "flip reuse on" PR whose sole change
-  is the default, so a regression is trivially bisectable.
+- **Fixpoint sensitivity.** Because the self-hosted compiler's own source is
+  compiled *with* reuse on, a subtle bug surfaces as a fixpoint divergence (or
+  a crash compiling the compiler). When bisecting such a failure,
+  `FERN_SELFHOST_NO_REUSE=1` (§6.5) removes the whole reuse layer in one
+  switch — if the divergence disappears, the regression is in a reuse
+  pairing/emitter; if not, look elsewhere.
 
 ## 5. Open questions
 
@@ -328,12 +332,27 @@ Reuse must divert the ALLOC half only. Two options:
 - **(b) a reuse-aware `op_struct_make_reuse`** carrying a token operand — cleaner
   long-term but touches every backend's struct-make handler. Defer.
 
-### 6.5 Gate
+### 6.5 Gate — SHIPPED (env-var switch + differential suite)
 
-Add `reuse_enabled` to `EmitState` (default **false**), mirroring native's
-`RcReuseEnabled`. All of Slices 0–4 land behind it; a final isolated PR flips the
-default once every slice's differential + both fixpoint suites are green — so any
-regression bisects to that one-line flip.
+Historical note: the original plan here ("`reuse_enabled` on `EmitState`,
+default false, flipped by one final PR") predates how the port actually
+landed — the reuse families shipped **on by default**, each gated by its own
+detector/corruption-probe/fixpoint coverage, and (as of #4350) each carrying
+the runtime `is_unique` token guard.
+
+The reuse-on/off switch exists as `irlower.reuse_layer_disabled()`: setting
+**`FERN_SELFHOST_NO_REUSE=1`** in the compiler's environment empties every
+donor-based pairing (self-overwrite / cross-struct / cross-tuple / enum-donor
+/ enum-cross / in-arm — the site lists stay empty, so their donor-free
+suppressions never fire either) and drops the ENUMRE in-place reassign
+upgrade back to `emit_enum_reclaim_store`'s free+alloc — mirroring native's
+`ast.RcReuseEnabled=false`. The differential contract ("reuse-on vs reuse-off
+must be observationally identical") is enforced by
+`TestSelfHostReuseDifferentialX86_64`
+(`internal/e2eselfhost/self_host_reuse_differential_test.go`): each firing
+shape from every family compiles both ways, the switch is proven live (asm
+differs; `alloc_reuse` present only on the ON side), and both binaries must
+exit identically (detector cases pin leak-freedom on both sides).
 
 ---
 

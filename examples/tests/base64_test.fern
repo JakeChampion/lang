@@ -52,6 +52,26 @@ function test_roundtrip(): test.TestOutcome {
     return test.assert_eq(base64.base64_decode(base64.base64_encode(s)), s);
 }
 
+// base64_decode_strict returns Some(bytes) on well-formed input.
+function test_decode_strict_valid(): test.TestOutcome {
+    match (base64.base64_decode_strict("Zm9vYmFy")) {
+        Some(v) => { return test.assert_eq(v, "foobar"); },
+        None => { return test.assert_true(false); },
+    }
+}
+// ...and None on malformed input, instead of the lenient variant's silent
+// truncation (#4384): a bad char mid-token, a char after padding, and bare
+// padding all reject.
+function b64_is_none(s: string): boolean {
+    match (base64.base64_decode_strict(s)) { Some(v) => { return false; }, None => { return true; } }
+}
+function test_decode_strict_rejects(): test.TestOutcome {
+    return test.assert_true(
+        b64_is_none("!!!invalid!!!")
+        && b64_is_none("Zm9v!")
+        && b64_is_none("=="));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/base64");
     r = r.it("encode (no pad)", test_encode_no_pad());
@@ -64,5 +84,7 @@ function main(): i32 {
     r = r.it("decode (two pad)", test_decode_two_pad());
     r = r.it("decode (empty)", test_decode_empty());
     r = r.it("roundtrip", test_roundtrip());
+    r = r.it("decode_strict valid", test_decode_strict_valid());
+    r = r.it("decode_strict rejects", test_decode_strict_rejects());
     return r.finish();
 }

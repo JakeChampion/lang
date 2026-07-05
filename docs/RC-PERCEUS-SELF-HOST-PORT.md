@@ -3668,3 +3668,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   arm64`). Native reference: `detectTrmc` / `emitTrmc` (internal/trmc.go) —
   the self-host detector is stricter (same-ctor restriction) but the emitted
   loop shape matches.
+- 2026-07-05: **Landed defer/errdefer on the `?` failure path (#4334 part 1 —
+  parse-pass markers + irlower replay, all three backends).** The self-host
+  lowers defers at PARSE level by rewriting StmtReturn (parser.fern
+  `lower_defers_func`), so the try operator's implicit early return skipped
+  every registered defer — and errdefer never fired on the exact path it
+  exists for (native runs emitDeferCleanup + emitErrDeferCleanup at the TryOp
+  edge). Fix: the pass embeds its two cleanup lists behind never-true
+  `__dfa_tryall` / `__dfa_tryerr` guards at the body tail (dead code on any
+  backend that doesn't know them), lower_func extracts the marker blocks into
+  the new `LowerState.try_cleanup`, and lower_try replays the guarded
+  statements at the `?` failure edge — plain defers first, then errdefers,
+  then the existing #4422 dec-sweep, matching both native's TryOp order and
+  the pass's explicit-`return Err` expansion. The per-defer `__dfa<i>` guards
+  make registration dynamic (a defer after the `?` has flag 0 and stays
+  silent). LowerState is pinned at 33 fields (the #4554 legacy-AST 34-field
+  miscompile), so the slot came from folding `ret_is_i64arr` + `ret_is_dyn`
+  into one `ret_arrdyn` 2-bit flag word (accessors `ret_i64arr()` /
+  `ret_dyn()`). VERIFIED: TestSelfHostTryDeferIRX86_64 (+wasm/arm64 siblings)
+  — fail-path firing (defer then errdefer then the caller's Err), success
+  path (defer at return only), LIFO at the `?` edge, conditional/late
+  registration, and the #4422-shaped isolated probe showing the owned-local
+  sweep survives the replay; every case cross-checked against native stdout +
+  exit. Known remaining (documented on the issue): the legacy self-host AST
+  emitters still skip defers at `?` (markers are dead code there) — per the
+  legacy-gap policy, not blocking.

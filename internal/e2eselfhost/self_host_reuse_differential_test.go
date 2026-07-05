@@ -1,0 +1,138 @@
+package e2eselfhost
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The #4350 §6.5 reuse-on/off differential gate (the self-host sibling of
+// native's ast.RcReuseEnabled + MatchesNoReuse oracles): compiling with
+// FERN_SELFHOST_NO_REUSE=1 in the DRIVER's environment suppresses every
+// donor-based reuse pairing (self-overwrite / cross-struct / cross-tuple /
+// enum-donor / enum-cross / in-arm) plus the ENUMRE in-place reassign
+// upgrade, and the two compiles of the same program must be OBSERVATIONALLY
+// IDENTICAL — same exit code, and (via the detector cases) both leak-free of
+// over-releases. Reuse-off is the plain fresh-alloc semantics; reuse-on may
+// only trade alloc count / peak heap, never the value.
+//
+// Every case here is a FIRING shape for its family (guard-checked below: the
+// reuse-on asm carries the __fern_alloc_reuse call or the ENUMRE in-place
+// shape, the reuse-off asm does not), so the differential actually exercises
+// the switch rather than comparing two identical lowerings.
+var reuseDifferentialCases = []struct {
+	name string
+	src  string
+	want int
+	// what the reuse-ON asm must contain that the OFF asm must not — the
+	// firing witness. The alloc_reuse CALL for the five guarded donor
+	// families (the call, not the bare helper name: the runtime helper BODY
+	// is always emitted, so its label matches on both sides). "" skips the
+	// witness check (ENUMRE's in-place form has no distinct call symbol;
+	// its firing is pinned by asm inequality instead).
+	witness string
+}{
+	// Family 1 — functional-update self-overwrite (emit_self_overwrite_reuse).
+	{"self-overwrite", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`, 14, "call __fn___fern_alloc_reuse"},
+	// Family 2 — cross-statement struct reuse in a loop (emit_cross_struct_reuse).
+	{"cross-struct-loop", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i * 2, y: 3 }; sum = sum + s + b.x + b.y; i = i + 1; } return sum; }`, 40, "call __fn___fern_alloc_reuse"},
+	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
+	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
+	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).
+	{"enum-donor", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; return t + y.p + y.q; }`, 37, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; var s = t + y.p + y.q; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 5 — enum->enum cross-local reuse (emit_enum_cross_reuse).
+	{"enum-cross", `enum E { A(i32[]), B(i32[]) } function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; } function main(): i32 { return f(); }`, 12, "call __fn___fern_alloc_reuse"},
+	{"enum-cross-detector", `enum E { A(i32[]), B(i32[]) } function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 12) { return 99; } return __rc_underflow(); } function main(): i32 { return f(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 6 — in-arm consuming-match reuse (emit_inarm_match_reuse), scalar +
+	// the two array cow-guard shapes (same-slot MOVE and fresh-literal REPLACE).
+	{"inarm-scalar", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, 9, "call __fn___fern_alloc_reuse"},
+	{"inarm-array-move", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } return r; } function main(): i32 { return go(); }`, 64, "call __fn___fern_alloc_reuse"},
+	{"inarm-array-replace-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } if (r != 18) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// ENUMRE — the in-place enum reassign upgrade (emit_enum_inplace_reassign),
+	// gated with the layer; reuse-off falls back to emit_enum_reclaim_store's
+	// free+alloc. No distinct call symbol, so no witness string — the asm
+	// inequality check below pins that the switch changed the lowering.
+	{"enumre-inplace-churn", `enum Bag { Keep(i32[]), Swap(i32[]) } function churn(n: i32): i32 { var b: Bag = Keep([0, 0, 0, 0]); var i = 0; while (i < n) { b = Keep([i, i, i, i]); b = Swap([i, i, i, i]); i = i + 1; } var r = 0; match (b) { Keep(_) => { r = 1; }, Swap(_) => { r = 2; }, } if (r != 2) { return 99; } return __rc_underflow(); } function main(): i32 { return churn(5); }`, 0, ""},
+}
+
+// TestSelfHostReuseDifferentialX86_64 compiles each firing case TWICE through
+// the self-hosted x86-64 driver — once normally (reuse on) and once with
+// FERN_SELFHOST_NO_REUSE=1 (reuse off) — and asserts (a) the switch actually
+// changed the lowering (asm differs; the ON asm carries the family's firing
+// witness, the OFF asm does not), and (b) both binaries exit identically.
+func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	// emitEnv runs the driver on prog with extra environment entries.
+	emitEnv := func(t *testing.T, prog string, extraEnv ...string) string {
+		t.Helper()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(prog))
+		cmd.Env = append(os.Environ(), extraEnv...)
+		out, err := cmd.Output()
+		if err != nil || len(out) == 0 {
+			t.Fatalf("driver failed (env %v): %v", extraEnv, err)
+		}
+		return string(out)
+	}
+	runBin := func(t *testing.T, bin string) int {
+		t.Helper()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(bin)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+		}
+		_ = cmd.Run()
+		return cmd.ProcessState.ExitCode()
+	}
+
+	for _, tc := range reuseDifferentialCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asmOn := emitEnv(t, tc.src)
+			asmOff := emitEnv(t, tc.src, "FERN_SELFHOST_NO_REUSE=1")
+			if asmOn == asmOff {
+				t.Errorf("%s: reuse-on and reuse-off asm are identical — the switch did not change the lowering (not a firing shape?)", tc.name)
+			}
+			if tc.witness != "" {
+				if !strings.Contains(asmOn, tc.witness) {
+					t.Errorf("%s: reuse-on asm lacks firing witness %q", tc.name, tc.witness)
+				}
+				if strings.Contains(asmOff, tc.witness) {
+					t.Errorf("%s: reuse-off asm still contains %q — the reuse was not suppressed", tc.name, tc.witness)
+				}
+			}
+			onBin := buildBin(t, gcc, dir, tc.name+"-on", asmOn)
+			offBin := buildBin(t, gcc, dir, tc.name+"-off", asmOff)
+			gotOn := runBin(t, onBin)
+			gotOff := runBin(t, offBin)
+			if gotOn != gotOff {
+				t.Errorf("%s: OBSERVATIONAL DIVERGENCE — reuse-on exited %d, reuse-off %d", tc.name, gotOn, gotOff)
+			}
+			if gotOn != tc.want {
+				t.Errorf("%s: reuse-on exited %d, want %d", tc.name, gotOn, tc.want)
+			}
+			if gotOff != tc.want {
+				t.Errorf("%s: reuse-off exited %d, want %d", tc.name, gotOff, tc.want)
+			}
+		})
+	}
+}
