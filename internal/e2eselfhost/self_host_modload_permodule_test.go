@@ -118,6 +118,16 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// window bounds only the per-function IR-op accumulation on top of it.
 	const shardThreshold = 100
 
+	// Function count alone under-shards a module of FEW but GIANT functions:
+	// asm_arm64 (32 funcs, ~470 KB — emit_runtime alone is ~235 KB) crossed the
+	// arena ceiling emitted whole while staying far under the 100-func
+	// threshold. Weight windows by SOURCE BYTES too (manifest name → staged
+	// file size): a module also gets at least ceil(bytes/300 KB) windows.
+	// 300 KB keeps every measured window comfortably clear of the trap while
+	// adding only one extra emit today (asm_arm64 → 2 windows); the per-window
+	// cost floor (whole-program parse) makes finer splits expensive.
+	modBytes := perModuleSourceBytes(t, drive, dir, n)
+
 	// 3. Emit every module as its own unit(s) (the entry folds in the need union).
 	// Every module emitting proves the 12/12 per-module eligibility frontier.
 	var objs []string
@@ -140,13 +150,14 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		objs = append(objs, p)
 	}
 	for i := 0; i < n; i++ {
-		if funcCounts[i] <= shardThreshold {
+		window := emitWindowSize(funcCounts[i], modBytes[i], shardThreshold)
+		if funcCounts[i] <= window {
 			emitUnit(t, i, "", nil)
 			continue
 		}
-		// Oversized module: emit in threshold-sized [lo,hi) function windows.
-		for lo := 0; lo < funcCounts[i]; lo += shardThreshold {
-			hi := lo + shardThreshold
+		// Oversized module: emit in window-sized [lo,hi) function windows.
+		for lo := 0; lo < funcCounts[i]; lo += window {
+			hi := lo + window
 			if hi > funcCounts[i] {
 				hi = funcCounts[i]
 			}
@@ -265,6 +276,9 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		t.Errorf("self-compiled whole compiler missing `call __fn_main` — has_main misread (no-main fallback)")
 	}
 
+	// (helpers for the emit-window plan shared with the arm64 twin are at the
+	// bottom of this file: perModuleSourceBytes / emitWindowSize.)
+
 	// 8. SELF-DRIVEN -per-module-needs (the #3456 step toward the IR-only bootstrap):
 	// the per-module-built compiler drives ITS OWN whole-program runtime-need query.
 	// This used to OOM (exit 137): the old -per-module-needs ran a full emit_module_funcs
@@ -291,4 +305,61 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 			t.Errorf("self-driven -per-module-needs missing root %q (got %q)", root, strings.TrimSpace(string(selfNeeds)))
 		}
 	}
+}
+
+// perModuleSourceBytes maps each module (manifest order) to its staged source
+// file's byte size — the weight emitWindowSize uses alongside function count.
+// The manifest lines are `name|hash|hash|deps`; module sources are staged as
+// dir/<name>.fern by WriteSelfHostModloadProject.
+func perModuleSourceBytes(t *testing.T, drive func(*testing.T, ...string) (string, error), dir string, n int) []int {
+	t.Helper()
+	manOut, err := drive(t, "-per-module-manifest")
+	if err != nil {
+		t.Fatalf("-per-module-manifest: %v", err)
+	}
+	var sizes []int
+	for _, ln := range strings.Split(manOut, "\n") {
+		s := strings.TrimSpace(ln)
+		if s == "" {
+			continue
+		}
+		name := s
+		if i := strings.IndexByte(s, '|'); i >= 0 {
+			name = s[:i]
+		}
+		// A module without a staged file (the synthesized "__entry") weighs 0:
+		// its window stays func-count based, so the entry is never sharded
+		// (the exactly-one-_start link assertion depends on that).
+		sz := 0
+		if fi, err := os.Stat(filepath.Join(dir, name+".fern")); err == nil {
+			sz = int(fi.Size())
+		}
+		sizes = append(sizes, sz)
+	}
+	if len(sizes) != n {
+		t.Fatalf("-per-module-manifest returned %d modules, want %d", len(sizes), n)
+	}
+	return sizes
+}
+
+// emitWindowSize returns the [lo,hi) function-window size for a module of
+// `funcs` functions and `bytes` source bytes. The function-count budget and a
+// 300 KB source-byte budget each set a minimum window count; the window is
+// funcs/ceil(max of the two). Byte weighting exists for modules of FEW but
+// GIANT functions (asm_arm64: 32 funcs / ~470 KB) that the count threshold
+// alone emits whole — measured past the bump-arena trap (exit 137).
+func emitWindowSize(funcs, bytes, funcBudget int) int {
+	const byteBudget = 300_000
+	nWin := (funcs + funcBudget - 1) / funcBudget
+	if byBytes := (bytes + byteBudget - 1) / byteBudget; byBytes > nWin {
+		nWin = byBytes
+	}
+	if nWin < 1 {
+		nWin = 1
+	}
+	window := (funcs + nWin - 1) / nWin
+	if window < 1 {
+		window = 1
+	}
+	return window
 }
