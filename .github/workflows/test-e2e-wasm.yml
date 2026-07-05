@@ -9,6 +9,22 @@ name: Test e2e wasm
 # Matrix per host arch because wasmtime + wasm-tools ship distinct
 # binaries per arch; running both lanes guarantees the same .wat
 # emission validates byte-for-byte under both wasmtime ABIs.
+#
+# COMPILE-ONCE / RUNNER PREEMPTION (#4577). The lane was repeatedly killed
+# by runner-pool preemption ("The runner has received a shutdown signal" /
+# exit 143), always landing ~2.5-3 min into the run — i.e. during the
+# `internal/e2e` PACKAGE COMPILE, before a single test reported. This is the
+# same infrastructure preemption `test-e2e-selfhost.yml` documents at length
+# (RUNNER PREEMPTION): short jobs survive, long jobs get reclaimed. A retry
+# can't help — a runner reclaim kills the whole job, not a trappable step
+# exit code. The lever that works is the selfhost workflow's own playbook
+# (option 1): compile the test binary ONCE in a short `build` job (short jobs
+# are never reclaimed) and run the wasm slice from the prebuilt binary in the
+# `test` job. That removes the ~2.5-min compile — precisely the observed kill
+# window — from the long job. Unlike the selfhost x86 shards this lane is NOT
+# `continue-on-error`: there is no strict twin re-running the identical set
+# (the aarch64 wasm job runs the same tests but with its own toolchain), so
+# the redness stays load-bearing.
 
 on:
   pull_request:
@@ -42,8 +58,34 @@ jobs:
           step: e2e-wasm
           sha: ${{ github.event.pull_request.head.sha || github.sha }}
 
-  test:
+  # Compile the internal/e2e test binary ONCE per arch (short job — never
+  # reclaimed by the runner pool). No wasmtime needed here: this only builds.
+  build:
     needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: build-e2e-wasm-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - name: compile test binary (go test -c)
+        run: go test -c -o e2e.test ./internal/e2e/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-wasm-test-${{ matrix.host }}
+          path: e2e.test
+          retention-days: 1
+          if-no-files-found: error
+
+  test:
+    needs: [gate, build]
     if: needs.gate.outputs.skip != 'true'
     strategy:
       fail-fast: false
@@ -53,14 +95,24 @@ jobs:
           - { runner: ubuntu-24.04-arm, host: aarch64 }
     name: test-e2e-wasm-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-          gotestsum: "true"
-      - name: go test (wasm e2e)
-        # `^Test(WASM|Wasm)` matches both wasm_e2e_test.go
-        # (TestWASM* — uppercase) and wasm_preview2_test.go
-        # (TestWasmPreview2* — mixed case).
-        run: gotestsum --format pkgname-and-test-fails -- -run '^Test(WASM|Wasm)' ./internal/e2e/
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-wasm-test-${{ matrix.host }}
+      # Run the wasm slice from the PREBUILT binary — the compile that used to
+      # be the preemption window now lives in the short `build` job above.
+      # `^Test(WASM|Wasm)` matches both wasm_e2e_test.go (TestWASM* — uppercase)
+      # and wasm_preview2_test.go (TestWasmPreview2* — mixed case). `-test.v`
+      # streams RUN/PASS/FAIL live so a preempted run shows the in-flight test.
+      - name: go test (wasm e2e, prebuilt)
+        run: |
+          set -euo pipefail
+          chmod +x e2e.test
+          BIN="$PWD/e2e.test"
+          cd internal/e2e
+          "$BIN" -test.run '^Test(WASM|Wasm)' -test.v -test.timeout 18m
