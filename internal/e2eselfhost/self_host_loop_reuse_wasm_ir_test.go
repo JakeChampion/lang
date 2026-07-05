@@ -62,6 +62,20 @@ func TestSelfHostLoopReuseWasmIR(t *testing.T) {
 		// Higher iteration count: the prior-release must free each loop-carried box
 		// (a double-free would trap). 2000 iters, value kept small (sum mod 100 = 0).
 		{"loop-struct-churn", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 2000) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 100; i = i + 1; } return sum; }`, 0},
+		// IN-ARM consuming-match reuse (#4350 slice 5 wasm coverage): the runtime-
+		// guarded FBIP match — x's box reused (or a guarded fresh box) per arm.
+		// Scalar payloads: V(3,4) -> W(4,5) -> 9.
+		{"inarm-match-reuse", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, 9},
+		// In-arm ARRAY MOVE: the same-slot binding moves the payload array into the
+		// result box (cow-guard: old==new, no dec). 4+10+20+30 = 64.
+		{"inarm-match-reuse-array-move", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } return r; } function main(): i32 { return go(); }`, 64},
+		// In-arm ARRAY REPLACE: a fresh literal replaces the old payload array
+		// (cow-guard: old!=new, old dec'd on the reuse arm). 3+7+8 = 18.
+		{"inarm-match-reuse-array-replace", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } return r; } function main(): i32 { return go(); }`, 18},
+		// ENUM->ENUM cross-local reuse (#4350 slice 5 wasm coverage): dead donor
+		// `a = A([1,2])`'s box reused for `c = B([3,4])` behind the guard; the
+		// donor's old payload array released on the reuse arm. t=5, v=7 -> 12.
+		{"enum-cross-reuse", `enum E { A(i32[]), B(i32[]) } function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; } function main(): i32 { return f(); }`, 12},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

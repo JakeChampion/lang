@@ -140,4 +140,18 @@ func TestSelfHostEnumCrossReuseFiresX86_64(t *testing.T) {
 	if got := countAllocs(enumCrossReuseFiresLiveDonor); got != 4 {
 		t.Errorf("live enum donor: got %d box allocs, want 4 (reuse must NOT fire)", got)
 	}
+
+	// #4350 slice 5: the firing site is RUNTIME-GUARDED — the emitted asm must
+	// carry the uniqueness probe and the token-degrade allocator (reused =
+	// __fern_rc_is_unique(a); box = __fern_alloc_reuse(reused ? a : 0, nf+1)).
+	// The degrade arm is unreachable from any statically admitted program
+	// (sole-owner donors only), so it is pinned structurally here and at scale
+	// by the self-compile fixpoints.
+	asm := string(runCapture(t, gcc, runner, driverBin, []byte(enumCrossReuseFiresDeadDonor)))
+	if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+		t.Error("enum-cross reuse site emitted no __fern_rc_is_unique guard")
+	}
+	if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
+		t.Error("enum-cross reuse site emitted no __fern_alloc_reuse token-degrade call")
+	}
 }
