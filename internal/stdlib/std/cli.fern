@@ -276,3 +276,48 @@ pub function (s: CliSpec) usage(): string {
     }
     return out;
 }
+
+// ============================================================
+// ANSI colour helpers (#4385 — "zero hits for ansi|tty").
+//
+// The colourisers wrap text in an SGR escape sequence and reset,
+// but only when colour is enabled: they honour the NO_COLOR
+// convention (no-color.org) so piping a coloured CLI tool into a
+// file or `less` degrades to plain text automatically — no
+// per-call guard at the use site. There is no isatty primitive in
+// the runtime yet, so terminal auto-detection is a follow-up;
+// callers who want to force colour on a non-terminal, or off, can
+// gate on `cli_color_enabled()` themselves.
+// ============================================================
+
+// `cli_color_enabled()` — false when the NO_COLOR environment
+// variable is present (any value, per no-color.org), true
+// otherwise. The gate every coloriser consults.
+pub function cli_color_enabled(): boolean {
+    match (env("NO_COLOR")) {
+        Some(_) => { return false; },
+        None => { return true; }
+    }
+}
+
+// Wrap `s` in the SGR `code` and a reset, or return it unchanged
+// when colour is disabled. The ESC byte (0x1B) is built from bytes
+// since Fern string literals don't decode a `\x1b` escape.
+function __cli_sgr(code: string, s: string): string {
+    if (!cli_color_enabled()) { return s; }
+    var escb: u8[] = [27 as u8];
+    var esc: string = string_from_bytes(escb);
+    return esc + "[" + code + "m" + s + esc + "[0m";
+}
+
+// Foreground colours.
+pub function cli_red(s: string): string { return __cli_sgr("31", s); }
+pub function cli_green(s: string): string { return __cli_sgr("32", s); }
+pub function cli_yellow(s: string): string { return __cli_sgr("33", s); }
+pub function cli_blue(s: string): string { return __cli_sgr("34", s); }
+pub function cli_magenta(s: string): string { return __cli_sgr("35", s); }
+pub function cli_cyan(s: string): string { return __cli_sgr("36", s); }
+
+// Text attributes.
+pub function cli_bold(s: string): string { return __cli_sgr("1", s); }
+pub function cli_dim(s: string): string { return __cli_sgr("2", s); }
