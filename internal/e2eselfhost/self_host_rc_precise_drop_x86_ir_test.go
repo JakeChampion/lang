@@ -200,6 +200,26 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// new array. Donor read once before c, dead after. Value correct, detector 0.
 		{"struct-cross-reuse-array-value", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var u = d.items[0]; var c = Vec { tag: 2, items: [100, 50] }; return c.items[0] + c.items[1] + c.tag + u; }`, 162},
 		{"struct-cross-reuse-array-detector", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var u = d.items[0]; var c = Vec { tag: 2, items: [100, 50] }; var s = c.items[0] + c.items[1] + c.tag + u; if (s != 162) { return 99; } return __rc_underflow(); }`, 0},
+		// CALL-RESULT donor (#4356 divergence 3): d is bound from a STRICT
+		// fresh-returning function (return_fresh_struct_ret_fns), so
+		// donor_bind_type admits it as a cross-reuse donor exactly like a
+		// literal binding — the box is recycled into c, freed exactly once.
+		// Value correct, detector 0.
+		{"struct-cross-reuse-callret-donor-value", `struct Point { x: i32, y: i32 } function mk(a: i32): Point { return Point { x: a, y: a + 1 }; } function main(): i32 { var d: Point = mk(3); var u = d.x + d.y; var c = Point { x: 10, y: 20 }; return c.x + c.y + u; }`, 37},
+		{"struct-cross-reuse-callret-donor-detector", `struct Point { x: i32, y: i32 } function mk(a: i32): Point { return Point { x: a, y: a + 1 }; } function main(): i32 { var d: Point = mk(3); var u = d.x + d.y; var c = Point { x: 10, y: 20 }; var sum = c.x + c.y + u; if (sum != 37) { return 99; } return __rc_underflow(); }`, 0},
+		// CALL-RESULT donor with an array field: mk's return is strict-fresh
+		// (fresh scalar-array literal field), so the donor's OLD array is
+		// released at the reuse and c owns the new one. Value + detector 0.
+		{"struct-cross-reuse-callret-array-detector", `struct Vec { tag: i32, items: i32[] } function mkv(t: i32): Vec { return Vec { tag: t, items: [10, 20, 30] }; } function main(): i32 { var d: Vec = mkv(1); var u = d.items[0]; var c = Vec { tag: 2, items: [100, 50] }; var s = c.items[0] + c.items[1] + c.tag + u; if (s != 162) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: the callee returns its PARAM (not strict-fresh — not in
+		// the registry), so the call-result binding is NOT a donor; c gets a
+		// fresh box and nothing double-frees. Value correct, detector 0.
+		{"struct-cross-no-reuse-nonfresh-callee-detector", `struct Point { x: i32, y: i32 } function pick(p: Point): Point { return p; } function main(): i32 { var s0 = Point { x: 3, y: 4 }; var d: Point = pick(s0); var u = d.x + d.y; var c = Point { x: 10, y: 20 }; var s = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: no type annotation on the call binding (`var d = mk(3)`)
+		// — donor_bind_type needs the explicit `: T` (type source + method-key
+		// receiver approximation), so the donor is not admitted. Sound leak-free
+		// fallback: value correct, detector 0.
+		{"struct-cross-no-reuse-unannotated-callret-detector", `struct Point { x: i32, y: i32 } function mk(a: i32): Point { return Point { x: a, y: a + 1 }; } function main(): i32 { var d = mk(3); var u = d.x + d.y; var c = Point { x: 10, y: 20 }; var s = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0},
 		// NON-firing cross case: the donor d is used AFTER the full construction
 		// (`d.x` in the return), so d is NOT dead at the construction — reuse must NOT
 		// fire and c gets a fresh box. Value still correct, detector 0.

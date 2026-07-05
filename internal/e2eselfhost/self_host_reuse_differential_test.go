@@ -39,6 +39,19 @@ var reuseDifferentialCases = []struct {
 	{"self-overwrite", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`, 14, "call __fn___fern_alloc_reuse"},
 	// Family 2 — cross-statement struct reuse in a loop (emit_cross_struct_reuse).
 	{"cross-struct-loop", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i * 2, y: 3 }; sum = sum + s + b.x + b.y; i = i + 1; } return sum; }`, 40, "call __fn___fern_alloc_reuse"},
+	// Family 2b — cross-statement struct reuse with a CALL-RESULT donor
+	// (#4356 divergence 3): `d` is bound from a STRICT fresh-returning
+	// function (return_fresh_struct_ret_fns — every return a no-base literal,
+	// sole owner of box + fields), so donor_bind_type admits it exactly like
+	// a literal-bound donor. Previously only same-body literals could donate,
+	// so this shape fresh-allocated every time.
+	{"cross-struct-callret-donor", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10, y: 20 }; return c.x + c.y + u; }`, 37, "call __fn___fern_alloc_reuse"},
+	{"cross-struct-callret-donor-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 1b — functional-update self-overwrite with a CALL-RESULT base
+	// (#4356 divergence 3): same strict-fresh donor admission on the
+	// `var c = P { ...d, x: v }` path.
+	{"self-overwrite-callret-base", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var c: P = P { ...d, x: 10 }; return c.x + c.y; }`, 14, "call __fn___fern_alloc_reuse"},
+	{"self-overwrite-callret-base-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var c: P = P { ...d, x: 10 }; var s: i32 = c.x + c.y; if (s != 14) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).
