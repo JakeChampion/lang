@@ -157,6 +157,36 @@ function test_parse_invalid(): test.TestOutcome {
     }
 }
 
+// nest(n) builds n open brackets followed by n close brackets —
+// an n-deep JSON array `[[[…]]]`. Used by the recursion-depth tests.
+function nest(n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + "["; i = i + 1; }
+    i = 0;
+    while (i < n) { out = out + "]"; i = i + 1; }
+    return out;
+}
+
+// Reasonable nesting (well under the 128-deep cap) still
+// parses — the cap must not reject legitimate documents.
+function test_depth_ok(): test.TestOutcome {
+    match (json.json_parse(nest(50))) {
+        Some(v) => { return test.pass(); },
+        None => { return test.fail("50-deep array should parse"); }
+    }
+}
+
+// A body nested past the cap is rejected with None rather than
+// recursing without bound and overflowing the stack (#4384 item 3
+// — DoS on an untrusted deeply-nested request body).
+function test_depth_limit(): test.TestOutcome {
+    match (json.json_parse(nest(500))) {
+        Some(v) => { return test.fail("500-deep array should be rejected"); },
+        None => { return test.pass(); }
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/json roundtrip");
     r = r.it("get_string",        test_get_string());
@@ -170,5 +200,7 @@ function main(): i32 {
     r = r.it("encode scalars",    test_encode_scalars());
     r = r.it("encode string escape", test_encode_string_escape());
     r = r.it("parse invalid",     test_parse_invalid());
+    r = r.it("depth ok",          test_depth_ok());
+    r = r.it("depth limit",       test_depth_limit());
     return r.finish();
 }
