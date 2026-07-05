@@ -13088,7 +13088,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var st: LowerState = s;
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && st.is_arr_slot(i)) {
+        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -20190,6 +20190,36 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params, return_fresh_struct_ret_fns, str_fresh_ret_fns);
+    // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
+    // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
+    // body, but the env box owns those references — the exit sweep's shallow
+    // dec released them EVERY CALL (rc==1 captures were freed out from under
+    // the box's owner: a per-call over-dec/UAF, 2 underflow ticks on the
+    // 2-call escaping shape). Register them under the "ENVCAP:" prefix so the
+    // sweep's array loop skips them; the env box itself (owned by the CALLER)
+    // keeps its normal release path.
+    if (fn.params.len() > 0 && fn.params[0].name == "__env") {
+        var evi: i32 = 0;
+        while (evi < fn.body.len()) {
+            match (fn.body[evi]) {
+                parser.StmtVar(ev) => {
+                    match (ev.init) {
+                        parser.ExprIndex(evix) => {
+                            match (evix.array) {
+                                parser.ExprIdent(evid) => {
+                                    if (evid.name == "__env") { reclaim = reclaim.append("ENVCAP:" + ev.name); }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            evi = evi + 1;
+        }
+    }
     // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
     // "SNAP:<name>" so slot_is_reclaimable_struct (bare-name lookup) stays false
