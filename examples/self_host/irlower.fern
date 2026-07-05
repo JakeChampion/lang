@@ -18751,6 +18751,414 @@ function tco_self_tail(ops: ir.Op[], name: string, nparams: i32): ir.Op[] {
     return out;
 }
 
+// --- TRMC: tail recursion modulo cons (#4352 slice 1) -------------------------
+//
+// The native pass (internal/ir/trmc.go) rewrites the canonical list-builder
+//     function f(x: E, ...): E { match (x) { V(h, t) => { return C(g(h), f(t, ...)); },
+//                                            N => { return N; } } }
+// into a hole-passing LOOP: each iteration allocates the result node with its
+// tail slot left as a hole, links the node into the previous hole (or the
+// result), advances the hole to the new node's tail slot, rebinds the params,
+// and continues — O(1) stack instead of one frame per element (deep
+// list-building recursion SIGSEGVs without it, #4352).
+//
+// Port adaptations (v1, deliberately conservative — native's slice-1 gates plus
+// two more):
+//   - the hole is the previous NODE pointer, not a raw field address, and the
+//     link write is a plain op_struct_set at the ctor's tail index — possible
+//     because v1 requires every recursive arm to build the SAME ctor variant
+//     (the canonical Cons shape), so the tail index is one compile-time
+//     constant. This keeps the rewrite fully portable (no raw pointer stores,
+//     which the wasm backend doesn't lower).
+//   - nodes are built by the normal op_struct_make with a 0 dummy tail, so
+//     layout / shape-ptr / rc-header parity with regular construction is
+//     automatic (leak-mode enum boxes, same as the un-rewritten body).
+//   - all payload fields (scrutinee arms and ctor) must be width-0 kinds
+//     (i32 / pointer); i64/f64 payloads keep the plain recursion for now.
+//
+// Consume-safety (native slice 2 — freeing the scrutinee cell per iteration)
+// is deferred; this slice is value- and stack-behavior only.
+
+// trmc_count_self_calls: how many calls to bare `fname` appear in `e`.
+function trmc_count_self_calls(e: parser.Expr, fname: string): i32 {
+    var n: i32 = 0;
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { if (cid.name == fname) { n = n + 1; } },
+                _ => { n = n + trmc_count_self_calls(c.callee, fname); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { n = n + trmc_count_self_calls(c.args[i], fname); i = i + 1; }
+            return n;
+        },
+        parser.ExprBinary(b) => { return trmc_count_self_calls(b.left, fname) + trmc_count_self_calls(b.right, fname); },
+        parser.ExprUnary(u) => { return trmc_count_self_calls(u.operand, fname); },
+        parser.ExprIndex(ix) => { return trmc_count_self_calls(ix.array, fname) + trmc_count_self_calls(ix.index, fname); },
+        parser.ExprFieldAccess(fa) => { return trmc_count_self_calls(fa.obj, fname); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { n = n + trmc_count_self_calls(a.elements[i], fname); i = i + 1; }
+            return n;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { n = n + trmc_count_self_calls(t.elements[i], fname); i = i + 1; }
+            return n;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { n = n + trmc_count_self_calls(sl.base, fname); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { n = n + trmc_count_self_calls(sl.field_values[i], fname); i = i + 1; }
+            return n;
+        },
+        _ => { return 0; }
+    }
+    return n;
+}
+
+// trmc_is_enum_type: `tn` names an enum (some variant struct carries it as owner).
+function trmc_is_enum_type(structs: parser.StructDecl[], tn: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == tn) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// trmc_variant_name strips a qualified `E.V` pattern / ctor name to the bare
+// variant, resolving the mangled `E__V` form when that names the decl.
+function trmc_variant_name(structs: parser.StructDecl[], raw: string): string {
+    var vname: string = raw;
+    var vdot: i32 = 0 - 1;
+    var vc: i32 = 0;
+    while (vc < raw.len()) {
+        if (raw[vc] == 46) { vdot = vc; }   // 46 = '.'
+        vc = vc + 1;
+    }
+    if (vdot >= 0) { vname = raw[vdot + 1 : raw.len()]; }
+    if (!decl_is_struct(structs, vname) && vdot >= 0) {
+        var vm: string = raw[0:vdot] + "__" + raw[vdot + 1 : raw.len()];
+        if (decl_is_struct(structs, vm)) { vname = vm; }
+    }
+    return vname;
+}
+
+// trmc_variant_fields_ok: every payload field of variant `vname` is a width-0
+// kind (i32 / pointer) — the v1 width gate — and the variant is an ENUM-variant
+// decl (synthetic __ev fields), not a union member (whole-box binding differs).
+function trmc_variant_fields_ok(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    if (n > 0 && decl_field_type(structs, vname, "__ev") == "") { return false; }   // union member
+    var i: i32 = 0;
+    while (i < n) {
+        if (struct_field_width(structs, vname, i) != 0) { return false; }
+        var ft: string = decl_field_type_at(structs, vname, i);
+        if (ft == "f32") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// trmc_eligible: fn is the canonical single-hole modulo-cons shape — returns
+// the (single) recursive-arm ctor variant name, or "" when ineligible. Gates
+// mirror native detectTrmc (trmc.go:84-192) plus the v1 same-ctor and width-0
+// restrictions documented above.
+function trmc_eligible(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    if (fn.receiver_type.len() > 0) { return ""; }
+    if (fn.type_params.len() > 0) { return ""; }
+    if (fn.body.len() != 1) { return ""; }
+    if (!trmc_is_enum_type(structs, fn.ret_type)) { return ""; }
+    var m_scrut: string = "";
+    match (fn.body[0]) {
+        parser.StmtMatch(m0) => {
+            match (m0.scrutinee) {
+                parser.ExprIdent(sid) => { m_scrut = sid.name; },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    if (m_scrut.len() == 0) { return ""; }
+    // scrutinee must be a param of enum type.
+    var mp: i32 = 0 - 1;
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        if (fn.params[pi].name == m_scrut) { mp = pi; }
+        pi = pi + 1;
+    }
+    if (mp < 0) { return ""; }
+    if (!trmc_is_enum_type(structs, fn.params[mp].type_name)) { return ""; }
+    var ctor: string = "";
+    var any_rec: boolean = false;
+    match (fn.body[0]) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                if (arm.has_guard) { return ""; }
+                var vname: string = "";
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => { vname = trmc_variant_name(structs, pv.type_name); },
+                    _ => { return ""; }
+                }
+                if (!decl_is_struct(structs, vname)) { return ""; }
+                if (!trmc_variant_fields_ok(structs, vname)) { return ""; }
+                if (arm.body.len() != 1) { return ""; }
+                var rv_ok: boolean = false;
+                match (arm.body[0]) {
+                    parser.StmtReturn(r) => {
+                        rv_ok = true;
+                        var nself: i32 = trmc_count_self_calls(r.value, fn.name);
+                        if (nself > 1) { return ""; }
+                        if (nself == 1) {
+                            // recursive arm: `return C(head..., f(args...))`.
+                            var arm_ctor: string = "";
+                            match (r.value) {
+                                parser.ExprCall(c) => {
+                                    match (c.callee) {
+                                        parser.ExprIdent(cid) => { arm_ctor = trmc_variant_name(structs, cid.name); },
+                                        parser.ExprFieldAccess(cfa) => { arm_ctor = trmc_variant_name(structs, cfa.field); },
+                                        _ => { return ""; }
+                                    }
+                                    if (variant_enum_owner(structs, arm_ctor) != fn.ret_type) { return ""; }
+                                    if (!trmc_variant_fields_ok(structs, arm_ctor)) { return ""; }
+                                    var argc: i32 = c.args.len();
+                                    if (argc == 0) { return ""; }
+                                    if (argc != decl_field_count(structs, arm_ctor)) { return ""; }
+                                    // last arg IS the self call, other args self-free.
+                                    var last_ok: boolean = false;
+                                    match (c.args[argc - 1]) {
+                                        parser.ExprCall(sc) => {
+                                            match (sc.callee) {
+                                                parser.ExprIdent(scid) => {
+                                                    if (scid.name == fn.name && sc.args.len() == fn.params.len()) { last_ok = true; }
+                                                },
+                                                _ => {}
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                    if (!last_ok) { return ""; }
+                                    var hi: i32 = 0;
+                                    while (hi < argc - 1) {
+                                        if (trmc_count_self_calls(c.args[hi], fn.name) != 0) { return ""; }
+                                        hi = hi + 1;
+                                    }
+                                    if (ctor.len() > 0 && ctor != arm_ctor) { return ""; }   // v1: one ctor variant
+                                    ctor = arm_ctor;
+                                    any_rec = true;
+                                },
+                                _ => { return ""; }
+                            }
+                        }
+                    },
+                    _ => { return ""; }
+                }
+                if (!rv_ok) { return ""; }
+                ai = ai + 1;
+            }
+        },
+        _ => { return ""; }
+    }
+    if (!any_rec) { return ""; }
+    return ctor;
+}
+
+// emit_trmc lowers an eligible fn (trmc_eligible returned `ctor`) as the
+// hole-passing loop. Emits the COMPLETE body (including the final return); the
+// caller skips the normal statement loop and the exit machinery — a TRMC body
+// has no swept-class locals (params are borrowed; binds/temps are scalars or
+// enum boxes, leak-mode like the un-rewritten construction).
+//
+// Block shape (br depths from inside an arm block):
+//   block(exit)            // br 2 = break with result
+//     loop                 // br 1 = continue (next iteration)
+//       [per arm] block    // br 0 = skip arm (variant mismatch)
+//         variant_is test; payload binds;
+//         recursive: heads -> temps; node = struct_make(ctor, heads..., 0);
+//                    hole-link(node); hole = node; rebind params; br 1
+//         base:      value -> temp; hole-link(value); br 2
+//       end
+//     end
+//   end
+//   load result; return
+// hole-link(v): if (hole == 0) { result = v } else { hole.tail = v } — the
+// tail index is the ctor's last field (compile-time constant, the v1
+// same-ctor gate), so the link is a plain struct_set.
+function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerState {
+    var s: LowerState = sin;
+    var tail_idx: i32 = decl_field_count(s.structs, ctor) - 1;
+    s = s.add_local("$trmc_hole");
+    var hole: i32 = s.slot_of("$trmc_hole");
+    s = s.add_local("$trmc_res");
+    var res: i32 = s.slot_of("$trmc_res");
+    s = s.emit(ir.op_const_i32(0));
+    s = s.emit(ir.op_store_local(hole));
+    s = s.emit(ir.op_const_i32(0));
+    s = s.emit(ir.op_store_local(res));
+    var mslot: i32 = 0 - 1;
+    match (fn.body[0]) {
+        parser.StmtMatch(m0) => {
+            match (m0.scrutinee) {
+                parser.ExprIdent(sid) => { mslot = s.slot_of(sid.name); },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    s = s.emit(ir.op_block(0));   // exit
+    s = s.emit(ir.op_loop(0));
+    match (fn.body[0]) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                var vname: string = "";
+                var binds: string[] = [];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        vname = trmc_variant_name(s.structs, pv.type_name);
+                        binds = binds.append(pv.binding);
+                        var eb: i32 = 0;
+                        while (eb < pv.extra_bindings.len()) { binds = binds.append(pv.extra_bindings[eb]); eb = eb + 1; }
+                    },
+                    _ => {}
+                }
+                s = s.emit(ir.op_block(0));   // arm
+                s = s.emit(ir.op_load_local(mslot));
+                s = s.emit(ir.op_variant_is(vname));
+                s = s.emit(ir.op_bin("not", 0, false));
+                s = s.emit(ir.op_brif(0));
+                // payload binds (width-0 fields only — the detection gate).
+                var bi: i32 = 0;
+                while (bi < binds.len() && bi < decl_field_count(s.structs, vname)) {
+                    var bname: string = binds[bi];
+                    if (bname.len() > 0 && bname != "_") {
+                        var fname: string = "__ev";
+                        if (bi > 0) { fname = "__ev" + util.i32_to_string(bi); }
+                        var ev_ty: string = decl_field_type(s.structs, vname, fname);
+                        s = s.add_local(bname);
+                        var bslot: i32 = s.slot_of(bname);
+                        s = s.emit(ir.op_load_local(mslot));
+                        s = s.emit(ir.op_struct_get(bi, 0));
+                        s = s.emit(ir.op_store_local(bslot));
+                        if (ev_ty == "string") { s = s.mark_str(bslot, true); }
+                        else if (decl_is_struct(s.structs, ev_ty) || is_enum_like_name(ev_ty, s.structs)) { s = s.mark_struct_type(bslot, ev_ty); }
+                    }
+                    bi = bi + 1;
+                }
+                // arm body: exactly one StmtReturn (detection-guaranteed).
+                match (arm.body[0]) {
+                    parser.StmtReturn(r) => {
+                        var nself: i32 = trmc_count_self_calls(r.value, fn.name);
+                        if (nself == 1) {
+                            match (r.value) {
+                                parser.ExprCall(c) => {
+                                    var argc: i32 = c.args.len();
+                                    // heads -> temps (evaluated BEFORE the node alloc,
+                                    // reading the current bindings).
+                                    var hslots: i32[] = [];
+                                    var hi: i32 = 0;
+                                    while (hi < argc - 1) {
+                                        var htmp: string = "$trmc_h" + util.i32_to_string(ai) + "_" + util.i32_to_string(hi);
+                                        var hl: LowerState = lower_expr(c.args[hi], s);
+                                        if (!hl.ok) { return hl; }
+                                        s = hl.add_local(htmp);
+                                        var hs: i32 = s.slot_of(htmp);
+                                        s = s.emit(ir.op_store_local(hs));
+                                        hslots = hslots.append(hs);
+                                        hi = hi + 1;
+                                    }
+                                    // node = struct_make(ctor, heads..., 0-tail).
+                                    var li: i32 = 0;
+                                    while (li < hslots.len()) { s = s.emit(ir.op_load_local(hslots[li])); li = li + 1; }
+                                    s = s.emit(ir.op_const_i32(0));
+                                    s = s.emit(ir.op_struct_make(ctor, argc));
+                                    var ntmp: string = "$trmc_n" + util.i32_to_string(ai);
+                                    s = s.add_local(ntmp);
+                                    var nslot: i32 = s.slot_of(ntmp);
+                                    s = s.emit(ir.op_store_local(nslot));
+                                    // hole-link(node).
+                                    s = s.emit(ir.op_load_local(hole));
+                                    s = s.emit(ir.op_bin("not", 0, false));
+                                    s = s.emit(ir.op_if(0));
+                                    s = s.emit(ir.op_load_local(nslot));
+                                    s = s.emit(ir.op_store_local(res));
+                                    s = s.emit(ir.op_else());
+                                    s = s.emit(ir.op_load_local(hole));
+                                    s = s.emit(ir.op_load_local(nslot));
+                                    s = s.emit(ir.op_struct_set(tail_idx, 0));
+                                    s = s.emit(ir.op_end());
+                                    // hole = node.
+                                    s = s.emit(ir.op_load_local(nslot));
+                                    s = s.emit(ir.op_store_local(hole));
+                                    // rebind params: eval self args to temps FIRST
+                                    // (they read the current params/binds), then store.
+                                    match (c.args[argc - 1]) {
+                                        parser.ExprCall(sc) => {
+                                            var aslots: i32[] = [];
+                                            var sai: i32 = 0;
+                                            while (sai < sc.args.len()) {
+                                                var atmp: string = "$trmc_a" + util.i32_to_string(ai) + "_" + util.i32_to_string(sai);
+                                                var al: LowerState = lower_expr(sc.args[sai], s);
+                                                if (!al.ok) { return al; }
+                                                s = al.add_local(atmp);
+                                                var aslot: i32 = s.slot_of(atmp);
+                                                s = s.emit(ir.op_store_local(aslot));
+                                                aslots = aslots.append(aslot);
+                                                sai = sai + 1;
+                                            }
+                                            var pj: i32 = 0;
+                                            while (pj < aslots.len()) {
+                                                s = s.emit(ir.op_load_local(aslots[pj]));
+                                                s = s.emit(ir.op_store_local(pj));
+                                                pj = pj + 1;
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                    s = s.emit(ir.op_br(1));   // continue
+                                },
+                                _ => {}
+                            }
+                        } else {
+                            // base arm: value -> temp; hole-link; break.
+                            var vl: LowerState = lower_expr(r.value, s);
+                            if (!vl.ok) { return vl; }
+                            var vtmp: string = "$trmc_v" + util.i32_to_string(ai);
+                            s = vl.add_local(vtmp);
+                            var vslot: i32 = s.slot_of(vtmp);
+                            s = s.emit(ir.op_store_local(vslot));
+                            s = s.emit(ir.op_load_local(hole));
+                            s = s.emit(ir.op_bin("not", 0, false));
+                            s = s.emit(ir.op_if(0));
+                            s = s.emit(ir.op_load_local(vslot));
+                            s = s.emit(ir.op_store_local(res));
+                            s = s.emit(ir.op_else());
+                            s = s.emit(ir.op_load_local(hole));
+                            s = s.emit(ir.op_load_local(vslot));
+                            s = s.emit(ir.op_struct_set(tail_idx, 0));
+                            s = s.emit(ir.op_end());
+                            s = s.emit(ir.op_br(2));   // break with result
+                        }
+                    },
+                    _ => {}
+                }
+                s = s.emit(ir.op_end());   // arm block
+                ai = ai + 1;
+            }
+        },
+        _ => {}
+    }
+    s = s.emit(ir.op_end());   // loop
+    s = s.emit(ir.op_end());   // exit block
+    s = s.emit(ir.op_load_local(res));
+    s = s.emit(ir.op_return());
+    return s;
+}
+
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
     map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[]): LowerResult {
     var empty: ir.Op[] = [];
@@ -19207,6 +19615,19 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // rcenumfrees / the enum-rcpayload precise drop) is SUPPRESSED below so its box
     // survives to the reuse and is freed exactly once via c.
     var ecross: EnumCrossSites = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon);
+    // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
+    // as a hole-passing loop instead of the recursive body — O(1) stack. The
+    // emission is the complete body (its own return); everything below the
+    // normal statement loop (sweeps, precise drops, TCO) is bypassed — a TRMC
+    // body has no swept locals and no self-tail call pair.
+    var trmc_ctor: string = trmc_eligible(fn, structs);
+    if (trmc_ctor != "") {
+        var ts: LowerState = emit_trmc(fn, trmc_ctor, s);
+        if (ts.ok) {
+            return LowerResult { ok: true, ops: ts.ops, n_locals: ts.locals.len(), n_params: ts.n_params, arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts) };
+        }
+        return LowerResult { ok: false, ops: [], n_locals: 0, n_params: 0, arr_slots: [], i64_slots: [], f64_slots: [] };
+    }
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Slot count before this statement, so a `for` / `match` at function-body
