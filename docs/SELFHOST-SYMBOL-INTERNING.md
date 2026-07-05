@@ -99,21 +99,74 @@ rewrites the whole pipeline:
    multi-module bundling (the real self-compile). It does not use `SymTab` (a
    declname→mangled map is a parallel array, not the name→id→name intern table);
    the id-based slices below are the path to the residual itself.
-1. **Intern the mangled names at `mangle_bare`.** Return an id-backed handle for
-   the mangled symbol; keep the *textual* `Op.str` for now by materialising
-   `name_of` at the op-construction boundary. This is behaviour-preserving
-   (identical `Op.str` bytes) and measurable: the persistent op arrays now share
-   one string instance per unique mangled name instead of one per reference.
-   Gate: the three x86 fixpoints stay byte-identical; RSS on the 500×20
-   self-compile is the success metric.
-2. **Carry the id on `Op` alongside `Op.str`.** Add `Op.sym: i32`; populate it
-   where `Op.str` is a symbol (call targets, global refs). `Op.str` stays as the
-   debug/emit spelling. Still byte-identical output.
-3. **Emit from the id.** At the backends' symbol-write sites, resolve
-   `name_of(op.sym)` instead of reading `op.str`; then `Op.str` can drop to
-   debug-only (or be reconstructed on demand), removing the per-op string from
-   the persistent array. This is the slice that actually shrinks the residual.
-   Gate: byte-identical asm on all three backends + fixpoints; measured RSS drop.
+   The `mangle_bare` **heap** churn this slice targeted is now captured by the
+   landed cleanup above — see the sharpened finding below.
+
+### What the heap residual actually is (investigated 2026-07-05, post-#4612)
+
+Probing the op-construction path sharpened the target and de-risked the id
+slices:
+
+- **Runtime-helper callee names** (`__fern_str_dec`, `__fern_rc_inc`, … — the
+  hot, high-fan-in ones) are Fern **string literals**, which are `.rodata`-backed
+  (the backends' own `str_lit_label` / "literal is data in `.rodata`" paths):
+  evaluating `"__fern_str_dec"` yields a value pointing at shared `.rodata`
+  bytes, **no heap body**. So the hot helper names contribute ~zero heap residual.
+- **Mangled user-callee names** are the heap part. irlower does not
+  re-concatenate them — it passes the AST identifier (`cid.name` / `id.name`)
+  straight into `op_call_direct` — and those AST names are now the **shared
+  instances** the landed `mangle_bare` dedup produced. So the call-op `Op.str`
+  **heap bodies are already deduped**.
+
+Net: the remaining `Op.str` residual is not string *bodies* (helpers are
+`.rodata`, mangled bodies are deduped) but the **per-op `str` pointer field
+itself** — 8 bytes × every op in the persistent arrays. Only shrinking the `Op`
+box removes it, which is the id conversion below.
+
+### Remaining work — why the naive id conversion does NOT win, and what does
+
+The originally-sketched "add `Op.sym: i32`, emit from it" does **not** shrink the
+residual, for two compounding reasons this investigation surfaced:
+
+1. **`Op.str` is double-duty.** It holds both `const_str`'s literal *value* and a
+   call/global op's *name*. `const_str` genuinely needs a string, and Fern structs
+   have no optional fields, so **`str` cannot be removed from `Op`**. Adding a
+   `sym: i32` for call ops therefore makes every op box carry *both* `str` and
+   `sym` — the box **grows** ~4–8 bytes × every op in the persistent arrays: a
+   straight memory *regression*.
+2. **The call-name bodies are already gone.** Per the finding above, hot helper
+   names are `.rodata` (no heap) and mangled user-callee bodies are deduped
+   (#4612). So a call-op `sym` removes no string body — there is nothing left to
+   remove there. The box growth in (1) is unoffset.
+
+So the real residual is the **`Op.str` pointer slot × N ops**, and the only way to
+reclaim it is to drop `str` **entirely** — which requires **every** `Op.str` use,
+including `const_str` values, to become an id/handle, not just call names. That is
+a materially bigger and different change than "intern the symbols":
+
+- It needs a table that interns **arbitrary string constants** (user literals),
+  not just the symbol name space — closer to a general constant pool than the
+  `SymTab` name→id table.
+- Or it needs `Op` split so only the ops that *use* a string carry one (a variant
+  / tagged representation), so the common ops shrink — an IR representation change,
+  not an interning slice.
+
+**Recommendation:** do **not** pursue the naive per-op `sym` id — it regresses.
+The tractable, already-landed wins on this axis are the SH-021 decoder migration
+(smaller, correcter type decode) and the `mangle_bare` body dedup (#4612). A
+genuine `Op.str`-slot reclamation is an **IR-representation** change (constant
+pool for all string operands, or an op-variant split) that should be scoped as its
+own design against a measured multi-module-self-compile RSS baseline before any
+code — the 215-constructor churn only pays off if the box actually shrinks, which
+neither the partial `sym` nor a body-dedup achieves. Lexer interning (slice 4)
+remains independently worth measuring for *allocation performed* (churn), separate
+from the persistent-residual question.
+
+The pre-populated read-only `SymTab` insight still holds for whichever
+representation is chosen (the call-target name space — module function names plus
+the fixed runtime-helper set — is known before lowering, so no table need thread
+through the lowering/emit recursion), which is why the `SymTab` foundation stays a
+useful building block.
 4. **Intern at the lexer (`scan_ident`).** The deepest change and the largest
    churn source; do it last, once the id plumbing exists, so identifiers are ids
    from birth. Needs care that the functionally-threaded `Lex` state does not
