@@ -3101,12 +3101,49 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 return s;
             }
             var n_fields: i32 = sl.field_values.len();
+            // Field-slot mapping (#4554): values are EVALUATED in literal
+            // order (source-visible side effects keep their written order),
+            // but each value must be STORED at its field's DECLARATION-order
+            // slot — the offset ExprFieldAccess reads back at. The old code
+            // stored positionally (literal index j → slot j+1), silently
+            // scrambling every field of a literal written out of decl order
+            // (the #4552 LowerState literal corrupted the stage-2 bootstrap
+            // this way: `aliased_names` read back `clo_cap_kinds`' value).
+            // slot_of[j] = decl index of literal field j, falling back to j
+            // when the decl is unknown or a name doesn't resolve (synthesized
+            // literals for shapes without a registered decl keep the old
+            // positional layout, which is also how they are read back).
+            var lit_fields: parser.StructFieldDecl[] = [];
+            var lfi: i32 = 0;
+            while (lfi < s.struct_decls.len()) {
+                if (s.struct_decls[lfi].name == sl.type_name) { lit_fields = s.struct_decls[lfi].fields; }
+                lfi = lfi + 1;
+            }
+            var slot_of: i32[] = [];
+            var so: i32 = 0;
+            while (so < n_fields) {
+                var so_idx: i32 = so;
+                if (lit_fields.len() > 0 && so < sl.field_names.len()) {
+                    var sd: i32 = 0;
+                    while (sd < lit_fields.len()) {
+                        if (lit_fields[sd].name == sl.field_names[so]) { so_idx = sd; }
+                        sd = sd + 1;
+                    }
+                }
+                slot_of = slot_of.append(so_idx);
+                so = so + 1;
+            }
             var i: i32 = 0;
             while (i < n_fields) {
                 s = emit_expr(sl.field_values[i], s);
                 i = i + 1;
             }
-            var slot_bytes: i32 = (n_fields + 1) * 8;
+            // Box size: the DECLARED field count when the decl is known (a
+            // literal is checker-verified complete, so these agree; the decl
+            // count is the layout truth), else the literal count.
+            var box_fields: i32 = n_fields;
+            if (lit_fields.len() > 0) { box_fields = lit_fields.len(); }
+            var slot_bytes: i32 = (box_fields + 1) * 8;
             s = s.write("    movq $" + util.i32_to_string(slot_bytes) + ", %rdi\n");
             s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
@@ -3134,7 +3171,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %rcx\n");       // value (helper returns the ptr)
                     s = s.write("    popq %rax\n");             // restore box ptr
                 }
-                s = s.write("    movq %rcx, " + util.i32_to_string((j + 1) * 8) + "(%rax)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string((slot_of[j] + 1) * 8) + "(%rax)\n");
                 j = j - 1;
             }
             s = s.write("    pushq %rax\n");
