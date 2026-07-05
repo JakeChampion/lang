@@ -28,11 +28,12 @@ import (
 // The diff covers `diffedTables` and widens line-by-line as ports land:
 // preciseDrops landed first, consumedParams second (the consumed_params_of
 // port of native computeConsumedParams), freeEligible third (the
-// free_eligible_of port of native computeFreeEligible, #4482), movedLocals
-// fourth (the moved_locals_of port of native computeMovedLocals). The
-// self-host dump deliberately OMITS tables it has no counterpart for
-// (moveSites, ...) — a native-only line is a documented port gap, not a
-// failure, so the comparison here is per-table, not whole-dump.
+// free_eligible_of port of native computeFreeEligible, #4482), movedLocals +
+// moveSites fourth/fifth (the rc_ml_compute port of native
+// computeMovedLocals, whose site keys render as the native nodePos
+// "line:col"). The self-host dump deliberately OMITS tables it has no
+// counterpart for (arraySetInc, reuseSources, ...) — a native-only line is a
+// documented port gap, not a failure, so the comparison is per-table.
 //
 // Known divergences are pinned explicitly (both sides' current output) so
 // drift on EITHER side is caught; agreement cases assert equality plus, for
@@ -53,10 +54,10 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
 	// The tables diffed per function; widened line-by-line as ports land
-	// (#4482). moveSites etc. are NOT diffed yet — the self-host has no
-	// counterpart tables (moveSites is node-position-keyed and waits on
-	// #2857), and its dump omits the lines.
-	diffedTables := []string{"consumedParams", "freeEligible", "movedLocals", "preciseDrops"}
+	// (#4482). arraySetInc / reuseSources / consumingMatchReuse are NOT
+	// diffed yet — the self-host has no counterpart tables, and its dump
+	// omits the lines.
+	diffedTables := []string{"consumedParams", "freeEligible", "movedLocals", "moveSites", "preciseDrops"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -209,7 +210,7 @@ function main(): i32 { return tup(("a", 2)); }`,
 	return b[0];
 }
 function main(): i32 { return mv(); }`,
-			anchor: map[string]map[string]string{"mv": {"movedLocals": "a"}},
+			anchor: map[string]map[string]string{"mv": {"movedLocals": "a", "moveSites": "3:2"}},
 		},
 		{
 			// MOVE-ON-CONSTRUCTION: an owned rc local consumed at last use in
@@ -223,7 +224,7 @@ function w(): i32 {
 	return s.items[0];
 }
 function main(): i32 { return w(); }`,
-			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}},
+			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}},  // moveSites agreement-checked (ident col)
 		},
 		{
 			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last
@@ -237,7 +238,7 @@ function main(): i32 { return w(); }`,
 	return xs[0] + n;
 }
 function main(): i32 { return d(); }`,
-			anchor: map[string]map[string]string{"d": {"movedLocals": "t"}},
+			anchor: map[string]map[string]string{"d": {"movedLocals": "t", "moveSites": "3:2"}},
 			diverge: map[string]map[string]divergence{
 				"d": {"freeEligible": {native: "__destruct_3_2,t,xs", selfhost: "t,xs"}},
 			},
