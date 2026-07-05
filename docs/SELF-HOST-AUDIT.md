@@ -266,16 +266,31 @@ findings. Ranked by leverage.
   `(` and mis-read the trailing `[]`, wrongly reporting it as a flat extern tuple
   param). This is a codegen path, so the three x86 fixpoints strictly gate the
   correction. Pinned by `nth_tuple_elem_run.fern` + `TestSelfHostNthTupleElem`.
-  _Remaining:_ the genuine comma-depth type decoders are now migrated; what's left
-  is lower-value or delicate — the unambiguous `[]`-suffix element-strips
-  (`ft[0:len-2]` / `ty_spelling_is_array`; a trailing `[]` is a structurally
-  unambiguous array marker, so these carry no nested-comma mis-read risk and are
-  not worth routing through a heavier parse) and the parser's `bind_unify`
-  monomorphisation unifier, whose final case matches a generic pattern against a
-  `__`-mangled clone name (not a type spelling `parse_type_ref` can decode), so it
-  stays string-based — byte-identity-critical. The endgame remains having the
-  parser store `TypeRef` directly so the string becomes render output.
-  Unblocks #4394 lever 1 (symbol interning ripples into this type system).
+  _flatten tuple-mangle slice landed:_ `rewrite_type_name`'s tuple branch (mangle
+  each element of a `(A, B, …)` cross-module type, preserving nesting) now decodes
+  the tuple via `parse_type_ref` (`is_tuple` / `args` / `array_depth`) instead of a
+  hand-rolled depth-tracking comma split + per-element space trim; each element is
+  rendered back to its canonical spelling and recursed through `rewrite_type_name`.
+  This is the mangle path — byte-identity-critical — so the three x86 fixpoints
+  (which self-compile real cross-module tuples like std/test's `(string,
+  TestRunner)`) strictly gate it. Covered by new tuple assertions in flatten.fern's
+  own `main()` self-test (own-decl + imported-qualified + nested-generic + nested-
+  tuple elements, and the tuple-array fallthrough) under `TestSelfHostFlattenX86_64`.
+  _Remaining:_ every genuine canonical-type-spelling comma-depth decoder in the
+  self-host compiler is now migrated onto `parse_type_ref` (asmcore, the checker's
+  resolvers + `count_type_args`, wasm's extern-sum / payload / tuple decoders,
+  irlower's `tuple_type_elem_tag`, flatten's tuple mangle). What's left is either
+  lower-value or delicate: the unambiguous `[]`-suffix element-strips (`ft[0:len-2]`
+  / `ty_spelling_is_array`; a trailing `[]` is a structurally unambiguous array
+  marker, so these carry no nested-comma mis-read risk and are not worth routing
+  through a heavier parse); the internal `,`-joined tag encodings (irlower's
+  `csv_nth` / `LowerState.tuple_elem_tag`, which decode a spaceless CSV of tags,
+  not a canonical type spelling); and the parser's `bind_unify` monomorphisation
+  unifier, whose final case matches a generic pattern against a `__`-mangled clone
+  name (not a type spelling `parse_type_ref` can decode), so it stays string-based.
+  The endgame remains having the parser store `TypeRef` directly so the string
+  becomes render output. Unblocks #4394 lever 1 (symbol interning ripples into this
+  type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress

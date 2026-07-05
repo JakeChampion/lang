@@ -204,29 +204,22 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     // recovers the unmangled tag and dispatches a non-existent `Box.method`
     // instead of `mod__Box.method` (#3457: std/test's must_temp_dir ->
     // (string, TestRunner), used by result_assertions / dir_listing).
-    if (tn.len() >= 2 && tn[0] == 40 && tn[tn.len() - 1] == 41) {   // '(' .. ')'
-        var inner: string = tn[1 : tn.len() - 1];
+    // Decode the tuple via the structured TypeRef (SH-021, docs/SELF-HOST-AUDIT.md
+    // T2) rather than a hand-rolled depth-tracking top-level-comma split + per-
+    // element space trim; parse_type_ref splits the elements without letting a
+    // nested generic's / tuple's inner commas confuse the split, and each element
+    // rendered back is the canonical spelling the recursion expects. A tuple-ARRAY
+    // ("(A, B)[]", array_depth > 0) is not a bare tuple, so it falls through to the
+    // bracket/suffix logic below — matching the former guard, whose ")"-suffix test
+    // failed on the trailing "]".
+    var tref: parser.TypeRef = parser.parse_type_ref(tn);
+    if (tref.is_tuple && tref.array_depth == 0) {
         var out: string = "(";
-        var depth: i32 = 0;
-        var start: i32 = 0;
-        var first: boolean = true;
-        var i: i32 = 0;
-        while (i <= inner.len()) {
-            var split: boolean = false;
-            if (i == inner.len()) { split = true; }
-            else if (inner[i] == 44 && depth == 0) { split = true; }   // ',' at depth 0
-            else if (inner[i] == 91 || inner[i] == 40) { depth = depth + 1; }   // '[' '('
-            else if (inner[i] == 93 || inner[i] == 41) { depth = depth - 1; }   // ']' ')'
-            if (split) {
-                var seg: string = inner[start : i];
-                if (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()]; }   // trim leading ' '
-                if (seg.len() > 0 && seg[seg.len() - 1] == 32) { seg = seg[0 : seg.len() - 1]; }
-                if (!first) { out = out + ", "; }
-                out = out + rewrite_type_name(seg, ctx);
-                first = false;
-                start = i + 1;
-            }
-            i = i + 1;
+        var ti: i32 = 0;
+        while (ti < tref.args.len()) {
+            if (ti > 0) { out = out + ", "; }
+            out = out + rewrite_type_name(parser.render_type_ref(tref.args[ti]), ctx);
+            ti = ti + 1;
         }
         return out + ")";
     }
@@ -1098,6 +1091,16 @@ function main(): i32 {
     // Bare imported-enum variant resolves to its bundled mangled name;
     // a same-named own decl still wins (declnames checked first).
     if (rewrite_type_name("Fail", ctx) != "test__Fail") { return 96; }
+    // Tuple types mangle each element, preserving nesting (SH-021 TypeRef decode).
+    // Own-decl + imported-qualified elements rewrite; a nested generic's / tuple's
+    // inner commas must not split the top-level element list.
+    if (rewrite_type_name("(lexer.Token, i32)", ctx) != "(lexer__Token, i32)") { return 200; }
+    if (rewrite_type_name("(Token, string)", ctx) != "(lx__Token, string)") { return 201; }
+    if (rewrite_type_name("(Map[string, i32], Token)", ctx) != "(Map[string, i32], lx__Token)") { return 202; }
+    if (rewrite_type_name("((Token, i32), string)", ctx) != "((lx__Token, i32), string)") { return 203; }
+    // A tuple-ARRAY is not a bare tuple: it falls through to the suffix logic, which
+    // leaves a non-own base untouched (the array element is not a rewrite target here).
+    if (rewrite_type_name("(i32, i32)[]", ctx) != "(i32, i32)[]") { return 204; }
 
     // --- `pub use` re-export redirection (type position) ---
     // A facade re-exports lexer's Token; a consumer's `lexer.Token`
