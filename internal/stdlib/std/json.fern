@@ -134,6 +134,15 @@ struct __JsonParser {
     s: string,
     pos: i32,
     error: i32,
+    // Current container-nesting depth, threaded through every
+    // cursor so the recursive descent can bound how deep it
+    // will go. A hostile `[[[[…` / `{"a":{"a":{…` body would
+    // otherwise recurse without limit and overflow the stack
+    // (a DoS on an untrusted request body). The cap is 128 (see
+    // __json_p_value), matching serde_json's default recursion
+    // limit — well clear of any realistic document, well short of
+    // a stack overflow.
+    depth: i32,
 }
 
 // __json_p_skip_ws advances past leading whitespace and returns
@@ -463,8 +472,26 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
         if (p.error != 0) { return (JNull, p); }
         return (JString(s), p);
     }
-    if (b == 91)  { return __json_p_array(p); }         // '['
-    if (b == 123) { return __json_p_object(p); }        // '{'
+    if (b == 91) {                                      // '['
+        // Bound the recursion: a value nested past 128 containers
+        // (serde_json's default limit) is rejected before descending
+        // another level, so a hostile deeply-nested body can't
+        // overflow the stack.
+        if (p.depth >= 128) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        var savedA: i32 = p.depth;
+        p = __JsonParser { ...p, depth: p.depth + 1 };
+        var (av, pa) = __json_p_array(p);
+        // Restore the caller's depth on the way out so siblings at
+        // this level see the correct nesting, not an inflated one.
+        return (av, __JsonParser { ...pa, depth: savedA });
+    }
+    if (b == 123) {                                     // '{'
+        if (p.depth >= 128) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        var savedO: i32 = p.depth;
+        p = __JsonParser { ...p, depth: p.depth + 1 };
+        var (ov, po) = __json_p_object(p);
+        return (ov, __JsonParser { ...po, depth: savedO });
+    }
     if (b == 45 || (b >= 48 && b <= 57)) {              // '-' or digit
         return __json_p_number(p);
     }
@@ -472,7 +499,7 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
 }
 
 pub function json_parse(s: string): Option[JsonValue] {
-    var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0 };
+    var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0, depth: 0 };
     var (v, pv) = __json_p_value(p);
     p = pv;
     p = __json_p_skip_ws(p);
