@@ -927,7 +927,7 @@ function (p: Par) arrow_lambda_at(): boolean {
 // The cursor is on the opening `(`. Parameter types are required (as in the
 // verbose form); the return type is optional. Ported from the native
 // parser's parseArrowLambda (#2701).
-function parse_arrow_lambda(p: Par): (Expr, Par) {
+function parse_arrow_lambda(p: Par): ExprResult {
     p = p.advance();  // consume `(`
     var params: ParamDecl[] = [];
     var apd_names: string[] = [];
@@ -937,22 +937,22 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
     if (p.peek_punct() != ")") {
         while (true) {
             if (p.peek_punct() == "(") {
-                var (atpr_param, atpr_destr_names, atpr_line, atpr_col, atpr_p) = parse_tuple_param(p);
-                p = atpr_p;
-                if (atpr_destr_names.len() == 0) {
-                    return (e_unknown("lambda: bad tuple param"), p);
+                var atpr: TupleParamResult = parse_tuple_param(p);
+                p = atpr.par;
+                if (atpr.destr_names.len() == 0) {
+                    return ExprResult { par: p, expr: e_unknown("lambda: bad tuple param") };
                 }
-                params = params.append(atpr_param);
-                apd_names = apd_names.append(atpr_destr_names);
-                apd_synths = apd_synths.append(atpr_param.name);
-                apd_lines = apd_lines.append(atpr_line);
-                apd_cols = apd_cols.append(atpr_col);
+                params = params.append(atpr.param);
+                apd_names = apd_names.append(atpr.destr_names);
+                apd_synths = apd_synths.append(atpr.param.name);
+                apd_lines = apd_lines.append(atpr.line);
+                apd_cols = apd_cols.append(atpr.col);
                 if (p.peek_punct() == ",") { p = p.advance(); continue; }
                 break;
             }
-            var (pr_param, pr_p) = parse_param(p);
-            p = pr_p;
-            params = params.append(pr_param);
+            var pr: ParamResult = parse_param(p);
+            p = pr.par;
+            params = params.append(pr.param);
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -961,14 +961,14 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
     var ret_type: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
-        var (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p);
-        p = rtr_p;
-        ret_type = rtr_name;
+        var rtr: TypeNameResult = parse_type_name(p);
+        p = rtr.par;
+        ret_type = rtr.name;
     }
     if (p.peek_punct() == "=>") { p = p.advance(); }
-    var (ber_expr, ber_p) = parse_expr(p);
-    p = ber_p;
-    var body: Stmt[] = [s_return(ber_expr)];
+    var ber: ExprResult = parse_expr(p);
+    p = ber.par;
+    var body: Stmt[] = [s_return(ber.expr)];
     body = prepend_param_destrs(body, apd_names, apd_synths, apd_lines, apd_cols);
     return parse_postfix(p, e_lambda(params, ret_type, body));
 }
@@ -976,6 +976,8 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
 // Result types — both pieces of the (new_parser, parsed_thing)
 // pair we need to thread through recursive-descent. Avoids a
 // stateful `var p: Par` shared across helpers.
+struct ExprResult { par: Par, expr: Expr }
+struct StmtResult { par: Par, stmt: Stmt }
 
 // parse_map_lit parses a map literal `Map { k0: v0, k1: v1, … }` (the
 // cursor is on the opening `{`) and desugars it to a chained
@@ -983,19 +985,19 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
 // the whole thing is one expression. map_new_i32 when the first key is
 // a number literal (integer keys), else map_new (string keys), so the
 // chained .set dispatch picks the right key compare.
-function parse_map_lit(p: Par): (Expr, Par) {
+function parse_map_lit(p: Par): ExprResult {
     p = p.advance();   // consume `{`
     var mlk: Expr[] = [];
     var mlv: Expr[] = [];
     if (p.peek_punct() != "}") {
         while (true) {
-            var (mke_expr, mke_p) = parse_expr(p);
-            p = mke_p;
+            var mke: ExprResult = parse_expr(p);
+            p = mke.par;
             if (p.peek_punct() == ":") { p = p.advance(); }
-            var (mve_expr, mve_p) = parse_expr(p);
-            p = mve_p;
-            mlk = mlk.append(mke_expr);
-            mlv = mlv.append(mve_expr);
+            var mve: ExprResult = parse_expr(p);
+            p = mve.par;
+            mlk = mlk.append(mke.expr);
+            mlv = mlv.append(mve.expr);
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -1030,7 +1032,7 @@ function parse_map_lit(p: Par): (Expr, Par) {
 // type_name. Shared by the bare-ident struct literal in
 // parse_primary and the qualified `pkg.Type { … }` form in
 // parse_postfix.
-function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32): (Expr, Par) {
+function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32): ExprResult {
     p = p.advance();  // consume `{`
     var fnames: string[] = [];
     var fvals: Expr[] = [];
@@ -1042,36 +1044,36 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
     var base: Expr = e_unknown("no-base");
     if (p.peek_punct() == "...") {
         p = p.advance();
-        var (br_expr, br_p) = parse_expr(p);
-        p = br_p;
+        var br = parse_expr(p);
+        p = br.par;
         has_base = true;
-        base = br_expr;
+        base = br.expr;
         if (p.peek_punct() == ",") {
             p = p.advance();
         } else {
             // No overrides — expect the closing brace (pure copy).
             if (p.peek_punct() != "}") {
-                return (e_unknown("missing } in struct update"), p);
+                return ExprResult { par: p, expr: e_unknown("missing } in struct update") };
             }
             p = p.advance();
-            return (e_struct_update(type_name, fnames, fvals, base, sline, scol), p);
+            return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base, sline, scol) };
         }
     }
     if (p.peek_punct() != "}") {
         while (true) {
             var fn: string = p.peek_ident();
             if (fn.len() == 0) {
-                return (e_unknown("missing field name in struct lit"), p);
+                return ExprResult { par: p, expr: e_unknown("missing field name in struct lit") };
             }
             p = p.advance();
             if (p.peek_punct() != ":") {
-                return (e_unknown("missing : in struct lit"), p);
+                return ExprResult { par: p, expr: e_unknown("missing : in struct lit") };
             }
             p = p.advance();
-            var (fv_expr, fv_p) = parse_expr(p);
-            p = fv_p;
+            var fv = parse_expr(p);
+            p = fv.par;
             fnames = fnames.append(fn);
-            fvals = fvals.append(fv_expr);
+            fvals = fvals.append(fv.expr);
             if (p.peek_punct() == ",") {
                 p = p.advance();
                 // Trailing comma before the closing brace is allowed
@@ -1083,13 +1085,13 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
         }
     }
     if (p.peek_punct() != "}") {
-        return (e_unknown("missing } in struct lit"), p);
+        return ExprResult { par: p, expr: e_unknown("missing } in struct lit") };
     }
     p = p.advance();
     if (has_base) {
-        return (e_struct_update(type_name, fnames, fvals, base, sline, scol), p);
+        return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base, sline, scol) };
     }
-    return (e_struct_lit(type_name, fnames, fvals, sline, scol), p);
+    return ExprResult { par: p, expr: e_struct_lit(type_name, fnames, fvals, sline, scol) };
 }
 
 // parse_postfix runs the chained-postfix loop on a base
@@ -1098,7 +1100,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
 // the next token isn't one of these. Used by parse_primary
 // to share the loop across multiple base shapes — ident
 // chains, parenthesised exprs, tuple / array literals.
-function parse_postfix(p: Par, base: Expr): (Expr, Par) {
+function parse_postfix(p: Par, base: Expr): ExprResult {
     // Carries the explicit type-argument count from a `[...]` instantiation to
     // the call `(...)` that immediately follows (`f[i32](x)`), so the call node
     // records it for the E040 arity check. Reset after each call.
@@ -1129,20 +1131,20 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                         var acol: i32 = p.peek_col();
                         p = p.advance();   // consume the parameter name
                         p = p.advance();   // consume `=`
-                        var (rv_expr, rv_p) = parse_expr(p);
-                        p = rv_p;
-                        args = args.append(ExprBinary { op: "__named_arg", left: ExprIdent { name: an, line: aline, col: acol }, right: rv_expr, line: aline, col: acol });
+                        var rv = parse_expr(p);
+                        p = rv.par;
+                        args = args.append(ExprBinary { op: "__named_arg", left: ExprIdent { name: an, line: aline, col: acol }, right: rv.expr, line: aline, col: acol });
                     } else {
-                        var (ra_expr, ra_p) = parse_expr(p);
-                        p = ra_p;
-                        args = args.append(ra_expr);
+                        var ra = parse_expr(p);
+                        p = ra.par;
+                        args = args.append(ra.expr);
                     }
                     if (p.peek_punct() == ",") { p = p.advance(); continue; }
                     break;
                 }
             }
             if (p.peek_punct() != ")") {
-                return (e_unknown("missing ) in call"), p);
+                return ExprResult { par: p, expr: e_unknown("missing ) in call") };
             }
             p = p.advance();
             base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc };
@@ -1166,13 +1168,13 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                     base = e_slice(base, e_number("0", "", false), e_call(e_field_access(base, "len"), []));
                     continue;
                 }
-                var (shi_expr, shi_p) = parse_expr(p);
-                p = shi_p;
+                var shi = parse_expr(p);
+                p = shi.par;
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in slice"), p);
+                    return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
                 }
                 p = p.advance();
-                base = e_slice(base, e_number("0", "", false), shi_expr);
+                base = e_slice(base, e_number("0", "", false), shi.expr);
                 continue;
             }
             // Generic instantiation `f[i32](…)` / `Box[T] { … }`: the
@@ -1181,8 +1183,8 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             // like `i32` isn't a value expression), skip to the matching
             // `]` and erase the type args, leaving `base` unchanged.
             var idxStart: i32 = p.pos;
-            var (idx_expr, idx_p) = parse_expr(p);
-            if (idx_p.pos == idxStart) {
+            var idx = parse_expr(p);
+            if (idx.par.pos == idxStart) {
                 // Count the top-level (comma-separated) type arguments while
                 // skipping them, tracking nested `[...]` depth so a comma
                 // inside `Map[K, V]` doesn't inflate the count.
@@ -1205,16 +1207,16 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 if (p.peek_punct() == "{") {
                     match (base) {
                         ExprIdent(bid) => {
-                            var (glit_expr, glit_p) = parse_struct_lit_body(p, bid.name, 0, 0);
-                            p = glit_p;
-                            base = glit_expr;
+                            var glit: ExprResult = parse_struct_lit_body(p, bid.name, 0, 0);
+                            p = glit.par;
+                            base = glit.expr;
                         },
                         _ => {},
                     }
                 }
                 continue;
             }
-            p = idx_p;
+            p = idx.par;
             if (p.peek_punct() == ":") {
                 p = p.advance();
                 // Open-ended high bound `a[lo:]` — the end defaults to the
@@ -1226,22 +1228,22 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 // than the `ExprUnknown` placeholder they each mistranslate.
                 if (p.peek_punct() == "]") {
                     p = p.advance();
-                    base = e_slice(base, idx_expr, e_call(e_field_access(base, "len"), []));
+                    base = e_slice(base, idx.expr, e_call(e_field_access(base, "len"), []));
                     continue;
                 }
-                var (end_expr, end_p) = parse_expr(p);
-                p = end_p;
+                var end = parse_expr(p);
+                p = end.par;
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in slice"), p);
+                    return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
                 }
                 p = p.advance();
-                base = e_slice(base, idx_expr, end_expr);
+                base = e_slice(base, idx.expr, end.expr);
             } else {
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in index"), p);
+                    return ExprResult { par: p, expr: e_unknown("missing ] in index") };
                 }
                 p = p.advance();
-                base = e_index(base, idx_expr);
+                base = e_index(base, idx.expr);
             }
         } else if (pk == ".") {
             // Field access `obj.field`. Field is either an
@@ -1261,7 +1263,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 }
             }
             if (fname.len() == 0) {
-                return (e_unknown("missing field name after ."), p);
+                return ExprResult { par: p, expr: e_unknown("missing field name after .") };
             }
             p = p.advance();
             // Qualified struct literal: `pkg.Type { f: v, … }`. Only
@@ -1295,9 +1297,9 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 }
             }
             if (qstruct_ok) {
-                var (qr_expr, qr_p) = parse_struct_lit_body(p, qname + "." + fname, 0, 0);
-                p = qr_p;
-                base = qr_expr;
+                var qr: ExprResult = parse_struct_lit_body(p, qname + "." + fname, 0, 0);
+                p = qr.par;
+                base = qr.expr;
             } else {
                 base = e_field_access_at(base, fname, dline, dcol);
             }
@@ -1339,9 +1341,9 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             // back as the bare name, so is_numeric_cast_op still recognises
             // them. parse_type_name also folds a trailing `[]` and a qualified
             // `pkg.Type` chain the old single-ident read left on the cursor.
-            var (castty_name, castty_ret_arr, castty_fn_ret, castty_p) = parse_type_name(p);
-            p = castty_p;
-            var tyname: string = castty_name;
+            var castty: TypeNameResult = parse_type_name(p);
+            p = castty.par;
+            var tyname: string = castty.name;
             if (is_downcast) { base = e_unary_at("as?_" + tyname, base, asline, ascol); }
             else { base = e_unary_at("as_" + tyname, base, asline, ascol); }
         } else if (p.peek_punct() == "?") {
@@ -1355,7 +1357,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             break;
         }
     }
-    return (base, p);
+    return ExprResult { par: p, expr: base };
 }
 
 // parse_expr_from_text re-lexes + parses an f-string interpolant's
@@ -1366,13 +1368,13 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
 function parse_expr_from_text(text: string): Expr {
     var toks: lexer.Token[] = lexer.tokenize(text);
     var sub: Par = Par { toks: toks, pos: 0, no_struct: false };
-    var (r_expr, r_p) = parse_expr(sub);
-    return r_expr;
+    var r: ExprResult = parse_expr(sub);
+    return r.expr;
 }
 
 // parse_primary: number, ident (which may extend to call), string,
 // bool, parenthesised expr, unknown otherwise.
-function parse_primary(p: Par): (Expr, Par) {
+function parse_primary(p: Par): ExprResult {
     var t: lexer.Token = p.peek();
     match (t) {
         lexer.TokNumber(x) => {
@@ -1412,7 +1414,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 // optional receiver clause.
                 p = p.advance();  // consume `function`
                 if (p.peek_punct() != "(") {
-                    return (e_unknown("lambda: missing ("), p);
+                    return ExprResult { par: p, expr: e_unknown("lambda: missing (") };
                 }
                 p = p.advance();
                 var params: ParamDecl[] = [];
@@ -1423,22 +1425,22 @@ function parse_primary(p: Par): (Expr, Par) {
                 if (p.peek_punct() != ")") {
                     while (true) {
                         if (p.peek_punct() == "(") {
-                            var (ltpr_param, ltpr_destr_names, ltpr_line, ltpr_col, ltpr_p) = parse_tuple_param(p);
-                            p = ltpr_p;
-                            if (ltpr_destr_names.len() == 0) {
-                                return (e_unknown("lambda: bad tuple param"), p);
+                            var ltpr: TupleParamResult = parse_tuple_param(p);
+                            p = ltpr.par;
+                            if (ltpr.destr_names.len() == 0) {
+                                return ExprResult { par: p, expr: e_unknown("lambda: bad tuple param") };
                             }
-                            params = params.append(ltpr_param);
-                            lpd_names = lpd_names.append(ltpr_destr_names);
-                            lpd_synths = lpd_synths.append(ltpr_param.name);
-                            lpd_lines = lpd_lines.append(ltpr_line);
-                            lpd_cols = lpd_cols.append(ltpr_col);
+                            params = params.append(ltpr.param);
+                            lpd_names = lpd_names.append(ltpr.destr_names);
+                            lpd_synths = lpd_synths.append(ltpr.param.name);
+                            lpd_lines = lpd_lines.append(ltpr.line);
+                            lpd_cols = lpd_cols.append(ltpr.col);
                             if (p.peek_punct() == ",") { p = p.advance(); continue; }
                             break;
                         }
-                        var (pr_param, pr_p) = parse_param(p);
-                        p = pr_p;
-                        params = params.append(pr_param);
+                        var pr: ParamResult = parse_param(p);
+                        p = pr.par;
+                        params = params.append(pr.param);
                         if (p.peek_punct() == ",") { p = p.advance(); continue; }
                         break;
                     }
@@ -1447,13 +1449,13 @@ function parse_primary(p: Par): (Expr, Par) {
                 var lret: string = "";
                 if (p.peek_punct() == ":") {
                     p = p.advance();
-                    var (ltr_name, ltr_ret_arr, ltr_fn_ret, ltr_p) = parse_type_name(p);
-                    p = ltr_p;
-                    lret = ltr_name;
+                    var ltr: TypeNameResult = parse_type_name(p);
+                    p = ltr.par;
+                    lret = ltr.name;
                 }
-                var (lblk_body, lblk_p) = parse_block(p);
-                p = lblk_p;
-                var lbody: Stmt[] = prepend_param_destrs(lblk_body, lpd_names, lpd_synths, lpd_lines, lpd_cols);
+                var lblk: BlockResult = parse_block(p);
+                p = lblk.par;
+                var lbody: Stmt[] = prepend_param_destrs(lblk.body, lpd_names, lpd_synths, lpd_lines, lpd_cols);
                 return parse_postfix(p, e_lambda(params, lret, lbody));
             }
             if (x.name == "match") {
@@ -1502,7 +1504,7 @@ function parse_primary(p: Par): (Expr, Par) {
                     return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
                 }
             }
-            return (e_unknown("keyword:" + x.name), p);
+            return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
         },
         lexer.TokIdent(x) => {
             var idline: i32 = p.peek_line();
@@ -1543,9 +1545,9 @@ function parse_primary(p: Par): (Expr, Par) {
                 // `pkg.Type { … }` path at parse_postfix and the generic
                 // `Name[T] { … }` path) rather than re-implementing the
                 // spread / field / trailing-comma loop inline (SH-040).
-                var (slr_expr, slr_p) = parse_struct_lit_body(p, x.name, idline, idcol);
-                p = slr_p;
-                base = slr_expr;
+                var slr: ExprResult = parse_struct_lit_body(p, x.name, idline, idcol);
+                p = slr.par;
+                base = slr.expr;
             }
             return parse_postfix(p, base);
         },
@@ -1569,23 +1571,23 @@ function parse_primary(p: Par): (Expr, Par) {
                 // result feeds through the postfix loop so
                 // `(a, b).0` and `(f(x)).y` both work.
                 p = p.advance();
-                var (inner_expr, inner_p) = parse_expr(p);
-                p = inner_p;
+                var inner = parse_expr(p);
+                p = inner.par;
                 if (p.peek_punct() == ",") {
                     var elems: Expr[] = [];
-                    elems = elems.append(inner_expr);
+                    elems = elems.append(inner.expr);
                     while (p.peek_punct() == ",") {
                         p = p.advance();
                         if (p.peek_punct() == ")") { break; }
-                        var (er_expr, er_p) = parse_expr(p);
-                        p = er_p;
-                        elems = elems.append(er_expr);
+                        var er = parse_expr(p);
+                        p = er.par;
+                        elems = elems.append(er.expr);
                     }
                     if (p.peek_punct() == ")") { p = p.advance(); }
                     return parse_postfix(p, e_tuple(elems));
                 }
                 if (p.peek_punct() == ")") { p = p.advance(); }
-                return parse_postfix(p, inner_expr);
+                return parse_postfix(p, inner.expr);
             }
             if (x.text == "[") {
                 // Array literal `[e1, e2, e3]`. Empty `[]` allowed.
@@ -1593,15 +1595,15 @@ function parse_primary(p: Par): (Expr, Par) {
                 var elems: Expr[] = [];
                 if (p.peek_punct() != "]") {
                     while (true) {
-                        var (er_expr, er_p) = parse_expr(p);
-                        p = er_p;
-                        elems = elems.append(er_expr);
+                        var er = parse_expr(p);
+                        p = er.par;
+                        elems = elems.append(er.expr);
                         if (p.peek_punct() == ",") { p = p.advance(); continue; }
                         break;
                     }
                 }
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in array literal"), p);
+                    return ExprResult { par: p, expr: e_unknown("missing ] in array literal") };
                 }
                 p = p.advance();
                 return parse_postfix(p, e_array(elems));
@@ -1612,8 +1614,8 @@ function parse_primary(p: Par): (Expr, Par) {
                 var uline: i32 = p.peek_line();
                 var ucol: i32 = p.peek_col();
                 p = p.advance();
-                var (operand_expr, operand_p) = parse_primary(p);
-                return (e_unary_at(x.text, operand_expr, uline, ucol), operand_p);
+                var operand = parse_primary(p);
+                return ExprResult { par: operand.par, expr: e_unary_at(x.text, operand.expr, uline, ucol) };
             }
             // Unknown leading punct — advance past it so the
             // surrounding parse loop can recover. Skipping the
@@ -1622,10 +1624,10 @@ function parse_primary(p: Par): (Expr, Par) {
             // postfix that doesn't pair with the TokIdent's
             // chain loop).
             p = p.advance();
-            return (e_unknown("punct:" + x.text), p);
+            return ExprResult { par: p, expr: e_unknown("punct:" + x.text) };
         },
-        lexer.TokEof(_) => { return (e_unknown("eof"), p); },
-        lexer.TokError(x) => { return (e_unknown("lex error: " + x.msg), p); },
+        lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; },
+        lexer.TokError(x) => { return ExprResult { par: p, expr: e_unknown("lex error: " + x.msg) }; },
         lexer.TokFString(f) => {
             p = p.advance();
             // Desugar to a `+`-chain, mirroring the Go checker's
@@ -1655,7 +1657,7 @@ function parse_primary(p: Par): (Expr, Par) {
             return parse_postfix(p, built);
         }
     }
-    return (e_unknown("primary"), p);
+    return ExprResult { par: p, expr: e_unknown("primary") };
 }
 
 // precedence: higher binds tighter. Returns -1 for non-binop
@@ -1677,30 +1679,27 @@ function precedence(op: string): i32 {
 // parse_binary uses precedence climbing. `min_prec` is the
 // minimum precedence the caller will accept — recursively
 // climbs while the next operator's prec is >= min_prec.
-function parse_binary(p: Par, min_prec: i32): (Expr, Par) {
-    var (lhs_expr, lhs_p) = parse_primary(p);
-    p = lhs_p;
-    // The climbing accumulator: a plain mutable Expr, with the cursor
-    // threaded through the equally mutable `p` (the old shape rebuilt an
-    // ExprResult per iteration; the pair return made that struct obsolete).
-    var acc: Expr = lhs_expr;
+function parse_binary(p: Par, min_prec: i32): ExprResult {
+    var lhs = parse_primary(p);
+    p = lhs.par;
     while (true) {
         var op: string = p.peek_punct();
         var prec: i32 = precedence(op);
-        if (prec < min_prec) { return (acc, p); }
+        if (prec < min_prec) { return ExprResult { par: p, expr: lhs.expr }; }
         // The Go parser positions a Binary at its operator token
         // (`Binary{P: opTok.Pos}`), so E009 / E041 land there.
         var opline: i32 = p.peek_line();
         var opcol: i32 = p.peek_col();
         p = p.advance();
-        var (rhs_expr, rhs_p) = parse_binary(p, prec + 1);
-        p = rhs_p;
-        acc = e_binary_at(op, acc, rhs_expr, opline, opcol);
+        var rhs = parse_binary(p, prec + 1);
+        p = rhs.par;
+        var combined: Expr = e_binary_at(op, lhs.expr, rhs.expr, opline, opcol);
+        lhs = ExprResult { par: p, expr: combined };
     }
-    return (acc, p);
+    return lhs;
 }
 
-function parse_expr(p: Par): (Expr, Par) {
+function parse_expr(p: Par): ExprResult {
     return parse_pipe(p);
 }
 
@@ -1823,8 +1822,9 @@ struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr
 // parse_tuple_arm_pattern consumes `(p0, p1, …)` with the cursor on the
 // opening `(`, returning the element encoding. A parse problem yields
 // elem_kinds.len() == 0 (the callers emit a degenerate stmt).
+struct TupArmPatResult { par: Par, elem_kinds: i32[], binds: string[], lits: Expr[] }
 
-function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Par) {
+function parse_tuple_arm_pattern(p: Par): TupArmPatResult {
     var elem_kinds: i32[] = [];
     var binds: string[] = [];
     var lits: Expr[] = [];
@@ -1843,22 +1843,22 @@ function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Par) {
             binds = binds.append(n);
             lits = lits.append(e_bool(true));
         } else if (p.peek_is_literal()) {
-            var (le_expr, le_p) = parse_expr(p);
-            p = le_p;
+            var le: ExprResult = parse_expr(p);
+            p = le.par;
             elem_kinds = elem_kinds.append(2);
             binds = binds.append("");
-            lits = lits.append(le_expr);
+            lits = lits.append(le.expr);
         } else {
-            return (none, [], [], p);
+            return TupArmPatResult { par: p, elem_kinds: none, binds: [], lits: [] };
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
     if (elem_kinds.len() < 2) {
-        return (none, [], [], p);
+        return TupArmPatResult { par: p, elem_kinds: none, binds: [], lits: [] };
     }
-    return (elem_kinds, binds, lits, p);
+    return TupArmPatResult { par: p, elem_kinds: elem_kinds, binds: binds, lits: lits };
 }
 
 // build_tuple_match assembles the desugared statement described above.
@@ -1938,9 +1938,10 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
     return s_if(e_bool(true), outer, []);
 }
 
-// A parsed if/match value-branch body: the
+// BranchBodyResult carries a parsed if/match value-branch body: the
 // Stmt[] (leading statements followed by `s_return(tail)`) plus the
 // return-type tag derived from the TAIL expression (the block's value).
+struct BranchBodyResult { par: Par, body: Stmt[], rt: string }
 
 // branch_stmt_start reports whether the next token begins a STATEMENT
 // inside an if/match value-branch body (block-expressions slice 1). These
@@ -1981,12 +1982,12 @@ function branch_stmt_start(p: Par): boolean {
 // be followed by `}`). The `rt` tag is derived from the TAIL expression
 // (the value), not a leading statement, so the desugared IIFE / value-
 // lowering gets the right return type.
-function parse_branch_body(p: Par): (Stmt[], string, Par) {
+function parse_branch_body(p: Par): BranchBodyResult {
     var ebody: Stmt[] = [];
     var rt: string = "i32";
     if (p.peek_punct() != "{") {
         ebody = ebody.append(s_unknown("missing { in branch body"));
-        return (ebody, rt, p);
+        return BranchBodyResult { par: p, body: ebody, rt: rt };
     }
     p = p.advance();  // consume `{`
     var leading: Stmt[] = [];
@@ -1994,25 +1995,25 @@ function parse_branch_body(p: Par): (Stmt[], string, Par) {
     var tail: Expr = e_unknown("empty branch");
     while (p.peek_punct() != "}" && !p.at_end()) {
         if (branch_stmt_start(p)) {
-            var (sr_stmt, sr_p) = parse_stmt(p);
+            var sr: StmtResult = parse_stmt(p);
             // Progress guard: a malformed statement that consumed no token
             // would otherwise spin forever — skip it instead.
-            if (sr_p.pos == p.pos) { p = p.advance(); continue; }
-            p = sr_p;
-            leading = leading.append(sr_stmt);
+            if (sr.par.pos == p.pos) { p = p.advance(); continue; }
+            p = sr.par;
+            leading = leading.append(sr.stmt);
             continue;
         }
         // Non-keyword item: an expression that is either an ExprStmt
         // (followed by `;`) or the trailing value (followed by `}`).
-        var (er_expr, er_p) = parse_expr(p);
-        p = er_p;
+        var er: ExprResult = parse_expr(p);
+        p = er.par;
         if (p.peek_punct() == ";") {
             p = p.advance();
-            leading = leading.append(s_expr(er_expr));
+            leading = leading.append(s_expr(er.expr));
             continue;
         }
         // No `;` — this is the trailing tail expression; `}` must follow.
-        tail = er_expr;
+        tail = er.expr;
         have_tail = true;
         break;
     }
@@ -2023,10 +2024,10 @@ function parse_branch_body(p: Par): (Stmt[], string, Par) {
     // than silently miscompiling (the Go checker reports E061).
     if (!have_tail) {
         leading = leading.append(s_unknown("value branch has no trailing expression"));
-        return (leading, rt, p);
+        return BranchBodyResult { par: p, body: leading, rt: rt };
     }
     leading = leading.append(s_return(tail));
-    return (leading, rt, p);
+    return BranchBodyResult { par: p, body: leading, rt: rt };
 }
 
 // parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
@@ -2045,13 +2046,13 @@ function parse_branch_body(p: Par): (Stmt[], string, Par) {
 function parse_if_chain(p: Par): IfChain {
     p = p.advance();                              // `if`
     if (p.peek_punct() == "(") { p = p.advance(); }
-    var (condr_expr, condr_p) = parse_expr(p);
-    p = condr_p;
+    var condr: ExprResult = parse_expr(p);
+    p = condr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
-    var (thenb_body, thenb_rt, thenb_p) = parse_branch_body(p);
-    p = thenb_p;
-    var then_body: Stmt[] = thenb_body;
-    var rt: string = thenb_rt;
+    var thenb: BranchBodyResult = parse_branch_body(p);
+    p = thenb.par;
+    var then_body: Stmt[] = thenb.body;
+    var rt: string = thenb.rt;
     if (p.peek_keyword() == "else") { p = p.advance(); }
     var else_body: Stmt[] = [];
     if (p.peek_keyword() == "if") {
@@ -2060,11 +2061,11 @@ function parse_if_chain(p: Par): IfChain {
         p = nested.par;
         else_body = [nested.stmt];
     } else {
-        var (elseb_body, elseb_rt, elseb_p) = parse_branch_body(p);
-        p = elseb_p;
-        else_body = elseb_body;
+        var elseb: BranchBodyResult = parse_branch_body(p);
+        p = elseb.par;
+        else_body = elseb.body;
     }
-    return IfChain { par: p, stmt: s_if(condr_expr, then_body, else_body), rt: rt };
+    return IfChain { par: p, stmt: s_if(condr.expr, then_body, else_body), rt: rt };
 }
 
 // parse_match_expr parses `match (e) { Pat => E, Pat when C => E, … }` in value
@@ -2078,8 +2079,8 @@ function parse_match_expr(p: Par): IfChain {
     var mkcol: i32 = p.peek_col();
     p = p.advance();                              // `match`
     if (p.peek_punct() == "(") { p = p.advance(); }
-    var (sr_expr, sr_p) = parse_expr(p);
-    p = sr_p;
+    var sr: ExprResult = parse_expr(p);
+    p = sr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
     var rt: string = "i32";
     if (p.peek_punct() == "{") { p = p.advance(); }
@@ -2098,41 +2099,41 @@ function parse_match_expr(p: Par): IfChain {
             var et_binds: string[] = [];
             var et_lits: Expr[] = [];
             if (p.peek_punct() == "(") {
-                var (etpr_elem_kinds, etpr_binds, etpr_lits, etpr_p) = parse_tuple_arm_pattern(p);
-                p = etpr_p;
-                if (etpr_elem_kinds.len() == 0) {
+                var etpr: TupArmPatResult = parse_tuple_arm_pattern(p);
+                p = etpr.par;
+                if (etpr.elem_kinds.len() == 0) {
                     return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt };
                 }
-                et_kinds = etpr_elem_kinds;
-                et_binds = etpr_binds;
-                et_lits = etpr_lits;
+                et_kinds = etpr.elem_kinds;
+                et_binds = etpr.binds;
+                et_lits = etpr.lits;
             } else {
-                var (etwp_v, etwp_p) = parse_pattern(p);
-                p = etwp_p;
+                var etwp: PatternResult = parse_pattern(p);
+                p = etwp.par;
                 et_wild = true;
             }
             var et_guard: Expr = e_bool(true);
             var et_has_guard: boolean = false;
             if (p.peek_keyword() == "when") {
                 p = p.advance();
-                var (etgr_expr, etgr_p) = parse_expr(p);
-                p = etgr_p;
-                et_guard = etgr_expr;
+                var etgr: ExprResult = parse_expr(p);
+                p = etgr.par;
+                et_guard = etgr.expr;
                 et_has_guard = true;
             }
             if (p.peek_punct() == "=>") { p = p.advance(); }
             var etbody: Stmt[] = [];
             var etrt: string = "i32";
             if (p.peek_punct() == "{") {
-                var (etbb_body, etbb_rt, etbb_p) = parse_branch_body(p);
-                p = etbb_p;
-                etbody = etbb_body;
-                etrt = etbb_rt;
+                var etbb: BranchBodyResult = parse_branch_body(p);
+                p = etbb.par;
+                etbody = etbb.body;
+                etrt = etbb.rt;
             } else {
-                var (eter_expr, eter_p) = parse_expr(p);
-                p = eter_p;
-                etbody = [s_return(eter_expr)];
-                etrt = if_expr_rt(eter_expr);
+                var eter: ExprResult = parse_expr(p);
+                p = eter.par;
+                etbody = [s_return(eter.expr)];
+                etrt = if_expr_rt(eter.expr);
             }
             if (etfirst) { rt = etrt; etfirst = false; }
             etarms = etarms.append(TupArm { is_wild: et_wild, elem_kinds: et_kinds, binds: et_binds, lits: et_lits, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
@@ -2140,7 +2141,7 @@ function parse_match_expr(p: Par): IfChain {
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return IfChain { par: p, stmt: build_tuple_match(sr_expr, etarms, mkline, mkcol), rt: rt };
+        return IfChain { par: p, stmt: build_tuple_match(sr.expr, etarms, mkline, mkcol), rt: rt };
     }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
@@ -2156,21 +2157,21 @@ function parse_match_expr(p: Par): IfChain {
             var llit: Expr = e_bool(true);
             var lwild: boolean = false;
             if (p.peek_is_literal()) {
-                var (lle_expr, lle_p) = parse_expr(p);
-                p = lle_p;
-                llit = lle_expr;
+                var lle: ExprResult = parse_expr(p);
+                p = lle.par;
+                llit = lle.expr;
             } else {
-                var (lpr_v, lpr_p) = parse_pattern(p);
-                p = lpr_p;
+                var lpr: PatternResult = parse_pattern(p);
+                p = lpr.par;
                 lwild = true;
             }
             var lguard: Expr = e_bool(true);
             var lhas_guard: boolean = false;
             if (p.peek_keyword() == "when") {
                 p = p.advance();
-                var (lgr_expr, lgr_p) = parse_expr(p);
-                p = lgr_p;
-                lguard = lgr_expr;
+                var lgr: ExprResult = parse_expr(p);
+                p = lgr.par;
+                lguard = lgr.expr;
                 lhas_guard = true;
             }
             if (p.peek_punct() == "=>") { p = p.advance(); }
@@ -2180,15 +2181,15 @@ function parse_match_expr(p: Par): IfChain {
             var lbody: Stmt[] = [];
             var lrt: string = "i32";
             if (p.peek_punct() == "{") {
-                var (lbb_body, lbb_rt, lbb_p) = parse_branch_body(p);
-                p = lbb_p;
-                lbody = lbb_body;
-                lrt = lbb_rt;
+                var lbb: BranchBodyResult = parse_branch_body(p);
+                p = lbb.par;
+                lbody = lbb.body;
+                lrt = lbb.rt;
             } else {
-                var (ler_expr, ler_p) = parse_expr(p);
-                p = ler_p;
-                lbody = [s_return(ler_expr)];
-                lrt = if_expr_rt(ler_expr);
+                var ler: ExprResult = parse_expr(p);
+                p = ler.par;
+                lbody = [s_return(ler.expr)];
+                lrt = if_expr_rt(ler.expr);
             }
             if (lfirst) { rt = lrt; lfirst = false; }
             lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol });
@@ -2196,32 +2197,32 @@ function parse_match_expr(p: Par): IfChain {
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt };
+        return IfChain { par: p, stmt: build_literal_match(sr.expr, lit_arms, mkline, mkcol), rt: rt };
     }
     var arms: MatchArm[] = [];
     var first: boolean = true;
     while (p.peek_punct() != "}" && !p.at_end()) {
         var aline: i32 = p.peek_line();
         var acol: i32 = p.peek_col();
-        var (pr_v, pr_p) = parse_pattern(p);
-        p = pr_p;
+        var pr: PatternResult = parse_pattern(p);
+        p = pr.par;
         // Or-patterns: `A | B | … => expr` — one MatchArm per alternative,
         // sharing the guard + body. Variant patterns only (see the stmt-form
         // note); a literal-first match takes the build_literal_match path.
-        var pats: Pattern[] = [pr_v];
+        var pats: Pattern[] = [pr.pattern];
         while (p.peek_punct() == "|") {
             p = p.advance();
-            var (pr2_v, pr2_p) = parse_pattern(p);
-            p = pr2_p;
-            pats = pats.append(pr2_v);
+            var pr2: PatternResult = parse_pattern(p);
+            p = pr2.par;
+            pats = pats.append(pr2.pattern);
         }
         var arm_guard: Expr = e_bool(true);
         var arm_has_guard: boolean = false;
         if (p.peek_keyword() == "when") {
             p = p.advance();
-            var (gr_expr, gr_p) = parse_expr(p);
-            p = gr_p;
-            arm_guard = gr_expr;
+            var gr: ExprResult = parse_expr(p);
+            p = gr.par;
+            arm_guard = gr.expr;
             arm_has_guard = true;
         }
         if (p.peek_punct() == "=>") { p = p.advance(); }
@@ -2231,15 +2232,15 @@ function parse_match_expr(p: Par): IfChain {
         var abody: Stmt[] = [];
         var art: string = "i32";
         if (p.peek_punct() == "{") {
-            var (abb_body, abb_rt, abb_p) = parse_branch_body(p);
-            p = abb_p;
-            abody = abb_body;
-            art = abb_rt;
+            var abb: BranchBodyResult = parse_branch_body(p);
+            p = abb.par;
+            abody = abb.body;
+            art = abb.rt;
         } else {
-            var (er_expr, er_p) = parse_expr(p);
-            p = er_p;
-            abody = [s_return(er_expr)];
-            art = if_expr_rt(er_expr);
+            var er: ExprResult = parse_expr(p);
+            p = er.par;
+            abody = [s_return(er.expr)];
+            art = if_expr_rt(er.expr);
         }
         if (first) { rt = art; first = false; }
         var pi: i32 = 0;
@@ -2251,7 +2252,7 @@ function parse_match_expr(p: Par): IfChain {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt };
+    return IfChain { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol), rt: rt };
 }
 
 // pipe_prepend builds [head] ++ tail — the argument list for a piped
@@ -2293,34 +2294,34 @@ function pipe_desugar(left: Expr, right: Expr): Expr {
 // with parse_binary so `0..n+1` is `0..(n+1)`. The `for i in LOW..HIGH` loop
 // keeps its own counted-loop desugar — parse_for_stmt reads its bounds with
 // parse_binary (below this level), so a range there stays the optimized form.
-function parse_range(p: Par): (Expr, Par) {
-    var (left_expr, left_p) = parse_binary(p, 1);
-    p = left_p;
+function parse_range(p: Par): ExprResult {
+    var left: ExprResult = parse_binary(p, 1);
+    p = left.par;
     var pk: string = p.peek_punct();
     if (pk == ".." || pk == "..=") {
         p = p.advance();
         var fn: string = "range";
         if (pk == "..=") { fn = "range_incl"; }
-        var (right_expr, right_p) = parse_binary(p, 1);
-        p = right_p;
+        var right: ExprResult = parse_binary(p, 1);
+        p = right.par;
         var callee: Expr = e_field_access(e_ident("iter"), fn);
-        var args: Expr[] = [left_expr, right_expr];
-        return (e_call(callee, args), p);
+        var args: Expr[] = [left.expr, right.expr];
+        return ExprResult { par: p, expr: e_call(callee, args) };
     }
-    return (left_expr, p);
+    return ExprResult { par: p, expr: left.expr };
 }
 
-function parse_pipe(p: Par): (Expr, Par) {
-    var (left_expr, left_p) = parse_range(p);
-    p = left_p;
-    var acc: Expr = left_expr;
+function parse_pipe(p: Par): ExprResult {
+    var left: ExprResult = parse_range(p);
+    p = left.par;
+    var acc: Expr = left.expr;
     while (p.peek_punct() == "|>") {
         p = p.advance();
-        var (right_expr, right_p) = parse_range(p);
-        p = right_p;
-        acc = pipe_desugar(acc, right_expr);
+        var right: ExprResult = parse_range(p);
+        p = right.par;
+        acc = pipe_desugar(acc, right.expr);
     }
-    return (acc, p);
+    return ExprResult { par: p, expr: acc };
 }
 
 // parse_stmt: `var x = expr;`, `return expr;`, or `expr;`.
@@ -2329,23 +2330,24 @@ function parse_pipe(p: Par): (Expr, Par) {
 // token. On malformed input — missing `{` or `}` — the result is
 // a single StmtUnknown so the outer caller can still surface a
 // reasonable error site.
+pub struct BlockResult { par: Par, body: Stmt[] }
 
-function parse_block(p: Par): (Stmt[], Par) {
+function parse_block(p: Par): BlockResult {
     if (p.peek_punct() != "{") {
         var miss: Stmt[] = [s_unknown("missing { in block")];
-        return (miss, p);
+        return BlockResult { par: p, body: miss };
     }
     p = p.advance();
-    var (r_body, r_p) = parse_block_body(p);
-    p = r_p;
+    var r: BlockResult = parse_block_body(p);
+    p = r.par;
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (r_body, p);
+    return BlockResult { par: p, body: r.body };
 }
 
 // parse_block_body parses statements up to (but not consuming) the block's
 // closing `}`. Split from parse_block so the callback-passing `use` bind can
 // recurse on the rest of the block.
-function parse_block_body(p: Par): (Stmt[], Par) {
+function parse_block_body(p: Par): BlockResult {
     var body: Stmt[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
         // `use NAME [: TYPE] <- CALL;` — monadic-bind / callback-passing sugar
@@ -2361,24 +2363,24 @@ function parse_block_body(p: Par): (Stmt[], Par) {
             var utype: string = "";
             if (p.peek_punct() == ":") {
                 p = p.advance();
-                var (utn_name, utn_ret_arr, utn_fn_ret, utn_p) = parse_type_name(p);
-                p = utn_p;
-                utype = utn_name;
+                var utn: TypeNameResult = parse_type_name(p);
+                p = utn.par;
+                utype = utn.name;
             }
             // `<-` lexes as `<` then `-`.
             if (p.peek_punct() == "<") { p = p.advance(); }
             if (p.peek_punct() == "-") { p = p.advance(); }
-            var (usrc_expr, usrc_p) = parse_expr(p);
-            p = usrc_p;
+            var usrc: ExprResult = parse_expr(p);
+            p = usrc.par;
             if (p.peek_punct() == ";") { p = p.advance(); }
             // The rest of the block is the callback body (recurse so a further
             // `use` chains).
-            var (rest_body, rest_p) = parse_block_body(p);
-            p = rest_p;
+            var rest: BlockResult = parse_block_body(p);
+            p = rest.par;
             var cbparam: ParamDecl = ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
             var cbparams: ParamDecl[] = [cbparam];
-            var cb: Expr = e_lambda(cbparams, "", rest_body);
-            match (usrc_expr) {
+            var cb: Expr = e_lambda(cbparams, "", rest.body);
+            match (usrc.expr) {
                 ExprCall(c) => {
                     var newargs: Expr[] = c.args.append(cb);
                     body = body.append(s_return(e_call(c.callee, newargs)));
@@ -2387,19 +2389,19 @@ function parse_block_body(p: Par): (Stmt[], Par) {
                     body = body.append(s_unknown("use source must be a function call"));
                 },
             }
-            return (body, p);
+            return BlockResult { par: p, body: body };
         }
-        var (r_stmt, r_p) = parse_stmt(p);
+        var r: StmtResult = parse_stmt(p);
         // Guarantee progress: a malformed statement that doesn't consume a
         // token would otherwise spin forever — skip it instead.
-        if (r_p.pos == p.pos) {
+        if (r.par.pos == p.pos) {
             p = p.advance();
             continue;
         }
-        p = r_p;
-        body = body.append(r_stmt);
+        p = r.par;
+        body = body.append(r.stmt);
     }
-    return (body, p);
+    return BlockResult { par: p, body: body };
 }
 
 // parse_block_or_stmt accepts EITHER a braced `{ … }` block OR a single
@@ -2410,16 +2412,16 @@ function parse_block_body(p: Par): (Stmt[], Par) {
 // `/*unknown-stmt: missing { in block*/` with the real statement hoisted to
 // run unconditionally (#4337). Only the control-flow body sites route here;
 // function / match-arm / lambda blocks still require braces.
-function parse_block_or_stmt(p: Par): (Stmt[], Par) {
+function parse_block_or_stmt(p: Par): BlockResult {
     if (p.peek_punct() == "{") { return parse_block(p); }
-    var (r_stmt, r_p) = parse_stmt(p);
+    var r: StmtResult = parse_stmt(p);
     // Guarantee progress on a malformed body token rather than spinning.
-    if (r_p.pos == p.pos) {
+    if (r.par.pos == p.pos) {
         var none: Stmt[] = [s_unknown("missing statement in braceless body")];
-        return (none, p.advance());
+        return BlockResult { par: p.advance(), body: none };
     }
-    var one: Stmt[] = [r_stmt];
-    return (one, r_p);
+    var one: Stmt[] = [r.stmt];
+    return BlockResult { par: r.par, body: one };
 }
 
 // parse_pattern reads a single match-arm pattern. Forms accepted:
@@ -2428,16 +2430,17 @@ function parse_block_or_stmt(p: Par): (Stmt[], Par) {
 //   Name(_)            — PatVariant { type_name: Name, binding: "_" }
 //   Name(ident)        — PatVariant { type_name: Name, binding: ident }
 // The lexer treats `_` as an identifier (underscore is a valid
-// alpha byte) so wildcards arrive here via peek_ident. Returns
-// the cursor-idiom pair (pattern, cursor) — see docs/CURSOR-IDIOM.md.
-function parse_pattern(p: Par): (Pattern, Par) {
+// alpha byte) so wildcards arrive here via peek_ident.
+pub struct PatternResult { par: Par, pattern: Pattern }
+
+function parse_pattern(p: Par): PatternResult {
     var name: string = p.peek_ident();
     // `true` / `false` arms (and other keyword-named patterns) arrive as
     // keyword tokens, not idents — fall back to the keyword text.
     if (name.len() == 0) { name = p.peek_keyword(); }
     if (name == "_") {
         p = p.advance();
-        return (p_wildcard(), p);
+        return PatternResult { par: p, pattern: p_wildcard() };
     }
     // A literal-pattern arm (`1 => …`, `"yes" => …`) only reaches
     // parse_pattern when an EARLIER arm wasn't a literal (so the whole
@@ -2451,10 +2454,10 @@ function parse_pattern(p: Par): (Pattern, Par) {
     // already earns.
     if (p.peek_is_literal()) {
         p = p.advance();
-        return (p_variant("", ""), p);
+        return PatternResult { par: p, pattern: p_variant("", "") };
     }
     if (name.len() == 0) {
-        return (p_variant("", ""), p);
+        return PatternResult { par: p, pattern: p_variant("", "") };
     }
     p = p.advance();
     // Qualified variant pattern: `pkg.Variant` (e.g.
@@ -2495,7 +2498,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings }, p);
+    return PatternResult { par: p, pattern: PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings } };
 }
 
 // parse_match_stmt consumes `match (scrutinee) { arm, arm, … }`
@@ -2504,22 +2507,23 @@ function parse_pattern(p: Par): (Pattern, Par) {
 // Malformed input recovers by yielding an empty-arm StmtMatch
 // — the surrounding parse_module loop continues at the next
 // token.
+pub struct MatchStmtResult { par: Par, stmt: Stmt }
 
-function parse_match_stmt(p: Par): (Stmt, Par) {
+function parse_match_stmt(p: Par): MatchStmtResult {
     // E030 (non-exhaustive match) is reported at the `match` keyword.
     var mkline: i32 = p.peek_line();
     var mkcol: i32 = p.peek_col();
     p = p.advance();  // consume `match`
     var empty_arms: MatchArm[] = [];
     if (p.peek_punct() != "(") {
-        return (s_match(e_unknown("match: missing ("), empty_arms), p);
+        return MatchStmtResult { par: p, stmt: s_match(e_unknown("match: missing ("), empty_arms) };
     }
     p = p.advance();
-    var (sr_expr, sr_p) = parse_expr(p);
-    p = sr_p;
+    var sr: ExprResult = parse_expr(p);
+    p = sr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
     if (p.peek_punct() != "{") {
-        return (s_match_at(sr_expr, empty_arms, mkline, mkcol), p);
+        return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, empty_arms, mkline, mkcol) };
     }
     p = p.advance();
     // A `(` at the FIRST arm's pattern position marks a match on a
@@ -2535,37 +2539,37 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             var t_binds: string[] = [];
             var t_lits: Expr[] = [];
             if (p.peek_punct() == "(") {
-                var (tpr_elem_kinds, tpr_binds, tpr_lits, tpr_p) = parse_tuple_arm_pattern(p);
-                p = tpr_p;
-                if (tpr_elem_kinds.len() == 0) {
-                    return (s_unknown("bad tuple pattern"), p);
+                var tpr: TupArmPatResult = parse_tuple_arm_pattern(p);
+                p = tpr.par;
+                if (tpr.elem_kinds.len() == 0) {
+                    return MatchStmtResult { par: p, stmt: s_unknown("bad tuple pattern") };
                 }
-                t_kinds = tpr_elem_kinds;
-                t_binds = tpr_binds;
-                t_lits = tpr_lits;
+                t_kinds = tpr.elem_kinds;
+                t_binds = tpr.binds;
+                t_lits = tpr.lits;
             } else {
-                var (twp_v, twp_p) = parse_pattern(p);
-                p = twp_p;
+                var twp: PatternResult = parse_pattern(p);
+                p = twp.par;
                 t_wild = true;
             }
             var t_guard: Expr = e_bool(true);
             var t_has_guard: boolean = false;
             if (p.peek_keyword() == "when") {
                 p = p.advance();
-                var (tgr_expr, tgr_p) = parse_expr(p);
-                p = tgr_p;
-                t_guard = tgr_expr;
+                var tgr: ExprResult = parse_expr(p);
+                p = tgr.par;
+                t_guard = tgr.expr;
                 t_has_guard = true;
             }
             if (p.peek_punct() == "=>") { p = p.advance(); }
-            var (tbb_body, tbb_p) = parse_block(p);
-            p = tbb_p;
-            tarms = tarms.append(TupArm { is_wild: t_wild, elem_kinds: t_kinds, binds: t_binds, lits: t_lits, guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
+            var tbb: BlockResult = parse_block(p);
+            p = tbb.par;
+            tarms = tarms.append(TupArm { is_wild: t_wild, elem_kinds: t_kinds, binds: t_binds, lits: t_lits, guard: t_guard, has_guard: t_has_guard, body: tbb.body, line: taline, col: tacol });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return (build_tuple_match(sr_expr, tarms, mkline, mkcol), p);
+        return MatchStmtResult { par: p, stmt: build_tuple_match(sr.expr, tarms, mkline, mkcol) };
     }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
@@ -2580,32 +2584,32 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             var llit: Expr = e_bool(true);
             var lwild: boolean = false;
             if (p.peek_is_literal()) {
-                var (lle_expr, lle_p) = parse_expr(p);
-                p = lle_p;
-                llit = lle_expr;
+                var lle: ExprResult = parse_expr(p);
+                p = lle.par;
+                llit = lle.expr;
             } else {
-                var (lpr_v, lpr_p) = parse_pattern(p);
-                p = lpr_p;
+                var lpr: PatternResult = parse_pattern(p);
+                p = lpr.par;
                 lwild = true;
             }
             var lguard: Expr = e_bool(true);
             var lhas_guard: boolean = false;
             if (p.peek_keyword() == "when") {
                 p = p.advance();
-                var (lgr_expr, lgr_p) = parse_expr(p);
-                p = lgr_p;
-                lguard = lgr_expr;
+                var lgr: ExprResult = parse_expr(p);
+                p = lgr.par;
+                lguard = lgr.expr;
                 lhas_guard = true;
             }
             if (p.peek_punct() == "=>") { p = p.advance(); }
-            var (lbb_body, lbb_p) = parse_block(p);
-            p = lbb_p;
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol });
+            var lbb: BlockResult = parse_block(p);
+            p = lbb.par;
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb.body, line: laline, col: lacol });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return (build_literal_match(sr_expr, lit_arms, mkline, mkcol), p);
+        return MatchStmtResult { par: p, stmt: build_literal_match(sr.expr, lit_arms, mkline, mkcol) };
     }
     var arms: MatchArm[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
@@ -2613,20 +2617,20 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         // pattern's first token.
         var aline: i32 = p.peek_line();
         var acol: i32 = p.peek_col();
-        var (pr_v, pr_p) = parse_pattern(p);
-        p = pr_p;
+        var pr: PatternResult = parse_pattern(p);
+        p = pr.par;
         // Or-patterns: `A | B | … => body`. Each `|`-separated variant
         // pattern becomes its own MatchArm sharing the guard + body, so the
         // checker (exhaustiveness) and lowering see a flat arm list. Bindings
         // are per-alternative; the body only sees those the alternative
         // introduces. (Variant patterns only — a literal arm takes the
         // build_literal_match path above, and bare `|` is bitwise-or there.)
-        var pats: Pattern[] = [pr_v];
+        var pats: Pattern[] = [pr.pattern];
         while (p.peek_punct() == "|") {
             p = p.advance();
-            var (pr2_v, pr2_p) = parse_pattern(p);
-            p = pr2_p;
-            pats = pats.append(pr2_v);
+            var pr2: PatternResult = parse_pattern(p);
+            p = pr2.par;
+            pats = pats.append(pr2.pattern);
         }
         // Optional guard: `Pattern when <expr> => …`. The arm matches only
         // when the guard is true (E027 checks it is boolean). Applies to
@@ -2635,27 +2639,27 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         var arm_has_guard: boolean = false;
         if (p.peek_keyword() == "when") {
             p = p.advance();
-            var (gr_expr, gr_p) = parse_expr(p);
-            p = gr_p;
-            arm_guard = gr_expr;
+            var gr: ExprResult = parse_expr(p);
+            p = gr.par;
+            arm_guard = gr.expr;
             arm_has_guard = true;
         }
         // `=>` arrives as a single punct token from the lexer.
         if (p.peek_punct() == "=>") {
             p = p.advance();
         }
-        var (bb_body, bb_p) = parse_block(p);
-        p = bb_p;
+        var bb: BlockResult = parse_block(p);
+        p = bb.par;
         var pi: i32 = 0;
         while (pi < pats.len()) {
-            arms = arms.append(MatchArm { pattern: pats[pi], body: bb_body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            arms = arms.append(MatchArm { pattern: pats[pi], body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
             pi = pi + 1;
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (s_match_at(sr_expr, arms, mkline, mkcol), p);
+    return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol) };
 }
 
 // expr_mentions / stmts_mention report whether `name` appears as an
@@ -2747,10 +2751,10 @@ pub function stmts_mention(stmts: Stmt[], name: string): boolean {
 // StmtWhile IR lowering (block/loop/br_if) with no new node or emitter
 // arm. Kept in its own function so parse_stmt (already very large) doesn't
 // grow — an oversized function miscompiles on the native backend (#2720).
-function parse_loop_stmt(p: Par): (Stmt, Par) {
+function parse_loop_stmt(p: Par): StmtResult {
     var p2: Par = p.advance();
-    var (lb_body, lb_p) = parse_block_or_stmt(p2);
-    return (s_while(e_bool(true), lb_body), lb_p);
+    var lb: BlockResult = parse_block_or_stmt(p2);
+    return StmtResult { par: lb.par, stmt: s_while(e_bool(true), lb.body) };
 }
 
 // parse_for_stmt parses a `for` statement (`p` is positioned at the
@@ -2761,7 +2765,7 @@ function parse_loop_stmt(p: Par): (Stmt, Par) {
 // (array / range foreach), and the range form `for i in LOW..HIGH` /
 // `for i in LOW..=HIGH` — the latter two encode the interval as a
 // synthetic `__range` / `__range_incl` call (see below).
-function parse_for_stmt(p: Par): (Stmt, Par) {
+function parse_for_stmt(p: Par): StmtResult {
     // `for VAR in EXPR { body }`. `in` arrives as a plain
     // TokIdent (not in the lexer's keyword set), so peek
     // it through peek_ident rather than peek_keyword.
@@ -2805,27 +2809,27 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
             if (p.peek_punct() == ";") {
                 p = p.advance();
             } else {
-                var (fcinit_stmt, fcinit_p) = parse_stmt(p);
-                p = fcinit_p;
-                initstmts = [fcinit_stmt];
+                var fcinit: StmtResult = parse_stmt(p);
+                p = fcinit.par;
+                initstmts = [fcinit.stmt];
             }
             // COND: empty means "always true" (`for (…; ; …)` loops forever).
             var condexpr: Expr = e_bool(true);
             if (p.peek_punct() != ";") {
-                var (fccond_expr, fccond_p) = parse_expr(p);
-                p = fccond_p;
-                condexpr = fccond_expr;
+                var fccond: ExprResult = parse_expr(p);
+                p = fccond.par;
+                condexpr = fccond.expr;
             }
             if (p.peek_punct() == ";") { p = p.advance(); }
             var stepone: Stmt[] = [];                 // STEP (no `;`, stops at `)`)
             if (p.peek_punct() != ")") {
-                var (fcstep_stmt, fcstep_p) = parse_stmt(p);
-                p = fcstep_p;
-                stepone = [fcstep_stmt];
+                var fcstep: StmtResult = parse_stmt(p);
+                p = fcstep.par;
+                stepone = [fcstep.stmt];
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
-            var (fcbody_body, fcbody_p) = parse_block(p);
-            p = fcbody_p;
+            var fcbody: BlockResult = parse_block(p);
+            p = fcbody.par;
             var flag: string = "__forc_" + util.i32_to_string(cfl) + "_" + util.i32_to_string(cfc);
             var noelse: Stmt[] = [];
             var wbody: Stmt[] = [];
@@ -2839,14 +2843,14 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
             var breakone: Stmt[] = [s_break()];
             wbody = wbody.append(s_if(e_unary("!", condexpr), breakone, noelse));
             var fbi: i32 = 0;
-            while (fbi < fcbody_body.len()) { wbody = wbody.append(fcbody_body[fbi]); fbi = fbi + 1; }
+            while (fbi < fcbody.body.len()) { wbody = wbody.append(fcbody.body[fbi]); fbi = fbi + 1; }
             // { INIT; var first = true; while (true) { <wbody> } }  (scoped via if-true)
             var outer: Stmt[] = [];
             var ini: i32 = 0;
             while (ini < initstmts.len()) { outer = outer.append(initstmts[ini]); ini = ini + 1; }
             outer = outer.append(s_var(flag, "", e_bool(true)));
             outer = outer.append(s_while(e_bool(true), wbody));
-            return (s_if(e_bool(true), outer, noelse), p);
+            return StmtResult { par: p, stmt: s_if(e_bool(true), outer, noelse) };
         }
         var kvk: string = p.peek_ident();
         if (kvk.len() > 0) { p = p.advance(); }
@@ -2858,19 +2862,19 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
         // Suppress trailing struct-literal parsing — the `{` that
         // follows the iter opens the loop body, not a struct lit.
         var kv_saved: boolean = p.no_struct;
-        var (kvi_expr, kvi_p) = parse_expr(p.with_no_struct(true));
-        p = (kvi_p).with_no_struct(kv_saved);
-        var (kvb_body, kvb_p) = parse_block(p);
-        p = kvb_p;
-        return (s_for(kvk + "," + kvv, kvi_expr, kvb_body), p);
+        var kvi: ExprResult = parse_expr(p.with_no_struct(true));
+        p = (kvi.par).with_no_struct(kv_saved);
+        var kvb: BlockResult = parse_block(p);
+        p = kvb.par;
+        return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
     }
     var fvar: string = p.peek_ident();
     if (fvar.len() == 0) {
-        return (s_unknown("missing for-var name"), p);
+        return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
     }
     p = p.advance();
     if (p.peek_ident() != "in") {
-        return (s_unknown("missing `in` in for"), p);
+        return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
     }
     p = p.advance();  // consume `in`
     // Suppress trailing struct-literal parsing on the iter so that
@@ -2880,11 +2884,11 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
     // (parse_binary, not parse_expr) so `for i in 0..n` stops at `..` and keeps
     // the counted-loop desugar below, instead of collapsing `0..n` into an
     // `iter.range(0, n)` iterator value.
-    var (fiter_expr, fiter_p) = parse_binary(p.with_no_struct(true), 1);
-    p = (fiter_p).with_no_struct(f_saved);
-    var iter_expr: Expr = fiter_expr;
+    var fiter = parse_binary(p.with_no_struct(true), 1);
+    p = (fiter.par).with_no_struct(f_saved);
+    var iter_expr: Expr = fiter.expr;
     // Range form `for IDENT in LOW..HIGH { body }`. parse_expr stops
-    // at `..` (not a binary operator), so `fiter_expr` is LOW; read
+    // at `..` (not a binary operator), so `fiter.expr` is LOW; read
     // `..` + HIGH and encode the half-open interval as a synthetic
     // `__range(LOW, HIGH)` call — the same parser-internal-builtin
     // idiom as `__set_index` / `__set_field`. The checker binds the
@@ -2898,28 +2902,28 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
     if (range_punct == ".." || range_punct == "..=") {
         p = p.advance();   // consume `..` or `..=`
         var hi_saved: boolean = p.no_struct;
-        var (fhi_expr, fhi_p) = parse_binary(p.with_no_struct(true), 1);
-        p = (fhi_p).with_no_struct(hi_saved);
-        var rargs: Expr[] = [fiter_expr, fhi_expr];
+        var fhi = parse_binary(p.with_no_struct(true), 1);
+        p = (fhi.par).with_no_struct(hi_saved);
+        var rargs: Expr[] = [fiter.expr, fhi.expr];
         var range_fn: string = "__range";
         if (range_punct == "..=") { range_fn = "__range_incl"; }
         iter_expr = e_call(e_ident(range_fn), rargs);
     }
-    var (fb_body, fb_p) = parse_block_or_stmt(p);
-    p = fb_p;
-    return (s_for(fvar, iter_expr, fb_body), p);
+    var fb: BlockResult = parse_block_or_stmt(p);
+    p = fb.par;
+    return StmtResult { par: p, stmt: s_for(fvar, iter_expr, fb.body) };
 }
 
-function parse_stmt(p: Par): (Stmt, Par) {
+function parse_stmt(p: Par): StmtResult {
     // A bare block `{ ... }` in statement position is its own scope. The
     // self-host Stmt union has no StmtBlock node, so desugar it to
     // `if (true) { ... }` — reusing the scoped if-body (the same trick
     // `loop` uses for `while (true)`). Map / struct literals only appear in
     // expression position, so a leading `{` here is unambiguously a block.
     if (p.peek_punct() == "{") {
-        var (bb_body, bb_p) = parse_block(p);
+        var bb: BlockResult = parse_block(p);
         var noelse: Stmt[] = [];
-        return (s_if(e_bool(true), bb_body, noelse), bb_p);
+        return StmtResult { par: bb.par, stmt: s_if(e_bool(true), bb.body, noelse) };
     }
     // Loop label `outer: while (…) { … }` / `outer: for … ` / `outer: loop { … }`.
     // A leading `IDENT :` immediately before a loop keyword is a label (a bare
@@ -2946,15 +2950,15 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // (assignment, call, …). Parse it (which consumes the trailing
         // `;`) and wrap it; lower_defers schedules it at function exit.
         p = p.advance();  // consume `defer`
-        var (da_stmt, da_p) = parse_stmt(p);
-        return (s_defer(da_stmt), da_p);
+        var da: StmtResult = parse_stmt(p);
+        return StmtResult { par: da.par, stmt: s_defer(da.stmt) };
     }
     if (kw == "errdefer") {
         // `errdefer ACTION;` — like `defer`, but lower_defers schedules it
         // only on an error exit (a `return` of a None/Err value).
         p = p.advance();  // consume `errdefer`
-        var (ea_stmt, ea_p) = parse_stmt(p);
-        return (s_errdefer(ea_stmt), ea_p);
+        var ea: StmtResult = parse_stmt(p);
+        return StmtResult { par: ea.par, stmt: s_errdefer(ea.stmt) };
     }
     if (kw == "function") {
         // Local (nested) function declaration: desugar to a closure-valued
@@ -2964,21 +2968,21 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // marking it IsLocal + the closureconv hoist. (Self-reference /
         // recursion isn't captured — the name is bound after the lambda is
         // built — matching a plain closure-valued local.)
-        var (fr_func, fr_p) = parse_func_decl(p);
-        p = fr_p;
-        if (stmts_mention(fr_func.body, fr_func.name)) {
+        var fr: FuncResult = parse_func_decl(p);
+        p = fr.par;
+        if (stmts_mention(fr.func.body, fr.func.name)) {
             // Self-recursive local function: the closure can't reference
             // itself (the name binds after the lambda captures), so this
             // needs top-level hoisting (closureconv), not yet ported.
             // Surface it rather than miscompile silently.
-            return (s_var(fr_func.name, "", e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)), p);
+            return StmtResult { par: p, stmt: s_var(fr.func.name, "", e_lambda(fr.func.params, fr.func.ret_type, fr.func.body)) };
         }
-        var lam: Expr = e_lambda(fr_func.params, fr_func.ret_type, fr_func.body);
-        return (s_var(fr_func.name, "", lam), p);
+        var lam: Expr = e_lambda(fr.func.params, fr.func.ret_type, fr.func.body);
+        return StmtResult { par: p, stmt: s_var(fr.func.name, "", lam) };
     }
     if (kw == "match") {
-        var (mr_stmt, mr_p) = parse_match_stmt(p);
-        return (mr_stmt, mr_p);
+        var mr: MatchStmtResult = parse_match_stmt(p);
+        return StmtResult { par: mr.par, stmt: mr.stmt };
     }
     if (kw == "if") {
         p = p.advance();
@@ -2989,66 +2993,66 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // has no parenthesised condition.
         if (p.peek_keyword() == "let") {
             p = p.advance();  // consume `let`
-            var (ilpat_v, ilpat_p) = parse_pattern(p);
-            p = ilpat_p;
+            var ilpat: PatternResult = parse_pattern(p);
+            p = ilpat.par;
             if (p.peek_punct() == "=") { p = p.advance(); }
-            var (ilscrut_expr, ilscrut_p) = parse_expr(p);
-            p = ilscrut_p;
-            var (ilthen_body, ilthen_p) = parse_block(p);
-            p = ilthen_p;
+            var ilscrut: ExprResult = parse_expr(p);
+            p = ilscrut.par;
+            var ilthen: BlockResult = parse_block(p);
+            p = ilthen.par;
             var ilelse: Stmt[] = [];
             if (p.peek_keyword() == "else") {
                 p = p.advance();
-                var (ileb_body, ileb_p) = parse_block(p);
-                p = ileb_p;
-                ilelse = ileb_body;
+                var ileb: BlockResult = parse_block(p);
+                p = ileb.par;
+                ilelse = ileb.body;
             }
             var ilarms: MatchArm[] = [];
-            ilarms = ilarms.append(MatchArm { pattern: ilpat_v, body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            ilarms = ilarms.append(MatchArm { pattern: ilpat.pattern, body: ilthen.body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
             ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            return (s_match_origin(ilscrut_expr, ilarms, 0, 0, "if_let"), p);
+            return StmtResult { par: p, stmt: s_match_origin(ilscrut.expr, ilarms, 0, 0, "if_let") };
         }
         if (p.peek_punct() != "(") {
-            return (s_unknown("missing ( in if"), p);
+            return StmtResult { par: p, stmt: s_unknown("missing ( in if") };
         }
         p = p.advance();
-        var (c_expr, c_p) = parse_expr(p);
-        p = c_p;
+        var c = parse_expr(p);
+        p = c.par;
         if (p.peek_punct() == ")") { p = p.advance(); }
-        var (then_blk_body, then_blk_p) = parse_block_or_stmt(p);
-        p = then_blk_p;
+        var then_blk: BlockResult = parse_block_or_stmt(p);
+        p = then_blk.par;
         var else_body: Stmt[] = [];
         if (p.peek_keyword() == "else") {
             p = p.advance();
             // `else if` — wrap as a nested StmtIf in the else
             // branch so an else-chain reads as one shape.
             if (p.peek_keyword() == "if") {
-                var (nested_stmt, nested_p) = parse_stmt(p);
-                p = nested_p;
-                else_body = else_body.append(nested_stmt);
+                var nested: StmtResult = parse_stmt(p);
+                p = nested.par;
+                else_body = else_body.append(nested.stmt);
             } else {
-                var (else_blk_body, else_blk_p) = parse_block_or_stmt(p);
-                p = else_blk_p;
-                else_body = else_blk_body;
+                var else_blk: BlockResult = parse_block_or_stmt(p);
+                p = else_blk.par;
+                else_body = else_blk.body;
             }
         }
-        return (s_if(c_expr, then_blk_body, else_body), p);
+        return StmtResult { par: p, stmt: s_if(c.expr, then_blk.body, else_body) };
     }
     if (kw == "while") {
         p = p.advance();
         if (p.peek_punct() != "(") {
-            return (s_unknown("missing ( in while"), p);
+            return StmtResult { par: p, stmt: s_unknown("missing ( in while") };
         }
         p = p.advance();
-        var (wc_expr, wc_p) = parse_expr(p);
-        p = wc_p;
+        var wc = parse_expr(p);
+        p = wc.par;
         if (p.peek_punct() == ")") { p = p.advance(); }
-        var (wb_body, wb_p) = parse_block_or_stmt(p);
-        p = wb_p;
-        return (with_loop_label(s_while(wc_expr, wb_body), loop_label), p);
+        var wb: BlockResult = parse_block_or_stmt(p);
+        p = wb.par;
+        return StmtResult { par: p, stmt: with_loop_label(s_while(wc.expr, wb.body), loop_label) };
     }
-    if (kw == "loop") { var (lr_stmt, lr_p) = parse_loop_stmt(p); return (with_loop_label(lr_stmt, loop_label), lr_p); }
-    if (kw == "for") { var (fr0_stmt, fr0_p) = parse_for_stmt(p); return (with_loop_label(fr0_stmt, loop_label), fr0_p); }
+    if (kw == "loop") { var lr: StmtResult = parse_loop_stmt(p); return StmtResult { par: lr.par, stmt: with_loop_label(lr.stmt, loop_label) }; }
+    if (kw == "for") { var fr0: StmtResult = parse_for_stmt(p); return StmtResult { par: fr0.par, stmt: with_loop_label(fr0.stmt, loop_label) }; }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction
     // (the Go checker enforces it), so both parse to the same StmtVar.
@@ -3080,14 +3084,14 @@ function parse_stmt(p: Par): (Stmt, Par) {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
             if (p.peek_punct() == "=") { p = p.advance(); }
-            var (tdinit_expr, tdinit_p) = parse_expr(p);
-            p = tdinit_p;
+            var tdinit: ExprResult = parse_expr(p);
+            p = tdinit.par;
             if (p.peek_punct() == ";") { p = p.advance(); }
-            return (s_var_at(tdnames, "", tdinit_expr, vline, vcol), p);
+            return StmtResult { par: p, stmt: s_var_at(tdnames, "", tdinit.expr, vline, vcol) };
         }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
-            return (s_unknown("missing var name"), p);
+            return StmtResult { par: p, stmt: s_unknown("missing var name") };
         }
         p = p.advance();
         // let-else payload bindings: `let Variant(b1, b2, …) = E else { … }`.
@@ -3119,19 +3123,19 @@ function parse_stmt(p: Par): (Stmt, Par) {
         var type_name: string = "";
         if (p.peek_punct() == ":") {
             p = p.advance();
-            var (vtr_name, vtr_ret_arr, vtr_fn_ret, vtr_p) = parse_type_name(p);
-            p = vtr_p;
-            type_name = vtr_name;
+            var vtr: TypeNameResult = parse_type_name(p);
+            p = vtr.par;
+            type_name = vtr.name;
         }
         if (p.peek_punct() != "=") {
-            return (s_unknown("missing = in var"), p);
+            return StmtResult { par: p, stmt: s_unknown("missing = in var") };
         }
         p = p.advance();
         // The source expr is followed by either `;` (plain binding) or
         // the `else` keyword (let-else) — never directly by `{`, so no
         // struct-literal suppression is needed here.
-        var (init_expr, init_p) = parse_expr(p);
-        p = init_p;
+        var init = parse_expr(p);
+        p = init.par;
         // let-else: `let Variant(b..) = E else { divergent };`. The
         // rest of the enclosing block becomes the success arm body;
         // the else block becomes the wildcard arm. Reuses the
@@ -3145,36 +3149,36 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // simply falls through to the end of the block.
         if (p.peek_keyword() == "else") {
             p = p.advance();  // consume `else`
-            var (le_else_body, le_else_p) = parse_block(p);
-            p = le_else_p;
+            var le_else: BlockResult = parse_block(p);
+            p = le_else.par;
             if (p.peek_punct() == ";") { p = p.advance(); }
             // Consume the rest of the enclosing block as the success
             // body, mirroring parse_block's loop (incl. its
             // progress guard so a malformed statement can't spin).
             var rest: Stmt[] = [];
             while (p.peek_punct() != "}" && !p.at_end()) {
-                var (rr_stmt, rr_p) = parse_stmt(p);
-                if (rr_p.pos == p.pos) { p = p.advance(); continue; }
-                p = rr_p;
-                rest = rest.append(rr_stmt);
+                var rr: StmtResult = parse_stmt(p);
+                if (rr.par.pos == p.pos) { p = p.advance(); continue; }
+                p = rr.par;
+                rest = rest.append(rr.stmt);
             }
             var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
-            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
-            return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
+            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else.body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            return StmtResult { par: p, stmt: s_match_origin(init.expr, le_arms, vline, vcol, "let_else") };
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (s_var_at(name, type_name, init_expr, vline, vcol), p);
+        return StmtResult { par: p, stmt: s_var_at(name, type_name, init.expr, vline, vcol) };
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
         var rcol: i32 = p.peek_col();
         p = p.advance();
-        var (val_expr, val_p) = parse_expr(p);
-        p = val_p;
+        var val = parse_expr(p);
+        p = val.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (s_return_at(val_expr, rline, rcol), p);
+        return StmtResult { par: p, stmt: s_return_at(val.expr, rline, rcol) };
     }
     if (kw == "break") {
         // E011 is reported at the `break` keyword (Go's `Break{P}`).
@@ -3190,7 +3194,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
         var bid: string = p.peek_ident();
         if (bid.len() > 0 && p.advance().peek_punct() == ";") { blbl = bid; p = p.advance(); }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl }, p);
+        return StmtResult { par: p, stmt: StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl } };
     }
     if (kw == "continue") {
         // E011 is reported at the `continue` keyword (Go's `Continue{P}`).
@@ -3203,7 +3207,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
         var cid: string = p.peek_ident();
         if (cid.len() > 0 && p.advance().peek_punct() == ";") { clbl = cid; p = p.advance(); }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl }, p);
+        return StmtResult { par: p, stmt: StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl } };
     }
     // Expression statement — or (compound) assignment if `=`,
     // `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
@@ -3221,8 +3225,8 @@ function parse_stmt(p: Par): (Stmt, Par) {
     // Only bare-ident targets are supported in this cut — full
     // lvalue syntax (field / index / tuple) is a later
     // milestone.
-    var (e_expr, e_p) = parse_expr(p);
-    p = e_p;
+    var e = parse_expr(p);
+    p = e.par;
     // Capture the assign-op position — the Go checker reports an
     // assignment type error (E003) at the `=` token, not the lvalue.
     var aline: i32 = p.peek_line();
@@ -3236,35 +3240,31 @@ function parse_stmt(p: Par): (Stmt, Par) {
                             || assign_op == "<<=" || assign_op == ">>=";
     if (is_assign || is_compound) {
         p = p.advance(); // consume the assign-op token
-        var (av_expr0, av_p) = parse_expr(p);
-        p = av_p;
-        // Mutable accumulator: the chained-assign loop below re-binds it
-        // to each successive parsed value (the old shape reassigned the
-        // whole ExprResult).
-        var av_expr: Expr = av_expr0;
+        var av = parse_expr(p);
+        p = av.par;
         // Chained assignment `x = y = e` (plain `=`, bare-ident targets):
         // native assignment is a right-recursive expression, so the value
         // flows to every target. parse_expr stopped at the inner `=`, so
-        // av_expr is the next target. Collect the ident chain + final value
+        // av.expr is the next target. Collect the ident chain + final value
         // and emit the equivalent right-to-left assigns (`y = e; x = y;` —
         // e is evaluated exactly once) in a scoped block. Without this the
         // trailing `= e` was left as junk and only the first link ran, a
         // silent wrong result (#4339 item 1). Index / field middle targets
         // fall through to the single-assign path unchanged (as before).
         if (is_assign && p.peek_punct() == "=") {
-            match (e_expr) {
+            match (e.expr) {
                 ExprIdent(id0) => {
                     var chain: string[] = [];
                     var okchain: boolean = true;
                     var moretgt: boolean = true;
                     while (moretgt && okchain) {
-                        match (av_expr) {
+                        match (av.expr) {
                             ExprIdent(idn) => {
                                 chain = chain.append(idn.name);
                                 p = p.advance();          // consume the `=`
-                                var (nx_v, nx_p) = parse_expr(p);
-                                p = nx_p;
-                                av_expr = nx_v;
+                                var nx = parse_expr(p);
+                                p = nx.par;
+                                av = nx;
                                 moretgt = (p.peek_punct() == "=");
                             },
                             _ => { okchain = false; },
@@ -3276,27 +3276,27 @@ function parse_stmt(p: Par): (Stmt, Par) {
                         var stmts: Stmt[] = [];
                         // innermost target gets the final value, then each
                         // earlier target copies from the one to its right.
-                        stmts = stmts.append(s_assign(chain[chain.len() - 1], av_expr));
+                        stmts = stmts.append(s_assign(chain[chain.len() - 1], av.expr));
                         var ci: i32 = chain.len() - 1;
                         while (ci > 0) {
                             stmts = stmts.append(s_assign(chain[ci - 1], e_ident(chain[ci])));
                             ci = ci - 1;
                         }
                         stmts = stmts.append(s_assign(id0.name, e_ident(chain[0])));
-                        return (s_if(e_bool(true), stmts, noelse), p);
+                        return StmtResult { par: p, stmt: s_if(e_bool(true), stmts, noelse) };
                     }
                 },
                 _ => { },
             }
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        var rhs: Expr = av_expr;
+        var rhs: Expr = av.expr;
         // Dispatch on the lvalue shape: bare ident → StmtAssign;
         // `arr[idx]` → desugar to the builtin __set_index(arr, idx,
         // value) (an expression statement) so no new Stmt node is
         // needed. Compound `arr[idx] += y` reads the element back (see
         // the ExprIndex arm below); field compounds work the same way.
-        match (e_expr) {
+        match (e.expr) {
             ExprIdent(id) => {
                 var rhs2: Expr = rhs;
                 if (is_compound) {
@@ -3305,7 +3305,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                     var op: string = assign_op[0:assign_op.len() - 1];
                     rhs2 = e_binary(op, e_ident(id.name), rhs);
                 }
-                return (s_assign_at(id.name, rhs2, aline, acol, id.line, id.col), p);
+                return StmtResult { par: p, stmt: s_assign_at(id.name, rhs2, aline, acol, id.line, id.col) };
             },
             ExprIndex(ix) => {
                 // `arr[idx] = rhs` → __set_index(arr, idx, rhs). A compound
@@ -3320,7 +3320,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 sargs = sargs.append(ix.array);
                 sargs = sargs.append(ix.index);
                 sargs = sargs.append(irhs);
-                return (s_expr(e_call(e_ident("__set_index"), sargs)), p);
+                return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_index"), sargs)) };
             },
             ExprFieldAccess(fa) => {
                 // `obj.field = rhs` → __set_field(obj, "field", rhs)
@@ -3341,22 +3341,22 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 // FieldAccess position. Codegen ignores the position.
                 fargs = fargs.append(e_string_at(fa.field, fa.line, fa.col));
                 fargs = fargs.append(frhs);
-                return (s_expr(e_call(e_ident("__set_field"), fargs)), p);
+                return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_field"), fargs)) };
             },
-            _ => { return (s_unknown("lhs of assign must be ident, index, or field"), p); }
+            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident, index, or field") }; }
         }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (s_expr(e_expr), p);
+    return StmtResult { par: p, stmt: s_expr(e.expr) };
 }
 
 pub function parse_program(toks: lexer.Token[]): Stmt[] {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false };
     var out: Stmt[] = [];
     while (!p.at_end()) {
-        var (r_stmt, r_p) = parse_stmt(p);
-        p = r_p;
-        out = out.append(r_stmt);
+        var r = parse_stmt(p);
+        p = r.par;
+        out = out.append(r.stmt);
     }
     return out;
 }
@@ -3367,6 +3367,7 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
 // bit lower_func needs to admit `for y in f(x)` (flat_map's shape) onto the
 // IR path. The type position is a bare ident in this cut —
 // no array / generic / union syntax.
+pub struct ParamResult { par: Par, param: ParamDecl }
 
 // parse_type_name reads a (possibly generic) type spelling and
 // returns it as a single concatenated string. Recognises:
@@ -3382,6 +3383,7 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
 // resolve `g().field` (struct_ret_fns gets a `g|P` entry in lower_func), so the
 // call-result field read lowers on the IR path instead of bailing to AST
 // (#3640 slice A). Empty for non-struct returns (the common fn-value case).
+pub struct TypeNameResult { par: Par, name: string, ret_arr: boolean, fn_ret: string }
 
 // consume_array_suffix swallows trailing `[]` suffix(es) after a type and
 // appends them to `name`. Needed for the parenthesized type forms — a
@@ -3409,7 +3411,7 @@ function is_struct_ret_name(n: string): boolean {
     return true;
 }
 
-function consume_array_suffix(p: Par, name: string): (string, boolean, string, Par) {
+function consume_array_suffix(p: Par, name: string): TypeNameResult {
     while (p.peek_punct() == "[") {
         p = p.advance();
         if (p.peek_punct() == "]") {
@@ -3417,10 +3419,10 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
             name = name + "[]";
         }
     }
-    return (name, false, "", p);
+    return TypeNameResult { par: p, name: name, ret_arr: false, fn_ret: "" };
 }
 
-function parse_type_name(p: Par): (string, boolean, string, Par) {
+function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
     // `dyn Trait` (single) or `dyn A + B + …` (multi-trait object) — a
@@ -3442,21 +3444,21 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
     // See docs/DYN-TRAITS.md §4.3 + §10.
     if (base == "dyn") {
         p = p.advance(); // consume `dyn`
-        var (dinner_name, dinner_ret_arr, dinner_fn_ret, dinner_p) = parse_type_name(p);
-        p = dinner_p;
-        var dynname: string = dinner_name;
+        var dinner: TypeNameResult = parse_type_name(p);
+        p = dinner.par;
+        var dynname: string = dinner.name;
         // Collect any `+ Trait` continuations (multi-trait `dyn A + B`).
         while (p.peek_punct() == "+") {
             p = p.advance(); // consume `+`
-            var (dmore_name, dmore_ret_arr, dmore_fn_ret, dmore_p) = parse_type_name(p);
-            p = dmore_p;
-            if (dmore_name.len() == 0) {
+            var dmore: TypeNameResult = parse_type_name(p);
+            p = dmore.par;
+            if (dmore.name.len() == 0) {
                 // Trailing / empty `+` — no trait name followed it.
-                return ("", false, "", p);
+                return TypeNameResult { par: p, name: "", ret_arr: false, fn_ret: "" };
             }
-            dynname = dynname + " + " + dmore_name;
+            dynname = dynname + " + " + dmore.name;
         }
-        return ("dyn " + dynname, false, "", p);
+        return TypeNameResult { par: p, name: "dyn " + dynname, ret_arr: false, fn_ret: "" };
     }
     // WIT resource-handle type `own R` / `borrow R` (P5 —
     // docs/WIT-BRING-YOUR-OWN.md). A handle is an opaque i32 at the canonical
@@ -3472,8 +3474,8 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // defaults), and the spelling lets insert_resource_drops find owned
         // handles and tell own from borrow for its move analysis.
         p = p.advance(); // consume `own` / `borrow`
-        var (hinner_name, hinner_ret_arr, hinner_fn_ret, hinner_p) = parse_type_name(p);
-        return (base + " " + hinner_name, false, "", hinner_p);
+        var hinner: TypeNameResult = parse_type_name(p);
+        return TypeNameResult { par: hinner.par, name: base + " " + hinner.name, ret_arr: false, fn_ret: "" };
     }
     if (base.len() == 0) {
         // Tuple type `(T1, T2, …)`. The self-host stores types
@@ -3519,22 +3521,22 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             // type are left on the cursor and the decl loop spins (OOM).
             if (p.peek_punct() == "=>") {
                 p = p.advance();  // consume `=>`
-                var (rr_name, rr_ret_arr, rr_fn_ret, rr_p) = parse_type_name(p);
-                p = rr_p;
+                var rr: TypeNameResult = parse_type_name(p);
+                p = rr.par;
                 // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
                 // array of closures. Record ret_arr when R is itself an
                 // array (`(T) => U[]`): the tag stays the plain "fn" all
                 // consumers expect, but the bit rides along so lower_func can
                 // admit `for y in f(x)` (flat_map) onto the IR path.
-                var (fnr_name, fnr_ret_arr, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
-                var r_is_arr: boolean = rr_name.len() >= 2 && rr_name[rr_name.len() - 2 : rr_name.len()] == "[]";
+                var fnr: TypeNameResult = consume_array_suffix(p, "fn");
+                var r_is_arr: boolean = rr.name.len() >= 2 && rr.name[rr.name.len() - 2 : rr.name.len()] == "[]";
                 // Preserve R when it is a concrete struct return type, so a
                 // fn-value `g: () => P` can resolve `g().field` on the IR path
                 // (#3640). Only a bare struct-ish name qualifies — arrays carry
                 // their info in ret_arr, and primitives need no field lookup.
                 var fn_ret_ty: string = "";
-                if (!r_is_arr && is_struct_ret_name(rr_name)) { fn_ret_ty = rr_name; }
-                return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
+                if (!r_is_arr && is_struct_ret_name(rr.name)) { fn_ret_ty = rr.name; }
+                return TypeNameResult { par: fnr.par, name: fnr.name, ret_arr: r_is_arr, fn_ret: fn_ret_ty };
             }
             // Tuple type — return the reconstructed precise spelling
             // (e.g. "(string, TestRunner)") so tuple-destructure
@@ -3552,12 +3554,12 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // the existing array path.
         if (p.peek_punct() == "[") {
             p = p.advance();   // consume `[`
-            var (bracketed_name, bracketed_ret_arr, bracketed_fn_ret, bracketed_p) = parse_type_name(p);
-            p = bracketed_p;
+            var bracketed: TypeNameResult = parse_type_name(p);
+            p = bracketed.par;
             if (p.peek_punct() == "]") { p = p.advance(); }
-            return (bracketed_name + "[]", false, "", p);
+            return TypeNameResult { par: p, name: bracketed.name + "[]", ret_arr: false, fn_ret: "" };
         }
-        return ("", false, "", p);
+        return TypeNameResult { par: p, name: "", ret_arr: false, fn_ret: "" };
     }
     p = p.advance();
     // Qualified type name: `pkg.Name` (e.g. `lexer.Token`). Consume
@@ -3577,7 +3579,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         p = p.advance();
     }
     if (p.peek_punct() != "[") {
-        return (base, false, "", p);
+        return TypeNameResult { par: p, name: base, ret_arr: false, fn_ret: "" };
     }
     // Consume `[T1, T2, …]` by tracking bracket depth so nested
     // generics survive verbatim. Token text reconstructed from
@@ -3638,7 +3640,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             break;
         }
     }
-    return (nm, false, "", p);
+    return TypeNameResult { par: p, name: nm, ret_arr: false, fn_ret: "" };
 }
 
 // parse_tuple_param consumes a tuple-destructuring parameter
@@ -3653,8 +3655,9 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
 // lowering. Empty destr_names signals a parse problem (fewer than 2
 // names, or a missing `:`); callers degrade the same way they do for
 // parse_param's empty-name result.
+pub struct TupleParamResult { par: Par, param: ParamDecl, destr_names: string, line: i32, col: i32 }
 
-function parse_tuple_param(p: Par): (ParamDecl, string, i32, i32, Par) {
+function parse_tuple_param(p: Par): TupleParamResult {
     var tline: i32 = p.peek_line();
     var tcol: i32 = p.peek_col();
     var bad: ParamDecl = ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
@@ -3675,20 +3678,20 @@ function parse_tuple_param(p: Par): (ParamDecl, string, i32, i32, Par) {
     // At least 2 names (no-singleton-tuples rule), and the annotation
     // is required.
     if (count < 2) {
-        return (bad, "", tline, tcol, p);
+        return TupleParamResult { par: p, param: bad, destr_names: "", line: tline, col: tcol };
     }
     if (p.peek_punct() != ":") {
-        return (bad, "", tline, tcol, p);
+        return TupleParamResult { par: p, param: bad, destr_names: "", line: tline, col: tcol };
     }
     p = p.advance();
-    var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
-    p = tr_p;
+    var tr: TypeNameResult = parse_type_name(p);
+    p = tr.par;
     // A destructured parameter can't carry a default value.
     if (p.peek_punct() == "=") {
-        return (bad, "", tline, tcol, p);
+        return TupleParamResult { par: p, param: bad, destr_names: "", line: tline, col: tcol };
     }
     var synth: string = "__ptuple_" + util.i32_to_string(tline) + "_" + util.i32_to_string(tcol);
-    return (ParamDecl { name: synth, type_name: tr_name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr_ret_arr, fn_ret: tr_fn_ret }, names, tline, tcol, p);
+    return TupleParamResult { par: p, param: ParamDecl { name: synth, type_name: tr.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr.ret_arr, fn_ret: tr.fn_ret }, destr_names: names, line: tline, col: tcol };
 }
 
 // prepend_param_destrs splices the desugared `var (a, b) = <synth>;`
@@ -3711,10 +3714,10 @@ function prepend_param_destrs(body: Stmt[], destrs: string[], synths: string[], 
     return out;
 }
 
-function parse_param(p: Par): (ParamDecl, Par) {
+function parse_param(p: Par): ParamResult {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return (ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }, p);
+        return ParamResult { par: p, param: ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" } };
     }
     // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
     // the checker's E050/E051). `own` is a plain ident to the lexer, so it
@@ -3732,23 +3735,23 @@ function parse_param(p: Par): (ParamDecl, Par) {
     }
     p = p.advance();
     if (p.peek_punct() != ":") {
-        return (ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }, p);
+        return ParamResult { par: p, param: ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" } };
     }
     p = p.advance();
-    var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
-    p = tr_p;
+    var tr: TypeNameResult = parse_type_name(p);
+    p = tr.par;
     // Optional default value: `function f(a: i32, b: i32 = 128)`.
     // fill_default_args_module fills it at call sites that omit the argument.
     var has_def: boolean = false;
     var def_val: Expr = e_unknown("");
     if (p.peek_punct() == "=") {
         p = p.advance();
-        var (de_expr, de_p) = parse_expr(p);
-        p = de_p;
+        var de: ExprResult = parse_expr(p);
+        p = de.par;
         has_def = true;
-        def_val = de_expr;
+        def_val = de.expr;
     }
-    return (ParamDecl { name: name, type_name: tr_name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr_ret_arr, fn_ret: tr_fn_ret }, p);
+    return ParamResult { par: p, param: ParamDecl { name: name, type_name: tr.name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr.ret_arr, fn_ret: tr.fn_ret } };
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -3756,8 +3759,9 @@ function parse_param(p: Par): (ParamDecl, Par) {
 // the offending token; the surrounding parse_module loop turns the
 // result into a degenerate FuncDecl with empty name on failure so
 // the caller can spot it.
+pub struct FuncResult { par: Par, func: FuncDecl }
 
-function parse_func_decl(p: Par): (FuncDecl, Par) {
+function parse_func_decl(p: Par): FuncResult {
     // Caller has already peeked the `function` keyword. Consume.
     var fline: i32 = p.peek_line();
     var fcol: i32 = p.peek_col();
@@ -3796,16 +3800,16 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
             p = p.advance();
             if (p.peek_punct() == ":") {
                 p = p.advance();
-                var (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p);
-                p = rtr_p;
-                receiver_type = rtr_name;
+                var rtr: TypeNameResult = parse_type_name(p);
+                p = rtr.par;
+                receiver_type = rtr.name;
             }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
     var name: string = p.peek_member_name();
     if (name.len() == 0) {
-        return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 }, p);
+        return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 } };
     }
     p = p.advance();
     // Optional generic type parameters: `name[T]`, `name[T: Bound, U]`.
@@ -3861,7 +3865,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         if (p.peek_punct() == "]") { p = p.advance(); }
     }
     if (p.peek_punct() != "(") {
-        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count }, p);
+        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count } };
     }
     p = p.advance();
     var params: ParamDecl[] = [];
@@ -3875,22 +3879,22 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     if (p.peek_punct() != ")") {
         while (true) {
             if (p.peek_punct() == "(") {
-                var (tpr_param, tpr_destr_names, tpr_line, tpr_col, tpr_p) = parse_tuple_param(p);
-                p = tpr_p;
-                if (tpr_destr_names.len() == 0) {
-                    return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 }, p);
+                var tpr: TupleParamResult = parse_tuple_param(p);
+                p = tpr.par;
+                if (tpr.destr_names.len() == 0) {
+                    return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 } };
                 }
-                params = params.append(tpr_param);
-                pd_names = pd_names.append(tpr_destr_names);
-                pd_synths = pd_synths.append(tpr_param.name);
-                pd_lines = pd_lines.append(tpr_line);
-                pd_cols = pd_cols.append(tpr_col);
+                params = params.append(tpr.param);
+                pd_names = pd_names.append(tpr.destr_names);
+                pd_synths = pd_synths.append(tpr.param.name);
+                pd_lines = pd_lines.append(tpr.line);
+                pd_cols = pd_cols.append(tpr.col);
                 if (p.peek_punct() == ",") { p = p.advance(); continue; }
                 break;
             }
-            var (pr_param, pr_p) = parse_param(p);
-            p = pr_p;
-            params = params.append(pr_param);
+            var pr: ParamResult = parse_param(p);
+            p = pr.par;
+            params = params.append(pr.param);
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -3899,9 +3903,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     var ret_type: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
-        var (fr_tr_name, fr_tr_ret_arr, fr_tr_fn_ret, fr_tr_p) = parse_type_name(p);
-        p = fr_tr_p;
-        ret_type = fr_tr_name;
+        var fr_tr: TypeNameResult = parse_type_name(p);
+        p = fr_tr.par;
+        ret_type = fr_tr.name;
     }
     // Targeted promotion: promote an unbounded type param only when BOTH
     //   (a) it feeds a parametric type — appears as a bracketed type-argument
@@ -3948,14 +3952,14 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // param has nothing to bind into, so degrade to the empty-name
         // FuncDecl the caller treats as a parse failure.
         if (pd_names.len() > 0) {
-            return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 }, p);
+            return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 } };
         }
-        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count }, p);
+        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count } };
     }
-    var (blk_body, blk_p) = parse_block(p);
-    p = blk_p;
-    var fbody: Stmt[] = prepend_param_destrs(blk_body, pd_names, pd_synths, pd_lines, pd_cols);
-    return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count }, p);
+    var blk: BlockResult = parse_block(p);
+    p = blk.par;
+    var fbody: Stmt[] = prepend_param_destrs(blk.body, pd_names, pd_synths, pd_lines, pd_cols);
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count } };
 }
 
 // parse_module is the entry point that handles both function
@@ -3965,19 +3969,20 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
 // parse_struct_field consumes `name: type_name` and returns the
 // declared field. Same type-name model as parse_param: a bare
 // ident, no array / generic syntax for this cut.
+pub struct StructFieldResult { par: Par, field: StructFieldDecl }
 
-function parse_struct_field(p: Par): (StructFieldDecl, Par) {
+function parse_struct_field(p: Par): StructFieldResult {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return (StructFieldDecl { name: "", type_name: "" }, p);
+        return StructFieldResult { par: p, field: StructFieldDecl { name: "", type_name: "" } };
     }
     p = p.advance();
     if (p.peek_punct() != ":") {
-        return (StructFieldDecl { name: name, type_name: "" }, p);
+        return StructFieldResult { par: p, field: StructFieldDecl { name: name, type_name: "" } };
     }
     p = p.advance();
-    var (sftr_name, sftr_ret_arr, sftr_fn_ret, sftr_p) = parse_type_name(p);
-    return (StructFieldDecl { name: name, type_name: sftr_name }, sftr_p);
+    var sftr: TypeNameResult = parse_type_name(p);
+    return StructFieldResult { par: sftr.par, field: StructFieldDecl { name: name, type_name: sftr.name } };
 }
 
 // parse_struct_decl consumes `struct Name { field, field, … }`
@@ -3986,8 +3991,9 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
 // is optional). Errors leave the parser at the offending token;
 // surrounding parse_module recovers via the StructDecl with
 // empty name.
+pub struct StructResult { par: Par, decl: StructDecl }
 
-function parse_struct_decl(p: Par): (StructDecl, Par) {
+function parse_struct_decl(p: Par): StructResult {
     var sline: i32 = p.peek_line();
     var scol: i32 = p.peek_col();
     p = p.advance();  // consume `struct`
@@ -3995,7 +4001,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol, enum_owner: "" }, p);
+        return StructResult { par: p, decl: StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol, enum_owner: "" } };
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -4019,15 +4025,15 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol, enum_owner: "" }, p);
+        return StructResult { par: p, decl: StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol, enum_owner: "" } };
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
     if (p.peek_punct() != "}") {
         while (true) {
-            var (fr_field, fr_p) = parse_struct_field(p);
-            p = fr_p;
-            fields = fields.append(fr_field);
+            var fr: StructFieldResult = parse_struct_field(p);
+            p = fr.par;
+            fields = fields.append(fr.field);
             // A trailing comma before `}` must not start another (empty-named)
             // field — mirrors the struct-literal parser and the Go parser.
             if (p.peek_punct() == ",") {
@@ -4039,7 +4045,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol, enum_owner: "" }, p);
+    return StructResult { par: p, decl: StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol, enum_owner: "" } };
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -4047,8 +4053,9 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
 // produce an alias with no variants — the checker rejects them,
 // but parsing stays lenient so error recovery proceeds. The
 // trailing semicolon is consumed if present.
+pub struct TypeAliasResult { par: Par, alias: TypeAlias }
 
-function parse_type_alias(p: Par): (TypeAlias, Par) {
+function parse_type_alias(p: Par): TypeAliasResult {
     // E016 (alias name collides with a struct/enum) is reported at the
     // `type` keyword.
     var taline: i32 = p.peek_line();
@@ -4057,12 +4064,12 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
         var empty: string[] = [];
-        return (TypeAlias { name: "", variants: empty, line: taline, col: tacol }, p);
+        return TypeAliasResult { par: p, alias: TypeAlias { name: "", variants: empty, line: taline, col: tacol } };
     }
     p = p.advance();
     if (p.peek_punct() != "=") {
         var empty2: string[] = [];
-        return (TypeAlias { name: name, variants: empty2, line: taline, col: tacol }, p);
+        return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: empty2, line: taline, col: tacol } };
     }
     p = p.advance();  // consume `=`
     var variants: string[] = [];
@@ -4080,7 +4087,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
         break;
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (TypeAlias { name: name, variants: variants, line: taline, col: tacol }, p);
+    return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: variants, line: taline, col: tacol } };
 }
 
 // parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), … }`
@@ -4093,12 +4100,13 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
 // first payload of a multi-payload variant is bound; extras are
 // consumed. The enum's own name isn't recorded — variant names are
 // global, as with the existing union machinery.
+pub struct EnumResult { par: Par, name: string, variants: StructDecl[], type_params: string[] }
 
-function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
+function parse_enum_decl(p: Par): EnumResult {
     p = p.advance();  // consume `enum`
     var out: StructDecl[] = [];
     var name: string = p.peek_ident();
-    if (name.len() == 0) { return ("", out, [], p); }
+    if (name.len() == 0) { return EnumResult { par: p, name: "", variants: out, type_params: [] }; }
     p = p.advance();
     // Optional generic type parameters: `enum Opt[T] { … }`. Captured so the
     // monomorphiser can clone a concrete enum per instantiation (the variant
@@ -4119,7 +4127,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
             p = p.advance();
         }
     }
-    if (p.peek_punct() != "{") { return (name, out, tparams, p); }
+    if (p.peek_punct() != "{") { return EnumResult { par: p, name: name, variants: out, type_params: tparams }; }
     p = p.advance();
     while (p.peek_punct() != "}" && !p.at_end()) {
         var vname: string = p.peek_ident();
@@ -4128,19 +4136,19 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
         var fields: StructFieldDecl[] = [];
         if (p.peek_punct() == "(") {
             p = p.advance();
-            var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
-            p = tr_p;
+            var tr: TypeNameResult = parse_type_name(p);
+            p = tr.par;
             // A multi-payload variant `V(A, B, …)` keeps every payload as a field
             // `__ev`, `__ev1`, `__ev2`, … (the first stays `__ev` so the existing
             // "is this a payloaded variant?" checks that look for `__ev` still
             // fire). Codegen indexes them by position (struct_field_off).
-            fields = fields.append(StructFieldDecl { name: "__ev", type_name: tr_name });
+            fields = fields.append(StructFieldDecl { name: "__ev", type_name: tr.name });
             var pnum: i32 = 1;
             while (p.peek_punct() == ",") {
                 p = p.advance();
-                var (tr2_name, tr2_ret_arr, tr2_fn_ret, tr2_p) = parse_type_name(p);
-                p = tr2_p;
-                fields = fields.append(StructFieldDecl { name: "__ev" + dl_itoa(pnum), type_name: tr2_name });
+                var tr2: TypeNameResult = parse_type_name(p);
+                p = tr2.par;
+                fields = fields.append(StructFieldDecl { name: "__ev" + dl_itoa(pnum), type_name: tr2.name });
                 pnum = pnum + 1;
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
@@ -4150,7 +4158,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (name, out, tparams, p);
+    return EnumResult { par: p, name: name, variants: out, type_params: tparams };
 }
 
 // parse_import consumes `import "path";` starting from the
@@ -4158,8 +4166,9 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
 // trailing semicolon is consumed when present. Malformed input
 // (missing string, etc.) yields an Import with empty path so
 // the surrounding loop can recover.
+pub struct ImportResult { par: Par, imp: Import }
 
-function parse_import(p: Par): (Import, Par) {
+function parse_import(p: Par): ImportResult {
     p = p.advance();  // consume `import`
     var path: string = "";
     var t: lexer.Token = p.peek();
@@ -4179,7 +4188,7 @@ function parse_import(p: Par): (Import, Par) {
         if (alias.len() > 0) { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias }, p);
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: false, reexport_names: [], alias: alias } };
 }
 
 // parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
@@ -4188,7 +4197,7 @@ function parse_import(p: Par): (Import, Par) {
 // loader pulls in the target module and the bundler can redirect a
 // consumer's `facade.name` to the target's mangled symbol. Malformed
 // input degrades to an empty re-export the caller can recover from.
-function parse_pubuse(p: Par): (Import, Par) {
+function parse_pubuse(p: Par): ImportResult {
     p = p.advance();  // consume `use`
     var path: string = "";
     var t: lexer.Token = p.peek();
@@ -4211,14 +4220,14 @@ function parse_pubuse(p: Par): (Import, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "" }, p);
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: true, reexport_names: names, alias: "" } };
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
 // `const` keyword) and returns it as a zero-arg FuncDecl returning
 // EXPR — so the rest of the pipeline + the emitter reuse the existing
 // function machinery, and a bare `NAME` reference becomes a call.
-function parse_const_decl(p: Par): (FuncDecl, Par) {
+function parse_const_decl(p: Par): FuncResult {
     p = p.advance();  // consume `const`
     var name: string = p.peek_ident();
     if (name.len() == 0) { name = p.peek_keyword(); }
@@ -4226,19 +4235,19 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
     var ty: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
-        var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
-        p = tr_p;
-        ty = tr_name;
+        var tr: TypeNameResult = parse_type_name(p);
+        p = tr.par;
+        ty = tr.name;
     }
     if (p.peek_punct() == "=") { p = p.advance(); }
-    var (er_expr, er_p) = parse_expr(p);
-    p = er_p;
+    var er: ExprResult = parse_expr(p);
+    p = er.par;
     if (p.peek_punct() == ";") { p = p.advance(); }
     var body: Stmt[] = [];
-    body = body.append(s_return(er_expr));
+    body = body.append(s_return(er.expr));
     var noparams: ParamDecl[] = [];
     var notp: string[] = [];
-    return (FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 }, p);
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 } };
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -7504,6 +7513,7 @@ function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[
     }
 }
 
+pub struct HoistResult { stmts: Stmt[], hoisted: FuncDecl[], lifts: CapLift[] }
 
 // CapLift records a capturing recursive local that was lambda-lifted: its
 // (now top-level) name and the ordered list of enclosing names it
@@ -7708,26 +7718,26 @@ function rw_call_stmts(stmts: Stmt[], fname: string, caps: string[]): Stmt[] {
     return out;
 }
 
-function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]): (Stmt[], FuncDecl[], CapLift[]) {
+function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]): HoistResult {
     var arms: MatchArm[] = [];
     var acc: FuncDecl[] = hoisted;
     var acc_lifts: CapLift[] = hl_no_lifts();
     var a: i32 = 0;
     while (a < m.arms.len()) {
-        var (ar_stmts, ar_hoisted, ar_lifts) = hl_rewrite(m.arms[a].body, enclosing, acc);
-        acc = ar_hoisted;
-        acc_lifts = hl_append_lifts(acc_lifts, ar_lifts);
-        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar_stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        var ar: HoistResult = hl_rewrite(m.arms[a].body, enclosing, acc);
+        acc = ar.hoisted;
+        acc_lifts = hl_append_lifts(acc_lifts, ar.lifts);
+        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
         a = a + 1;
     }
-    return ([s_match_at(m.scrutinee, arms, m.line, m.col)], acc, acc_lifts);
+    return HoistResult { stmts: [s_match_at(m.scrutinee, arms, m.line, m.col)], hoisted: acc, lifts: acc_lifts };
 }
 
 // hl_rewrite lifts self-recursive local functions out of a statement
 // list. A body with none is returned verbatim (the precheck) — so only
 // functions that actually use the feature are ever rebuilt.
-function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): (Stmt[], FuncDecl[], CapLift[]) {
-    if (!hl_has_rec_local(stmts)) { return (stmts, hoisted, hl_no_lifts()); }
+function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): HoistResult {
+    if (!hl_has_rec_local(stmts)) { return HoistResult { stmts: stmts, hoisted: hoisted, lifts: hl_no_lifts() }; }
     var out: Stmt[] = [];
     var acc: FuncDecl[] = hoisted;
     var acc_lifts: CapLift[] = hl_no_lifts();
@@ -7755,11 +7765,11 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): (S
                             // lifted function the captures are in scope as params.
                             var inner_encl: string[] = hl_param_names(new_params);
                             inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
-                            var (ir_stmts, ir_hoisted, ir_lifts) = hl_rewrite(lam.body, inner_encl, acc);
-                            acc = ir_hoisted;
-                            acc_lifts = hl_append_lifts(acc_lifts, ir_lifts);
+                            var ir: HoistResult = hl_rewrite(lam.body, inner_encl, acc);
+                            acc = ir.hoisted;
+                            acc_lifts = hl_append_lifts(acc_lifts, ir.lifts);
                             // Thread the captures through the recursive self-calls.
-                            var lifted_body: Stmt[] = ir_stmts;
+                            var lifted_body: Stmt[] = ir.stmts;
                             if (caps.len() > 0) { lifted_body = rw_call_stmts(lifted_body, v.name, caps); }
                             var notp: string[] = [];
                             acc = acc.append(FuncDecl {
@@ -7776,45 +7786,45 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): (S
                 if (!did_lift) { out = out.append(stmts[i]); }
             },
             StmtIf(f) => {
-                var (tr_stmts, tr_hoisted, tr_lifts) = hl_rewrite(f.then_body, enclosing, acc);
-                acc = tr_hoisted;
-                acc_lifts = hl_append_lifts(acc_lifts, tr_lifts);
-                var (er_stmts, er_hoisted, er_lifts) = hl_rewrite(f.else_body, enclosing, acc);
-                acc = er_hoisted;
-                acc_lifts = hl_append_lifts(acc_lifts, er_lifts);
-                out = out.append(s_if(f.cond, tr_stmts, er_stmts));
+                var tr: HoistResult = hl_rewrite(f.then_body, enclosing, acc);
+                acc = tr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, tr.lifts);
+                var er: HoistResult = hl_rewrite(f.else_body, enclosing, acc);
+                acc = er.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, er.lifts);
+                out = out.append(s_if(f.cond, tr.stmts, er.stmts));
             },
             StmtWhile(w) => {
-                var (wr_stmts, wr_hoisted, wr_lifts) = hl_rewrite(w.body, enclosing, acc);
-                acc = wr_hoisted;
-                acc_lifts = hl_append_lifts(acc_lifts, wr_lifts);
-                out = out.append(s_while(w.cond, wr_stmts));
+                var wr: HoistResult = hl_rewrite(w.body, enclosing, acc);
+                acc = wr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, wr.lifts);
+                out = out.append(s_while(w.cond, wr.stmts));
             },
             StmtFor(fr) => {
-                var (fr2_stmts, fr2_hoisted, fr2_lifts) = hl_rewrite(fr.body, enclosing, acc);
-                acc = fr2_hoisted;
-                acc_lifts = hl_append_lifts(acc_lifts, fr2_lifts);
-                out = out.append(s_for(fr.var_name, fr.iter, fr2_stmts));
+                var fr2: HoistResult = hl_rewrite(fr.body, enclosing, acc);
+                acc = fr2.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, fr2.lifts);
+                out = out.append(s_for(fr.var_name, fr.iter, fr2.stmts));
             },
             StmtMatch(m) => {
-                var (mr_stmts, mr_hoisted, mr_lifts) = hl_rewrite_match(m, enclosing, acc);
-                acc = mr_hoisted;
-                acc_lifts = hl_append_lifts(acc_lifts, mr_lifts);
+                var mr: HoistResult = hl_rewrite_match(m, enclosing, acc);
+                acc = mr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, mr.lifts);
                 var km: i32 = 0;
-                while (km < mr_stmts.len()) { out = out.append(mr_stmts[km]); km = km + 1; }
+                while (km < mr.stmts.len()) { out = out.append(mr.stmts[km]); km = km + 1; }
             },
             StmtDefer(d) => {
                 var one: Stmt[] = [d.action];
-                var (dr_stmts, dr_hoisted, dr_lifts) = hl_rewrite(one, enclosing, acc);
-                acc = dr_hoisted;
-                acc_lifts = hl_append_lifts(acc_lifts, dr_lifts);
-                if (dr_stmts.len() >= 1) { out = out.append(s_defer(dr_stmts[0])); }
+                var dr: HoistResult = hl_rewrite(one, enclosing, acc);
+                acc = dr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, dr.lifts);
+                if (dr.stmts.len() >= 1) { out = out.append(s_defer(dr.stmts[0])); }
             },
             _ => { out = out.append(stmts[i]); },
         }
         i = i + 1;
     }
-    return (out, acc, acc_lifts);
+    return HoistResult { stmts: out, hoisted: acc, lifts: acc_lifts };
 }
 
 // hl_apply_lifts rewrites a (host) statement list's calls to each
@@ -7839,11 +7849,11 @@ pub function hoist_local_funcs_module(mod: Module): Module {
         var fn: FuncDecl = mod.funcs[i];
         var encl: string[] = hl_param_names(fn.params);
         encl = hl_append_str(encl, hl_collect_var_names(fn.body));
-        var (r_stmts, r_hoisted, r_lifts) = hl_rewrite(fn.body, encl, hoisted);
-        hoisted = r_hoisted;
+        var r: HoistResult = hl_rewrite(fn.body, encl, hoisted);
+        hoisted = r.hoisted;
         // Rewrite this body's calls to any lambda-lifted function so the
         // captures are passed at the (now top-level) call sites.
-        var fn_body: Stmt[] = hl_apply_lifts(r_stmts, r_lifts);
+        var fn_body: Stmt[] = hl_apply_lifts(r.stmts, r.lifts);
         funcs = funcs.append(FuncDecl {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
             type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: fn_body,
@@ -7853,9 +7863,9 @@ pub function hoist_local_funcs_module(mod: Module): Module {
         i = i + 1;
     }
     var tencl: string[] = hl_collect_var_names(mod.top_stmts);
-    var (tr_stmts, tr_hoisted, tr_lifts) = hl_rewrite(mod.top_stmts, tencl, hoisted);
-    hoisted = tr_hoisted;
-    var top_body: Stmt[] = hl_apply_lifts(tr_stmts, tr_lifts);
+    var tr: HoistResult = hl_rewrite(mod.top_stmts, tencl, hoisted);
+    hoisted = tr.hoisted;
+    var top_body: Stmt[] = hl_apply_lifts(tr.stmts, tr.lifts);
     var j: i32 = 0;
     while (j < hoisted.len()) { funcs = funcs.append(hoisted[j]); j = j + 1; }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports };
@@ -9358,12 +9368,13 @@ pub function module_with_builtins(mod: Module): Module {
     };
 }
 
-// Returns the parser plus the desugared receiver-method
+// ImplResult carries the parser plus the desugared receiver-method
 // FuncDecls produced from an `impl Trait for Type { … }` block, along
 // with the metadata parse_module needs to synthesise inherited trait
 // default methods after every trait declaration has been seen:
 // trait_name (simple, qualifier stripped), impl_type, the impl's bounded
 // type params, and the method names the impl explicitly provided.
+pub struct ImplResult { par: Par, funcs: FuncDecl[], trait_name: string, impl_type: string, type_params: string[], method_names: string[] }
 
 // TraitDefault is one trait method that carries a `{ … }` default body
 // (abstract signatures are dropped). `trait_name` is the simple trait
@@ -9371,6 +9382,7 @@ pub function module_with_builtins(mod: Module): Module {
 // method, `Self` still spelled in its types). An impl of the trait that
 // omits the method inherits a copy via finalize_impl_method.
 pub struct TraitDefault { trait_name: string, method: FuncDecl }
+pub struct TraitParseResult { par: Par, defaults: TraitDefault[] }
 
 // ImplInfo is the per-impl metadata parse_module retains so it can
 // synthesise inherited defaults after the full module is parsed (a trait
@@ -10013,7 +10025,8 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
 
 // parse_derive_attr consumes `@derive(Trait, mod.Trait, …)` (the `@` is
 // at the cursor) and returns the (possibly qualified) trait names.
-function parse_derive_attr(p: Par): (string[], Par) {
+pub struct DeriveResult { par: Par, derives: string[] }
+function parse_derive_attr(p: Par): DeriveResult {
     var derives: string[] = [];
     p = p.advance(); // `@`
     if (p.peek_ident() == "derive") { p = p.advance(); }
@@ -10034,7 +10047,7 @@ function parse_derive_attr(p: Par): (string[], Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (derives, p);
+    return DeriveResult { par: p, derives: derives };
 }
 
 // parse_import_attr consumes `@import("wasi:iface@x.y.z", "wit-func-name")`
@@ -10042,10 +10055,11 @@ function parse_derive_attr(p: Par): (string[], Par) {
 // that bind the following body-less function to a WIT import (bring-your-own
 // WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). `is_import` is false when the
 // attribute after `@` is not `import`, so the caller falls back to @derive.
-function parse_import_attr(p: Par): (string, string, boolean, Par) {
+pub struct ImportAttrResult { par: Par, iface: string, wit: string, is_import: boolean }
+function parse_import_attr(p: Par): ImportAttrResult {
     p = p.advance(); // `@`
     if (p.peek_keyword() != "import") {
-        return ("", "", false, p);
+        return ImportAttrResult { par: p, iface: "", wit: "", is_import: false };
     }
     p = p.advance(); // `import`
     var iface: string = "";
@@ -10063,17 +10077,17 @@ function parse_import_attr(p: Par): (string, string, boolean, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (iface, wit, true, p);
+    return ImportAttrResult { par: p, iface: iface, wit: wit, is_import: true };
 }
 
 // parse_export_attr consumes `@export("wasi:iface@x.y.z", "wit-name")` (the `@`
 // is at the cursor) and returns the (iface, name) pair that binds the following
 // function to a WIT export (P6 — docs/WIT-BRING-YOUR-OWN.md). Reuses
-// the shared (iface, wit, is_import, par) tuple shape.
-function parse_export_attr(p: Par): (string, string, boolean, Par) {
+// ImportAttrResult for the shared (par, iface, wit) shape.
+function parse_export_attr(p: Par): ImportAttrResult {
     p = p.advance(); // `@`
     if (p.peek_ident() != "export") {
-        return ("", "", false, p);
+        return ImportAttrResult { par: p, iface: "", wit: "", is_import: false };
     }
     p = p.advance(); // `export`
     var iface: string = "";
@@ -10091,21 +10105,22 @@ function parse_export_attr(p: Par): (string, string, boolean, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (iface, wit, true, p);
+    return ImportAttrResult { par: p, iface: iface, wit: wit, is_import: true };
 }
 
-// Returns the (resource name, advanced parser) pair.
+// ResourceNameResult carries the advanced parser plus the parsed resource name.
+pub struct ResourceNameResult { par: Par, name: string }
 
 // parse_resource_decl_name consumes `resource Name;` (the contextual `resource`
 // identifier is at the cursor) and returns the parser plus `Name`. The optional
 // `@import` WIT binding is attached by parse_module. See ResourceDecl and
 // docs/WIT-BRING-YOUR-OWN.md (P5).
-function parse_resource_decl_name(p: Par): (string, Par) {
+function parse_resource_decl_name(p: Par): ResourceNameResult {
     p = p.advance(); // `resource`
     var name: string = p.peek_ident();
     if (name.len() > 0) { p = p.advance(); } // Name
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (name, p);
+    return ResourceNameResult { par: p, name: name };
 }
 
 // parse_impl_decl consumes `impl Trait for Type { <function>… }`.
@@ -10117,7 +10132,7 @@ function parse_resource_decl_name(p: Par): (string, Par) {
 // The trait name is parsed and discarded: the self-host resolves
 // `obj.method()` by the receiver's concrete type, not via the
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
-function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], Par) {
+function parse_impl_decl(p: Par): ImplResult {
     var out: FuncDecl[] = [];
     var method_names: string[] = [];
     p = p.advance(); // `impl`
@@ -10158,9 +10173,9 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // (`impl Trait for Type`) it's the trait; for an inherent impl
     // (`impl Type { … }`, #2700) there is no `for` and this name IS the
     // impl type, with no trait.
-    var (tnr_name, tnr_ret_arr, tnr_fn_ret, tnr_p) = parse_type_name(p);
-    p = tnr_p;
-    var first_name: string = tnr_name;
+    var tnr: TypeNameResult = parse_type_name(p);
+    p = tnr.par;
+    var first_name: string = tnr.name;
     var trait_name: string = "";
     var impl_type: string = "";
     if (p.peek_keyword() == "for") {
@@ -10168,9 +10183,9 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
         // Trait name retained so parse_module can match the impl against
         // the trait's default methods.
         trait_name = first_name;
-        var (ity_name, ity_ret_arr, ity_fn_ret, ity_p) = parse_type_name(p);
-        p = ity_p;
-        impl_type = ity_name;
+        var ity: TypeNameResult = parse_type_name(p);
+        p = ity.par;
+        impl_type = ity.name;
     } else {
         // Inherent impl: the first name is the type; receiver-less methods
         // are associated functions (`Type.f(args)`), `self`-taking ones are
@@ -10187,9 +10202,9 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
             p = p.advance();
             continue;
         }
-        var (fr_func, fr_p) = parse_func_decl(p);
-        p = fr_p;
-        var m: FuncDecl = fr_func;
+        var fr: FuncResult = parse_func_decl(p);
+        p = fr.par;
+        var m: FuncDecl = fr.func;
         // finalize_impl_method does the receiver-peel / associated-function
         // encoding, the `Self` -> impl_type rewrite, and the bounded-type-
         // param merge (shared with trait default-method synthesis).
@@ -10203,7 +10218,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the trait decl's bracket-free simple name). Without the strip,
     // `impl Greet[i32] for P` records trait_name "Greet[i32]", never matches
     // the `Greet` trait, and its default methods are never synthesised (#4340).
-    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, method_names, p);
+    return ImplResult { par: p, funcs: out, trait_name: derive_simple_name(strip_struct_base(trait_name)), impl_type: impl_type, type_params: impl_tps, method_names: method_names };
 }
 
 // finalize_impl_method turns a parsed impl/trait-default method `m` into
@@ -10469,7 +10484,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
 // method parses with the ordinary parse_func_decl machinery (no receiver
 // clause; its first parameter is `self: Self`); an abstract one ends at
 // `;` and so comes back with an empty body, which we skip.
-function parse_trait_decl(p: Par): (TraitDefault[], Par) {
+function parse_trait_decl(p: Par): TraitParseResult {
     var defaults: TraitDefault[] = [];
     p = p.advance(); // `trait`
     var tname: string = p.peek_ident();
@@ -10514,13 +10529,13 @@ function parse_trait_decl(p: Par): (TraitDefault[], Par) {
         while (!p.at_end()) {
             if (p.peek_punct() == "}") { break; }
             if (p.peek_keyword() == "function") {
-                var (fr_func, fr_p) = parse_func_decl(p);
-                p = fr_p;
+                var fr: FuncResult = parse_func_decl(p);
+                p = fr.par;
                 // A non-empty body marks a default method. (An empty `{}`
                 // body is indistinguishable from an abstract `;` here and
                 // is treated as abstract — it would synthesise a no-op.)
-                if (fr_func.body.len() > 0) {
-                    defaults = defaults.append(TraitDefault { trait_name: simple, method: fr_func });
+                if (fr.func.body.len() > 0) {
+                    defaults = defaults.append(TraitDefault { trait_name: simple, method: fr.func });
                 }
             } else {
                 // Defensive: don't stall on an unexpected token.
@@ -10529,7 +10544,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], Par) {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
-    return (defaults, p);
+    return TraitParseResult { par: p, defaults: defaults };
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
@@ -10562,22 +10577,22 @@ pub function parse_module(toks: lexer.Token[]): Module {
             // from `@derive`, which keeps the original cursor.
             var probe: Par = p.advance();
             if (probe.peek_keyword() == "import") {
-                var (iar_iface, iar_wit, iar_is_import, iar_p) = parse_import_attr(p);
-                p = iar_p;
+                var iar: ImportAttrResult = parse_import_attr(p);
+                p = iar.par;
                 var ik: string = p.peek_keyword();
                 if (ik == "pub") { p = p.advance(); ik = p.peek_keyword(); }
                 if (ik == "function") {
-                    var (ifr_func, ifr_p) = parse_func_decl(p);
-                    p = ifr_p;
-                    var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit };
+                    var ifr: FuncResult = parse_func_decl(p);
+                    p = ifr.par;
+                    var ifn: FuncDecl = FuncDecl { ...ifr.func, import_iface: iar.iface, import_wit: iar.wit };
                     funcs = funcs.append(ifn);
                 } else if (p.peek_ident() == "resource") {
                     // `@import(iface, wit) resource Name;` binds a WIT resource
                     // handle type to its WIT identity (P5). Record it so
                     // insert_resource_drops can synthesize the [resource-drop].
-                    var (rnr_name, rnr_p) = parse_resource_decl_name(p);
-                    p = rnr_p;
-                    resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit });
+                    var rnr: ResourceNameResult = parse_resource_decl_name(p);
+                    p = rnr.par;
+                    resources = resources.append(ResourceDecl { name: rnr.name, iface: iar.iface, wit: iar.wit });
                 }
                 continue;
             }
@@ -10587,74 +10602,74 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 // The function is parsed normally; the binding is recorded on
                 // Module.exports so the wasm emitter surfaces a core export
                 // `iface#wit-name` the Go composer lifts.
-                var (ear_iface, ear_wit, ear_is_import, ear_p) = parse_export_attr(p);
-                p = ear_p;
+                var ear: ImportAttrResult = parse_export_attr(p);
+                p = ear.par;
                 var xk: string = p.peek_keyword();
                 if (xk == "pub") { p = p.advance(); xk = p.peek_keyword(); }
                 if (xk == "function") {
-                    var (xfr_func, xfr_p) = parse_func_decl(p);
-                    p = xfr_p;
-                    funcs = funcs.append(xfr_func);
-                    exports = exports.append(ExportBinding { func_name: xfr_func.name, iface: ear_iface, wit: ear_wit });
+                    var xfr: FuncResult = parse_func_decl(p);
+                    p = xfr.par;
+                    funcs = funcs.append(xfr.func);
+                    exports = exports.append(ExportBinding { func_name: xfr.func.name, iface: ear.iface, wit: ear.wit });
                 }
                 continue;
             }
-            var (dr_derives, dr_p) = parse_derive_attr(p);
-            p = dr_p;
+            var dr: DeriveResult = parse_derive_attr(p);
+            p = dr.par;
             var dk: string = p.peek_keyword();
             if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); }
             if (dk == "struct") {
-                var (dsr_decl, dsr_p) = parse_struct_decl(p);
-                p = dsr_p;
-                structs = structs.append(dsr_decl);
-                funcs = synth_derives(dsr_decl, dr_derives, funcs);
+                var dsr: StructResult = parse_struct_decl(p);
+                p = dsr.par;
+                structs = structs.append(dsr.decl);
+                funcs = synth_derives(dsr.decl, dr.derives, funcs);
                 continue;
             }
             if (dk == "enum") {
                 var deline: i32 = p.peek_line();
                 var decol: i32 = p.peek_col();
-                var (denr_name, denr_variants, denr_type_params, denr_p) = parse_enum_decl(p);
-                p = denr_p;
-                enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol });
+                var denr: EnumResult = parse_enum_decl(p);
+                p = denr.par;
+                enums = enums.append(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants), type_params: denr.type_params, line: deline, col: decol });
                 var dei: i32 = 0;
-                while (dei < denr_variants.len()) {
-                    structs = structs.append(denr_variants[dei]);
+                while (dei < denr.variants.len()) {
+                    structs = structs.append(denr.variants[dei]);
                     dei = dei + 1;
                 }
                 // Synthesise variant-wise Display / Eq methods on the
                 // enum type; they dispatch via the enum-method fallback.
-                funcs = synth_enum_derives(denr_name, denr_variants, dr_derives, funcs);
+                funcs = synth_enum_derives(denr.name, denr.variants, dr.derives, funcs);
                 continue;
             }
             continue;
         }
         if (kw == "function") {
-            var (fr_func, fr_p) = parse_func_decl(p);
-            p = fr_p;
-            funcs = funcs.append(fr_func);
+            var fr: FuncResult = parse_func_decl(p);
+            p = fr.par;
+            funcs = funcs.append(fr.func);
             continue;
         }
         if (kw == "struct") {
-            var (sr_decl, sr_p) = parse_struct_decl(p);
-            p = sr_p;
-            structs = structs.append(sr_decl);
+            var sr: StructResult = parse_struct_decl(p);
+            p = sr.par;
+            structs = structs.append(sr.decl);
             continue;
         }
         if (kw == "type") {
-            var (tr_alias, tr_p) = parse_type_alias(p);
-            p = tr_p;
-            aliases = aliases.append(tr_alias);
+            var tr: TypeAliasResult = parse_type_alias(p);
+            p = tr.par;
+            aliases = aliases.append(tr.alias);
             continue;
         }
         if (kw == "enum") {
             var eline: i32 = p.peek_line();
             var ecol: i32 = p.peek_col();
-            var (enr_name, enr_variants, enr_type_params, enr_p) = parse_enum_decl(p);
-            p = enr_p;
-            enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol });
+            var enr: EnumResult = parse_enum_decl(p);
+            p = enr.par;
+            enums = enums.append(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants), type_params: enr.type_params, line: eline, col: ecol });
             var ei: i32 = 0;
-            while (ei < enr_variants.len()) {
-                structs = structs.append(enr_variants[ei]);
+            while (ei < enr.variants.len()) {
+                structs = structs.append(enr.variants[ei]);
                 ei = ei + 1;
             }
             continue;
@@ -10663,45 +10678,45 @@ pub function parse_module(toks: lexer.Token[]): Module {
             // `const NAME: T = EXPR;` desugars to a zero-arg function
             // `function NAME(): T { return EXPR; }`; a bare reference
             // to NAME is lowered to a call (see emit_expr ExprIdent).
-            var (cr_func, cr_p) = parse_const_decl(p);
-            p = cr_p;
-            funcs = funcs.append(cr_func);
+            var cr: FuncResult = parse_const_decl(p);
+            p = cr.par;
+            funcs = funcs.append(cr.func);
             continue;
         }
         if (kw == "import") {
-            var (ir_imp, ir_p) = parse_import(p);
-            p = ir_p;
-            imports = imports.append(ir_imp);
+            var ir: ImportResult = parse_import(p);
+            p = ir.par;
+            imports = imports.append(ir.imp);
             continue;
         }
         // `pub use "path".{names…};` — a re-export directive. Recorded as a
         // re-export Import so the loader pulls in the target module and the
         // bundler redirects `facade.name` to the target's mangled symbol.
         if (kw == "use") {
-            var (ur_imp, ur_p) = parse_pubuse(p);
-            p = ur_p;
-            imports = imports.append(ur_imp);
+            var ur: ImportResult = parse_pubuse(p);
+            p = ur.par;
+            imports = imports.append(ur.imp);
             continue;
         }
         if (kw == "trait") {
-            var (tpr_defaults, tpr_p) = parse_trait_decl(p);
-            p = tpr_p;
+            var tpr: TraitParseResult = parse_trait_decl(p);
+            p = tpr.par;
             var tdi: i32 = 0;
-            while (tdi < tpr_defaults.len()) {
-                trait_defaults = trait_defaults.append(tpr_defaults[tdi]);
+            while (tdi < tpr.defaults.len()) {
+                trait_defaults = trait_defaults.append(tpr.defaults[tdi]);
                 tdi = tdi + 1;
             }
             continue;
         }
         if (kw == "impl") {
-            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_method_names, imr_p) = parse_impl_decl(p);
-            p = imr_p;
+            var imr: ImplResult = parse_impl_decl(p);
+            p = imr.par;
             var mi: i32 = 0;
-            while (mi < imr_funcs.len()) {
-                funcs = funcs.append(imr_funcs[mi]);
+            while (mi < imr.funcs.len()) {
+                funcs = funcs.append(imr.funcs[mi]);
                 mi = mi + 1;
             }
-            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, method_names: imr_method_names });
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr.trait_name, impl_type: imr.impl_type, type_params: imr.type_params, method_names: imr.method_names });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
@@ -10711,22 +10726,22 @@ pub function parse_module(toks: lexer.Token[]): Module {
         if (p.peek_ident() == "resource") {
             var pr: Par = p.advance();
             if (pr.peek_ident().len() > 0) {
-                var (rnr2_name, rnr2_p) = parse_resource_decl_name(p);
-                p = rnr2_p;
-                resources = resources.append(ResourceDecl { name: rnr2_name, iface: "", wit: "" });
+                var rnr2: ResourceNameResult = parse_resource_decl_name(p);
+                p = rnr2.par;
+                resources = resources.append(ResourceDecl { name: rnr2.name, iface: "", wit: "" });
                 continue;
             }
         }
-        var (stmtR_stmt, stmtR_p) = parse_stmt(p);
+        var stmtR: StmtResult = parse_stmt(p);
         // Guarantee forward progress: if a malformed top-level token (e.g.
         // a reserved keyword where a declaration / statement is expected)
         // leaves the cursor un-advanced, skip it rather than spin forever.
-        if (stmtR_p.pos == p.pos) {
+        if (stmtR.par.pos == p.pos) {
             p = p.advance();
             continue;
         }
-        p = stmtR_p;
-        top_stmts = top_stmts.append(stmtR_stmt);
+        p = stmtR.par;
+        top_stmts = top_stmts.append(stmtR.stmt);
     }
     // Synthesise inherited trait default methods now that the whole module
     // is parsed (a trait may be declared after the impl that uses it). For
