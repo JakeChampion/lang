@@ -53,6 +53,22 @@ function test_encode_lowercase_digits(): test.TestOutcome {
     return test.assert_eq(hex.hex_encode(hex.hex_decode("ff")), "ff");
 }
 
+// hex_decode_strict returns Some(bytes) on well-formed input.
+function test_decode_strict_valid(): test.TestOutcome {
+    match (hex.hex_decode_strict("48656c6c6f")) {
+        Some(v) => { return test.assert_eq(v, "Hello"); },
+        None => { return test.assert_true(false); },
+    }
+}
+// ...and None on malformed input, instead of the lenient variant's silent
+// truncation (#4384): an odd-length tail and a non-hex char both reject.
+function hex_is_none(s: string): boolean {
+    match (hex.hex_decode_strict(s)) { Some(v) => { return false; }, None => { return true; } }
+}
+function test_decode_strict_rejects(): test.TestOutcome {
+    return test.assert_true(hex_is_none("414") && hex_is_none("zz") && hex_is_none("48656c6c6fzz"));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/hex");
     r = r.it("encode",                   test_encode());
@@ -65,5 +81,7 @@ function main(): i32 {
     r = r.it("decode odd tail",          test_decode_odd_tail());
     r = r.it("round-trip",               test_roundtrip());
     r = r.it("encode emits lowercase",   test_encode_lowercase_digits());
+    r = r.it("decode_strict valid",      test_decode_strict_valid());
+    r = r.it("decode_strict rejects",    test_decode_strict_rejects());
     return r.finish();
 }

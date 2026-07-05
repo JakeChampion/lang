@@ -85,6 +85,17 @@ function test_non_empty_string(): test.TestOutcome {
     return test.assert_non_empty_string("x");
 }
 
+// truncate: normal cap, unchanged when it fits, and the #4390 guard — a
+// non-positive cap yields "" instead of reaching `s[0:n]` with a negative
+// bound (matching the `ellipsis` sibling).
+function test_truncate(): test.TestOutcome {
+    return test.assert_true(
+        "hello world".truncate(8, "...") == "hello..."
+        && "hi".truncate(10, "...") == "hi"
+        && "hello world".truncate(0 - 1, "...") == ""
+        && "hello world".truncate(0, "...") == "");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("strings");
     r = r.it("to_upper", test_uppercase());
@@ -102,5 +113,6 @@ function main(): i32 {
     r = r.it("find_ci hit", test_find_ci_hit());
     r = r.it("empty string", test_empty_string());
     r = r.it("non-empty string", test_non_empty_string());
+    r = r.it("truncate", test_truncate());
     return r.finish();
 }

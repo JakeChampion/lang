@@ -29,6 +29,13 @@ var ifLetIRCases = []struct {
 	{"none-else", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); if let Some(v) = m.get(\"absent\") { return v + pad; } else { return 7 + pad; } }", 7},
 	{"no-else-fallthrough", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 5); if let Some(v) = m.get(\"absent\") { return v + pad; } return 9 + pad; }", 9},
 	{"user-variant", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var s: Shape = Circle(42); if let Circle(r) = s { return r + pad; } else { return 0 + pad; } }", 42},
+	// if-let source swallowed as struct literal (#4339 item 4): the source
+	// expression parses with struct literals suppressed (native's
+	// noStructLit), so a bare-ident source whose then-block opens with a
+	// labeled loop (`lp: while …` — the IDENT `:` struct-lit lookahead) is
+	// no longer taken as `s { … }`. Pre-fix the whole statement shredded and
+	// the program mis-ran.
+	{"labeled-then-block", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var s: Shape = Circle(42); if let Circle(r) = s { lp: while (true) { return r + pad; } } return 0 + pad; }", 42},
 }
 
 // TestSelfHostIfLetIRX86_64 compiles each case through the self-hosted x86-64

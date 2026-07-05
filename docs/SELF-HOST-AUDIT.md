@@ -256,6 +256,16 @@ findings. Ranked by leverage.
   `[]`, but that value only ever fed E019 on a struct's OWN generic head, never an
   array, so the arity diagnostics are unchanged, confirmed by the fixpoints).
   Pinned by `count_type_args_run.fern` + `TestSelfHostCountTypeArgs`.
+  _wasm tuple-element slice landed:_ `nth_tuple_type_elem` (idx-th element of a
+  `(A, B, …)` tuple spelling, feeding the extern flat-tuple-param check + tuple
+  struct-element recovery) now decodes via `parse_type_ref` (`is_tuple` / `args` /
+  `array_depth`) instead of its own bracket/paren depth scan. On every non-array
+  spelling the element matches the former scan exactly (incl. nested generic /
+  tuple elements); a tuple-array `(i32, i32)[]` resolves to "" (array_depth > 0 is
+  a value of array type, not a tuple — the former scan keyed only off a leading
+  `(` and mis-read the trailing `[]`, wrongly reporting it as a flat extern tuple
+  param). This is a codegen path, so the three x86 fixpoints strictly gate the
+  correction. Pinned by `nth_tuple_elem_run.fern` + `TestSelfHostNthTupleElem`.
   _Remaining:_ the genuine comma-depth type decoders are now migrated; what's left
   is lower-value or delicate — the unambiguous `[]`-suffix element-strips
   (`ft[0:len-2]` / `ty_spelling_is_array`; a trailing `[]` is a structurally
