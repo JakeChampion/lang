@@ -2463,7 +2463,10 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 		"ok 1 - Content-Type reachable case-insensitively",
 		"ok 3 - duplicate Set-Cookie preserves insertion order",
 		"ok 4 - missing header returns None",
-		"# pass 5",
+		"ok 6 - X-*-Content-Length is not the body length",
+		"ok 7 - duplicate Content-Length rejected",
+		"ok 8 - Transfer-Encoding rejected",
+		"# pass 8",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

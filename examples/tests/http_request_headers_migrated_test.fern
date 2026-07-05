@@ -86,6 +86,42 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
     return test.fail("unreachable");
 }
 
+// ---- request-smuggling / framing hardening (#4383) ----
+
+// An `X-*-Content-Length` header must NOT be mistaken for the real
+// Content-Length. The wire has no real CL, so the body is empty —
+// the trailing bytes are not consumed as this request's body. (The
+// old raw substring scan matched `X-Custom-Content-Length:` first
+// and read a 5-byte body — the classic desync.)
+function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
+    var wire: string = "GET / HTTP/1.1\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
+    match (http.http_parse_request(wire)) {
+        Some(req) => { return test.assert_eq(req.body, ""); },
+        None => { return test.fail("well-formed request wrongly rejected"); }
+    }
+    return test.fail("unreachable");
+}
+
+// Duplicate Content-Length is an unrecoverable framing error → reject.
+function test_duplicate_content_length_rejected(): test.TestOutcome {
+    var wire: string = "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
+    match (http.http_parse_request(wire)) {
+        Some(req) => { return test.fail("duplicate Content-Length must be rejected"); },
+        None => { return test.pass(); }
+    }
+    return test.fail("unreachable");
+}
+
+// Transfer-Encoding (chunked unsupported; TE+CL is the desync vector) → reject.
+function test_transfer_encoding_rejected(): test.TestOutcome {
+    var wire: string = "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
+    match (http.http_parse_request(wire)) {
+        Some(req) => { return test.fail("Transfer-Encoding must be rejected"); },
+        None => { return test.pass(); }
+    }
+    return test.fail("unreachable");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
     r = r.it("Content-Type reachable case-insensitively",
@@ -98,5 +134,11 @@ function main(): i32 {
              test_missing_header_returns_none());
     r = r.it("get_all on missing returns []",
              test_get_all_on_missing_is_empty());
+    r = r.it("X-*-Content-Length is not the body length",
+             test_x_prefixed_cl_not_content_length());
+    r = r.it("duplicate Content-Length rejected",
+             test_duplicate_content_length_rejected());
+    r = r.it("Transfer-Encoding rejected",
+             test_transfer_encoding_rejected());
     return r.finish();
 }
