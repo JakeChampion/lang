@@ -134,7 +134,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
                 elems = elems.append(fold_expr(t.elements[i]));
                 i = i + 1;
             }
-            return parser.ExprTuple { elements: elems };
+            return parser.ExprTuple { elements: elems, line: t.line, col: t.col };
         },
         parser.ExprArray(a) => {
             var elems: parser.Expr[] = [];
