@@ -84,6 +84,21 @@ rewrites the whole pipeline:
    `fern.fern` does not import, so it is inert to the main self-compile (only its
    test driver pulls it in) — it costs nothing against the ~512-function bundle
    budget until slice 1 consumes it. Mirrors the SH-021 TypeRef foundation slice.
+
+   _Complementary churn cleanup (landed, independent of the id plumbing):_
+   `flatten.mangle_bare`'s own-decl branch re-concatenated `prefix + "__" + name`
+   on every reference; it now resolves to a **precomputed shared instance** from a
+   `RewriteCtx.declnames_mangled` parallel array (mirroring the existing
+   `ivar_mangled` idiom), so N references to a decl share one mangled string body
+   instead of N. Byte-identical (fixpoint-proven) and it reduces *allocation
+   performed* at the mangle churn site #4394 names — but note it is a **transient
+   churn** reduction, not a cut to the persistent `Op.str` residual (the mangled
+   name is still a string on the op stream, just a shared one), and the standard
+   single-module 500×20 benchmark does **not** exercise it (an entry module is not
+   mangled — `flatten_qualified` uses empty declnames); the win lives in
+   multi-module bundling (the real self-compile). It does not use `SymTab` (a
+   declname→mangled map is a parallel array, not the name→id→name intern table);
+   the id-based slices below are the path to the residual itself.
 1. **Intern the mangled names at `mangle_bare`.** Return an id-backed handle for
    the mangled symbol; keep the *textual* `Op.str` for now by materialising
    `name_of` at the op-construction boundary. This is behaviour-preserving
