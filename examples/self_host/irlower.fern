@@ -8999,6 +8999,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         _ => { }
                     }
                 },
+                // `var d = c` where c is already a closure local (#4557): d
+                // ALIASES the env box. Without this arm d stayed a plain
+                // scalar slot and `d()` called the raw box pointer as a
+                // table index — SIGSEGV. d is marked a closure local below
+                // (env-first dispatch) and the box is alias-inc'd after the
+                // store, so the exit sweep's two shallow decs balance — the
+                // rc==1 gate hands the capture release to the LAST owner
+                // (whose kinds are empty for the alias name, so captures
+                // keep the documented aliased-env leak).
+                parser.ExprIdent(iid) => { if (s.is_closure_local(iid.name)) { clo_init = true; } },
                 _ => { }
             }
             if (clo_init) {
@@ -9025,6 +9035,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 cvb = cvb.mark_arr(cslot, true);
                 cvb = cvb.mark_closure_local(v.name);
                 cvb = cvb.emit(ir.op_store_local(cslot));
+                // #4557 alias retain: a bare-ident closure alias shares the
+                // env box; inc it so this slot's exit-sweep dec is balanced
+                // (fresh lambda / __mkclo$ / element inits are already owned).
+                match (v.init) {
+                    parser.ExprIdent(_) => {
+                        cvb = cvb.emit(ir.op_load_local(cslot));
+                        cvb = cvb.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        cvb = cvb.emit(ir.op_drop());
+                    },
+                    _ => {}
+                }
                 // #4354 build-site retain: for each classifiable capture, read it
                 // back from the stored env box (env[ci+1], the same arr_get the
                 // closure call path uses) and __fern_rc_inc it — the rc-aware inc

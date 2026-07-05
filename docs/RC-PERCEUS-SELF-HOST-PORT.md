@@ -3693,3 +3693,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   exit. Known remaining (documented on the issue): the legacy self-host AST
   emitters still skip defers at `?` (markers are dead code there) — per the
   legacy-gap policy, not blocking.
+- 2026-07-05: **Fixed the bare-ident closure alias segfault (#4557 — irlower
+  StmtVar, all three backends).** `var d = c` where c is a closure local left
+  d a plain scalar slot, so `d()` called the raw env-box pointer as a
+  call-table index — SIGSEGV on the IR path. clo_init's detection now has a
+  bare-ident arm gated on is_closure_local: the alias is marked a closure
+  local (env-first dispatch) and its env box is __fern_rc_inc'd after the
+  store, so the exit sweep's two shallow decs balance and the rc==1 gate
+  hands the capture release to the LAST owner (the alias name carries no
+  capture kinds, so captures keep the documented aliased-env leak). Covers
+  fn-typed-param aliases (`var g = f`) and chains; a REASSIGN alias
+  (`f = d`) dispatches correctly but takes no alias-inc (the rebind-drop
+  decs the old box) — same leak-mode class as before, noted not fixed.
+  VERIFIED: TestSelfHostClosureAliasIRX86_64 (+wasm/arm64 siblings) — the
+  filed repro (139 → 4), both-names array-capture, param alias, chained +
+  branch alias, native cross-checked + pathprobe "ir"-pinned. Found and
+  PINNED pre-existing (NOT this fix, reproduced on unmodified main): ANY
+  closure called through the hoisted/escaping path over-decs its extracted
+  captures per call (2 underflow ticks for a 2-call shape with or without
+  an alias) — the #4354 escaping-closure drop-thunk slice remains the
+  tracked fix for that.
