@@ -2466,7 +2466,9 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 		"ok 6 - X-*-Content-Length is not the body length",
 		"ok 7 - duplicate Content-Length rejected",
 		"ok 8 - Transfer-Encoding rejected",
-		"# pass 8",
+		"ok 9 - http_header_value via HeaderMap",
+		"ok 10 - http_header_value missing returns None",
+		"# pass 10",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
@@ -2500,7 +2502,9 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 		"ok 3 - user Content-Length overridden by auto",
 		"ok 4 - bogus Content-Length absent from wire",
 		"ok 6 - duplicate Set-Cookie preserves order",
-		"# pass 6",
+		"ok 7 - status reason for extended codes",
+		"ok 8 - unknown status falls back to Status",
+		"# pass 8",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

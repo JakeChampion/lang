@@ -122,6 +122,21 @@ function test_transfer_encoding_rejected(): test.TestOutcome {
     return test.fail("unreachable");
 }
 
+// http_header_value now routes through the same HeaderMap the
+// request parser builds (#4381): case-insensitive, value trimmed,
+// first match — no parallel raw re-scan.
+function test_http_header_value_via_headermap(): test.TestOutcome {
+    var block: string = "Host: example.com\r\nContent-Type:  application/json  ";
+    return test.assert_is_some_eq_string(
+        http.http_header_value(block, "content-type"),
+        "application/json");
+}
+
+function test_http_header_value_missing_is_none(): test.TestOutcome {
+    return test.assert_is_none_string(
+        http.http_header_value("Host: e\r\n", "X-Absent"));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
     r = r.it("Content-Type reachable case-insensitively",
@@ -140,5 +155,9 @@ function main(): i32 {
              test_duplicate_content_length_rejected());
     r = r.it("Transfer-Encoding rejected",
              test_transfer_encoding_rejected());
+    r = r.it("http_header_value via HeaderMap",
+             test_http_header_value_via_headermap());
+    r = r.it("http_header_value missing returns None",
+             test_http_header_value_missing_is_none());
     return r.finish();
 }
