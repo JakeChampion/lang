@@ -3610,3 +3610,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   gated). Remaining for full slice-5 parity: struct/enum/map/string[]/nested
   capture kinds, closure ARRAYS (`__drop_arr_closure` equivalent), and the
   escaping-closure drop thunk (native `__closure_drop_<name>` dispatch).
+- 2026-07-05: **Landed dyn-Trait STRUCT-payload reclaim on the IR path (#4351
+  v1 — irlower-only, all three backends).** A `var d: dyn T = C { ... }` local
+  holds the concrete's rc-headered struct box (structs flow UNBOXED behind the
+  dyn coercion), but the coarse "dyn T" slot type kept it out of every reclaim
+  class — every such box leaked. Now `collect_dyn_struct_names` credits
+  "DYN:<name>|<Concrete>" in reclaimable_names (fresh leak-safe struct-LITERAL
+  init, scalar-only or deep-drop-ok, single-bind, never reassigned,
+  body_unsafe_for-clean — a `d.show()` dispatch is a receiver borrow), and the
+  exit sweep's new DYN loop releases it exactly like a reclaimable struct:
+  `__struct_drop_<Concrete>` (auto-materialized per-type by every backend;
+  emitted only when the concrete carries a reclaimable field) then the box dec.
+  Reclaimable dyn slots join the entry zero-init set, and
+  slot_is_reclaimable_struct now REJECTS "dyn "-tagged slots — pre-fix both
+  loops fired and over-released the box (caught by the underflow probe during
+  development). Deliberately NOT covered (documented on the issue): PRIMITIVE
+  and STRING dyn payloads — op_dyn_box allocates a HEADERLESS 16-byte
+  `__fern_alloc` cell the asm no-op `__free` cannot reclaim (needs an
+  allocation-layout slice: rc-header the cell, then a `'s'`-kind release);
+  `dyn T[]` element boxes (needs the genArrDynDropFn analog); enum payloads
+  behind dyn. VERIFIED: TestSelfHostDynStructReclaimIRX86_64 (+wasm/arm64
+  siblings) — churn flat + underflow 0 for array-field and scalar-only
+  concretes; escaping (`return d`) and reassigned dyn locals excluded and
+  balanced. Native reference: buildDynDropHelpers routes through a vtable drop
+  slot because it erases the type; the self-host binding-site registry skips
+  the vtable entirely (the concrete is statically known), mirroring the #4552
+  closure-capture design.

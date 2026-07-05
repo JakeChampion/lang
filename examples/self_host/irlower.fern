@@ -12973,6 +12973,29 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         j = j + 1;
     }
+    // Reclaimable dyn-Trait STRUCT-payload locals (#4351) — the dyn local holds
+    // the concrete's rc-headered struct box (structs flow unboxed behind dyn),
+    // so release it exactly like the struct loop above: deep-drop the
+    // concrete's rc fields via __struct_drop_<Concrete> (auto-materialized by
+    // each backend on seeing the call; only emitted when the concrete carries a
+    // reclaimable field), then shallow-dec the box. Slots are zeroed at entry
+    // (arr_slots_of includes reclaimable dyn slots), so an untaken-branch slot
+    // routes a null through the null-guarded helpers.
+    var dj: i32 = st.n_params;
+    while (dj < st.locals.len()) {
+        if (!slot_list_has(keeps, dj) && slot_is_reclaimable_dyn(st, dj)) {
+            var dconc: string = dyn_reclaim_concrete_of(st, st.locals[dj].slot_name);
+            if (struct_has_reclaim_array_field(st.structs, dconc)) {
+                st = st.emit(ir.op_load_local(dj));
+                st = st.emit(ir.op_call_direct("__struct_drop_" + dconc, 1));
+                st = st.emit(ir.op_drop());
+            }
+            st = st.emit(ir.op_load_local(dj));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+        }
+        dj = dj + 1;
+    }
     // Reclaimable scalar-tuple locals — a shallow rc-dec of the (now rc-headered)
     // box at scope exit, the tuple sibling of the struct loop above. Only fresh,
     // proven-non-escaping, scalar-literal tuple locals qualify (slot_is_reclaimable
@@ -13410,7 +13433,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -14624,6 +14647,67 @@ function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
 }
 
+// collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <C literal>`
+// binding whose concrete struct is leak-safe and scalar-only / deep-drop-ok,
+// as "<name>|<Concrete>" entries (recursing through nested blocks). A name
+// bound twice is blanked (shadow — the concretes may differ).
+function collect_dyn_struct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_dyn_struct_in_stmt(stmts[i], structs, a); i = i + 1; }
+    return a;
+}
+function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn ") {
+                match (v.init) {
+                    parser.ExprStructLit(slz) => {
+                        var cty: string = slz.type_name;
+                        if (!slz.has_base && decl_is_struct(structs, cty) && decl_is_leaksafe(structs, cty)
+                            && (struct_is_scalar_only(structs, cty) || nested_field_deep_drop_ok(structs, cty))) {
+                            // shadow check: a same-named earlier entry blanks both.
+                            var pi: i32 = 0;
+                            while (pi < acc.len()) {
+                                var e: string = acc[pi];
+                                var b2: i32 = 0;
+                                while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
+                                if (b2 <= e.len() && e[0:b2] == v.name) {
+                                    var out: string[] = [];
+                                    var oi: i32 = 0;
+                                    while (oi < acc.len()) {
+                                        if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
+                                        oi = oi + 1;
+                                    }
+                                    return out.append("|");
+                                }
+                                pi = pi + 1;
+                            }
+                            return acc.append(v.name + "|" + cty);
+                        }
+                        return acc;
+                    },
+                    _ => { return acc; }
+                }
+            }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_dyn_struct_names(iff.then_body, structs, acc);
+            return collect_dyn_struct_names(iff.else_body, structs, a);
+        },
+        parser.StmtWhile(w) => { return collect_dyn_struct_names(w.body, structs, acc); },
+        parser.StmtFor(f) => { return collect_dyn_struct_names(f.body, structs, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_dyn_struct_names(m.arms[i].body, structs, a); i = i + 1; }
+            return a;
+        },
+        _ => { return acc; },
+    }
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -14748,6 +14832,29 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (sri < sarrs.len()) {
         if (!strarr_unsafe_for(body, sarrs[sri], borrowable)) { out = out.append("SARR:" + sarrs[sri]); }
         sri = sri + 1;
+    }
+    // dyn-Trait STRUCT-payload locals (#4351): `var d: dyn T = C { ... }` — the
+    // struct flows UNBOXED behind the dyn coercion (the local holds the concrete's
+    // rc-headered box), but the coarse "dyn T" slot type kept it out of every
+    // reclaim class, so it leaked. Credited "DYN:<name>|<Concrete>" so the exit
+    // sweep deep-drops the concrete's rc fields (__struct_drop_<Concrete>) and
+    // frees the box. Gates mirror the enum struct-payload path: a FRESH struct
+    // LITERAL init (sole owner, rc==1) of a leak-safe scalar-only or
+    // deep-drop-ok struct, single-bind, never reassigned, non-escaping
+    // (body_unsafe_for — a `d.show()` dispatch is a receiver borrow, safe).
+    // Primitive/string dyn payloads ride a separate HEADERLESS 16-byte cell
+    // (op_dyn_box) that the asm no-op __free can't reclaim — a later slice.
+    var dyns: string[] = collect_dyn_struct_names(body, structs, []);
+    var dyi: i32 = 0;
+    while (dyi < dyns.len()) {
+        var dentry: string = dyns[dyi];
+        var dbar: i32 = 0;
+        while (dbar < dentry.len() && dentry[dbar] != 124) { dbar = dbar + 1; }   // 124 = '|'
+        var dname: string = dentry[0:dbar];
+        if (dname.len() > 0
+            && util.index_of_str(reassigned, dname) < 0
+            && !body_unsafe_for(body, dname, borrowable)) { out = out.append("DYN:" + dentry); }
+        dyi = dyi + 1;
     }
     // Reassigned array-payload ENUM locals: credited "ENUMRE:<E>:<name>" so the StmtAssign
     // deep-drops each superseded box's payload (emit_enum_reclaim_store) instead of the
@@ -16435,7 +16542,12 @@ function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
 function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
-    if (s.struct_type_of_slot(i).len() == 0) { return false; }
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0) { return false; }
+    // a dyn-Trait slot carries the coarse "dyn <T>" tag, not a struct decl —
+    // it is released by the dedicated DYN sweep loop (#4351), never here
+    // (double-firing both loops over-released the concrete's box).
+    if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     return util.index_of_str(s.reclaimable_names, s.locals[i].slot_name) >= 0;
 }
 
@@ -16515,6 +16627,34 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
     return util.index_of_str(s.reclaimable_names, "SARR:" + s.locals[i].slot_name) >= 0;
+}
+
+// dyn_reclaim_concrete_of (#4351): the concrete struct type registered for
+// dyn local `name` under the "DYN:<name>|<Concrete>" reclaim entry, or "".
+function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > 4 && e[0:4] == "DYN:") {
+            var body: string = e[4 : e.len()];
+            var bar: i32 = 0;
+            while (bar < body.len() && body[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            if (bar < body.len() && body[0:bar] == name) { return body[bar + 1 : body.len()]; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// slot_is_reclaimable_dyn: slot `i` is a fresh, non-escaping dyn-Trait local
+// holding a statically-known STRUCT payload (#4351) — credited "DYN:" by
+// reclaimable_names_of. The payload box is the concrete's rc-headered struct
+// box (structs flow unboxed behind dyn), released by the exit sweep like a
+// reclaimable struct: deep-drop the concrete's rc fields, then dec the box.
+function slot_is_reclaimable_dyn(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    return dyn_reclaim_concrete_of(s, s.locals[i].slot_name) != "";
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
