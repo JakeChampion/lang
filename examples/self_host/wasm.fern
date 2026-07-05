@@ -4785,55 +4785,32 @@ function method_ret(cx: Ctx, t: string, n: string): string {
     return "";
 }
 
-// parse_option_payload extracts the Some/Ok payload type from an
 // parse_result_err_payload extracts the Err type E from a `Result[T, E]` type
-// spelling (the part after the first top-level comma), or "" for an Option (no
-// Err arm) or a non-Result type. Used to release a Result's Err payload on free.
-function parse_result_err_payload(t: string): string {
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
-        var i: i32 = 0;
-        var depth: i32 = 0;
-        while (i < inner.len()) {
-            var c: i32 = inner[i];
-            if (c == 91) { depth = depth + 1; }
-            else if (c == 93) { depth = depth - 1; }
-            else if (c == 44 && depth == 0) { return trim_str(inner[i + 1:inner.len()]); }
-            i = i + 1;
-        }
+// spelling via the structured TypeRef (SH-021, docs/SELF-HOST-AUDIT.md T2), or ""
+// for an Option (no Err arm), a non-Result type, or an ARRAY of Result
+// (`Result[…, …][]` is an array value, not a Result). Used to release a Result's
+// Err payload on free. Supersedes the former `Result[` prefix + top-level-comma
+// depth scan; on the array case that scan returned garbage (the prefix matched
+// and the trailing `]` passed the last-char test), which this corrects to "".
+pub function parse_result_err_payload(t: string): string {
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth == 0 && r.base == "Result" && r.args.len() >= 2) {
+        return parser.render_type_ref(r.args[1]);
     }
     return "";
 }
 
-// `Option[T]` / `Result[T, E]` type spelling, or "" otherwise.
-function parse_option_payload(t: string): string {
-    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
-        return t[7:t.len() - 1];
-    }
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
-        // First top-level comma separates Ok payload from Err type.
-        var i: i32 = 0;
-        var depth: i32 = 0;
-        while (i < inner.len()) {
-            var c: i32 = inner[i];
-            if (c == 91) { depth = depth + 1; }
-            else if (c == 93) { depth = depth - 1; }
-            else if (c == 44 && depth == 0) { return trim_str(inner[0:i]); }
-            i = i + 1;
-        }
-        return trim_str(inner);
+// parse_option_payload extracts the Some/Ok payload type T from an `Option[T]` /
+// `Result[T, E]` type spelling via the structured TypeRef, or "" for any other
+// type (incl. an ARRAY of option/result — `Option[…][]` is an array, not an
+// Option). Same SH-021 migration as parse_result_err_payload; the former scan
+// returned garbage on the array case, corrected here to "".
+pub function parse_option_payload(t: string): string {
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth == 0 && (r.base == "Option" || r.base == "Result") && r.args.len() >= 1) {
+        return parser.render_type_ref(r.args[0]);
     }
     return "";
-}
-
-// trim_str strips leading/trailing ASCII spaces.
-function trim_str(s: string): string {
-    var a: i32 = 0;
-    var b: i32 = s.len();
-    while (a < b && s[a] == 32) { a = a + 1; }
-    while (b > a && s[b - 1] == 32) { b = b - 1; }
-    return s[a:b];
 }
 
 // A `for (k, v) in m` loop encodes its two binding names as "k,v" in the
