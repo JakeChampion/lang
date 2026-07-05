@@ -1,0 +1,83 @@
+// examples/self_host/wasm_extern_sum_run.fern — byte-identity guard for the wasm
+// backend's flat-sum extern type checks (wasm.fern's extern_sum_param_supported /
+// extern_sum_param_is_option, SH-021 slice — docs/SELF-HOST-AUDIT.md T2).
+//
+// Those two now decode an `Option[…]` / `Result[…, …]` type spelling via the
+// structured TypeRef (parser.parse_type_ref) instead of a magic-byte `Option[` /
+// `Result[` prefix + top-level-comma depth scan. This driver runs the REAL
+// (imported) functions AND a frozen copy of the FORMER magic-byte logic over a
+// corpus spanning every branch — Option/Result of i32/u32 (supported) vs of
+// string/struct/nested-generic (not), single- vs two- vs three-arg arities,
+// arrays (`Option[i32][]`), the degenerate `Option[]`, a bare `Option`/`Result`,
+// and plain scalars/structs — and asserts the new decode equals the old for each.
+// Exits with the mismatch count (0 = byte-identical), so a regression in the
+// TypeRef decode (or in parse_type_ref feeding it) fails the golden here.
+
+import "./wasm";
+import "./util";
+
+// --- frozen reference: the exact magic-byte logic these replaced ---
+function ref_trim(s: string): string {
+    var n: i32 = s.len();
+    var lo: i32 = 0;
+    while (lo < n && s[lo] == 32) { lo = lo + 1; }
+    var hi: i32 = n;
+    while (hi > lo && s[hi - 1] == 32) { hi = hi - 1; }
+    return s[lo:hi];
+}
+function ref_sum_supported(t: string): boolean {
+    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
+        var p: string = ref_trim(t[7:t.len() - 1]);
+        return p == "i32" || p == "u32";
+    }
+    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
+        var inner: string = t[7:t.len() - 1];
+        var i: i32 = 0;
+        var depth: i32 = 0;
+        while (i < inner.len()) {
+            var c: i32 = inner[i];
+            if (c == 91) { depth = depth + 1; }
+            else if (c == 93) { depth = depth - 1; }
+            else if (c == 44 && depth == 0) {
+                var ok: string = ref_trim(inner[0:i]);
+                var er: string = ref_trim(inner[i + 1:inner.len()]);
+                return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    return false;
+}
+function ref_is_option(t: string): boolean {
+    return t.len() > 7 && t[0:7] == "Option[";
+}
+
+function b(x: boolean): string { if (x) { return "1"; } return "0"; }
+
+function main(): i32 {
+    var corpus: string[] = [
+        "Option[i32]", "Option[u32]", "Option[string]", "Option[Foo]", "Option[Map[a, b]]",
+        "Option[i32][]", "Option[]", "Option", "Result[i32, u32]", "Result[u32, i32]",
+        "Result[i32, string]", "Result[string, i32]", "Result[i32]", "Result[i32, u32, x]",
+        "Result[i32, u32][]", "Result", "Result[Map[a, b], i32]", "i32", "u32", "string",
+        "Foo", "u8[]", "", "boolean[]", "Map[string, i32]"
+    ];
+    var out: string = "";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var t: string = corpus[i];
+        var ns: boolean = wasm.extern_sum_param_supported(t);
+        var no: boolean = wasm.extern_sum_param_is_option(t);
+        var os: boolean = ref_sum_supported(t);
+        var oo: boolean = ref_is_option(t);
+        var mark: string = "ok  ";
+        if (ns != os || no != oo) { mark = "BAD "; bad = bad + 1; }
+        out = out + mark + t + " sum=" + b(ns) + " opt=" + b(no) + "\n";
+        i = i + 1;
+    }
+    out = out + "mismatches=" + util.i32_to_string(bad) + "\n";
+    write(out);
+    return bad;
+}
