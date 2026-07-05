@@ -70,6 +70,30 @@ function test_is_between(): test.TestOutcome {
 
 function test_min(): test.TestOutcome { return test.assert_eq((10).min(3), 3); }
 
+// i32::MIN (-2147483648) edge cases (#4390): abs() wraps it back to i32::MIN
+// (still negative), so the digit family — which loops on the magnitude — used
+// to spin zero times and silently return 0 / false. The magnitude is now
+// carried in i64. `0 - 2147483647 - 1` builds i32::MIN staying in i32 range.
+function test_digits_min(): test.TestOutcome {
+    var m: i32 = 0 - 2147483647 - 1;
+    return test.assert_eq(m.digits(), 10);
+}
+function test_sum_of_digits_min(): test.TestOutcome {
+    var m: i32 = 0 - 2147483647 - 1;
+    return test.assert_eq(m.sum_of_digits(), 47);
+}
+function test_has_digit_min(): test.TestOutcome {
+    var m: i32 = 0 - 2147483647 - 1;   // 2147483648 — has a 3, no 9
+    return test.assert_true(m.has_digit(3) && !m.has_digit(9));
+}
+function test_reverse_digits_min(): test.TestOutcome {
+    var m: i32 = 0 - 2147483647 - 1;   // was silently 0 pre-fix
+    return test.assert_true(m.reverse_digits() != 0);
+}
+function test_digits_basic(): test.TestOutcome {
+    return test.assert_true((0).digits() == 1 && (7).digits() == 1 && (1000).digits() == 4);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i32");
     r = r.it("abs negative",        test_abs_neg());
@@ -91,5 +115,10 @@ function main(): i32 {
     r = r.it("is_in_range",         test_is_in_range());
     r = r.it("is_between",          test_is_between());
     r = r.it("min",                 test_min());
+    r = r.it("digits basic",        test_digits_basic());
+    r = r.it("digits i32::MIN",     test_digits_min());
+    r = r.it("sum_of_digits MIN",   test_sum_of_digits_min());
+    r = r.it("has_digit MIN",       test_has_digit_min());
+    r = r.it("reverse_digits MIN",  test_reverse_digits_min());
     return r.finish();
 }

@@ -94,8 +94,8 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 15") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 15 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 16") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 16 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
@@ -290,8 +290,10 @@ func TestRunnerIntExamplePasses(t *testing.T) {
 // receiver-method helpers — abs / signum, byte classification (is_digit /
 // is_alpha / hex_value / to_lower / to_upper), number-shape helpers
 // (reverse_digits / is_palindrome / sum_of_digits / factorial / is_prime /
-// is_perfect_square / is_multiple_of) and the range checks (is_in_range
-// half-open vs is_between inclusive). Passing suite → exit 0.
+// is_perfect_square / is_multiple_of), the range checks (is_in_range
+// half-open vs is_between inclusive), and the i32::MIN digit-family edge
+// cases (#4390: digits / sum_of_digits / has_digit / reverse_digits no longer
+// silently zero when abs() can't represent the magnitude). Passing suite → exit 0.
 func TestRunnerI32ExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/i32_test.fern")
@@ -299,7 +301,7 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/i32", "# pass 19", "# fail 0", "1..19"} {
+	for _, w := range []string{"# Suite: std/i32", "# pass 24", "# fail 0", "1..24"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
