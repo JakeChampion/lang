@@ -21136,15 +21136,21 @@ function rc_consumed_drop_wired(t: string, structs: parser.StructDecl[], seen: s
 // consumed_params_of is the port of native computeConsumedParams
 // (internal/ir/rc_analysis.go, #4482 slice 2): the pointer-shaped
 // struct/tuple params REASSIGNED in the body that are promoted to
-// consumed-threading. The native paramVerdict ladder drops out of this
-// table's condition — the !string-array-free gate below already implies
-// not-owned-by-default (isOwnedByDefaultType requires string-array-free) —
-// so the effective port is:
+// consumed-threading. The native paramVerdict ladder mostly drops out of
+// this table's condition, so the effective port is:
 //   not `own`  AND  reassigned in body  AND  struct- or tuple-typed  AND
-//   NOT string/array-free  AND  deep-drop fully wired.
-// Documented deviation: native returns the empty table for TRMC'd functions;
-// the self-host has no TRMC (#4352), so a TRMC-shaped corpus case would pin
-// a divergence here.
+//   deep-drop fully wired.
+// A string/array-BEARING type is never owned-by-default, so promotion is
+// unconditional there (matches native exactly). A string/array-FREE type
+// is promoted by native only when borrow inference DEMOTED the param
+// (verdict Borrowed — the non-escaping case; the borrowed-param
+// over-release fix). The port has no cross-function escape analysis, so
+// it promotes every reassigned scalar struct/tuple param — matching
+// native for non-escaping params. Documented deviations: (a) a REASSIGNED
+// scalar param that ESCAPES is Owned on native (not promoted) but
+// promoted here — a corpus case with that shape would pin the gap;
+// (b) native returns the empty table for TRMC'd functions, which the
+// port doesn't model.
 pub function consumed_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var reassigned: string[] = body_assign_targets(fn.body);
@@ -21157,7 +21163,6 @@ pub function consumed_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[
             var is_tuple: boolean = p.type_name.len() > 1 && p.type_name[0] == 40;
             hit = is_struct || is_tuple;
         }
-        if (hit && rc_type_string_array_free(p.type_name, structs, [])) { hit = false; }
         if (hit && !rc_consumed_drop_wired(p.type_name, structs, [])) { hit = false; }
         if (hit) { out = out.append(p.name); }
         pi = pi + 1;

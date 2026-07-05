@@ -19,6 +19,10 @@ import "testing"
 var rcCorpus = []struct {
 	name string
 	src  string
+	// skipWasm names the tracking issue for a case whose wasm-backend rc
+	// accounting is known-imbalanced (pre-existing; the case still gates
+	// x86-64 + arm64). Empty = runs everywhere.
+	skipWasm string
 }{
 	{
 		// string[] whose elements alias a live local. Exercises the native
@@ -3614,6 +3618,109 @@ function main(): i32 {
     return bad + __rc_underflow_count();
 }`,
 	},
+	{
+		// Recursive `(T, Cur)` tuple reader threading a SCALAR-ONLY struct
+		// cursor with `c = c2;` in a loop. Borrow inference demotes the
+		// non-escaping `c` param; before the computeConsumedParams fix the
+		// reassignment's overwrite dec released the caller's reference, the
+		// caller's destructure-temp deep drop then freed the cursor box
+		// early, and the still-live aliases double-freed it — freelist
+		// corruption that crashed __fern_alloc at recursion depth 4.
+		// Scalar-only cursors were the exact gap: string/array-bearing ones
+		// (json.fern's __JsonParser) were already consumed-promoted.
+		// 3^5 = 243 per build.
+		name: "tuple_return_scalar_cursor_recursion",
+		src: `
+struct Leaf { x: i32 }
+struct Node { kids: T[] }
+type T = Leaf | Node;
+struct Cur { pos: i32 }
+function build(c: Cur, depth: i32): (T, Cur) {
+    if (depth == 0) {
+        return (Leaf { x: 1 }, Cur { pos: c.pos + 1 });
+    }
+    var kids: T[] = [];
+    var i: i32 = 0;
+    while (i < 3) {
+        var (k, c2) = build(c, depth - 1);
+        c = c2;
+        kids = kids.append(k);
+        i = i + 1;
+    }
+    return (Node { kids: kids }, Cur { pos: c.pos + 1 });
+}
+function count(t: T): i32 {
+    match (t) {
+        Leaf(l) => { return l.x; },
+        Node(n) => {
+            var s: i32 = 0;
+            var i: i32 = 0;
+            while (i < n.kids.len()) {
+                s = s + count(n.kids[i]);
+                i = i + 1;
+            }
+            return s;
+        }
+    }
+    return 0;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var (t, c2) = build(Cur { pos: 0 }, 5);
+        total = total + count(t);
+        r = r + 1;
+    }
+    return (total / 20) - 243 + __rc_underflow_count();
+}`,
+	},
+	{
+		// ARRAY-BEARING cursor struct (Par-shaped — the self-host parser's)
+		// threaded through `(value, cursor)` tuple returns. The param is
+		// consumed-promoted (it is reassigned) but borrow-taint keeps it
+		// out of freeEligible; the entry inc used to be freeEligible-gated
+		// too, so the reassignment's unconditional overwrite dec stole the
+		// caller's count on every call, and the caller's destructure-temp
+		// deep drop freed a cursor box that live bindings still referenced
+		// (the self-host modload fixpoint crashed in __fern_alloc this way).
+		name:     "tuple_return_arraybearing_cursor_threading",
+		skipWasm: "#4587: wasm-side consumed-param accounting for array-bearing cursors underflows (pre-existing; 286 on main, 256 after the entry-inc fix)",
+		src: `
+struct Tok { k: i32 }
+struct Par { toks: Tok[], pos: i32 }
+function (p: Par) advance(): Par {
+    return Par { toks: p.toks, pos: p.pos + 1 };
+}
+function parse_one(p: Par): (i32, Par) {
+    p = p.advance();
+    if (p.pos % 3 == 0) { return (2, p); }
+    p = p.advance();
+    return (1, p);
+}
+function parse_many(p: Par): (i32, Par) {
+    var n: i32 = 0;
+    var guard: i32 = 0;
+    while (guard < 200) {
+        var (s, p2) = parse_one(p);
+        p = p2;
+        n = n + s;
+        guard = guard + 1;
+    }
+    return (n, p);
+}
+function main(): i32 {
+    var t0: Tok[] = [Tok { k: 1 }, Tok { k: 2 }];
+    var total: i32 = 0;
+    var r: i32 = 0;
+    while (r < 30) {
+        var (n, pf) = parse_many(Par { toks: t0, pos: 0 });
+        total = total + n + pf.pos % 7;
+        r = r + 1;
+    }
+    return (total / 30) - 50 + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
@@ -3639,6 +3746,9 @@ func TestArm64RcCorrectnessCorpus(t *testing.T) {
 func TestWASMRcCorrectnessCorpus(t *testing.T) {
 	for _, c := range rcCorpus {
 		t.Run(c.name, func(t *testing.T) {
+			if c.skipWasm != "" {
+				t.Skip(c.skipWasm)
+			}
 			if got := runWasm(t, c.src); got != 0 {
 				t.Errorf("%s: got exit %d, want 0 (wrong value or rc over-release)", c.name, got)
 			}
