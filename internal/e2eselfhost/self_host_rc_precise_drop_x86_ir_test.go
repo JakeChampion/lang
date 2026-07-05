@@ -237,6 +237,20 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing: the RECIPIENT's enum value is an alias — the recipient walk
 		// rejects, fresh box, nothing double-frees. Value + detector 0.
 		{"struct-cross-no-reuse-aliased-enum-recipient-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var d = M { tag: 1, st: On(5) }; var u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } var e1: St = On(9); var c = M { tag: 2, st: e1 }; var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + u; }, Off => { r = 0; } } if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
+		// CROSS-TYPE class pairing (#4356 divergence 2): donor A and recipient B
+		// share only the box class (same field count, slot-uniform boxes); field
+		// kinds are position-SWAPPED, so the reuse arm's release must walk A's
+		// OWN layout (dec the old array at A's slot 1) before B's fields
+		// overwrite. A recipient-layout walk would rc_dec A's scalar n as a
+		// pointer — the detector/value pair pins the donor-layout walk.
+		{"struct-cross-type-class-pairing-value", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = B { ys: [7, 8, 9], m: 2 }; return c.ys[2] + c.m + u; }`, 24},
+		{"struct-cross-type-class-pairing-detector", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = B { ys: [7, 8, 9], m: 2 }; var s: i32 = c.ys[2] + c.m + u; if (s != 24) { return 99; } return __rc_underflow(); }`, 0},
+		// CROSS-TYPE corruption probe: a fresh array after the swapped-kind reuse
+		// reads back intact (the donor's old array freed exactly once, at the
+		// right slot; no scalar was mis-dec'd as a pointer).
+		{"struct-cross-type-corruption-detector", `struct A { n: i32, xs: i32[] } struct B { ys: i32[], m: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.xs[1]; var c = B { ys: [40, 2], m: 5 }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (u != 20) { return 90; } if (s != 66) { return 91; } if (c.ys[0] + c.ys[1] + c.m != 47) { return 92; } return __rc_underflow(); }`, 0},
+		// NON-firing: different field COUNTS = different box class — never paired.
+		{"struct-cross-no-reuse-class-mismatch-detector", `struct A { n: i32, xs: i32[] } struct C3 { a: i32, b: i32, cc: i32 } function main(): i32 { var d = A { n: 3, xs: [10, 20] }; var u: i32 = d.n + d.xs[0]; var c = C3 { a: 1, b: 2, cc: 3 }; var s: i32 = c.a + c.b + c.cc + u; if (s != 19) { return 99; } return __rc_underflow(); }`, 0},
 		// NON-firing cross case: the donor d is used AFTER the full construction
 		// (`d.x` in the return), so d is NOT dead at the construction — reuse must NOT
 		// fire and c gets a fresh box. Value still correct, detector 0.
