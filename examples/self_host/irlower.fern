@@ -17211,11 +17211,19 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                         if (slit.has_base) {
                             match (slit.base) {
                                 parser.ExprIdent(bid) => {
-                                    var ok: boolean = struct_fields_reusable(structs, slit.type_name)
+                                    var ok: boolean = struct_fields_reusable_cross(structs, slit.type_name)
                                         && donor_bind_type(body, bid.name, structs, fresh_ret) == slit.type_name
                                         && v.name != bid.name
                                         && util.index_of_str(body_assign_targets(body), bid.name) < 0
                                         && !name_escapes_outside_stmt(body, bid.name, i);
+                                    // Enum-field types (#4356 divergence 1): the base's
+                                    // enum values must be fresh ctors so the override
+                                    // release's flat dec is alias-free (rejects call-
+                                    // bound bases too — the strict-fresh registry does
+                                    // not constrain enum fields).
+                                    if (ok && struct_has_enum_field(structs, slit.type_name)) {
+                                        if (!donor_enum_fields_fresh(body, bid.name, structs)) { ok = false; }
+                                    }
                                     // No override value may reference d.
                                     if (ok) {
                                         var fj: i32 = 0;
@@ -17249,6 +17257,11 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                                                     parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
                                                     _ => { ok = false; }
                                                 }
+                                            } else if (is_enum_like_name(fkt, structs)) {
+                                                // An ENUM override value must be a fresh
+                                                // variant ctor of that enum (#4356), so the
+                                                // reused box solely owns the new payload box.
+                                                if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { ok = false; }
                                             }
                                             fk = fk + 1;
                                         }
@@ -17405,6 +17418,17 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
+                } else if (is_enum_like_name(rfty, st.structs)) {
+                    // ENUM override (#4356 divergence 1, self-overwrite family):
+                    // flat rc-gated box dec of the OLD value — sentinel guard-
+                    // skipped, sole-owned box frees (payloads leak, the exit
+                    // sweep's safe-leak model), aliased box just decs. The base's
+                    // enum values are fresh-ctor gated (donor_enum_fields_fresh),
+                    // so the freed box can never be a still-live alias.
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
                 }
                 rj = rj + 1;
             }
@@ -17435,7 +17459,7 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_load_local(dslot));
                     st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty)) {
+                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty) || is_enum_like_name(cfty, st.structs)) {
                         st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
