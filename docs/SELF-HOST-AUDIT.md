@@ -246,6 +246,16 @@ findings. Ranked by leverage.
   elements (the inner commas the scan must not split on), single-element tuples,
   out-of-range and negative indices, non-tuples, and a tuple-array `(a, b)[]`.
   Pinned by `tuple_elem_tag_run.fern` + `TestSelfHostTupleElemTag`.
+  _checker generic-arity slice landed:_ `count_type_args` (top-level type-arg
+  count of a `Name[A, B, …]` annotation, feeding the E019 struct-arity check) now
+  decodes via `parse_type_ref` (`args` / `is_tuple` / `array_depth`) instead of a
+  first-`[` + trailing-`]` window with a depth-tracking top-level-comma count. On
+  every non-array annotation the count matches the former scan exactly (incl.
+  depth-correct nesting: `Pair[Map[a, b], c]` → 2); arrays/tuples resolve to -1
+  (not a generic head — the former scan returned a garbage count on a trailing
+  `[]`, but that value only ever fed E019 on a struct's OWN generic head, never an
+  array, so the arity diagnostics are unchanged, confirmed by the fixpoints).
+  Pinned by `count_type_args_run.fern` + `TestSelfHostCountTypeArgs`.
   _Remaining:_ the genuine comma-depth type decoders are now migrated; what's left
   is lower-value or delicate — the unambiguous `[]`-suffix element-strips
   (`ft[0:len-2]` / `ty_spelling_is_array`; a trailing `[]` is a structurally
