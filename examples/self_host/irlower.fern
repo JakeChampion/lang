@@ -10384,8 +10384,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // `V([..])` would allocate a fresh box, defeating the reuse. A ragged enum
             // (differing variant box sizes) or any non-`V(args)` RHS falls through to the
             // free+alloc emit_enum_reclaim_store below (still leak-free).
+            // Gated with the reuse layer (#4350 §6.5): native's
+            // tryEnumReuseOverwrite sits behind RcReuseEnabled the same way;
+            // reuse-off falls through to emit_enum_reclaim_store's free+alloc
+            // (still leak-free), trading only the churn.
             var ere_ip: string = slot_enum_reassign_reclaim(s, slot);
-            if (ere_ip.len() > 0 && enum_all_variants_same_field_count(s.structs, ere_ip)) {
+            if (ere_ip.len() > 0 && enum_all_variants_same_field_count(s.structs, ere_ip) && !reuse_layer_disabled()) {
                 var ip: LowerState = emit_enum_inplace_reassign(a.value, slot, ere_ip, s);
                 if (ip.ok) { return ip; }
             }
@@ -13272,6 +13276,25 @@ function xblock_donor_for(pending: string[], recip: string): string {
     return "";
 }
 
+// reuse_layer_disabled: the #4350 §6.5 differential switch. When the
+// FERN_SELFHOST_NO_REUSE env var is "1" in the COMPILER's environment, every
+// donor-based box-reuse pairing (self-overwrite / cross-struct / cross-tuple /
+// enum-donor / enum-cross / in-arm) and the ENUMRE in-place reassign upgrade
+// are suppressed: constructions allocate fresh boxes, donors take their normal
+// frees (nothing is suppressed on their behalf), and the ENUMRE reassign falls
+// back to emit_enum_reclaim_store's free+alloc — mirroring native
+// ast.RcReuseEnabled=false. Reuse-on vs reuse-off must be OBSERVATIONALLY
+// IDENTICAL (the differential gate in self_host_reuse_differential_test.go
+// asserts it); OFF trades only alloc count / peak heap. Read per lower_block /
+// lower_func entry (an env scan — no allocation on the None path).
+pub function reuse_layer_disabled(): boolean {
+    match (env("FERN_SELFHOST_NO_REUSE")) {
+        Some(v) => { return v == "1"; },
+        None => { return false; }
+    }
+    return false;
+}
+
 // xblock_without returns `pending` with any entry for recipient `recip` removed.
 function xblock_without(pending: string[], recip: string): string[] {
     var out: string[] = [];
@@ -13288,9 +13311,14 @@ function xblock_without(pending: string[], recip: string): string[] {
 
 pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     var base: i32 = s.locals.len();
-    var so: ReuseSites = self_overwrite_reuse_sites(stmts, s.structs);
-    var xreuse: CrossReuseSites = cross_reuse_sites(stmts, s.structs);
-    var xtuple: CrossTupleReuseSites = cross_tuple_reuse_sites(stmts);
+    var so: ReuseSites = ReuseSites { idxs: [], bases: [] };
+    var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [] };
+    var xtuple: CrossTupleReuseSites = CrossTupleReuseSites { idxs: [], donors: [] };
+    if (!reuse_layer_disabled()) {
+        so = self_overwrite_reuse_sites(stmts, s.structs);
+        xreuse = cross_reuse_sites(stmts, s.structs);
+        xtuple = cross_tuple_reuse_sites(stmts);
+    }
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -19775,21 +19803,30 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
     var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns, borrowable_params);
+    // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
+    // donor-based pairing below stays EMPTY, so every construction allocates
+    // fresh and every donor keeps its normal free (the suppressions keyed on
+    // these site lists never fire). Observational behaviour must be identical
+    // either way — the differential gate asserts it.
+    var no_reuse: boolean = reuse_layer_disabled();
     // Struct in-place reuse (FBIP): the functional-update self-overwrite sites
     // where `var c = T { ...d, .. }` reuses d's box in place (see
     // self_overwrite_reuse_sites). Each such statement is lowered by
     // emit_self_overwrite_reuse instead of lower_stmt.
-    var reuse: ReuseSites = self_overwrite_reuse_sites(fn.body, structs);
+    var reuse: ReuseSites = ReuseSites { idxs: [], bases: [] };
+    if (!no_reuse) { reuse = self_overwrite_reuse_sites(fn.body, structs); }
     // Cross-statement full-construction reuse sites: `var c = T { ... }` reusing an
     // earlier dead same-type donor's box (see cross_reuse_sites). Disjoint from the
     // self-overwrite sites by construction (it skips those indices + donors).
-    var xreuse: CrossReuseSites = cross_reuse_sites(fn.body, structs);
+    var xreuse: CrossReuseSites = CrossReuseSites { idxs: [], donors: [] };
+    if (!no_reuse) { xreuse = cross_reuse_sites(fn.body, structs); }
     // Tuple cross-reuse (FBIP): `var c = (…)` reusing an earlier dead same-arity
     // donor tuple's box (see cross_tuple_reuse_sites). Structural pairing; the
     // constructor-element eligibility (tuple_lit_ctor_eligible) is checked at the
     // dispatch below, falling back to normal lowering if not met. Disjoint from the
     // struct / enum reuse sites (a tuple init is never a struct-lit / enum-ctor).
-    var xtuple: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
+    var xtuple: CrossTupleReuseSites = CrossTupleReuseSites { idxs: [], donors: [] };
+    if (!no_reuse) { xtuple = cross_tuple_reuse_sites(fn.body); }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
     // consumed by exactly one `match (x)` where x is single-owner and dead after
     // the match. The box is freed (dec + zero) right after its match statement —
@@ -19815,20 +19852,23 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
     // the donor's post-match free is SUPPRESSED below (the reuse consumes the box).
-    var edon: EnumDonorSites = enum_donor_reuse_sites(fn.body, structs, reuse, xreuse, enumfrees);
+    var edon: EnumDonorSites = EnumDonorSites { idxs: [], recips: [], donors: [] };
+    if (!no_reuse) { edon = enum_donor_reuse_sites(fn.body, structs, reuse, xreuse, enumfrees); }
     // In-arm consuming-match box reuse (FBIP): `var y = match (x) { ... }` where x is
     // a fresh, sole-owner, dead-after, non-escaping scalar enum and EVERY arm builds
     // a same-size scalar variant. x's box is reused in place to build y
     // (emit_inarm_match_reuse). No post-match free exists for an in-arm scrutinee, so
     // nothing to suppress; y owns the box on every path, freed once at its reclamation.
-    var inarm: InArmReuseSites = consumed_inarm_reuse_sites(fn.body, structs);
+    var inarm: InArmReuseSites = InArmReuseSites { idxs: [], donors: [] };
+    if (!no_reuse) { inarm = consumed_inarm_reuse_sites(fn.body, structs); }
     // General enum->enum cross-local box reuse (FBIP): a `var c = V([..])` array-
     // payload-enum construction reuses an earlier dead same-enum donor `a = W([..])`'s
     // box in place instead of allocating (see enum_cross_reuse_sites). The recipient is
     // lowered by emit_enum_cross_reuse; the donor's otherwise-earlier reclamation (via
     // rcenumfrees / the enum-rcpayload precise drop) is SUPPRESSED below so its box
     // survives to the reuse and is freed exactly once via c.
-    var ecross: EnumCrossSites = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon);
+    var ecross: EnumCrossSites = EnumCrossSites { idxs: [], donors: [], enums: [] };
+    if (!no_reuse) { ecross = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon); }
     // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
     // as a hole-passing loop instead of the recursive body — O(1) stack. The
     // emission is the complete body (its own return); everything below the
