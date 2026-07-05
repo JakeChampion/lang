@@ -21780,11 +21780,48 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                 } else {
                     var t: string = v.type_name;
                     if (t.len() == 0) {
-                        // minimal init inference: array / tuple / struct literals.
+                        // minimal init inference: array / tuple / struct literals,
+                        // enum variant ctors, and value-position IIFE matches
+                        // (typed by an arm's constructed-variant owner).
                         match (v.init) {
                             parser.ExprArray(_) => { t = "i32[]"; },
                             parser.ExprTuple(tu) => { t = "("; var z: i32 = 0; while (z < tu.elements.len()) { if (z > 0) { t = t + ", "; } t = t + "i32"; z = z + 1; } t = t + ")"; },
                             parser.ExprStructLit(sl) => { t = sl.type_name; },
+                            parser.ExprCall(cc) => {
+                                match (cc.callee) {
+                                    parser.ExprIdent(cid) => {
+                                        var en: string = variant_enum_owner(structs, cid.name);
+                                        if (en.len() > 0) { t = en; }
+                                    },
+                                    parser.ExprLambda(_) => {
+                                        // type from the first arm's CONSTRUCTED
+                                        // result (a same-enum ctor), not its
+                                        // pattern — a scalar-yield match stays
+                                        // untyped (native infers i32 there).
+                                        var iarms: parser.MatchArm[] = inarm_iife_match(v.init, structs);
+                                        if (iarms.len() > 0 && iarms[0].body.len() == 1) {
+                                            match (iarms[0].body[0]) {
+                                                parser.StmtReturn(ir0) => {
+                                                    match (ir0.value) {
+                                                        parser.ExprCall(rc0) => {
+                                                            match (rc0.callee) {
+                                                                parser.ExprIdent(rid0) => {
+                                                                    var en2: string = variant_enum_owner(structs, rid0.name);
+                                                                    if (en2.len() > 0) { t = en2; }
+                                                                },
+                                                                _ => {}
+                                                            }
+                                                        },
+                                                        _ => {}
+                                                    }
+                                                },
+                                                _ => {}
+                                            }
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            },
                             _ => {}
                         }
                     }
@@ -22616,6 +22653,52 @@ pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
     return out;
 }
 
+// --- consumingMatchReuse port (#4482, the last rcPlan table) -----------------
+//
+// Native's table (computeConsumingMatchReuse, #4475) marks the C2 pairing: an
+// `own` enum PARAM consumed by a statement `match` whose unguarded arm is
+// exactly `return Ctor(..)` of the same enum — those ctors take the scrutinee
+// box via the reuse token. The SELF-HOST's consuming-match reuse is the inarm
+// family (consumed_inarm_reuse_sites): a fresh sole-owner LOCAL consumed by a
+// value-position `var y = match (x) {..}` whose every arm constructs a
+// same-size variant. The two mechanisms are structurally different (own-param
+// statement match vs local IIFE match) — the diff pins the difference per
+// corpus case, documenting both gaps. Entries are the arm CTOR call
+// positions, matching native nodePos of the ctor *ast.Call.
+pub function consuming_match_reuse_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    if (reuse_layer_disabled()) { return out; }
+    var sites: InArmReuseSites = consumed_inarm_reuse_sites(fn.body, structs);
+    var i: i32 = 0;
+    while (i < sites.idxs.len()) {
+        match (fn.body[sites.idxs[i]]) {
+            parser.StmtVar(v) => {
+                var arms: parser.MatchArm[] = inarm_iife_match(v.init, structs);
+                var ai: i32 = 0;
+                while (ai < arms.len()) {
+                    if (arms[ai].body.len() == 1) {
+                        match (arms[ai].body[0]) {
+                            parser.StmtReturn(r) => {
+                                match (r.value) {
+                                    parser.ExprCall(c) => {
+                                        out = out.append(util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col));
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                    ai = ai + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
 // string `<` operator), used to sort the name groups in rc_plan_dump the same
 // way native's sort.Strings orders them.
@@ -22831,6 +22914,34 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
             if (co2 > 0) { head = head + ","; }
             head = head + rcs[co2];
             co2 = co2 + 1;
+        }
+        head = head + "\n";
+    }
+    // consumingMatchReuse (#4482 — after reuseConsumed, native dumpRcPlan's
+    // order): arm-ctor positions, string-sorted, comma-joined.
+    var cmx: string[] = consuming_match_reuse_of(fn, structs);
+    if (cmx.len() > 0) {
+        var cms: string[] = [];
+        var mi2: i32 = 0;
+        while (mi2 < cmx.len()) {
+            if (util.index_of_str(cms, cmx[mi2]) < 0) {
+                var at: i32 = 0;
+                while (at < cms.len() && rc_dump_str_lt(cms[at], cmx[mi2])) { at = at + 1; }
+                var ns: string[] = [];
+                var q: i32 = 0;
+                while (q < at) { ns = ns.append(cms[q]); q = q + 1; }
+                ns = ns.append(cmx[mi2]);
+                while (q < cms.len()) { ns = ns.append(cms[q]); q = q + 1; }
+                cms = ns;
+            }
+            mi2 = mi2 + 1;
+        }
+        head = head + "consumingMatchReuse: ";
+        var mo2: i32 = 0;
+        while (mo2 < cms.len()) {
+            if (mo2 > 0) { head = head + ","; }
+            head = head + cms[mo2];
+            mo2 = mo2 + 1;
         }
         head = head + "\n";
     }
