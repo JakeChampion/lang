@@ -17576,6 +17576,16 @@ struct CrossReuseSites { idxs: i32[], donors: string[], dtypes: string[] }
 // given the already-computed self-overwrite reuse sites and the set of donors
 // already consumed by earlier cross pairings. Returns "" if none is eligible.
 function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDecl[], k: i32, c_type: string, c_name: string, so_bases: string[], consumed: string[], fresh_ret: string[]): string {
+    // The full-body assign-target and escape walks are body-invariant, but
+    // whether any candidate needs them depends on the earlier cheap gates —
+    // compute each AT MOST once per call, lazily. (Recomputing them per donor
+    // candidate made whole-compiler emits quadratic in body size once string-
+    // bearing structs became reuse-eligible, spiking the self-compile's peak
+    // memory — the shard-OOM signature on the per-module modload test.)
+    var tgts: string[] = [];
+    var tgts_done: boolean = false;
+    var allesc: string[] = [];
+    var allesc_done: boolean = false;
     var i: i32 = 0;
     while (i < k) {
         match (body[i]) {
@@ -17594,7 +17604,8 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                     && util.index_of_str(consumed, dname) < 0;
                 if (elig) {
                     // never reassigned, never escapes anywhere in the body.
-                    if (util.index_of_str(body_assign_targets(body), dname) >= 0) { elig = false; }
+                    if (!tgts_done) { tgts = body_assign_targets(body); tgts_done = true; }
+                    if (util.index_of_str(tgts, dname) >= 0) { elig = false; }
                 }
                 if (elig && struct_has_enum_field(structs, dtype)) {
                     // The DONOR's enum values must be fresh ctors for the reuse
@@ -17604,7 +17615,7 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
                     if (!donor_enum_fields_fresh(body, dname, structs)) { elig = false; }
                 }
                 if (elig) {
-                    var allesc: string[] = walk_stmts_escapes(body, []);
+                    if (!allesc_done) { allesc = walk_stmts_escapes(body, []); allesc_done = true; }
                     if (util.index_of_str(allesc, dname) >= 0) { elig = false; }
                 }
                 if (elig) {
@@ -17947,6 +17958,12 @@ function fresh_tuple_lit_arity(body: parser.Stmt[], name: string): i32 {
 // Arity match alone suffices for box reuse (the box is `arity` uniform 8-byte
 // slots; d's original element TYPES are overwritten by c's, so are irrelevant).
 function cross_tuple_construction_donor(body: parser.Stmt[], k: i32, arity: i32, c_name: string, consumed: string[]): string {
+    // Same lazy at-most-once hoist of the body-invariant walks as
+    // cross_construction_donor (they were per-candidate — quadratic).
+    var tgts: string[] = [];
+    var tgts_done: boolean = false;
+    var allesc: string[] = [];
+    var allesc_done: boolean = false;
     var i: i32 = 0;
     while (i < k) {
         match (body[i]) {
@@ -17956,10 +17973,11 @@ function cross_tuple_construction_donor(body: parser.Stmt[], k: i32, arity: i32,
                     && fresh_tuple_lit_arity(body, dname) == arity
                     && util.index_of_str(consumed, dname) < 0;
                 if (elig) {
-                    if (util.index_of_str(body_assign_targets(body), dname) >= 0) { elig = false; }
+                    if (!tgts_done) { tgts = body_assign_targets(body); tgts_done = true; }
+                    if (util.index_of_str(tgts, dname) >= 0) { elig = false; }
                 }
                 if (elig) {
-                    var allesc: string[] = walk_stmts_escapes(body, []);
+                    if (!allesc_done) { allesc = walk_stmts_escapes(body, []); allesc_done = true; }
                     if (util.index_of_str(allesc, dname) >= 0) { elig = false; }
                 }
                 if (elig) {
