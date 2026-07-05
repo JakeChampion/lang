@@ -251,7 +251,12 @@ func TestSelfHostTryDeferIRArm64(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.main+"\n"), "-target", "arm64")
+			// -ir is explicit here: asm_ir_run's non-IR route runs the strict
+			// pre-codegen checker, which rejects the defer pass's `__defret =
+			// Ok(…)` rebind in any Result-returning defer function (E004, a
+			// pre-existing legacy-path gap noted on #4334) — defer+Result only
+			// compiles through the IR path on this driver.
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.main+"\n"), "-ir", "-target", "arm64")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
