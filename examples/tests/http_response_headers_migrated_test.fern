@@ -91,6 +91,22 @@ function test_duplicate_set_cookie_both_in_order(): test.TestOutcome {
         ["set-cookie: a=1", "set-cookie: b=2"]);
 }
 
+// ---- status-line reason phrases (#4381) ----
+
+// The serializer's reason table used to be a narrow duplicate of
+// http_status_text that only knew 13 codes, so a 429 / 502 shipped
+// the bogus phrase "Status". Now both share one table.
+function test_status_reason_for_extended_codes(): test.TestOutcome {
+    var wire: string = http.http_serialize_response(http.http_response_text(429, "slow"));
+    return test.assert_contains(wire, "429 Too Many Requests");
+}
+
+// An unknown code still gets the generic "Status" fallback.
+function test_status_reason_unknown_falls_back(): test.TestOutcome {
+    var wire: string = http.http_serialize_response(http.http_response_text(599, ""));
+    return test.assert_contains(wire, "599 Status");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP response headers (migrated)");
     r = r.it("user-set headers before auto block",
@@ -105,5 +121,9 @@ function main(): i32 {
              test_duplicate_set_cookie_via_append());
     r = r.it("duplicate Set-Cookie preserves order",
              test_duplicate_set_cookie_both_in_order());
+    r = r.it("status reason for extended codes",
+             test_status_reason_for_extended_codes());
+    r = r.it("unknown status falls back to Status",
+             test_status_reason_unknown_falls_back());
     return r.finish();
 }

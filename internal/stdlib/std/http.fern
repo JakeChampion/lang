@@ -171,21 +171,12 @@ pub function http_user_agent_is_bot(ua: string): boolean {
 // Returns the FIRST matching header; for multi-valued
 // headers callers need a richer parser.
 pub function http_header_value(block: string, key: string): Option[string] {
-    var lines: string[] = block.split("\r\n");
-    var n: i32 = lines.len();
-    var i: i32 = 0;
-    while (i < n) {
-        match (lines[i].split_once(":")) {
-            Some(p) => {
-                if (p.0.eq_ignore_ascii_case(key)) {
-                    return Some(p.1.trim());
-                }
-            },
-            None => { },
-        }
-        i = i + 1;
-    }
-    return None;
+    // Route through the same HeaderMap the request parser builds
+    // (`__parse_headers` → case-folded, line-anchored, first-match)
+    // instead of a parallel raw re-scan. One header model, one set
+    // of edge-case rules — no drift between "look a header up on a
+    // request" and "look one up on a raw block".
+    return __parse_headers(block).get(key);
 }
 
 // HTTP method + path string from a request line. Uses
@@ -370,25 +361,18 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
     }
 }
 
-// Standard HTTP/1.1 reason-phrase mapping for the few
-// status codes a typical handler returns. Falls back to
-// "Status" for unrecognised codes — the kernel doesn't care,
-// browsers display the status code as-is.
+// Reason phrase for the status line. Delegates to the public
+// `http_status_text` table (the single source of truth) rather
+// than keeping a second, narrower copy that drifted out of sync:
+// the old duplicate only knew 13 codes, so a 307 / 429 / 502
+// response serialized with the bogus phrase "Status" even though
+// `http_status_text` spelled it correctly. Unknown codes still
+// fall back to a generic phrase — the kernel doesn't care and
+// clients display the numeric code regardless.
 function __http_reason(code: i32): string {
-    if (code == 200) { return "OK"; }
-    if (code == 201) { return "Created"; }
-    if (code == 204) { return "No Content"; }
-    if (code == 301) { return "Moved Permanently"; }
-    if (code == 302) { return "Found"; }
-    if (code == 304) { return "Not Modified"; }
-    if (code == 400) { return "Bad Request"; }
-    if (code == 401) { return "Unauthorized"; }
-    if (code == 403) { return "Forbidden"; }
-    if (code == 404) { return "Not Found"; }
-    if (code == 405) { return "Method Not Allowed"; }
-    if (code == 500) { return "Internal Server Error"; }
-    if (code == 503) { return "Service Unavailable"; }
-    return "Status";
+    var text: string = http_status_text(code);
+    if (text.len() == 0) { return "Status"; }
+    return text;
 }
 
 // `http_serialize_response(resp)` builds the wire-format
