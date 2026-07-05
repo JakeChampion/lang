@@ -22248,6 +22248,148 @@ pub function move_sites_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): s
     return rc_ml_compute(fn, structs).sites;
 }
 
+// --- arraySetInc port (#4482, native computeArraySetIncs) --------------------
+//
+// Per `.with(i, v)` call: must the lowering rc-inc the RECEIVER before the
+// CoW (forcing a copy)? true when the receiver buffer may be read again or is
+// not solely ours: a borrowed param receiver (non-`own`, non-consumed — the
+// caller's buffer, same scoping cut as free_eligible_of), a projection
+// receiver (`a[0].with(..)` / `s.b.with(..)` / slice — the container still
+// owns the inner buffer), or a bare local read again after the call. false
+// (the in-place rc==1 fast path) for a reassign-to-self (`a = a.with(..)`),
+// a fresh non-projection receiver (call result), or a receiver at its last
+// use. Rendered as native nodePos of the CALL node + "=true"/"=false".
+
+// rc_asi_is_with: the ExprCall is a `.with(index, value)` method call; the
+// receiver is the callee FieldAccess's object.
+function rc_asi_is_with(c: parser.ExprCall): boolean {
+    if (c.args.len() != 2) { return false; }
+    match (c.callee) {
+        parser.ExprFieldAccess(fa) => { return fa.field == "with"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// rc_asi_collect: walk every expression under statement k appending each
+// `.with` call's dump entry ("line:col=true/false") to `out`. `self_name` is
+// the enclosing StmtAssign's ident target ("" elsewhere) — a receiver ident
+// equal to it at the assign's own RHS call is the reassign-to-self shape.
+function rc_asi_expr(e: parser.Expr, body: parser.Stmt[], k: i32, self_name: string, borrowed: string[], out: string[]): string[] {
+    var acc: string[] = out;
+    match (e) {
+        parser.ExprCall(c) => {
+            if (rc_asi_is_with(c)) {
+                match (c.callee) {
+                    parser.ExprFieldAccess(fa) => {
+                        var inc: boolean = false;
+                        var decided: boolean = false;
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => {
+                                if (util.index_of_str(borrowed, rid.name) >= 0) { inc = true; decided = true; }
+                                else if (rid.name == self_name) { inc = false; decided = true; }
+                                else {
+                                    // live after the call iff this is not the
+                                    // receiver name's last mention.
+                                    inc = !rc_ml_last_use(body, rid.name, k);
+                                    decided = true;
+                                }
+                            },
+                            parser.ExprIndex(_) => { inc = true; decided = true; },
+                            parser.ExprFieldAccess(_) => { inc = true; decided = true; },
+                            parser.ExprSlice(_) => { inc = true; decided = true; },
+                            _ => { inc = false; decided = true; }
+                        }
+                        if (decided) {
+                            var tag: string = "false";
+                            if (inc) { tag = "true"; }
+                            acc = acc.append(util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col) + "=" + tag);
+                        }
+                        acc = rc_asi_expr(fa.obj, body, k, "", borrowed, acc);
+                    },
+                    _ => {}
+                }
+            } else {
+                acc = rc_asi_expr(c.callee, body, k, "", borrowed, acc);
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = rc_asi_expr(c.args[i], body, k, "", borrowed, acc); i = i + 1; }
+        },
+        parser.ExprBinary(b) => { acc = rc_asi_expr(b.left, body, k, "", borrowed, acc); acc = rc_asi_expr(b.right, body, k, "", borrowed, acc); },
+        parser.ExprUnary(u) => { acc = rc_asi_expr(u.operand, body, k, "", borrowed, acc); },
+        parser.ExprIndex(ix) => { acc = rc_asi_expr(ix.array, body, k, "", borrowed, acc); acc = rc_asi_expr(ix.index, body, k, "", borrowed, acc); },
+        parser.ExprFieldAccess(fa2) => { acc = rc_asi_expr(fa2.obj, body, k, "", borrowed, acc); },
+        parser.ExprSlice(sl) => { acc = rc_asi_expr(sl.array, body, k, "", borrowed, acc); acc = rc_asi_expr(sl.start, body, k, "", borrowed, acc); acc = rc_asi_expr(sl.end, body, k, "", borrowed, acc); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { acc = rc_asi_expr(ar.elements[i], body, k, "", borrowed, acc); i = i + 1; }
+        },
+        parser.ExprTuple(tu) => {
+            var i: i32 = 0;
+            while (i < tu.elements.len()) { acc = rc_asi_expr(tu.elements[i], body, k, "", borrowed, acc); i = i + 1; }
+        },
+        parser.ExprStructLit(sl2) => {
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { acc = rc_asi_expr(sl2.field_values[i], body, k, "", borrowed, acc); i = i + 1; }
+            if (sl2.has_base) { acc = rc_asi_expr(sl2.base, body, k, "", borrowed, acc); }
+        },
+        parser.ExprLambda(lam) => { acc = rc_asi_stmts(lam.body, body, k, borrowed, acc); },
+        _ => {}
+    }
+    return acc;
+}
+
+function rc_asi_stmts(stmts: parser.Stmt[], body: parser.Stmt[], k: i32, borrowed: string[], out: string[]): string[] {
+    var acc: string[] = out;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { acc = rc_asi_expr(v.init, body, k, "", borrowed, acc); },
+            parser.StmtAssign(a) => { acc = rc_asi_expr(a.value, body, k, a.target, borrowed, acc); },
+            parser.StmtReturn(r) => { acc = rc_asi_expr(r.value, body, k, "", borrowed, acc); },
+            parser.StmtExpr(x) => { acc = rc_asi_expr(x.value, body, k, "", borrowed, acc); },
+            parser.StmtIf(f) => {
+                acc = rc_asi_expr(f.cond, body, k, "", borrowed, acc);
+                acc = rc_asi_stmts(f.then_body, body, k, borrowed, acc);
+                acc = rc_asi_stmts(f.else_body, body, k, borrowed, acc);
+            },
+            parser.StmtWhile(w) => { acc = rc_asi_expr(w.cond, body, k, "", borrowed, acc); acc = rc_asi_stmts(w.body, body, k, borrowed, acc); },
+            parser.StmtFor(fr) => { acc = rc_asi_expr(fr.iter, body, k, "", borrowed, acc); acc = rc_asi_stmts(fr.body, body, k, borrowed, acc); },
+            parser.StmtMatch(m) => {
+                acc = rc_asi_expr(m.scrutinee, body, k, "", borrowed, acc);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = rc_asi_stmts(m.arms[ai].body, body, k, borrowed, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// array_set_incs_of: the ported analysis — one "line:col=true/false" entry
+// per `.with` call in `fn`. The borrow cut matches free_eligible_of's: a
+// param is borrowed unless `own` or consumed-threaded.
+pub function array_set_incs_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    var consumed: string[] = consumed_params_of(fn, structs);
+    var borrowed: string[] = [];
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var p: parser.ParamDecl = fn.params[pi];
+        if (!p.own && util.index_of_str(consumed, p.name) < 0) { borrowed = borrowed.append(p.name); }
+        pi = pi + 1;
+    }
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        var one: parser.Stmt[] = [];
+        one = one.append(fn.body[k]);
+        out = rc_asi_stmts(one, fn.body, k, borrowed, out);
+        k = k + 1;
+    }
+    return out;
+}
+
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
 // string `<` operator), used to sort the name groups in rc_plan_dump the same
 // way native's sort.Strings orders them.
@@ -22382,6 +22524,34 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
             if (xo > 0) { head = head + ","; }
             head = head + mss[xo];
             xo = xo + 1;
+        }
+        head = head + "\n";
+    }
+    // arraySetInc (#4482 — after moveSites, native dumpRcPlan's order):
+    // "line:col=true/false" entries sorted as strings, comma-joined.
+    var asi: string[] = array_set_incs_of(fn, structs);
+    if (asi.len() > 0) {
+        var ass: string[] = [];
+        var ii: i32 = 0;
+        while (ii < asi.len()) {
+            if (util.index_of_str(ass, asi[ii]) < 0) {
+                var at: i32 = 0;
+                while (at < ass.len() && rc_dump_str_lt(ass[at], asi[ii])) { at = at + 1; }
+                var ns: string[] = [];
+                var q: i32 = 0;
+                while (q < at) { ns = ns.append(ass[q]); q = q + 1; }
+                ns = ns.append(asi[ii]);
+                while (q < ass.len()) { ns = ns.append(ass[q]); q = q + 1; }
+                ass = ns;
+            }
+            ii = ii + 1;
+        }
+        head = head + "arraySetInc: ";
+        var ao: i32 = 0;
+        while (ao < ass.len()) {
+            if (ao > 0) { head = head + ","; }
+            head = head + ass[ao];
+            ao = ao + 1;
         }
         head = head + "\n";
     }

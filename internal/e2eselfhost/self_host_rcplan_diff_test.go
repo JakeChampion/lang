@@ -54,10 +54,9 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
 	// The tables diffed per function; widened line-by-line as ports land
-	// (#4482). arraySetInc / reuseSources / consumingMatchReuse are NOT
-	// diffed yet — the self-host has no counterpart tables, and its dump
-	// omits the lines.
-	diffedTables := []string{"consumedParams", "freeEligible", "movedLocals", "moveSites", "preciseDrops"}
+	// (#4482). reuseSources / consumingMatchReuse are NOT diffed yet — the
+	// self-host has no counterpart tables, and its dump omits the lines.
+	diffedTables := []string{"arraySetInc", "consumedParams", "freeEligible", "movedLocals", "moveSites", "preciseDrops"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -241,6 +240,55 @@ function main(): i32 { return d(); }`,
 			anchor: map[string]map[string]string{"d": {"movedLocals": "t", "moveSites": "3:2"}},
 			diverge: map[string]map[string]divergence{
 				"d": {"freeEligible": {native: "__destruct_3_2,t,xs", selfhost: "t,xs"}},
+			},
+		},
+		{
+			// ARRAY-SET INC, live receiver: `a` is read again after the
+			// `.with`, so the CoW must inc (force-copy) — the buffer is not
+			// solely the result's.
+			// arraySetInc agrees exactly (call-node position convention
+			// matches). KNOWN preciseDrops placement divergence, same class
+			// as escape-and-call-returned: the self-host precise-drops the
+			// receiver at its last-use statement; native leaves it to the
+			// exit sweep. Both sound.
+			name: "arrayset-inc-live-receiver",
+			src: `function f(): i32 {
+	var a: i32[] = [1, 2];
+	var b: i32[] = a.with(0, 9);
+	return a[0] + b[0];
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"arraySetInc": "3:23=true"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "2=a"}},
+			},
+		},
+		{
+			// ARRAY-SET INC, reassign-to-self: `a = a.with(..)` overwrites the
+			// receiver with the result — the in-place rc==1 fast path (no inc).
+			name: "arrayset-inc-reassign-self",
+			src: `function g(): i32 {
+	var a: i32[] = [1, 2];
+	a = a.with(0, 9);
+	return a[0];
+}
+function main(): i32 { return g(); }`,
+			anchor: map[string]map[string]string{"g": {"arraySetInc": "3:12=false"}},
+		},
+		{
+			// ARRAY-SET INC, borrowed param receiver: the caller still owns
+			// the buffer, so the CoW must inc even at the last use.
+			// (main carries the same known self-host-only precise drop of its
+			// argument array at last use; native sweeps.)
+			name: "arrayset-inc-borrowed-param",
+			src: `function h(xs: i32[]): i32 {
+	var b: i32[] = xs.with(0, 9);
+	return b[0];
+}
+function main(): i32 { var a: i32[] = [1, 2]; return h(a); }`,
+			anchor: map[string]map[string]string{"h": {"arraySetInc": "2:24=true"}},
+			diverge: map[string]map[string]divergence{
+				"main": {"preciseDrops": {native: "", selfhost: "1=a"}},
 			},
 		},
 	}
