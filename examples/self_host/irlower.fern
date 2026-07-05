@@ -17553,13 +17553,19 @@ function tuple_lit_ctor_eligible(tup: parser.ExprTuple, s: LowerState): boolean 
     return true;
 }
 
-// emit_cross_tuple_reuse lowers `var c = (…)` as an IN-PLACE reuse of dead donor
-// d's tuple box: overwrite each element slot (op_tuple_set / _w, offset i*8) with
-// c's value at its element WIDTH (i64 lowers via lower_i64 + tuple_set_w(64,i64);
-// f64 via lower_expr + tuple_set_w(64,f64); i32 / pointer via lower_expr +
-// tuple_set — mirroring op_tuple_make_k), bind c to d's box, tag c's slot
-// (mark_tuple_elems), and zero d's slot so the exit sweep frees the box once (via
-// c) and decs a null for d.
+// emit_cross_tuple_reuse lowers `var c = (…)` as a runtime-guarded reuse of dead
+// donor d's tuple box (#4350 slice 3, the emit_cross_struct_reuse token shape).
+// `__fern_rc_is_unique(d)` selects a token, `__fern_alloc_reuse(token, n-1)` hands
+// back d's cap-n box when d is sole-owner or a fresh cap-n box when d is SHARED
+// (a static-escape-walk hole then degrades to a fresh construction + a donor dec
+// instead of corrupting a shared box). Each element is written into the result
+// box at its width (op_tuple_set / _w, mirroring op_tuple_make_k: i64 via
+// lower_i64 + tuple_set_w(64,i64); f64 via lower_expr + tuple_set_w(64,f64); i32 /
+// pointer via lower_expr + tuple_set), c is bound to it and tagged
+// (mark_tuple_elems), and d's slot is zeroed so the exit sweep frees the box once
+// (via c) and decs a null for d. Simpler than the struct twin: a tuple is
+// leak-mode (no old-element release on the reuse arm) and has no shape word (no
+// shape copy on the fresh arm — element 0 occupies slot 0).
 function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
@@ -17567,13 +17573,84 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
         parser.ExprTuple(tup) => {
             var st: LowerState = s;
             var n: i32 = tup.elements.len();
+            // Bind c up front (both guard arms store the result box there) and tag
+            // its element kinds. enc is derived in a pre-pass (elem_type_tag is a
+            // pure type query) so mark_tuple_elems can run before the guard, like
+            // the struct-cross path marks the type up front.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
             var enc: string = "";
+            var ei: i32 = 0;
+            while (ei < n) {
+                var etk: string = elem_type_tag(iife_leaf_value(tup.elements[ei]), st);
+                if (ei > 0) { enc = enc + ","; }
+                enc = enc + etk;
+                ei = ei + 1;
+            }
+            st = st.mark_tuple_elems(cslot, enc);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) tuple local.
+            // An ESCAPING recipient's box is owned by the container it moved into, so
+            // a prior-release would free a still-referenced box (a UAF). Runs before
+            // the guard: it reads only c's old slot + d's slot, both still untouched.
+            if (release_prior && slot_is_reclaimable_tuple(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // Runtime uniqueness guard (#4350 slice 3, the emit_cross_struct_reuse
+            // token shape): the static walk (cross_tuple_reuse_sites) proves d is
+            // sole-owner and DEAD here, so the element values below cannot reference
+            // d — the guard exists so a future hole in the walk degrades (fresh box)
+            // instead of corrupting (in-place write over a shared box).
+            //   reused = __fern_rc_is_unique(d); token = reused ? d : 0;
+            //   box    = __fern_alloc_reuse(token, n - 1)
+            // n-1 because __fern_alloc_reuse allocates cap = nfields+1 (a struct's
+            // shape word + fields), while a tuple box is cap = n (arity slots, NO
+            // shape word); passing n-1 yields the exact same cap-n arr-box a fresh
+            // op_tuple_make would, and the donor's cap-n box matches on the reuse arm.
+            var uname: string = "$txr_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$txr_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_end());
+            var bname: string = "$txr_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(n - 1));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Branch-specific box preparation. REUSE arm (box == d's box): NOTHING —
+            // a tuple is leak-mode (its element boxes are never reclaimed by the exit
+            // sweep), so d's old element values need no release before the overwrite;
+            // and a tuple has no shape word, so there is nothing to preserve. FRESH
+            // arm (d's box is SHARED; box is a new rc=1 block): release d's reference
+            // (rc >= 2 here, so the dec never frees) so a future escape-walk hole
+            // degrades instead of leaking. Every element is written below.
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            // Write every element into the result box at its width (mirroring
+            // op_tuple_make_k): i64 via lower_i64 + tuple_set_w(64,i64), f64 via
+            // lower_expr + tuple_set_w(64,f64), i32 / pointer via lower_expr +
+            // tuple_set. cross_tuple_reuse_sites guarantees no value references d.
             var i: i32 = 0;
             while (i < n) {
                 var tek: string = elem_type_tag(iife_leaf_value(tup.elements[i]), st);
-                if (i > 0) { enc = enc + ","; }
-                enc = enc + tek;
-                st = st.emit(ir.op_load_local(dslot));
+                st = st.emit(ir.op_load_local(bslot));
                 if (tek == "i64") { st = lower_i64(tup.elements[i], st); }
                 else { st = lower_expr(tup.elements[i], st); }
                 if (!st.ok) { return st; }
@@ -17582,20 +17659,14 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
                 else { st = st.emit(ir.op_tuple_set(i)); }
                 i = i + 1;
             }
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_tuple_elems(cslot, enc);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) tuple local.
-            // An ESCAPING recipient's box is owned by the container it moved into, so
-            // a prior-release would free a still-referenced box (a UAF); such a
-            // recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_tuple(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            // Bind c to the result box and zero d's slot: on the reuse arm the exit
+            // sweep frees the box once (via c) and decs a null for d; on the fresh
+            // arm d's reference was released above and the aliases own the old box.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }

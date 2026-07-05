@@ -128,15 +128,19 @@ self-compile already exercises it) and tested:
   `consumed_inarm_reuse_sites` / `emit_inarm_match_reuse` (consuming-match FBIP;
   native's `consumingReuseCtor`).
 - The in-place field stores (`op_struct_set`, `op_struct_set_shape`).
-- The runtime uniqueness guard **at the reuse site**: as of #4350 slice 1 the
-  functional-update self-overwrite family (`emit_self_overwrite_reuse`) emits
-  native's token shape — `__fern_rc_is_unique(d)` selects a token,
-  `__fern_alloc_reuse(token, nfields)` hands back d's block or a fresh one,
-  and a shared donor degrades to a fresh construction (carried fields copied
-  + rc-inc'd, d's reference dec'd) instead of corrupting. **The other four
-  emitter families (`cross`/`xtuple`/`enum-donor`/`inarm`) are still
-  unguarded** — their soundness rests on the syntactic escape walk alone
-  until their slices land (#4350).
+- The runtime uniqueness guard **at the reuse site**: the token shape —
+  `__fern_rc_is_unique(d)` selects a token, `__fern_alloc_reuse(token, nfields)`
+  hands back d's block or a fresh one, and a shared donor degrades to a fresh
+  construction instead of corrupting — has landed for three of the five emitter
+  families: **`emit_self_overwrite_reuse`** (#4350 slice 1; carried fields copied
+  + rc-inc'd, d's reference dec'd on the fresh arm), **`emit_cross_struct_reuse`**
+  (#4350 slice 2; old pointer fields released on the reuse arm, shape word copied
+  on the fresh arm), and **`emit_cross_tuple_reuse`** (#4350 slice 3; simpler —
+  leak-mode ⇒ no old-element release, no shape word ⇒ no shape copy, just the
+  donor dec; `nfields = arity - 1` since alloc_reuse reserves a struct shape
+  slot a tuple box lacks). **The remaining two families (`enum-donor`/`inarm`)
+  are still unguarded** — their soundness rests on the syntactic escape walk
+  alone until their slices land (#4350).
 - Tests: `internal/e2e/rc_heap_bump_general_reuse_test.go`,
   `rc_heap_bump_enum_reuse_test.go`, `rc_c2_consuming_reuse_test.go`.
 
@@ -214,9 +218,10 @@ staying green (the self-compile must remain byte-identical).
 ## 4. Risks & testing
 
 - **Memory corruption** is the dominant risk. Mitigations: (a) the runtime
-  `is_unique` guard makes a guarded reuse site degrade-safe — since #4350
-  slice 1 that covers the self-overwrite family; the remaining families are
-  static-walk-only until their #4350 slices land; (b) each slice ships a
+  `is_unique` guard makes a guarded reuse site degrade-safe — as of #4350
+  slices 1–3 that covers the self-overwrite, cross-struct, and cross-tuple
+  families; enum-donor and inarm remain static-walk-only until their #4350
+  slices land; (b) each slice ships a
   differential e2e that stresses alloc/drop/reuse churn (the native
   `*reuse*/main.fern` cases) and compares self-host output to the interpreter
   **byte-for-byte**; (c) **both fixpoint suites must still converge** — reuse
