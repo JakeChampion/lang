@@ -53,7 +53,7 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	// The tables diffed per function; widened line-by-line as ports land
 	// (#4482). movedLocals / moveSites / freeEligible etc. are NOT diffed yet
 	// — the self-host has no counterpart tables, and its dump omits the lines.
-	diffedTables := []string{"consumedParams", "preciseDrops"}
+	diffedTables := []string{"consumedParams", "freeEligible", "preciseDrops"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)

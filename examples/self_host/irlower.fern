@@ -21400,6 +21400,487 @@ pub function consumed_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[
     return out;
 }
 
+// --- freeEligible port (#4482, native computeFreeEligible) -------------------
+//
+// The borrow-aware free analysis: the set of locals (and own/consumed params)
+// whose every written value is freshly OWNED, so their dec sites may reclaim
+// at rc==0. Ported from internal/ir/rc_analysis.go:392 (post-#4399 shape) with
+// ONE scoping cut: native's param owned-by-default ladder (paramVerdict —
+// interprocedural escape summaries, TRMC sets, borrow inference) is NOT
+// ported; a param here is non-tainted only when `own` or consumed-threaded
+// (consumed_params_of). Divergences that cut produces are PINNED per-case in
+// TestSelfHostRcPlanDiff's diverge maps — the harness documents the gap.
+
+// rc_fe_taint adds name to the taint set if absent.
+function rc_fe_taint(tainted: string[], name: string): string[] {
+    if (util.index_of_str(tainted, name) >= 0) { return tainted; }
+    return tainted.append(name);
+}
+
+// rc_fe_ptr_type: the declared/inferred TYPE NAME is pointer-shaped (its
+// values live in heap boxes an alias could dangle on): arrays, strings,
+// tuples, Map, user structs / enums. Scalars (i32/u32/i64/f64/boolean/usize)
+// are not.
+function rc_fe_ptr_type(t: string, structs: parser.StructDecl[]): boolean {
+    if (t.len() == 0) { return false; }
+    if (is_array_type_name(t)) { return true; }
+    if (t == "string") { return true; }
+    if (t[0] == 40) { return true; }   // '(' tuple
+    if (t.len() >= 3 && t[0:3] == "Map") { return true; }
+    if (rc_struct_decl_index(structs, t) >= 0) { return true; }
+    if (rc_fe_is_enum_name(structs, t)) { return true; }
+    return false;
+}
+
+// rc_fe_is_enum_name: `t` names an enum (some variant decl carries it as its
+// enum_owner — the self-host has no standalone enum decl entry).
+function rc_fe_is_enum_name(structs: parser.StructDecl[], t: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == t) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// rc_fe_expr_type: best-effort type name of expression `e` for the pointer
+// gates (projection unwrap + cast source). Bare ident → its recorded local /
+// param type; index into T[] → T; field access → the field's decl type;
+// anything else → "" (not pointer-shaped, so the walk stops — conservative
+// toward NOT unwrapping, which over-taints nothing and under-taints only via
+// projections the corpus will surface).
+function rc_fe_expr_type(e: parser.Expr, types_n: string[], types_t: string[], structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var i: i32 = 0;
+            while (i < types_n.len()) {
+                if (types_n[i] == id.name) { return types_t[i]; }
+                i = i + 1;
+            }
+            return "";
+        },
+        parser.ExprIndex(ix) => {
+            var bt: string = rc_fe_expr_type(ix.array, types_n, types_t, structs);
+            if (is_array_type_name(bt)) { return bt[0:bt.len() - 2]; }
+            return "";
+        },
+        parser.ExprFieldAccess(fa) => {
+            var ot: string = rc_fe_expr_type(fa.obj, types_n, types_t, structs);
+            var si: i32 = rc_struct_decl_index(structs, ot);
+            if (si >= 0) {
+                var fi: i32 = 0;
+                while (fi < structs[si].fields.len()) {
+                    if (structs[si].fields[fi].name == fa.field) { return structs[si].fields[fi].type_name; }
+                    fi = fi + 1;
+                }
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// rc_fe_escape: the UNCOUNTED-sink taint walk (native `escape`): a bare ident
+// taints; a pointer-shaped index / field projection unwraps to its root; an
+// array slice unwraps (string slices copy — fresh owned — and do not).
+function rc_fe_escape(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return rc_fe_taint(tainted, id.name); },
+        parser.ExprIndex(ix) => {
+            if (rc_fe_ptr_type(rc_fe_expr_type(e, types_n, types_t, structs), structs)) {
+                return rc_fe_escape(ix.array, tainted, types_n, types_t, structs);
+            }
+            return tainted;
+        },
+        parser.ExprFieldAccess(fa) => {
+            if (rc_fe_ptr_type(rc_fe_expr_type(e, types_n, types_t, structs), structs)) {
+                return rc_fe_escape(fa.obj, tainted, types_n, types_t, structs);
+            }
+            return tainted;
+        },
+        parser.ExprSlice(sl) => {
+            if (rc_fe_expr_type(sl.array, types_n, types_t, structs) != "string") {
+                return rc_fe_escape(sl.array, tainted, types_n, types_t, structs);
+            }
+            return tainted;
+        },
+        _ => { return tainted; }
+    }
+    return tainted;
+}
+
+// rc_fe_escape_owned: the COUNTED-sink variant (native `escapeOwned`) — the
+// sink dups projections, so only a direct ident can strand an uncounted alias.
+function rc_fe_escape_owned(e: parser.Expr, tainted: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return rc_fe_taint(tainted, id.name); },
+        _ => { return tainted; }
+    }
+    return tainted;
+}
+
+// FeState threads the taint set + the assigns table (parallel an/av arrays —
+// a name may repeat) + the name->type table through the recursive sink walk.
+struct FeState { tainted: string[], an: string[], av: parser.Expr[], types_n: string[], types_t: string[] }
+
+// rc_fe_collect_types: record every declared local's (name, type) pair,
+// recursively. A destructure `var (a, b) = t` types each binding by splitting
+// t's tuple annotation positionally (best-effort: bare-ident RHS only).
+function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[]): FeState {
+    var st: FeState = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name.len() > 0 && v.name[0] == 40) {
+                    // destructure: names inside "(a, b)"; element types from the
+                    // RHS ident's recorded tuple type, split at top-level commas.
+                    var tt: string = rc_fe_expr_type(v.init, st.types_n, st.types_t, structs);
+                    var names: string[] = rc_fe_split_csv(v.name[1:v.name.len() - 1]);
+                    var tys: string[] = [];
+                    if (tt.len() > 2 && tt[0] == 40) { tys = rc_fe_split_csv(tt[1:tt.len() - 1]); }
+                    var d: i32 = 0;
+                    while (d < names.len()) {
+                        var dt: string = "";
+                        if (d < tys.len()) { dt = tys[d]; }
+                        st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(names[d]), types_t: st.types_t.append(dt) };
+                        d = d + 1;
+                    }
+                } else {
+                    var t: string = v.type_name;
+                    if (t.len() == 0) {
+                        // minimal init inference: array / tuple / struct literals.
+                        match (v.init) {
+                            parser.ExprArray(_) => { t = "i32[]"; },
+                            parser.ExprTuple(tu) => { t = "("; var z: i32 = 0; while (z < tu.elements.len()) { if (z > 0) { t = t + ", "; } t = t + "i32"; z = z + 1; } t = t + ")"; },
+                            parser.ExprStructLit(sl) => { t = sl.type_name; },
+                            _ => {}
+                        }
+                    }
+                    st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t) };
+                }
+            },
+            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs); st = rc_fe_collect_types(f.else_body, st, structs); },
+            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs); },
+            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { st = rc_fe_collect_types(m.arms[ai].body, st, structs); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return st;
+}
+
+// rc_fe_split_csv splits "a, b, c" at top-level commas (tuple-type aware:
+// nested parens / brackets don't split), trimming spaces.
+function rc_fe_split_csv(s: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= s.len()) {
+        var split: boolean = i == s.len();
+        if (!split) {
+            var c: i32 = s[i];
+            if (c == 40 || c == 91) { depth = depth + 1; }
+            if (c == 41 || c == 93) { depth = depth - 1; }
+            if (c == 44 && depth == 0) { split = true; }
+        }
+        if (split) {
+            var piece: string = s[start:i];
+            var a: i32 = 0;
+            while (a < piece.len() && piece[a] == 32) { a = a + 1; }
+            var b: i32 = piece.len();
+            while (b > a && piece[b - 1] == 32) { b = b - 1; }
+            if (b > a) { out = out.append(piece[a:b]); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// rc_fe_walk_expr: the sink walk over one expression (native's ast.Walk arms
+// for StructLit / TupleLit / variant ctors / casts), recursing into
+// subexpressions and IIFE lambda bodies (the self-host's value-position
+// if/match desugar). Method-call sinks (Map_set / push / with) are ported as
+// escape/escape_owned on their value arguments when they appear as
+// `.set(...)` / `.append(...)` / `.with(...)` method calls.
+function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[]): FeState {
+    var st: FeState = s;
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                st = FeState { tainted: rc_fe_escape_owned(sl.field_values[i], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                st = rc_fe_walk_expr(sl.field_values[i], st, structs);
+                i = i + 1;
+            }
+            if (sl.has_base) { st = rc_fe_walk_expr(sl.base, st, structs); }
+        },
+        parser.ExprTuple(tu) => {
+            var i: i32 = 0;
+            while (i < tu.elements.len()) {
+                st = FeState { tainted: rc_fe_escape_owned(tu.elements[i], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                st = rc_fe_walk_expr(tu.elements[i], st, structs);
+                i = i + 1;
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (variant_enum_owner(structs, id.name).len() > 0) {
+                        // Variant ctor: counted (escape_owned) when the enum's
+                        // payloads are the leak-safe rc-counted shape the
+                        // EnumRcPayloads migration covers; full escape otherwise.
+                        var en: string = variant_enum_owner(structs, id.name);
+                        var rcp: boolean = enum_all_variants_array_payload(structs, en);
+                        var i: i32 = 0;
+                        while (i < c.args.len()) {
+                            if (rcp) { st = FeState { tainted: rc_fe_escape_owned(c.args[i], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            else { st = FeState { tainted: rc_fe_escape(c.args[i], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            i = i + 1;
+                        }
+                    }
+                },
+                parser.ExprLambda(lam) => {
+                    // value-position if/match IIFE: walk the body inline.
+                    st = rc_fe_walk_stmts(lam.body, st, structs);
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // method-call sinks on the receiver object.
+                    if (fa.field == "set" && c.args.len() == 2) {
+                        st = FeState { tainted: rc_fe_escape(c.args[0], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                        st = FeState { tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                    }
+                    if ((fa.field == "append" || fa.field == "push") && c.args.len() == 1) {
+                        st = FeState { tainted: rc_fe_escape_owned(c.args[0], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                    }
+                    if (fa.field == "with" && c.args.len() == 2) {
+                        // element-type gate (native: rc-tracked pointer elements
+                        // counted, strings full-escape): approximate via the
+                        // receiver's element type.
+                        var rt: string = rc_fe_expr_type(fa.obj, st.types_n, st.types_t, structs);
+                        var et: string = "";
+                        if (is_array_type_name(rt)) { et = rt[0:rt.len() - 2]; }
+                        if (et == "string") { st = FeState { tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                        else { st = FeState { tainted: rc_fe_escape_owned(c.args[1], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                    }
+                },
+                _ => {}
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { st = rc_fe_walk_expr(c.args[ai], st, structs); ai = ai + 1; }
+        },
+        parser.ExprBinary(b) => { st = rc_fe_walk_expr(b.left, st, structs); st = rc_fe_walk_expr(b.right, st, structs); },
+        parser.ExprUnary(u) => {
+            // `expr as T` desugars to unary op "as_<T>": a pointer-shaped
+            // operand cast to a non-pointer target escapes (raw address).
+            if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                var target: string = u.op[3:u.op.len()];
+                if (!rc_fe_ptr_type(target, structs) && rc_fe_ptr_type(rc_fe_expr_type(u.operand, st.types_n, st.types_t, structs), structs)) {
+                    st = FeState { tainted: rc_fe_escape(u.operand, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                }
+            }
+            st = rc_fe_walk_expr(u.operand, st, structs);
+        },
+        parser.ExprIndex(ix) => { st = rc_fe_walk_expr(ix.array, st, structs); st = rc_fe_walk_expr(ix.index, st, structs); },
+        parser.ExprFieldAccess(fa) => { st = rc_fe_walk_expr(fa.obj, st, structs); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { st = rc_fe_walk_expr(ar.elements[i], st, structs); i = i + 1; }
+        },
+        _ => {}
+    }
+    return st;
+}
+
+// rc_fe_walk_stmts: the statement-level sink walk — records assigns, taints
+// binding forms, recurses into nested blocks and value expressions.
+function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[]): FeState {
+    var st: FeState = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                // A destructure's bindings are counted owners (each extracted
+                // element is dup'd) — neither tainted nor recorded as assigns.
+                if (!(v.name.len() > 0 && v.name[0] == 40)) {
+                    st = FeState { tainted: st.tainted, an: st.an.append(v.name), av: st.av.append(v.init), types_n: st.types_n, types_t: st.types_t };
+                }
+                st = rc_fe_walk_expr(v.init, st, structs);
+            },
+            parser.StmtAssign(a) => {
+                st = FeState { tainted: st.tainted, an: st.an.append(a.target), av: st.av.append(a.value), types_n: st.types_n, types_t: st.types_t };
+                st = rc_fe_walk_expr(a.value, st, structs);
+            },
+            parser.StmtIf(f) => {
+                st = rc_fe_walk_expr(f.cond, st, structs);
+                st = rc_fe_walk_stmts(f.then_body, st, structs);
+                st = rc_fe_walk_stmts(f.else_body, st, structs);
+            },
+            parser.StmtWhile(w) => { st = rc_fe_walk_expr(w.cond, st, structs); st = rc_fe_walk_stmts(w.body, st, structs); },
+            parser.StmtFor(fr) => {
+                // for-in bindings alias the iterated container — tainted.
+                var names: string[] = rc_fe_split_csv(fr.var_name);
+                var d: i32 = 0;
+                while (d < names.len()) { st = FeState { tainted: rc_fe_taint(st.tainted, names[d]), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; d = d + 1; }
+                st = rc_fe_walk_expr(fr.iter, st, structs);
+                st = rc_fe_walk_stmts(fr.body, st, structs);
+            },
+            parser.StmtMatch(m) => {
+                st = rc_fe_walk_expr(m.scrutinee, st, structs);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    match (m.arms[ai].pattern) {
+                        parser.PatVariant(pv) => {
+                            // arm bindings alias enum payloads with no dup —
+                            // tainted (no consuming-bindings port yet).
+                            if (pv.binding.len() > 0 && pv.binding != "_") { st = FeState { tainted: rc_fe_taint(st.tainted, pv.binding), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            var xb: i32 = 0;
+                            while (xb < pv.extra_bindings.len()) {
+                                if (pv.extra_bindings[xb] != "_") { st = FeState { tainted: rc_fe_taint(st.tainted, pv.extra_bindings[xb]), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                                xb = xb + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                    st = rc_fe_walk_stmts(m.arms[ai].body, st, structs);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtReturn(r) => { st = rc_fe_walk_expr(r.value, st, structs); },
+            parser.StmtExpr(x) => { st = rc_fe_walk_expr(x.value, st, structs); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return st;
+}
+
+// rc_fe_rhs_tainted: native rhsTainted — whether the value of `e` may alias a
+// borrowed (tainted) value. Fresh constructions / literals / string concats /
+// string slices are owned; ident reads the taint set; projections and array
+// slices are tainted; calls are owned unless the receiver or any arg is
+// tainted; unknown shapes default tainted.
+function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return false; },
+        parser.ExprStructLit(_) => { return false; },
+        parser.ExprTuple(_) => { return false; },
+        parser.ExprIdent(id) => { return util.index_of_str(tainted, id.name) >= 0; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprFieldAccess(_) => { return true; },
+        parser.ExprIndex(_) => { return true; },
+        parser.ExprSlice(sl) => {
+            if (rc_fe_expr_type(sl.array, types_n, types_t, structs) == "string") { return false; }
+            return true;
+        },
+        parser.ExprBinary(b) => {
+            // string concat copies into a fresh owned buffer; other binaries
+            // keep the conservative tainted default.
+            if (b.op == "+" && (rc_fe_expr_type(b.left, types_n, types_t, structs) == "string" || rc_fe_expr_type(b.right, types_n, types_t, structs) == "string")) { return false; }
+            match (b.left) { parser.ExprString(_) => { return false; }, _ => {} }
+            match (b.right) { parser.ExprString(_) => { return false; }, _ => {} }
+            return true;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    // method call: aliases the receiver only.
+                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs);
+                },
+                _ => {}
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (rc_fe_rhs_tainted(c.args[i], tainted, types_n, types_t, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
+// freeEligible locals + own/consumed params for `fn`.
+pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
+    // param types recorded first (projection unwrap + destructure typing).
+    var consumed: string[] = consumed_params_of(fn, structs);
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var p: parser.ParamDecl = fn.params[pi];
+        st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(p.name), types_t: st.types_t.append(p.type_name) };
+        // taint seed: every param that is neither `own` nor consumed-threaded.
+        // (native's owned-by-default paramVerdict ladder is not ported — the
+        // scoping cut documented at the top of this section.)
+        if (!p.own && util.index_of_str(consumed, p.name) < 0) {
+            st = FeState { tainted: rc_fe_taint(st.tainted, p.name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+        }
+        pi = pi + 1;
+    }
+    st = rc_fe_collect_types(fn.body, st, structs);
+    st = rc_fe_walk_stmts(fn.body, st, structs);
+    // fixpoint: forward taint via rhs, backward via bare-ident aliasing.
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var i: i32 = 0;
+        while (i < st.an.len()) {
+            var name: string = st.an[i];
+            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs)) {
+                st = FeState { tainted: st.tainted.append(name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                changed = true;
+            }
+            if (util.index_of_str(st.tainted, name) >= 0) {
+                match (st.av[i]) {
+                    parser.ExprIdent(src) => {
+                        if (util.index_of_str(st.tainted, src.name) < 0) {
+                            st = FeState { tainted: st.tainted.append(src.name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                            changed = true;
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            i = i + 1;
+        }
+    }
+    // eligibility: untainted locals / own+consumed params of reclaimable type.
+    var out: string[] = [];
+    var pn: string[] = [];
+    var qi: i32 = 0;
+    while (qi < fn.params.len()) { pn = pn.append(fn.params[qi].name); qi = qi + 1; }
+    var ti: i32 = 0;
+    while (ti < st.types_n.len()) {
+        var nm: string = st.types_n[ti];
+        var t: string = st.types_t[ti];
+        var is_param: boolean = util.index_of_str(pn, nm) >= 0;
+        var dup: boolean = util.index_of_str(out, nm) >= 0;
+        if (!dup && util.index_of_str(st.tainted, nm) < 0) {
+            var ok: boolean = false;
+            if (is_array_type_name(t)) { ok = true; }
+            else if (t.len() > 0 && t[0] == 40) { ok = true; }                         // tuple
+            else if (t.len() >= 3 && t[0:3] == "Map") { ok = true; }
+            else if (rc_struct_decl_index(structs, t) >= 0) { ok = true; }             // user struct
+            else if (rc_fe_is_enum_name(structs, t)) { ok = true; }
+            else if (t == "string" && !is_param) { ok = true; }                        // locals on every ptrW
+            if (ok) { out = out.append(nm); }
+        }
+        ti = ti + 1;
+    }
+    return out;
+}
+
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
 // string `<` operator), used to sort the name groups in rc_plan_dump the same
 // way native's sort.Strings orders them.
@@ -21453,6 +21934,32 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
             if (co > 0) { head = head + ","; }
             head = head + sorted[co];
             co = co + 1;
+        }
+        head = head + "\n";
+    }
+    // freeEligible (#4482 — between consumedParams and preciseDrops, matching
+    // native dumpRcPlan's line order): name-sorted, comma-joined.
+    var fe: string[] = free_eligible_of(fn, structs);
+    if (fe.len() > 0) {
+        var fes: string[] = [];
+        var fi: i32 = 0;
+        while (fi < fe.len()) {
+            var at: i32 = 0;
+            while (at < fes.len() && rc_dump_str_lt(fes[at], fe[fi])) { at = at + 1; }
+            var ns: string[] = [];
+            var q: i32 = 0;
+            while (q < at) { ns = ns.append(fes[q]); q = q + 1; }
+            ns = ns.append(fe[fi]);
+            while (q < fes.len()) { ns = ns.append(fes[q]); q = q + 1; }
+            fes = ns;
+            fi = fi + 1;
+        }
+        head = head + "freeEligible: ";
+        var fo: i32 = 0;
+        while (fo < fes.len()) {
+            if (fo > 0) { head = head + ","; }
+            head = head + fes[fo];
+            fo = fo + 1;
         }
         head = head + "\n";
     }
