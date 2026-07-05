@@ -533,6 +533,26 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/cli_test.fern` covers std/cli's spec-driven argument
+// parser (#4385 item 1): valued options in --long V / --long=V / -short V
+// forms, boolean flags, positional operands, the `--` terminator, the
+// value_or default, the error paths (unknown option / missing value /
+// value on a bool), and auto-usage. This is the interp oracle; std/cli
+// also rides the self-host IR differential (selfHostStdTestCases).
+func TestRunnerCliExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/cli_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/cli", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/option_combinators_test.fern` covers the std/option
 // COMBINATOR surface (distinct from option_and_set_ops_test, which covers the
 // std/test Option assertion helpers) — is_some / is_none / unwrap_or /
