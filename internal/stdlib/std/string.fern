@@ -387,10 +387,13 @@ pub function (s: string) is_valid_identifier(): boolean {
 // leading-zero check; "0.0.0.0" / "255.255.255.255" / common
 // shapes all pass.
 //
-// Octet parse is a manual digit-walk rather than parse_int —
-// parse_int uses i64 internally and hits the native
-// i64-comparison-across-i32-boundary bug for small positive
-// inputs (returns None on arm64 / x86-64 for "127").
+// Octet parse is a manual digit-walk rather than parse_int: it
+// accepts ONLY a run of 1..3 ASCII digits, so a leading sign
+// ("+1" / "-1"), embedded whitespace, or an empty octet is
+// rejected — the strict shape an IPv4 octet needs (parse_int
+// would happily read "+1" / "-1" as 1). (An earlier version of
+// this note blamed a since-fixed parse_int i64-comparison bug;
+// parse_int("127") returns Some(127) on every backend today.)
 pub function (s: string) is_ipv4(): boolean {
     var parts: string[] = s.split(".");
     if (parts.len() != 4) { return false; }
