@@ -2996,8 +2996,15 @@ function parse_stmt(p: Par): StmtResult {
             var ilpat: PatternResult = parse_pattern(p);
             p = ilpat.par;
             if (p.peek_punct() == "=") { p = p.advance(); }
-            var ilscrut: ExprResult = parse_expr(p);
-            p = ilscrut.par;
+            // The source expression is followed directly by the then-block's
+            // `{`, so struct-literal parsing must be suppressed while reading
+            // it (native sets p.noStructLit here) — otherwise a bare-ident
+            // source whose then-block starts with `}`, `...`, or `IDENT :`
+            // (e.g. a labeled loop) is swallowed as `ident { … }` (#4339
+            // item 4). Same save/restore shape as the for-in iterable.
+            var il_saved: boolean = p.no_struct;
+            var ilscrut: ExprResult = parse_expr(p.with_no_struct(true));
+            p = (ilscrut.par).with_no_struct(il_saved);
             var ilthen: BlockResult = parse_block(p);
             p = ilthen.par;
             var ilelse: Stmt[] = [];
