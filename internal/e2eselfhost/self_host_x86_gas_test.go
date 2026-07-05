@@ -245,6 +245,15 @@ function main(): i32 {
     var n3: i64 = x86_gas_atoi64("-5");
     var ref3: i64 = 0 - 5;
     if (n3 != ref3) { return 23; }
+    // exponent parsing (#4342): the pre-fix parser stopped at the 'e',
+    // so a spliced-text .double operand like 1e3 mis-assembled off by the
+    // whole power of ten.
+    var fe: f64 = x86_gas_parse_f64("1e3");
+    if (fe < 999.9 || fe > 1000.1) { return 24; }
+    var fs: f64 = x86_gas_parse_f64("1.5e-2");
+    if (fs < 0.0149 || fs > 0.0151) { return 25; }
+    var fm: f64 = x86_gas_parse_f64("-2.5e+2");
+    if (fm < (0.0 - 250.1) || fm > (0.0 - 249.9)) { return 26; }
     return 0;
 }
 `
