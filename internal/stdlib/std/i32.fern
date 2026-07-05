@@ -1,10 +1,9 @@
 // std/i32 — integer (i32) receiver methods.
 //
-// Methods are migrated here gradually from the auto-injected
-// magic prelude per docs/PRELUDE-TO-MODULES.md. Files declare
-// `import "std/i32";` to bring the methods into scope. During
-// the transition the prelude itself does the same import so
-// existing single-file programs keep working unchanged.
+// There is no prelude: a program sees these methods only after
+// it declares `import "std/i32";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5). Callers reference the free functions qualified
+// (`i32.<name>`) and the receiver methods bare (`n.abs()`).
 
 import "core/int";
 // std/i32's bodies dispatch (string) methods like `s.pad_start(
@@ -27,14 +26,17 @@ pub function (n: i32) abs(): i32 {
     }
     return n;
 }
-// narrowing). Multibyte UTF-8 sequences pass through as
+// ASCII byte predicates — `is_digit` / `is_alpha` / `is_alnum` /
+// `is_ascii_white_space` classify a single byte (typically an
+// `s[i]` index into a string, i.e. a UTF-8 code unit, hence the
+// byte-range narrowing). Multibyte UTF-8 sequences pass through as
 // false for the alphabetic / digit predicates because their
 // leading bytes are all >= 0x80 — that matches Go's
 // `unicode/utf8` convention.
 //
 // Method-style chosen so call sites read as `s[i].is_digit()`
-// — matches the rest of the prelude's `to_string()` /
-// `is_empty()` shape on i32 / string receivers. `__is_ascii_ws`
+// — matches the rest of the i32 / string receiver surface's
+// `to_string()` / `is_empty()` shape. `__is_ascii_ws`
 // stays as a free function for the `trim()` body that pre-
 // dates this surface.
 
