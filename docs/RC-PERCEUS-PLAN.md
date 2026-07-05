@@ -1805,13 +1805,14 @@ cancellation — bounded, but separable, so it ships last.
     store data ptr. Two gates make it sound: **freeEligible** (OWNED,
     never a borrowed param — a borrow can be rc==1 while the caller
     still holds it) and the **runtime is_unique** check (an aliased p
-    copies, leaving the alias intact). Restricted to i32-class scalar
-    fields for now — pointer fields (per-field rc, deferred to 5d) and
-    wide/float scalars (need width-correct temps) fall back to the
-    normal fresh alloc. Gated on `ast.RcFreeEnabled`, so the flag-off
+    copies, leaving the alias intact). Originally restricted to i32-class scalar
+    fields; pointer fields joined in 5c, and wide/float scalars
+    (i64/u64/f32/f64) joined in the #4356 field-kind widening — the
+    reuse temps now carry a scratchType stamp so the backends size
+    them width-correctly. Only two-word strings remain excluded. Gated on `ast.RcFreeEnabled`, so the flag-off
     arena stays byte-identical. Tests: IR-level `TestStructReuse*`
-    (fires for the eligible shape; skips pointer-field / borrowed-param
-    / wide-scalar) + e2e `Test{X86_64,Arm64,WASM}StructReuse` churn /
+    (fires for the eligible shape incl. wide-scalar (#4356); skips
+    borrowed-param / string-field) + e2e `Test{X86_64,Arm64,WASM}StructReuse` churn /
     aliased / swap (value-correct + 0 over-releases). The
     `FixturesFreeMatchesNoFree` differential gate already asserts
     reuse-on == reuse-off byte-identical (reuse rides `RcFreeEnabled`).
@@ -2038,7 +2039,7 @@ reuse the argument. Sliced for risk:
     branch the box is fresh, so nothing is released and the alias keeps `D`'s
     box + fields. Simpler than the self-overwrite 5c/5f case (no carried-field
     elision — `D` dead means all fields replaced). Tests: IR
-    `TestGeneralReuse{FiresForPointerField,SkipsStringField,SkipsWideScalarField}`
+    `TestGeneralReuse{FiresForPointerField,FiresForWideScalarField,FiresForFloatField,SkipsStringField}`
     + e2e `…GeneralReuse` {`ptr_churn` (200-iter array-field reuse, old array
     freed each turn, 0 over-release), `ptr_aliased` (runtime is_unique decline
     — `keep` retains `D`'s box + array, `b` fresh-allocs)}. Full e2e
