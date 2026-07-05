@@ -50,6 +50,16 @@ var numericEdgeIRCases = []struct {
 	{"sat-inrange", `if ((42.7 as i32) == 42) { return 7; } return 1;`, 7},
 	{"sat64-huge", `var h = 1000000000000000000000.0; var r: i64 = h as i64; if (r == 9223372036854775807) { return 7; } return 1;`, 7},
 	{"sat64-nan", `var nan = 0.0 / 0.0; var r: i64 = nan as i64; if (r == 0) { return 7; } return 1;`, 7},
+	// #4332 (unsigned remainder) — f64 -> u32/u64 saturates over the UNSIGNED
+	// range: the signed lowering clamped `3e9 as u32` at INT32_MAX and
+	// `1e19 as u64` at INT64_MAX, and NaN/negative must still go to 0.
+	{"sat-u32-inrange", `var f = 3000000000.5; var u: u32 = f as u32; if (u == 3000000000u32) { return 7; } return 1;`, 7},
+	{"sat-u32-neg", `var f = 0.0 - 5.5; var u: u32 = f as u32; if (u == 0u32) { return 7; } return 1;`, 7},
+	{"sat-u32-big", `var f = 1000000000000.0; var u: u32 = f as u32; if (u == 4294967295u32) { return 7; } return 1;`, 7},
+	{"sat-u32-nan", `var nan = 0.0 / 0.0; var u: u32 = nan as u32; if (u == 0u32) { return 7; } return 1;`, 7},
+	{"sat-u64-huge", `var f = 10000000000000000000.0; var u: u64 = f as u64; if (u == 10000000000000000000u64) { return 7; } return 1;`, 7},
+	{"sat-u64-neg", `var f = 0.0 - 3.5; var u: u64 = f as u64; if (u == 0u64) { return 7; } return 1;`, 7},
+	{"sat-u64-nan", `var nan = 0.0 / 0.0; var u: u64 = nan as u64; if (u == 0u64) { return 7; } return 1;`, 7},
 }
 
 func numericEdgeIRSrc(mainBody string) string {

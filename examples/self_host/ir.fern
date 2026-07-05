@@ -169,6 +169,16 @@ pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
 // wasm, where i32 and i64 are different value types; the register backends
 // emit the same 64-bit-dest instruction for both.
 pub function op_f64_to_i64(): Op { return op0("f64_to_i64"); }
+// Unsigned truncation variants (#4332): the same kinds with `unsigned` set,
+// mirroring native's op.Unsigned. Saturation covers the full unsigned range —
+// NaN / negative -> 0, overflow -> u32::MAX / u64::MAX (arm64 fcvtzu, wasm
+// i32/i64.trunc_sat_f64_u, x86 the ported compare-and-clamp shape).
+pub function op_f64_to_u32(): Op {
+    return Op { kind_tag: kind_id("f64_to_i32"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
+}
+pub function op_f64_to_u64(): Op {
+    return Op { kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
+}
 
 // f64_bits / f64_from_bits — IEEE-754 bit reinterpret between an f64 and its
 // i64 bit pattern. On the register backends the 8-byte rt-stack slot already

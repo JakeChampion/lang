@@ -3487,6 +3487,44 @@ function ir_f2i_sat(width: i32, lb: string): string {
     return s64;
 }
 
+// ir_f2u_sat renders a saturating f64 -> UNSIGNED integer truncation (#4332)
+// — the unsigned sibling of ir_f2i_sat, mirroring native emitFloatToIntSat's
+// unsigned shapes: NaN / x < 0 -> 0, x >= 2^width -> all-ones. `lb` is a
+// per-op-unique label base. width is 32 or 64.
+function ir_f2u_sat(width: i32, lb: string): string {
+    if (width != 64) {
+        // u32: convert with 64-bit headroom (rax covers the whole u32 range
+        // exactly), then clamp against the ORIGINAL float: x < 0 / NaN -> 0
+        // (ucomisd sets CF on less-than AND on unordered, so one jb catches
+        // both), x >= 2^32 -> u32::MAX.
+        var s: string = "    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+        s = s + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jb " + lb + "_zero\n";
+        s = s + "    movabsq $0x41f0000000000000, %rcx\n    movq %rcx, %xmm1\n";   // 2^32 as f64
+        s = s + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_max\n    jmp " + lb + "_done\n";
+        s = s + lb + "_zero:\n    xorl %eax, %eax\n    jmp " + lb + "_done\n";
+        s = s + lb + "_max:\n    movl $0xffffffff, %eax\n";                        // zero-extends into rax
+        s = s + lb + "_done:\n    pushq %rax\n";
+        return s;
+    }
+    // u64: cvttsd2si only covers [0, 2^63); for x >= 2^63 convert x - 2^63 and
+    // set bit 63 back. The original x is saved in xmm2 (the subtraction
+    // mutates xmm0) and the edge clamps compare against it: x < 0 / NaN -> 0,
+    // x >= 2^64 -> u64::MAX.
+    var u: string = "    popq %rax\n    movq %rax, %xmm0\n    movaps %xmm0, %xmm2\n";
+    u = u + "    movabsq $0x43e0000000000000, %rcx\n    movq %rcx, %xmm1\n";       // 2^63 as f64
+    u = u + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_big\n";
+    u = u + "    cvttsd2si %xmm0, %rax\n    jmp " + lb + "_sat\n";
+    u = u + lb + "_big:\n    subsd %xmm1, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+    u = u + "    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, %rax\n";
+    u = u + lb + "_sat:\n    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm2\n    jb " + lb + "_zero\n";
+    u = u + "    movabsq $0x43f0000000000000, %rcx\n    movq %rcx, %xmm1\n";       // 2^64 as f64
+    u = u + "    ucomisd %xmm1, %xmm2\n    jae " + lb + "_umax\n    jmp " + lb + "_done\n";
+    u = u + lb + "_zero:\n    xorl %eax, %eax\n    jmp " + lb + "_done\n";
+    u = u + lb + "_umax:\n    movq $-1, %rax\n";
+    u = u + lb + "_done:\n    pushq %rax\n";
+    return u;
+}
+
 // br_target resolves a `br d` / `br_if d` at op index `i` to its label: a
 // loop scope -> its header label (the loop op's index); a block/if scope ->
 // the label at its matching `end`. Uses irlower's nesting scanners — no
@@ -4566,11 +4604,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // signed i32 -> f64 (cvtsi2sd); value rides the stack as bits.
             s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 12) {  // f64_to_i32
-            // Saturating f64 -> i32 (#4332); needs a per-op-unique label base.
-            s = s.write(ir_f2i_sat(32, lp + util.i32_to_string(i)));
+            // Saturating f64 -> i32 / u32 (#4332); needs a per-op-unique label base.
+            if (o.unsigned) { s = s.write(ir_f2u_sat(32, lp + util.i32_to_string(i))); }
+            else { s = s.write(ir_f2i_sat(32, lp + util.i32_to_string(i))); }
         } else if (o.kind_tag == 13) {  // f64_to_i64
-            // Saturating f64 -> i64 (#4332).
-            s = s.write(ir_f2i_sat(64, lp + util.i32_to_string(i)));
+            // Saturating f64 -> i64 / u64 (#4332).
+            if (o.unsigned) { s = s.write(ir_f2u_sat(64, lp + util.i32_to_string(i))); }
+            else { s = s.write(ir_f2i_sat(64, lp + util.i32_to_string(i))); }
         } else if (o.kind_tag == 16 || o.kind_tag == 17) {  // f64_bits, f64_from_bits
             // No-op reinterpret: the 8-byte rt-stack slot already holds the
             // IEEE-754 bit pattern, identical to the i64 bits.
