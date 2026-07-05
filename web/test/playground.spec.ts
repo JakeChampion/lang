@@ -14,7 +14,7 @@
 // local server, downloads + invokes the bombadil binary against this
 // spec.
 
-import { extract, always } from "@antithesishq/bombadil";
+import { extract, always, now, next } from "@antithesishq/bombadil";
 export * from "@antithesishq/bombadil/defaults";
 
 // ---- State extractors ----
@@ -89,28 +89,42 @@ export const problemCountMatchesItems = always(() => {
   return parsed === problemRealItemCount.current;
 });
 
-// `notBooted` is the pre-wasm guard used by the eventually-true
-// properties below. The HTML ships with `id="status"` carrying
-// "loading runtime…" and the runtime swaps it for "ready · …" once
-// wasm + LSP init finish, so the prefix is a stable boot sentinel.
-// Bombadil samples states from t=0 (before any script has run);
-// without this guard, properties about post-boot state would fire
-// on the initial HTML and report false violations.
+// `notBooted` is the pre-wasm guard used by the post-boot properties
+// below. The HTML ships with `id="status"` carrying "loading runtime…"
+// and the runtime swaps it for "ready · …" once the wasm runtime is up,
+// so the prefix is a stable boot sentinel. Bombadil samples states from
+// t=0 (before any script has run); without this guard, properties about
+// post-boot state would fire on the initial HTML and report false
+// violations.
+//
+// Since #4590 the boot runs in its own script, decoupled from the
+// esm.sh CodeMirror import: "ready" means the RUNTIME is up, NOT that
+// CodeMirror (and thus the editor + its button wiring) has loaded. So a
+// booted page can legitimately have no editor when the CDN is
+// unreachable — the properties below key off `editorMounted` for the
+// editor-dependent guarantees rather than off the boot sentinel alone.
 function notBooted(): boolean {
   return statusText.current.startsWith("loading");
 }
 
-// 4. Once mounted, the editor stays mounted. CodeMirror loads from a
-//    CDN; a dropped fetch (or a setSrc() that accidentally tears the
-//    EditorView down) would surface as the .cm-editor disappearing
-//    after we've seen it.
-export const editorStaysMountedAfterBoot = always(
-  () => editorMounted.current || notBooted()
+// 4. The editor never tears down once it has mounted. CodeMirror loads
+//    from a CDN and (post-#4590) is decoupled from the runtime boot, so
+//    the editor may legitimately never appear while #status reads
+//    "ready" — hence this is a MONOTONICITY property (mounted now ⟹
+//    still mounted next state), not "booted ⟹ mounted" (which #4590
+//    intentionally broke). A dropped fetch mid-session or a setSrc()
+//    that tore the EditorView down would surface as .cm-editor
+//    disappearing after we've seen it, violating this.
+export const editorNeverTearsDown = always(
+  now(() => editorMounted.current).implies(next(() => editorMounted.current))
 );
 
-// 5. After boot, the Run button is enabled. The notBooted() guard
-//    means the property is vacuously true while the runtime is
-//    still loading.
-export const runButtonReachableAfterBoot = always(
-  () => !runButtonDisabled.current || notBooted()
+// 5. The Run button is enabled once the editor is mounted AND the
+//    runtime has booted. The editor module's boot handler enables it and
+//    needs both, so guarding on `editorMounted` (a proxy for "the editor
+//    module ran") plus `notBooted()` keeps this from firing while the CDN
+//    is still in flight or unreachable — while still catching a button
+//    stuck disabled when everything is actually ready.
+export const runButtonEnabledWhenReady = always(
+  () => !runButtonDisabled.current || !editorMounted.current || notBooted()
 );
