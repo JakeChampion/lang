@@ -248,6 +248,18 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing: the base's enum field value is an ALIAS — donor_enum_fields_fresh
 		// rejects the base, normal has-base lowering, nothing double-frees.
 		{"struct-selfoverwrite-no-reuse-aliased-enum-base-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var e0: St = On(7); var d = M { tag: 1, st: e0 }; var c = M { ...d, st: On(9) }; var w: i32 = 0; match (e0) { On(v) => { w = v; }, Off => { w = 0; } } var r: i32 = 0; match (c.st) { On(v) => { r = v + c.tag + w; }, Off => { r = 0; } } if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
+		// STRING-field reuse (#4356 divergence 1): the donor's old fresh concat
+		// buffer is __fern_str_free'd on the reuse arm; values stay correct and
+		// nothing over-releases (str_free is rc-aware; literal .rodata data is
+		// heap-guard-skipped).
+		{"struct-string-field-reuse-value", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32 + d.id; var c = N { id: 2, name: "wxyz" + "q" }; return c.name.len() as i32 + c.id + u; }`, 11},
+		{"struct-string-field-reuse-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32 + d.id; var c = N { id: 2, name: "wxyz" + "q" }; var s: i32 = c.name.len() as i32 + c.id + u; if (s != 11) { return 99; } return __rc_underflow(); }`, 0},
+		// STRING corruption probe: a fresh array after the string-field reuse
+		// reads back intact and the recipient's string content is right.
+		{"struct-string-field-corruption-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32; var c = N { id: 2, name: "wxyz" + "q" }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (u != 3) { return 90; } if (s != 66) { return 91; } if (c.name[0] != 119) { return 92; } return __rc_underflow(); }`, 0},
+		// NON-firing: the donor's string field is a bare-ident ALIAS — rejected
+		// by the donor freshness gate; the aliased buffer stays valid.
+		{"struct-string-no-reuse-aliased-donor-detector", `struct N { id: i32, name: string } function main(): i32 { var nm: string = "ab" + "c"; var d = N { id: 1, name: nm }; var u: i32 = d.name.len() as i32 + d.id; var c = N { id: 2, name: "wxyz" + "q" }; var s: i32 = c.name.len() as i32 + c.id + u + nm.len() as i32; if (s != 14) { return 99; } return __rc_underflow(); }`, 0},
 		// CROSS-TYPE class pairing (#4356 divergence 2): donor A and recipient B
 		// share only the box class (same field count, slot-uniform boxes); field
 		// kinds are position-SWAPPED, so the reuse arm's release must walk A's

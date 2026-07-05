@@ -17043,7 +17043,7 @@ function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name:
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs)) { return false; }
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string") { return false; }
                 fi = fi + 1;
             }
             return true;
@@ -17095,7 +17095,10 @@ function fresh_struct_lit_type(body: parser.Stmt[], name: string): string {
 // `: T` annotation — it is both the donor-type source and the receiver-type
 // approximation is_fresh_ret_binding's method key needs. Returns "" when the
 // binding is neither form.
-// struct_has_enum_field: struct `name` declares at least one enum-typed field.
+// struct_has_enum_field: struct `name` declares at least one enum- or
+// string-typed field — the field kinds whose old-value release at a reuse
+// site is a flat/rc-aware free that admission must keep alias-free by
+// gating the DONOR's original values fresh (donor_enum_fields_fresh).
 function struct_has_enum_field(structs: parser.StructDecl[], name: string): boolean {
     var i: i32 = 0;
     while (i < structs.len()) {
@@ -17103,6 +17106,7 @@ function struct_has_enum_field(structs: parser.StructDecl[], name: string): bool
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 if (is_enum_like_name(structs[i].fields[fi].type_name, structs)) { return true; }
+                if (structs[i].fields[fi].type_name == "string") { return true; }
                 fi = fi + 1;
             }
             return false;
@@ -17133,6 +17137,18 @@ function donor_enum_fields_fresh(body: parser.Stmt[], name: string, structs: par
                                 var fkt: string = decl_field_type(structs, sl.type_name, sl.field_names[fk]);
                                 if (is_enum_like_name(fkt, structs)) {
                                     if (variant_ctor_enum_owner(sl.field_values[fk], structs) != fkt) { return false; }
+                                }
+                                if (fkt == "string") {
+                                    // A string field must be a literal or a fresh
+                                    // producer (#4355's rule), so the box solely owns
+                                    // it and the reuse-site __fern_str_free is
+                                    // alias-free.
+                                    var sfresh: boolean = false;
+                                    match (sl.field_values[fk]) {
+                                        parser.ExprString(_) => { sfresh = true; },
+                                        _ => { sfresh = str_local_binding_is_fresh(sl.field_values[fk]); }
+                                    }
+                                    if (!sfresh) { return false; }
                                 }
                                 fk = fk + 1;
                             }
@@ -17262,6 +17278,15 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                                                 // variant ctor of that enum (#4356), so the
                                                 // reused box solely owns the new payload box.
                                                 if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { ok = false; }
+                                            } else if (fkt == "string") {
+                                                // A STRING override must be a literal or a
+                                                // fresh producer (#4355's rule).
+                                                var sof: boolean = false;
+                                                match (slit.field_values[fk]) {
+                                                    parser.ExprString(_) => { sof = true; },
+                                                    _ => { sof = str_local_binding_is_fresh(slit.field_values[fk]); }
+                                                }
+                                                if (!sof) { ok = false; }
                                             }
                                             fk = fk + 1;
                                         }
@@ -17429,6 +17454,14 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
+                } else if (rfty == "string") {
+                    // STRING override (#4356): rc-aware __fern_str_free of the
+                    // OLD value; the base's string values are fresh-gated
+                    // (donor_enum_fields_fresh), so never a live alias.
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
+                    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+                    st = st.emit(ir.op_drop());
                 }
                 rj = rj + 1;
             }
@@ -17459,7 +17492,7 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_load_local(dslot));
                     st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty) || is_enum_like_name(cfty, st.structs)) {
+                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty) || is_enum_like_name(cfty, st.structs) || cfty == "string") {
                         st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
@@ -17641,6 +17674,16 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                                         }
                                     } else if (is_enum_like_name(fkt, structs)) {
                                         if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { ok = false; }
+                                    } else if (fkt == "string") {
+                                        // A STRING field value must be a literal or a
+                                        // fresh producer (#4355's rule) so the reused
+                                        // box solely owns the new buffer.
+                                        var csf: boolean = false;
+                                        match (slit.field_values[fk]) {
+                                            parser.ExprString(_) => { csf = true; },
+                                            _ => { csf = str_local_binding_is_fresh(slit.field_values[fk]); }
+                                        }
+                                        if (!csf) { ok = false; }
                                     }
                                     fk = fk + 1;
                                 }
@@ -17792,6 +17835,16 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (rty == "string") {
+                    // STRING field (#4356 divergence 1): rc-aware __fern_str_free
+                    // of the OLD value (box + heap data buffer; .rodata literal
+                    // data heap-guard-skipped; shared boxes just dec). Both
+                    // sides' string values are fresh-gated, so this can never
+                    // free a still-live alias.
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
+                    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
                     st = st.emit(ir.op_drop());
                 }
                 ri = ri + 1;
