@@ -2764,4 +2764,32 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			t.Errorf("expected E002 / Option[i32] diagnostic, got stderr:\n%s", stderr.String())
 		}
 	})
+
+	// Negative: parser failures must fail loudly. A reserved keyword used
+	// as a function name (`use`) used to parse into an empty-name stub and
+	// still emit asm (`__fn_:`), which could silently miscompile/hang.
+	// The driver must now exit non-zero with a parse diagnostic.
+	t.Run("rejects-parser-unknowns", func(t *testing.T) {
+		t.Parallel()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+		}
+		bad := "function use(src: i32[]): i32 { var i: i32 = 0; while (i < 3) { i = i + 1; } return i; } function main(): i32 { return 0; }"
+		cmd.Stdin = bytes.NewReader([]byte(bad))
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err == nil {
+			t.Fatalf("expected driver to reject parser unknowns, but it exited 0\n--- asm ---\n%s", out)
+		}
+		if strings.Contains(string(out), "__fn_:") {
+			t.Fatalf("expected no empty-name function emission, got asm:\n%s", out)
+		}
+		if !strings.Contains(stderr.String(), "P001") || !strings.Contains(stderr.String(), "malformed function declaration") {
+			t.Errorf("expected P001 parse diagnostic, got stderr:\n%s", stderr.String())
+		}
+	})
 }

@@ -8465,6 +8465,12 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
 }
 
 pub function emit_module(mod: parser.Module, darwin: boolean): string {
+    var parse_errs: string = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+        eprint(parse_errs);
+        exit(1);
+        return "";
+    }
     // Reset the global strbuf before any .write calls. Output is
     // accumulated there (amortised O(1) per append) and materialised
     // into a fresh string at the tail via strbuf_take().
