@@ -1708,7 +1708,12 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
                 var ct: string = u.op[3:u.op.len()];
                 if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
-                return ty_i32();
+                if (ct == "i32" || ct == "u32" || ct == "u8" || ct == "i64" || ct == "u64" || ct == "usize") { return ty_i32(); }
+                // `E as T` type ascription (non-numeric T): the value HAS
+                // type T. This arm used to return i32 for every non-float
+                // target, so `None as Option[i32]` read as i32 and the
+                // pre-IR check gate (#4327) rejected valid Option returns.
+                return ty_from_name(ct);
             }
             return ty_i32();
         },
@@ -2579,6 +2584,15 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             return ctx;
         },
         parser.StmtVar(v) => {
+            // Compiler-synthesized temps (`__defret`, `__dfa<N>`, `__env`, …)
+            // are declared as i32-0 by the defer/errdefer/closure desugars and
+            // then carry values of the enclosing function's own types (the
+            // defer return slot holds the return expression). Bind them
+            // unknown so the pre-codegen gate doesn't false-positive on
+            // desugared bodies (#4327).
+            if (v.name.len() >= 2 && v.name[0:2] == "__") {
+                return CheckCtx { st: ctx.st.bind_local_typed(v.name, ty_unknown()), errs: ctx.errs };
+            }
             var got: Ty = infer_expr_type(v.init, ctx.st);
             var bind_ty: Ty = got;
             if (v.type_name.len() > 0) {
