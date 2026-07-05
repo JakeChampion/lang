@@ -33,9 +33,10 @@ import (
 // the lambda hoisted via lift_lambdas), user enum matching
 // (struct_make tag + variant_is over the module's variant structs), and
 // array append / slice (arr_push / arr_push_owned / arr_slice / str_slice
-// via the injected __ssa_arr_push / __ssa_arr_slice helpers), and
-// string_from_bytes (str_from_bytes -> __ssa_arr_slice full-array copy),
-// with irlower's RC-helper calls stripped. Out-of-subset
+// via the injected __ssa_arr_push / __ssa_arr_slice helpers),
+// string_from_bytes (str_from_bytes -> __ssa_arr_slice full-array copy), and
+// i64 (const_i64 + width-aware i64 arithmetic / comparison + int_extend /
+// int_wrap casts), with irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
@@ -234,6 +235,18 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		// reusing the slice-15 helper. Checked by length and content equality.
 		{"strfrombytes", `function main(): i32 { var bs: u8[] = [72, 73]; var s: string = string_from_bytes(bs); return s.len(); }`},
 		{"strfrombyteseq", `function main(): i32 { var bs: u8[] = [65, 66, 67]; var s: string = string_from_bytes(bs); if (s == "ABC") { return 7; } return 0; }`},
+		// i64 over real irlower output (slice 17): a const_i64 comparison, i64
+		// addition and multiplication whose results OVERFLOW 32 bits (proving the
+		// arithmetic is genuinely 64-bit, not truncated), an i32->i64 widen
+		// (int_extend / sext) feeding an overflowing multiply, and an i64->i32
+		// truncate (int_wrap). Each is diffed against the interpreter; the
+		// comparison / truncation makes the 64-bit value observable in the i32
+		// exit code.
+		{"i64cmp", `function main(): i32 { if (3000000000 > 2000000000) { return 7; } return 0; }`},
+		{"i64add", `function main(): i32 { var x: i64 = 3000000000; var y: i64 = x + x; if (y > 5000000000) { return 9; } return 0; }`},
+		{"i64mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var p: i64 = a * b; if (p == 10000000000) { return 4; } return 0; }`},
+		{"i64extend", `function main(): i32 { var n: i32 = 2000000; var x: i64 = n as i64; var y: i64 = x * x; if (y > 3000000000000) { return 6; } return 0; }`},
+		{"i64wrap", `function main(): i32 { var x: i64 = 4294967338; var n: i32 = x as i32; return n; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

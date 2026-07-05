@@ -77,7 +77,15 @@
 //   - slice 16: `str_from_bytes` (string_from_bytes(bs)) ->
 //     `__ssa_arr_slice(bs, 0, bs.len())`, a full-array copy that IS the string
 //     (byte array and string share the layout), reusing the slice-15 helper.
-// Everything else (value-producing ifs, i64 width, f64 across calls / composite
+//   - slice 17: i64 — `const_i64` (source text -> movabsq / ldr =), i64
+//     arithmetic + comparison (the existing `binary` inst, now width-aware:
+//     compute_widths propagates 64-bit through arithmetic operands so the
+//     backends pick the q-suffixed / x-register ops and a comparison still
+//     yields i32), and the width casts `int_extend` (i32 -> i64 via
+//     sext_i64 / zext_i64) and `int_wrap` (i64 -> i32 truncate). i64 locals
+//     ride the value slots (already 8-byte) with width flowing through
+//     copy / phi. Values that don't fit i32 no longer bail.
+// Everything else (value-producing ifs, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
 // SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
@@ -330,12 +338,68 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             var fcv: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind: "const_float", result: fcv, args: [], imm: 0, str: op.str });
             stack = stack.append(fcv);
+        } else if (k == "const_i64") {
+            // A 64-bit integer literal, carried as source text (its value may not
+            // fit the i32 SInst.imm) → the SSA `const_i64` inst, which each
+            // backend splices straight into a full-width immediate (movabsq /
+            // ldr =). compute_widths marks the value 64-bit, so i64 arithmetic
+            // over it lowers to the q-suffixed / x-register ops. Accept a decimal
+            // (optionally signed) or 0x-hex literal — the two forms irlower emits
+            // — and bail on anything else so a caller falls back rather than
+            // splicing junk into the immediate.
+            var it: string = op.str;
+            var iok: boolean = it.len() > 0;
+            var istart: i32 = 0;
+            if (it.len() > 0 && it[0] == 45) { istart = 1; if (it.len() == 1) { iok = false; } }
+            var ishex: boolean = it.len() > istart + 1 && it[istart] == 48 && (it[istart + 1] == 120 || it[istart + 1] == 88);
+            var idi: i32 = istart;
+            if (ishex) { idi = istart + 2; if (it.len() <= idi) { iok = false; } }
+            while (idi < it.len()) {
+                var ic: i32 = it[idi];
+                var isdec: boolean = ic >= 48 && ic <= 57;
+                var ishexd: boolean = ishex && ((ic >= 97 && ic <= 102) || (ic >= 65 && ic <= 70));
+                if (!isdec && !ishexd) { iok = false; }
+                idi = idi + 1;
+            }
+            if (!iok) { ok = false; }
+            else {
+                var icv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_i64", result: icv, args: [], imm: 0, str: it });
+                stack = stack.append(icv);
+            }
         } else if (k == "int_cast") {
             // `x as i32` lowers to a sign-extend of the low 32 bits (movslq) —
             // identity for an i32 value, so the SSA value flows through with no
             // inst. The subword / unsigned casts (u8/u32), which
             // actually mask or re-extend, are out of the integer subset.
             if (op.str != "i32") { ok = false; }
+        } else if (k == "int_extend") {
+            // i32 -> i64 widen (`x as i64` / `as u64`): a unary that sign-extends
+            // (movslq / sxtw) a signed source or zero-extends (op.unsigned) an
+            // unsigned one. compute_widths marks sext_i64 / zext_i64 results
+            // 64-bit, so downstream i64 arithmetic uses the 64-bit ops.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var iea: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var iestr: string = "sext_i64";
+                if (op.unsigned) { iestr = "zext_i64"; }
+                var iev: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: iev, args: [iea], imm: 0, str: iestr });
+                stack = stack.append(iev);
+            }
+        } else if (k == "int_wrap") {
+            // i64 -> i32 truncate: keep the low 32 bits (the value's 32-bit home
+            // already holds them). A unary "wrap_i32" whose result compute_widths
+            // leaves 32-bit, mirroring build_func's narrowing `as i32`.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var iwa: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var iwv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: iwv, args: [iwa], imm: 0, str: "wrap_i32" });
+                stack = stack.append(iwv);
+            }
         } else if (k == "const_str") {
             // A string literal → the SSA const_str inst (materialised as a
             // [len, byte-per-word] block by ssa_x86 / eval_func). The value is

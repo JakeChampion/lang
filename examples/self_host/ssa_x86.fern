@@ -125,9 +125,40 @@ function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
     return 0;
 }
 
-// emit_binary emits a binary op assuming %eax = lhs and %ecx = rhs, leaving
-// the result in %eax.
-function emit_binary(op: string, out: string): string {
+// emit_binary emits a binary op assuming %eax/%rax = lhs and %ecx/%rcx = rhs
+// (per `width`), leaving the result in %eax/%rax. `width` is the OPERANDS'
+// width: 64 selects the q-suffixed instructions and 64-bit registers so i64
+// arithmetic doesn't truncate. A comparison still leaves an i32 0/1 in %eax
+// (the caller stores it at the result's own — i32 — width), but it compares the
+// full 64-bit operands (cmpq) when they are i64.
+function emit_binary(op: string, width: i32, out: string): string {
+    if (width == 64) {
+        var a: string = "%rax"; var c: string = "%rcx";
+        if (op == "+") { return out + "    addq " + c + ", " + a + "\n"; }
+        if (op == "-") { return out + "    subq " + c + ", " + a + "\n"; }
+        if (op == "*") { return out + "    imulq " + c + ", " + a + "\n"; }
+        if (op == "/") { return out + "    cqto\n    idivq " + c + "\n"; }
+        if (op == "%") { return out + "    cqto\n    idivq " + c + "\n    movq %rdx, %rax\n"; }
+        if (op == "&") { return out + "    andq " + c + ", " + a + "\n"; }
+        if (op == "|") { return out + "    orq " + c + ", " + a + "\n"; }
+        if (op == "^") { return out + "    xorq " + c + ", " + a + "\n"; }
+        if (op == "<<") { return out + "    salq %cl, " + a + "\n"; }
+        if (op == ">>") { return out + "    sarq %cl, " + a + "\n"; }
+        // Comparisons on 64-bit operands (cmpq); result is an i32 0/1 in %eax.
+        if (op == "==") { return out + "    cmpq " + c + ", " + a + "\n    sete %al\n    movzbl %al, %eax\n"; }
+        if (op == "!=") { return out + "    cmpq " + c + ", " + a + "\n    setne %al\n    movzbl %al, %eax\n"; }
+        if (op == "<") { return out + "    cmpq " + c + ", " + a + "\n    setl %al\n    movzbl %al, %eax\n"; }
+        if (op == "<=") { return out + "    cmpq " + c + ", " + a + "\n    setle %al\n    movzbl %al, %eax\n"; }
+        if (op == ">") { return out + "    cmpq " + c + ", " + a + "\n    setg %al\n    movzbl %al, %eax\n"; }
+        if (op == ">=") { return out + "    cmpq " + c + ", " + a + "\n    setge %al\n    movzbl %al, %eax\n"; }
+        if (op == "&&") {
+            return out + "    testq " + a + ", " + a + "\n    setne %al\n    movzbl %al, %eax\n    testq " + c + ", " + c + "\n    setne %cl\n    movzbl %cl, %ecx\n    andl %ecx, %eax\n";
+        }
+        if (op == "||") {
+            return out + "    testq " + a + ", " + a + "\n    setne %al\n    movzbl %al, %eax\n    testq " + c + ", " + c + "\n    setne %cl\n    movzbl %cl, %ecx\n    orl %ecx, %eax\n";
+        }
+        return out;
+    }
     if (op == "+") { return out + "    addl %ecx, %eax\n"; }
     if (op == "-") { return out + "    subl %ecx, %eax\n"; }
     if (op == "*") { return out + "    imull %ecx, %eax\n"; }
@@ -207,6 +238,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         return out + "    movl $" + util.i32_to_string(ins.imm) + ", " + regn(reg_of, ins.result, 32) + "\n";
     }
+    if (ins.kind == "const_i64") {
+        // A 64-bit integer literal: splice the source text straight into a
+        // movabsq (the assembler parses the full-width immediate), then store at
+        // the value's 64-bit home. compute_widths marks this value 64-bit.
+        out = out + "    movabsq $" + ins.str + ", %rax\n";
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
     if (ins.kind == "copy") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         return store_res(reg_of, widths, ins.result, "a", out);
@@ -228,7 +266,9 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         out = load_op(reg_of, widths, ins.args[1], "c", out);
-        out = emit_binary(ins.str, out);
+        // Operand width (not result width) selects 32- vs 64-bit instructions:
+        // an i64 comparison compares 64-bit operands (cmpq) but yields an i32.
+        out = emit_binary(ins.str, widths[ins.args[0]], out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "unary") {
@@ -258,6 +298,23 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         if (ins.str == "f64_bits" || ins.str == "f64_from_bits") {
             out = out + "    movq " + slot(ins.args[0]) + ", %rax\n";
             return out + "    movq %rax, " + slot(ins.result) + "\n";
+        }
+        // i32 -> i64 widen: movslq sign-extends the 32-bit source into %rax;
+        // movl zero-extends (writing %eax clears the upper 32 bits of %rax).
+        // Result stored 64-bit.
+        if (ins.str == "sext_i64") {
+            out = out + "    movslq " + regn(reg_of, ins.args[0], 32) + ", %rax\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
+        if (ins.str == "zext_i64") {
+            out = out + "    movl " + regn(reg_of, ins.args[0], 32) + ", %eax\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
+        // i64 -> i32 truncate: load the 64-bit operand, store at the result's
+        // 32-bit home (keeps the low word).
+        if (ins.str == "wrap_i32") {
+            out = load_op(reg_of, widths, ins.args[0], "a", out);
+            return store_res(reg_of, widths, ins.result, "a", out);
         }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         if (ins.str == "-") { out = out + "    negl %eax\n"; }
