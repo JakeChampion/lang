@@ -53,10 +53,9 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
-	// The tables diffed per function; widened line-by-line as ports land
-	// (#4482). consumingMatchReuse is NOT diffed yet — the self-host has no
-	// counterpart table, and its dump omits the line.
-	diffedTables := []string{"arraySetInc", "consumedParams", "freeEligible", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
+	// The tables diffed per function; ALL NINE dumped tables are diffed as
+	// of the consumingMatchReuse port (#4482 complete).
+	diffedTables := []string{"arraySetInc", "consumedParams", "consumingMatchReuse", "freeEligible", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -327,6 +326,27 @@ function main(): i32 { return q(); }`,
 			anchor: map[string]map[string]string{"q": {"reuseSources": "4:23<-t1", "reuseConsumed": "t1"}},
 			diverge: map[string]map[string]divergence{
 				"q": {"preciseDrops": {native: "", selfhost: "3=t2"}},
+			},
+		},
+		{
+			// CONSUMING-MATCH REUSE — the two mechanisms differ structurally:
+			// the self-host's inarm family fires on a fresh sole-owner LOCAL
+			// consumed by a value-position match (entries = the arm ctor
+			// positions); native's C2 table covers only `own`-param STATEMENT
+			// matches, so it emits nothing here. Pinned per-side — the diff
+			// documents the mechanism gap in both directions.
+			name: "consuming-match-inarm",
+			src: `enum E { V(i32, i32), W(i32, i32) }
+function go(): i32 {
+	var x = V(3, 4);
+	var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) };
+	var r = match (y) { V(a, b) => a + b, W(c, d) => c + d };
+	return r;
+}
+function main(): i32 { return go(); }`,
+			anchor: map[string]map[string]string{"go": {"freeEligible": "x,y"}},
+			diverge: map[string]map[string]divergence{
+				"go": {"consumingMatchReuse": {native: "", selfhost: "4:34,4:62"}},
 			},
 		},
 	}
