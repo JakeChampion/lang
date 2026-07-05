@@ -158,12 +158,11 @@ var interpProgs = []struct {
 	// (`y = e; x = y;`), so every target receives the value.
 	{"chained-assign-2", "function main(): i32 { var x = 0; var y = 0; x = y = 20; return x + y; }", 40},
 	{"chained-assign-3", "function main(): i32 { var x = 0; var y = 0; var z = 0; x = y = z = 14; return x + y + z; }", 42},
-	// if-let source swallowed as struct literal (#4339 item 4): the source
-	// expression now parses with struct literals suppressed (native's
-	// noStructLit), so a bare-ident source whose then-block opens with a
-	// labeled loop (`lp: while …` — the IDENT `:` struct-lit lookahead) is no
-	// longer taken as `e { … }`.
-	{"iflet-labeled-then", "enum E { A(i32), B } function main(): i32 { var e = A(42); if let A(v) = e { lp: while (true) { return v; } } return 0; }", 42},
+	// (#4339 item 4 — if-let source struct-lit suppression — is pinned in
+	// ifLetIRCases/"labeled-then-block": the interp value path can't host it
+	// because native if-let wants BARE patterns while this interp evaluates
+	// only QUALIFIED payload variants — an empty intersection for a
+	// payload-binding if-let.)
 	// Callback-passing `use x <- call();` monadic bind (#4335): the rest of the
 	// block becomes a callback lambda appended as the call's last argument, and
 	// the block returns the call's result — `use r <- apply(41); return r + 1;`
