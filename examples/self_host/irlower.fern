@@ -17053,7 +17053,7 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 //   1. every override value is evaluated into a temp (reads of d's old
 //      fields complete before any box surgery, on both branches);
 //   2. reused = __fern_rc_is_unique(d); token = reused ? d : 0;
-//   3. box = __fern_alloc_reuse(token, nfields) — the SAME block on the
+//   3. box = __fern_alloc_reuse(token, nfields+1 slots) — the SAME block on the
 //      reuse path (same type -> the cap always fits), a fresh rc=1 arr-box
 //      otherwise;
 //   4. reuse arm: release each OVERRIDDEN field's old value (it is about to
@@ -17138,7 +17138,7 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
             st = st.add_local(bname);
             var bslot: i32 = st.slot_of(bname);
             st = st.emit(ir.op_load_local(kslot));
-            st = st.emit(ir.op_const_i32(nf));
+            st = st.emit(ir.op_const_i32(nf + 1));
             st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
             st = st.emit(ir.op_store_local(bslot));
             // 5. Branch-specific box preparation.
@@ -17409,7 +17409,7 @@ function emit_reuse_recip_prior_release(s: LowerState, cslot: i32, dslot: i32): 
 // site found by cross_reuse_sites; the emit_self_overwrite_reuse token shape).
 // `c_name` is the new local; `init` the full no-base struct literal;
 // `donor_name` is d. reused = __fern_rc_is_unique(d); box =
-// __fern_alloc_reuse(reused ? d : 0, nfields). The reuse arm releases each
+// __fern_alloc_reuse(reused ? d : 0, nfields+1 slots). The reuse arm releases each
 // pointer-kinded OLD field (c overwrites every field, so the donor's old
 // values would otherwise leak); the fresh arm copies the shape word from d's
 // still-live box and decs d's reference (a future escape-walk hole thereby
@@ -17462,7 +17462,7 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
             st = st.add_local(bname);
             var bslot: i32 = st.slot_of(bname);
             st = st.emit(ir.op_load_local(kslot));
-            st = st.emit(ir.op_const_i32(ndecl));
+            st = st.emit(ir.op_const_i32(ndecl + 1));
             st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
             st = st.emit(ir.op_store_local(bslot));
             // Branch-specific box preparation. REUSE arm (box == d's box): release
@@ -17693,13 +17693,14 @@ function tuple_lit_ctor_eligible(tup: parser.ExprTuple, s: LowerState): boolean 
     return true;
 }
 
-// emit_cross_tuple_reuse lowers `var c = (…)` as an IN-PLACE reuse of dead donor
-// d's tuple box: overwrite each element slot (op_tuple_set / _w, offset i*8) with
-// c's value at its element WIDTH (i64 lowers via lower_i64 + tuple_set_w(64,i64);
-// f64 via lower_expr + tuple_set_w(64,f64); i32 / pointer via lower_expr +
-// tuple_set — mirroring op_tuple_make_k), bind c to d's box, tag c's slot
-// (mark_tuple_elems), and zero d's slot so the exit sweep frees the box once (via
-// c) and decs a null for d.
+// emit_cross_tuple_reuse lowers `var c = (…)` as a RUNTIME-GUARDED in-place
+// reuse of dead donor d's tuple box (#4350 slice 3; the token shape shared
+// with the struct families): reused = __fern_rc_is_unique(d); box =
+// __fern_alloc_reuse(reused ? d : 0, arity); each element slot of the result
+// box is overwritten at its element WIDTH, c binds to the box (tagged via
+// mark_tuple_elems), and d's slot is zeroed so the exit sweep frees the box
+// once (via c). A shared donor degrades to a fresh box + a dec of d's
+// reference instead of corrupting.
 function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
@@ -17707,13 +17708,70 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
         parser.ExprTuple(tup) => {
             var st: LowerState = s;
             var n: i32 = tup.elements.len();
+            // Element kind tags (the mark_tuple_elems encoding), computed up
+            // front — the write loop below and c's slot tag both consume them.
             var enc: string = "";
+            var pe: i32 = 0;
+            while (pe < n) {
+                var ptek: string = elem_type_tag(iife_leaf_value(tup.elements[pe]), st);
+                if (pe > 0) { enc = enc + ","; }
+                enc = enc + ptek;
+                pe = pe + 1;
+            }
+            // Bind c's slot up front — both guard arms store the result box there.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_tuple_elems(cslot, enc);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // only when the recipient is a RECLAIMABLE (non-escaping) tuple local
+            // (an escaping recipient's box is owned by its container; a prior-
+            // release would be a UAF).
+            if (release_prior && slot_is_reclaimable_tuple(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // Runtime uniqueness guard (#4350 slice 3, the token shape shared with
+            // the struct families): reused = __fern_rc_is_unique(d); box =
+            // __fern_alloc_reuse(reused ? d : 0, arity) — a tuple box has NO shape
+            // word (elements at i*8, arr_box cap = arity = its slots), so the
+            // fresh arm needs no slot-0 copy and no old-element release exists on
+            // the reuse arm (the pre-guard emitter released nothing either: the
+            // cross_tuple_reuse_sites gate admits only non-rc element kinds).
+            // The fresh arm only releases d's reference (rc >= 2 there — the dec
+            // never frees; the aliases own the old box).
+            var uname: string = "$sxt_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            var kname: string = "$sxt_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            var bname: string = "$sxt_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(n));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // Overwrite each element slot of the result box with c's value at its
+            // element WIDTH (i64 via lower_i64 + tuple_set_w(64,i64); f64 via
+            // lower_expr + tuple_set_w(64,f64); i32 / pointer via tuple_set —
+            // mirroring op_tuple_make_k). Element values cannot reference d
+            // (cross_tuple_reuse_sites proves d dead at the construction).
             var i: i32 = 0;
             while (i < n) {
                 var tek: string = elem_type_tag(iife_leaf_value(tup.elements[i]), st);
-                if (i > 0) { enc = enc + ","; }
-                enc = enc + tek;
-                st = st.emit(ir.op_load_local(dslot));
+                st = st.emit(ir.op_load_local(bslot));
                 if (tek == "i64") { st = lower_i64(tup.elements[i], st); }
                 else { st = lower_expr(tup.elements[i], st); }
                 if (!st.ok) { return st; }
@@ -17722,20 +17780,13 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
                 else { st = st.emit(ir.op_tuple_set(i)); }
                 i = i + 1;
             }
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_tuple_elems(cslot, enc);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) tuple local.
-            // An ESCAPING recipient's box is owned by the container it moved into, so
-            // a prior-release would free a still-referenced box (a UAF); such a
-            // recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_tuple(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            // Bind c to the result box; zero d's slot so the exit sweep frees the
+            // reused box once (via c) and harmlessly decs a null for d.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
@@ -21685,17 +21736,19 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             pc = pc + 1;
         }
         else if (o.kind_tag == 149 && o.str == "__fern_alloc_reuse") {  // call_direct
-            // FBIP reuse-degrade (#4350): pops [token, nfields]. A non-null token
-            // is handed straight back (same-type reuse — the class always fits);
-            // a null token allocates the same [rc, shape, fields…] block
-            // struct_make does (rc=1; shape left for the caller's raw copy).
+            // FBIP reuse-degrade (#4350): pops [token, slots] (slots = total
+            // payload words: struct nf+1 incl. the shape word, tuple arity). A
+            // non-null token is handed straight back (same-shape reuse — the
+            // class always fits); a null token allocates the same [rc, slots…]
+            // block struct_make / tuple_make do (rc=1; any shape word left for
+            // the caller's raw copy).
             sp = sp - 1;
             var arnf: i32 = stack[sp];
             sp = sp - 1;
             var artok: i32 = stack[sp];
             var arbase: i32 = artok;
             if (artok == 0) {
-                var arsize: i32 = (arnf + 2) * 4;
+                var arsize: i32 = (arnf + 1) * 4;
                 var arreuse: i32 = 0;
                 var arcur: i32 = freehead;
                 var arprev: i32 = 0;
