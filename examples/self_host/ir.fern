@@ -313,6 +313,11 @@ pub function op_load_i32(): Op { return op0("load_i32"); }
 pub function op_load_i64(): Op { return op0("load_i64"); }
 pub function op_load_ptr(): Op { return op0("load_ptr"); }
 pub function op_store_i32(): Op { return op0("store_i32"); }
+// op_store_i64 writes an 8-byte i64 to a raw usize address (the store sibling
+// of op_load_i64). Pops [addr, val] and pushes a dummy 0 (statement-position,
+// discarded), like store_i32/store_ptr — but stores the full 64-bit width.
+// Backs __store_i64, which was asymmetric with __load_i64 (#4375 item 2).
+pub function op_store_i64(): Op { return op0("store_i64"); }
 pub function op_store_ptr(): Op { return op0("store_ptr"); }
 // `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
 // `as u8` (and 255), `as i32` (sign-extend low 32 — movslq), `as u32`
@@ -1010,6 +1015,7 @@ function kind_id_1(name: string): i32 {
     if (name == "load_ptr") { return 71; }
     if (name == "store_i32") { return 72; }
     if (name == "store_ptr") { return 73; }
+    if (name == "store_i64") { return 199; }
     if (name == "memcpy") { return 74; }
     if (name == "memset") { return 75; }
     if (name == "alloc") { return 76; }
@@ -1312,6 +1318,7 @@ function kind_name_3(id: i32): string {
     if (id == 140) { return "struct_set"; }
     if (id == 141) { return "struct_set_shape"; }
     if (id == 198) { return "struct_copy"; }
+    if (id == 199) { return "store_i64"; }
     if (id == 142) { return "tuple_make"; }
     if (id == 143) { return "tuple_get"; }
     if (id == 144) { return "tuple_set"; }

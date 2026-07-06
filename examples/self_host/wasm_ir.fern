@@ -1224,6 +1224,11 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 72 || o.kind_tag == 73) {  // store_i32, store_ptr
             // stack: addr, val (val on top) -> i32.store, then push dummy 0.
             out = out + "    i32.store\n    i32.const 0\n";
+        } else if (o.kind_tag == 199) {  // store_i64
+            // stack: addr (i32), val (i64 on top) -> 8-byte i64.store, push dummy
+            // 0. Unlike store_ptr (4-byte i32.store on wasm32), the i64 value
+            // needs the full-width store (#4375 item 2).
+            out = out + "    i64.store\n    i32.const 0\n";
         } else if (o.kind_tag == 77) {  // alloc_u8
             // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
             // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header
