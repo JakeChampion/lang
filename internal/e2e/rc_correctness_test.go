@@ -3684,8 +3684,17 @@ function main(): i32 {
 		// caller's count on every call, and the caller's destructure-temp
 		// deep drop freed a cursor box that live bindings still referenced
 		// (the self-host modload fixpoint crashed in __fern_alloc this way).
-		name:     "tuple_return_arraybearing_cursor_threading",
-		skipWasm: "#4587: wasm-side consumed-param accounting for array-bearing cursors underflows (pre-existing; 286 on main, 256 after the entry-inc fix)",
+		name: "tuple_return_arraybearing_cursor_threading",
+		// #4587 turned out NOT to be a wasm rc bug: the underflow count is 0 on
+		// every backend (post-#4582). The case's `total` computes to a
+		// deterministic 9180 (= 306 * 30) identically on x86-64, arm64, AND wasm,
+		// so the value guard `(total / 30) - 306` is 0 everywhere. The earlier
+		// `- 50` left the value part at 256; x86-64 / arm64 read main's result as
+		// an 8-bit EXIT CODE, where 256 & 255 == 0 masked the miscalibration,
+		// while wasm's runWasm reads the full printed i32 and surfaced the 256 —
+		// which read as "256 wasm underflows" but was the value term, not an rc
+		// over-release. Recalibrated to `- 306` so the value guard is a true 0 on
+		// all three backends (and no longer aliases to 0 under the exit-byte wrap).
 		src: `
 struct Tok { k: i32 }
 struct Par { toks: Tok[], pos: i32 }
@@ -3718,7 +3727,7 @@ function main(): i32 {
         total = total + n + pf.pos % 7;
         r = r + 1;
     }
-    return (total / 30) - 50 + __rc_underflow_count();
+    return (total / 30) - 306 + __rc_underflow_count();
 }`,
 	},
 }
