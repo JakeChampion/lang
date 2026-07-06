@@ -443,7 +443,13 @@ function main(): i32 {
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
             if (probe) {
-                write(asm_ir.eligibility_report(asm_ir.lift_lambdas(merged)));
+                // Probe the module codegen actually routes on: run the same
+                // module_with_builtins pipeline the emit path below uses
+                // (monomorphise drops un-instantiated bounded-generic templates
+                // like core/cmp's min[T:Ord], whose type-param-receiver call
+                // otherwise bails and mis-reports `module: AST` for a program
+                // that in fact routes IR — #4374), not the raw merged module.
+                write(asm_ir.eligibility_report(asm_ir.lift_lambdas(parser.module_with_builtins(merged))));
                 return 0;
             }
             if (target == "arm64") {
