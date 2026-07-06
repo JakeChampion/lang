@@ -281,6 +281,23 @@ function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
     return x86_emit_mem(buf, src, base, disp);
 }
 
+// x86_mov_store_imm32: `movq $imm32, disp(%base[,%index,scale])` — a 64-bit
+// immediate-to-memory store (REX.W C7 /0 + mem operand + sign-extended imm32).
+// asm.fern emits it for the array-box header init (`movq $1, 8(%rax)` — the
+// refcount) and similar constant stores. x86_gas_movq previously mis-routed a
+// `$imm` source into its immediate-to-REGISTER branch regardless of the
+// destination, so `movq $1, 8(%rax)` emitted `mov $1, %edi` (clobbering %rdi)
+// and dropped the store — corrupting every freshly-boxed array's count field,
+// which crashed the string-keyed-map compare (mapstr).
+function x86_mov_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, 0, ix, base));
+    buf = buf.append(199); // 0xC7 /0
+    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+    return x86_le32(buf, imm);
+}
+
 // ---- SIB index addressing (slice 2j) ----
 //
 // `[base + index*scale + disp]` needs a SIB byte (ModR/M rm = 100). The
