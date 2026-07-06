@@ -38,6 +38,29 @@
 // directly — user code calls `m.insert(k, v)` / etc. and the
 // IR rewrites those to the `_impl` functions here.
 //
+// Iteration order (the contract every consumer relies on):
+//
+//   `insert` appends each NEW key to the end of the `entries`
+//   array, so a map built by inserts alone iterates — via the
+//   MapIter cursor (`for (k, v) in m`, `keys()`, `values()`,
+//   `entries()`) — in INSERTION order. Re-inserting an existing
+//   key overwrites in place and does NOT move it.
+//
+//   This holds only until the first `delete`. Delete is
+//   swap-with-last (`__map_delete_impl` / the keyKind-3 twin):
+//   the removed slot is backfilled with the array's LAST live
+//   entry, so that entry jumps to the deleted position and the
+//   sequence is no longer insertion order. There is no
+//   order-preserving delete (a shift-down `delete_ordered` is a
+//   possible future addition, #4388) and no shrink/rehash.
+//
+//   Consumers that depend on ordered iteration must therefore
+//   only rely on it for delete-free maps. `std/json`'s
+//   `json_encode` emits a `JObject`'s keys straight off this
+//   cursor, so its output preserves input/insertion key order
+//   for a map that was never deleted from, but a post-delete map
+//   serialises with the swapped key order.
+//
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
@@ -716,7 +739,10 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
         // Swap-with-last in the entries array, then patch the
         // moved entry's bucket pointer to its new index. The
         // last entry is alive (about to be removed) so the
-        // probe will hit it.
+        // probe will hit it. NOTE: this is what breaks
+        // insertion-order iteration after a delete — the last
+        // entry jumps to `idx`. See the module header's
+        // "Iteration order" contract (#4388).
         var lastKey: usize = __load_ptr(entriesBase + last * entryStride);
         var lastBucket: i32 = __map_hash(lastKey, keyKind) & mask;
         while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {
@@ -924,6 +950,10 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
     __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
     var last: i32 = len_ - 1;
     if (idx != last) {
+        // Swap-with-last (keyKind-3 twin of __map_delete_impl) —
+        // breaks insertion-order iteration after a delete, same
+        // as the scalar path. See the module header's "Iteration
+        // order" contract (#4388).
         var lastKey: usize = __load_ptr(entriesBase + last * entryStride);
         var lastBucket: i32 = hash_fn(lastKey) & mask;
         while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {

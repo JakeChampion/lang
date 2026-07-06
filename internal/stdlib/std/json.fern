@@ -104,6 +104,14 @@ pub function json_encode(v: JsonValue): string {
             return out + "]";
         },
         JObject(m) => {
+            // Keys are emitted straight off the map's iteration
+            // cursor, which is INSERTION order for a map built by
+            // inserts alone — so a decode→encode round-trip
+            // preserves key order. A map that has had a key
+            // `delete`d iterates in the swap-with-last order
+            // instead (see core/map's "Iteration order" contract,
+            // #4388); JSON object member order is not semantically
+            // significant, so this only affects byte-exactness.
             out = "{";
             var first: boolean = true;
             var iter: MapIter[string, JsonValue] = m.iter();
