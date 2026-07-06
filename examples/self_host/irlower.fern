@@ -17104,11 +17104,12 @@ function structs_reuse_compatible(structs: parser.StructDecl[], dt: string, rt: 
 
 // inarm_reuse_payload_type_ok: a payload field type the in-arm match-reuse lowering
 // can read into a temp and write back at the right width. Admits the i32-shaped
-// scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64
-// and f64 (struct_get_i64 / struct_get width-64 on read; lower_i64+struct_set_i64 /
-// lower_expr+struct_set width-64 on write, mirroring emit_enum_donor_reuse). u64 is
-// NOT admitted: struct_field_is_i64 / struct_field_width both classify a u64 field
-// as i32-shaped, so the i64 8-byte path is never selected and the value truncates.
+// scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64,
+// u64, and f64 (struct_get_i64 / struct_get width-64 on read; lower_i64+struct_set_i64
+// / lower_expr+struct_set width-64 on write, mirroring emit_enum_donor_reuse). u64
+// rides the i64 8-byte path: struct_field_width classifies a u64 field as 64-bit and
+// struct_field_is_i64 reports it i64, so the value round-trips at full width (no
+// truncation).
 function inarm_reuse_payload_type_ok(t: string): boolean {
     return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "u64" || t == "f64";
 }
@@ -19390,8 +19391,8 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 // out. Every arm binds y to a box it owns, so y is freed exactly once at y's
 // reclamation (no post-match free exists for an in-arm scrutinee). Restricted to
 // the inarm_reuse_match_ok shape
-// (scalar enum, i32/u32/boolean/i64/f64 payloads, same-size scalar-variant results,
-// no guards/wildcards; u64 excluded — see inarm_reuse_payload_type_ok).
+// (scalar enum, i32/u32/boolean/i64/u64/f64 payloads, same-size scalar-variant
+// results, no guards/wildcards — see inarm_reuse_payload_type_ok).
 function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
     var xslot: i32 = s.slot_of(donor_name);
     if (xslot < 0) { return s.fail(); }
