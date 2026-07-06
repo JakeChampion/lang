@@ -723,6 +723,22 @@ pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 pub function op_struct_make(type_name: string, nfields: i32): Op {
     return Op { kind_tag: 138, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
+// struct_copy pops [src box] and pushes a FRESH box that is a shallow, word-for-
+// word copy of src (the same shape ptr @0 + all `nfields` field slots). It is the
+// compact lowering of a functional struct-update's base copy: `T { ...base, f: v }`
+// becomes struct_copy(base) then one struct_set per overridden field, so the copy
+// of the N unchanged fields is a single O(1) `call __fern_struct_copy` instead of N
+// inline struct_get/store pairs per update site (#4650 — the self-host compiler's
+// working set on the x86_encode/x86_gas encoders, ~90 update sites on an 8-field
+// struct, otherwise scales ~1.75x the compact __set_field form and OOMs the wasm
+// driver). The copy shares every field pointer (arrays / strings / nested boxes)
+// exactly as the inline base-copy path does — same heap topology, same absence of
+// per-field rc-inc — so it is gated to structs whose base copy emits no retain
+// (struct_copy_eligible): the fresh box's rc header is 1 (from __fern_arr_box),
+// matching struct_make. Layout-agnostic: the helper copies `nfields`+1 words.
+pub function op_struct_copy(nfields: i32): Op {
+    return Op { kind_tag: 198, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 // width selects the field's load/store size on width-typed backends (wasm): 64
 // for an f64 field, 0 (i32-shaped) otherwise. The register backends use 8-byte
 // slots for every field and ignore it.
@@ -1068,6 +1084,7 @@ function kind_id_3(name: string): i32 {
     if (name == "struct_get") { return 139; }
     if (name == "struct_set") { return 140; }
     if (name == "struct_set_shape") { return 141; }
+    if (name == "struct_copy") { return 198; }
     if (name == "tuple_make") { return 142; }
     if (name == "tuple_get") { return 143; }
     if (name == "tuple_set") { return 144; }
@@ -1294,6 +1311,7 @@ function kind_name_3(id: i32): string {
     if (id == 139) { return "struct_get"; }
     if (id == 140) { return "struct_set"; }
     if (id == 141) { return "struct_set_shape"; }
+    if (id == 198) { return "struct_copy"; }
     if (id == 142) { return "tuple_make"; }
     if (id == 143) { return "tuple_get"; }
     if (id == 144) { return "tuple_set"; }
@@ -1463,6 +1481,7 @@ pub function render_op(o: Op): string {
     if (o.kind_tag == 138) { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 139) { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 140) { return "struct_set " + util.i32_to_string(o.i32_imm); }
+    if (o.kind_tag == 198) { return "struct_copy " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 145) { return "variant_is " + o.str; }
     if (o.kind_tag == 142) { return "tuple_make " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 143) { return "tuple_get " + util.i32_to_string(o.i32_imm); }

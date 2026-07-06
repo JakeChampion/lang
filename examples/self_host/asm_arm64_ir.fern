@@ -858,6 +858,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind_tag == 140) {  // struct_set
             // pop val (top), box; store val at field (index+1)*8.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n");
+        } else if (o.kind_tag == 198) {  // struct_copy
+            // pop src box; shallow-copy it into a fresh rc=1 box (nf+1 words) via
+            // __fern_struct_copy and push the copy. The O(1)-per-site base copy of a
+            // functional update (#4650), replacing nf inline ldr/str pairs.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n");
+            s = s.write("    bl __fern_struct_copy\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,
             // unlike struct_set). One 8-byte str for EVERY element kind (i32 / i64 /
