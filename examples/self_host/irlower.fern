@@ -17783,31 +17783,6 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
     return "";
 }
 
-// struct_all_scalar_fields reports whether every field of `name` is a flat
-// leak-only SCALAR (reuse_field_is_scalar — i32/boolean/i64/f64/u32/u64), so a
-// box of this type carries no rc pointer field to release or retain. The
-// own-param donor path (own_param_reuse_sites) restricts to these: a scalar-only
-// donor box needs no old-field release on the reuse arm and no freshness gate on
-// the recipient's values, so an `own` struct PARAM (which has no bind literal for
-// donor_enum_fields_fresh / the array-freshness gate to inspect) is nonetheless a
-// sound donor. rc-pointer-field own-param donors are a later cut.
-function struct_all_scalar_fields(structs: parser.StructDecl[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == name) {
-            if (structs[i].fields.len() == 0) { return false; }
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (!reuse_field_is_scalar(structs[i].fields[fi].type_name)) { return false; }
-                fi = fi + 1;
-            }
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
 // own_param_reuse_sites finds function-body top-level full-construction reuse
 // points whose donor is an `own` struct PARAMETER (#4356 divergence 3 — native's
 // computeReuseSources admits any freeEligible dead-after donor; the self-host had
@@ -17847,7 +17822,39 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
-                            if (!slit.has_base && struct_all_scalar_fields(structs, slit.type_name)) {
+                            // Recipient must be a scalar / leak-safe-array / nested-
+                            // struct box (struct_fields_reusable — NO enum/string/map/
+                            // tuple/option, whose old-value release needs a DONOR-side
+                            // freshness gate a param has no bind literal to satisfy).
+                            // For those admitted kinds the reuse arm's old-field release
+                            // is rc-GUARDED (__fern_rc_dec / __struct_drop free only at
+                            // rc==1), so a sole-owned `own` param's fields release
+                            // soundly with no donor-freshness gate — symmetric with the
+                            // cross-LOCAL donor path (cross_construction_donor adds a
+                            // freshness gate only when struct_has_enum_field).
+                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
+                                // RECIPIENT freshness (mirrors cross_reuse_sites' `ok`):
+                                // an array field VALUE must be a fresh array literal and
+                                // a nested-struct value a fresh no-base struct literal,
+                                // so the reused box solely owns each new inner box once
+                                // the donor's old one is full-freeing-dropped.
+                                var ok: boolean = true;
+                                var fk: i32 = 0;
+                                while (fk < slit.field_names.len()) {
+                                    var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
+                                    if (is_leaksafe_array_field(fkt)) {
+                                        match (slit.field_values[fk]) {
+                                            parser.ExprArray(_) => {},
+                                            _ => { ok = false; }
+                                        }
+                                    } else if (decl_is_struct(structs, fkt)) {
+                                        match (slit.field_values[fk]) {
+                                            parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
+                                            _ => { ok = false; }
+                                        }
+                                    }
+                                    fk = fk + 1;
+                                }
                                 // Suffix ident set from k onward — the donor must be
                                 // dead here (covers c's own field values too).
                                 var sfx: string[] = [];
@@ -17855,11 +17862,11 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
                                 while (m < fn.body.len()) { sfx = astwalk.collect_idents_stmt(fn.body[m], sfx); m = m + 1; }
                                 // First eligible own param, in param order.
                                 var pi: i32 = 0;
-                                while (pi < fn.params.len()) {
+                                while (ok && pi < fn.params.len()) {
                                     var p: parser.ParamDecl = fn.params[pi];
                                     if (p.own
                                         && p.name != v.name
-                                        && struct_all_scalar_fields(structs, p.type_name)
+                                        && struct_fields_reusable(structs, p.type_name)
                                         && structs_reuse_compatible(structs, p.type_name, slit.type_name)
                                         && util.index_of_str(consumed, p.name) < 0
                                         && util.index_of_str(reassigned, p.name) < 0

@@ -55,6 +55,14 @@ var reuseDifferentialCases = []struct {
 	{"own-param-donor-same", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; return c.x + c.y + u; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 37, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-cross", `struct A { n: i32, m: i32 } struct B { p: i32, q: i32 } function f(own d: A): i32 { var u: i32 = d.n + d.m; var c = B { p: 10, q: 20 }; return c.p + c.q + u; } function main(): i32 { return f(A { n: 3, m: 4 }); }`, 37, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-detector", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 2i — OWN-PARAM donor with RC-POINTER fields (#4356 slice 11): the
+	// donor param's old array / nested-struct field is released on the reuse arm
+	// (rc-GUARDED __fern_rc_dec / __struct_drop — safe for a sole-owned `own`
+	// param with no donor-freshness gate), the recipient's fresh literals owned
+	// going forward. Array-field and nested-struct-field donors.
+	{"own-param-donor-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2] + u; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 32, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-array-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; var s: i32 = c.id + c.items[0] + c.items[2] + u; if (s != 32) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-nested-detector", `struct Inner { a: i32, b: i32 } struct Outer { id: i32, inner: Inner } function bump(own d: Outer): i32 { var u: i32 = d.id + d.inner.a; var c = Outer { id: 5, inner: Inner { a: 7, b: 8 } }; var s: i32 = c.id + c.inner.a + c.inner.b + u; if (s != 23) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(Outer { id: 1, inner: Inner { a: 2, b: 3 } }); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 1b — functional-update self-overwrite with a CALL-RESULT base
 	// (#4356 divergence 3): same strict-fresh donor admission on the
 	// `var c = P { ...d, x: v }` path.
