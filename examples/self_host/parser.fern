@@ -1610,6 +1610,22 @@ function parse_primary(p: Par): (Expr, Par) {
                 p = p.advance();
                 return parse_postfix(p, e_array(elems));
             }
+            if (x.text == "{" && !p.no_struct) {
+                // General value-position block-expression (#4521) — the
+                // self-host mirror of the Go parser's parsePrimary `{` case.
+                // Reuse parse_branch_body (the if/match value-branch machinery,
+                // which already desugars `{ s; …; tail }` to `[<stmts…>,
+                // s_return(tail)]`) and wrap it in an immediately-invoked
+                // zero-arg lambda, exactly like the if/match value expressions
+                // desugar above. Gated on !no_struct like the `Ident { … }`
+                // struct-literal case so a loop/if HEADER's trailing `{` still
+                // opens the body rather than being consumed here.
+                var (bb_body, bb_rt, bb_p) = parse_branch_body(p);
+                var bx_params: ParamDecl[] = [];
+                var bx_args: Expr[] = [];
+                var iife: Expr = e_call(e_lambda(bx_params, bb_rt, bb_body), bx_args);
+                return parse_postfix(bb_p, iife);
+            }
             if (x.text == "-" || x.text == "!") {
                 // The Go parser positions a Unary at its operator token
                 // (`Unary{P: op.Pos}`), so E009 (`!`) lands there.

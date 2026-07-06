@@ -63,6 +63,16 @@ function main(): i32 { return f(5); }`},
 	// then .len(). s = "hi" -> 2.
 	{"if-then-string-tail", `function f(): i32 { var s: string = if (true) { var p = "hi"; p } else { "x" }; return s.len(); }
 function main(): i32 { return f(); }`},
+	// #4521: a general value-position block-expression (the RHS of `var`, not
+	// an if/match branch) — desugared to an immediately-invoked lambda in the
+	// self-host parser, so it stays on the IR path. k*m = 12.
+	{"value-position-var-rhs", `function main(): i32 { var n: i32 = { var k = 3; var m = 4; k * m }; return n; }`},
+	// #4521: a bare value-position block as a call argument. 40+2 = 42.
+	{"value-position-call-arg", `function id(x: i32): i32 { return x; } function main(): i32 { return id({ var a = 40; a + 2 }); }`},
+	// #4521: a single-expr value block `{ e }` stays the bare expr. 7+1 = 8.
+	{"value-position-single-expr", `function main(): i32 { var n: i32 = { 7 }; return n + 1; }`},
+	// #4521: a string-tail value-position block, then .len(). "foobar" -> 6.
+	{"value-position-string-tail", `function main(): i32 { var s: string = { var a = "foo"; var b = "bar"; a + b }; return s.len(); }`},
 }
 
 // TestSelfHostBlockExprIRX86_64 routes each block-expression case through the
