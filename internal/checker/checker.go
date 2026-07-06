@@ -6011,6 +6011,16 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	if b == nil {
 		return a
 	}
+	// `never` (bottom) unifies to the other arm: an `if`/`match` branch
+	// that always exits early contributes no value, so the construct's
+	// result type comes from the branch(es) that do yield one. Two
+	// never arms unify to never (the whole construct diverges). (#4522)
+	if _, ok := a.(ast.NeverType); ok {
+		return b
+	}
+	if _, ok := b.(ast.NeverType); ok {
+		return a
+	}
 	if ast.Equal(a, b) {
 		return a
 	}
@@ -6362,6 +6372,13 @@ func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
 
 func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
+		return true
+	}
+	// `never` (bottom) is assignable to any type: it is the type of an
+	// expression that never yields a value (a value-position block whose
+	// statements always exit early), so `var x: T = { …; return … };`
+	// type-checks for every T (#4522).
+	if _, ok := src.(ast.NeverType); ok {
 		return true
 	}
 	// Trait-object coercion (boxing): a concrete value whose type
@@ -7562,10 +7579,35 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 	}
 	c.mutualRecSiblings = prevMutualRec
 	if n.Tail == nil {
+		// A value-less block whose statements ALWAYS exit early
+		// (`return` / `break` / `continue` on every path) never
+		// reaches a trailing value, so it has no meaningful tail. It
+		// is not `void` (which would be a type error where a value is
+		// required) — it is the bottom type `never`, which is
+		// assignable to / unifies with any type. This lets
+		// `var x: i32 = { if (c) { return 1; } return 2; };` and the
+		// `if`/`match`-arm forms type-check (#4522). Codegen lowers the
+		// statements only — the diverging terminal makes the enclosing
+		// store unreachable (the ssa lift skips it), so no tail value
+		// is produced.
+		if stmtsDiverge(n.Stmts) {
+			return ast.NeverType{}
+		}
 		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
 		return ast.VoidType{}
 	}
 	return c.checkExpr(n.Tail, s)
+}
+
+// stmtsDiverge reports whether the last statement of a value-position
+// block-expression's statement list exits on every path (so the block
+// never falls through to a trailing value). Mirrors blockDiverges but
+// over a bare `[]ast.Stmt` (BlockExpr.Stmts) rather than an *ast.Block.
+func stmtsDiverge(stmts []ast.Stmt) bool {
+	if len(stmts) == 0 {
+		return false
+	}
+	return stmtDiverges(stmts[len(stmts)-1])
 }
 
 // detectMutualRecSCCs computes the names that participate in a
@@ -8531,6 +8573,17 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			result = armT
 			return
 		}
+		// A `never` arm (one that always exits early) contributes no
+		// value: the match's result type comes from the arms that do
+		// yield one. If the running result is still `never`, adopt the
+		// concrete arm; if this arm is `never`, keep the result. (#4522)
+		if _, ok := result.(ast.NeverType); ok {
+			result = armT
+			return
+		}
+		if _, ok := armT.(ast.NeverType); ok {
+			return
+		}
 		if c.assignable(armT, result) {
 			return
 		}
@@ -8597,6 +8650,17 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		}
 		if result == nil {
 			result = armT
+			return
+		}
+		// A `never` arm (one that always exits early) contributes no
+		// value: the match's result type comes from the arms that do
+		// yield one. If the running result is still `never`, adopt the
+		// concrete arm; if this arm is `never`, keep the result. (#4522)
+		if _, ok := result.(ast.NeverType); ok {
+			result = armT
+			return
+		}
+		if _, ok := armT.(ast.NeverType); ok {
 			return
 		}
 		if c.assignable(armT, result) {
