@@ -3713,3 +3713,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   captures per call (2 underflow ticks for a 2-call shape with or without
   an alias) — the #4354 escaping-closure drop-thunk slice remains the
   tracked fix for that.
+- 2026-07-05: **Fixed the hoisted-closure capture over-dec (#4354 borrow
+  slice — irlower, all three backends).** make_clo_func synthesizes capture
+  reads as `var <cap> = __env[1+i]` at the top of a `$clo`/`$wrap` body, so
+  the lambda's exit dec-sweep treated them as OWNED array locals and
+  shallow-dec'd them on EVERY call — but the env box owns those references:
+  an rc==1 capture was freed out from under the box's owner on the first
+  call (per-call UAF; 2 underflow ticks on the 2-call escaping shape,
+  independent of the #4557 alias fix). lower_func now registers env-extract
+  names as "ENVCAP:<name>" in reclaimable_names (gated on the synthesized
+  __env first param) and the sweep's array loop skips them — a borrow is
+  not released by the borrower; the env box keeps its caller-side release.
+  VERIFIED: TestSelfHostClosureCaptureBorrowIRX86_64 (+arm64 sibling) —
+  escaping 2-call shape and the alias shape at detector ZERO (previously
+  tolerated), 6000-iter churn flat + zero. The #4613 alias suite's RC note
+  updated accordingly. Remaining #4354 surface unchanged otherwise
+  (struct/enum/map/string[] capture kinds, closure arrays, drop thunk).
