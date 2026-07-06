@@ -5470,6 +5470,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sp.ok) { return sp; }
                         return sp.emit(ir.op_store_ptr());
                     }
+                    // __store_i64(addr, v) writes an 8-byte i64 — the store sibling
+                    // of __load_i64, which was missing (#4375 item 2). The address
+                    // is an i32/usize (lower_expr); the value is an i64, so it routes
+                    // through lower_i64 (like an i64[] element store). Pushes a dummy
+                    // 0, discarded in statement position.
+                    if (cid.name == "__store_i64" && c.args.len() == 2) {
+                        var s8: LowerState = lower_expr(c.args[0], s);
+                        if (!s8.ok) { return s8; }
+                        s8 = lower_i64(c.args[1], s8);
+                        if (!s8.ok) { return s8; }
+                        return s8.emit(ir.op_store_i64());
+                    }
                     // std/float single-instruction math builtins: __sqrt_f64 /
                     // __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64. Lower the
                     // f64 operand, then emit the op_funary intrinsic the IR backends

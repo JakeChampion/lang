@@ -422,8 +422,9 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind_tag == 72) {  // store_i32
             // [addr, val] -> store low 4 bytes (val on top); push dummy 0.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str w1, [x0]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 73) {  // store_ptr
-            // [addr, val] -> store 8 bytes; push dummy 0.
+        } else if (o.kind_tag == 73 || o.kind_tag == 199) {  // store_ptr, store_i64
+            // [addr, val] -> store 8 bytes; push dummy 0. i64 and heap-pointer
+            // are both 8-byte stores on arm64 (str x1), so they share this arm.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 18) {  // load_local
             s = fr_ldr(s, "x0", 0 - 8 * (o.i32_imm + 1));

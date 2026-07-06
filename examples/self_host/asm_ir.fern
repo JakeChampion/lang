@@ -3910,8 +3910,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 72) {  // store_i32
             // [addr, val] -> store low 4 bytes; push dummy 0 (val on top).
             s = s.write("    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n    pushq $0\n");
-        } else if (o.kind_tag == 73) {  // store_ptr
-            // [addr, val] -> store 8 bytes; push dummy 0.
+        } else if (o.kind_tag == 73 || o.kind_tag == 199) {  // store_ptr, store_i64
+            // [addr, val] -> store 8 bytes; push dummy 0. i64 and heap-pointer
+            // are both 8-byte stores on x86-64 (movq), so they share this arm.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, (%rax)\n    pushq $0\n");
         } else if (o.kind_tag == 18) {  // load_local
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
