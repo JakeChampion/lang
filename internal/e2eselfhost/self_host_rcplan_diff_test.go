@@ -467,6 +467,59 @@ function bump(own d: P): i32 {
 function main(): i32 { return bump(P { x: 3, y: 4 }); }`,
 			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
 		},
+		{
+			// FREE-ELIGIBLE for UNANNOTATED locals (found by the differential
+			// bug-hunt): a bare-lambda-bound closure. Native marks `add`
+			// freeEligible (owned closure frees its env); the self-host used to
+			// emit nothing — its free_eligible_of both mis-inferred the type
+			// (no lambda arm) AND tainted the closure (no ExprLambda owned-rhs
+			// arm). Both fixed to match native.
+			name: "fe-unannotated-closure",
+			src: `function f(): i32 {
+	var add = (a: i32) => a + 1;
+	return add(5);
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "add"}},
+		},
+		{
+			// Unannotated string literal + concat: both `a` ("hi") and `b`
+			// (a + "!") are owned heap strings, freeEligible on both sides.
+			name: "fe-unannotated-string-concat",
+			src: `function f(): i32 {
+	var a = "hi";
+	var b = a + "!";
+	return b.len();
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "a,b"}},
+		},
+		{
+			// Chained .with: `b` is bound from an array-preserving method call,
+			// so its type is inferred (i32[]) and it reaches the eligibility
+			// gate — freeEligible a,b. arraySetInc records both calls (the inner
+			// with on a live receiver incs; the outer with on the fresh temp
+			// does not).
+			name: "fe-unannotated-with-chain",
+			src: `function f(): i32 { var a: i32[] = [1, 2, 3]; var b = a.with(0, 9).with(1, 8); return b[0] + b[1] + a[0]; }
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "a,b", "arraySetInc": "1:61=true,1:72=false"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "2=a"}},
+			},
+		},
+		{
+			// Nested-if .with: `b` bound from a method call inside an if-arm —
+			// the collect-types fallback resolves it from the receiver `a` even
+			// across the block boundary.
+			name: "fe-unannotated-with-nested-if",
+			src: `function f(c: i32): i32 { var a: i32[] = [1, 2]; if (c > 0) { var b = a.with(0, 9); return b[0] + a[0]; } return a[1]; }
+function main(): i32 { return f(1); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "a,b", "arraySetInc": "1:77=true"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "2=a"}},
+			},
+		},
 	}
 
 	for _, tc := range cases {
