@@ -150,7 +150,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 22", "# fail 0", "1..22"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 25", "# fail 0", "1..25"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -244,7 +244,7 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/url", "# pass 16", "# fail 0", "1..16"} {
+	for _, w := range []string{"# Suite: std/url", "# pass 17", "# fail 0", "1..17"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -262,7 +262,7 @@ func TestRunnerCsvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/csv", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/csv", "# pass 13", "# fail 0", "1..13"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

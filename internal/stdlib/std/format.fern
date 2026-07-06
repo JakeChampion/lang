@@ -204,10 +204,26 @@ function __align_code(c: i32): i32 {
 }
 
 function __repeat_char(s: string, count: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < count) { out = out + s; i = i + 1; }
-    return out;
+    if (count <= 0) { return ""; }
+    var sl: i32 = s.len();
+    if (sl == 0) { return ""; }
+    // Fill one exact-size (sl·count) buffer instead of `out = out + s`,
+    // which recopied the growing prefix on every step (O((sl·count)²) — #4379).
+    // Same two-pass idiom as std/string's `repeat`; keeps every padded/aligned
+    // format spec off the quadratic path.
+    var buf: u8[] = __alloc_u8(sl * count);
+    var pos: i32 = 0;
+    var k: i32 = 0;
+    while (k < count) {
+        var j: i32 = 0;
+        while (j < sl) {
+            buf = buf.with(pos, s[j] as u8);
+            pos = pos + 1;
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `format_bytes(n)` — render an i32 byte count as "N B" /
