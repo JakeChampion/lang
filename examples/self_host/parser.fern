@@ -253,7 +253,12 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // signatures an `impl` MUST provide. A defaulted (bodied) method is NOT
 // required (the default is synthesised onto impls that omit it), so it never
 // appears here. Drives the E021 missing-method check (#4347).
-pub struct TraitReq { trait_name: string, methods: string[] }
+// TraitReq carries a trait's ABSTRACT (required) methods for the E021
+// conformance check (#4347). `methods` is the required method names; `req_sigs`
+// is the parallel full signatures (same length/order) so the checker can also
+// diagnose an impl method whose arity / param types / return type disagree with
+// the trait's declaration (Self resolves to the impl type at the check site).
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -10449,7 +10454,11 @@ function replace_struct_ident(ty: string, from: string, to: string): string {
 }
 // subst_self rewrites every standalone `Self` token in a type string to
 // impl_type, INCLUDING nested (Option[(T, Self)] -> Option[(T, ArrayIter[T])]).
-function subst_self(ty: string, impl_type: string): string {
+// pub so the checker's E021 signature comparison (#4347) can apply the SAME
+// substitution to a trait's required signature that finalize_impl_method
+// applied to the impl method — a consistent rewrite means a conforming impl
+// compares equal while a genuine arity / type mismatch surfaces.
+pub function subst_self(ty: string, impl_type: string): string {
     if (ty.len() == 0) { return ty; }
     var out: string = "";
     var i: i32 = 0;
@@ -10537,6 +10546,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
 function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
     var defaults: TraitDefault[] = [];
     var required: string[] = [];
+    var required_sigs: FuncDecl[] = [];
     p = p.advance(); // `trait`
     var tname: string = p.peek_ident();
     if (tname.len() > 0) { p = p.advance(); } // name
@@ -10590,8 +10600,11 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
                 } else {
                     // Abstract (body-less) signature: a REQUIRED method every
                     // impl must provide (#4347 E021). Bodied defaults above are
-                    // NOT required (synthesised onto omitting impls).
+                    // NOT required (synthesised onto omitting impls). The full
+                    // decl rides req_sigs (parallel to required) for the
+                    // signature-mismatch check.
                     required = required.append(fr_func.name);
+                    required_sigs = required_sigs.append(fr_func);
                 }
             } else {
                 // Defensive: don't stall on an unexpected token.
@@ -10600,7 +10613,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
-    return (defaults, TraitReq { trait_name: simple, methods: required }, p);
+    return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs }, p);
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {

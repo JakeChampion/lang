@@ -256,6 +256,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"impl-complete-ok", "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog { function hello(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"impl-default-omitted-ok", "trait Greet { function hi(): i32 { return 9; } }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n", nil},
 		{"impl-missing-one-of-two", "trait Two { function a(): i32; function b(): i32; }\nstruct S {}\nimpl Two for S { function a(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// E021 signature mismatch (#4347 slice 2): the impl provides the method
+		// but with the wrong arity / param type / return type vs the trait's
+		// declaration (Self resolves to the impl type). A correct impl is clean.
+		{"impl-sig-arity", "trait T { function m(self: Self, x: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-sig-ret", "trait T { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self): string { return \"x\"; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-sig-paramtype", "trait T { function m(self: Self, x: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, x: string): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-sig-correct-ok", "trait T { function m(self: Self, x: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, x: i32): i32 { return x; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
