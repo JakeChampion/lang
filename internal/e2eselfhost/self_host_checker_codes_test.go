@@ -229,6 +229,26 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// checkers must now flag E064 here, the mirror image of the
 		// subword-int-vars-clean case above.
 		{"unknown-retired-subword-var-type", "function main(): i32 { var x: i8 = q(); return 0; }\n", []string{"E001", "E064"}},
+		// E064 widening (#4363 item 3): an unknown nominal reached through an
+		// array-element (`Nope[]`) or generic-argument (`Map[string, Nope]`)
+		// spelling draws E064 just like a bare `Nope` — the check used to bail on
+		// any non-identifier text, so these inner positions went unflagged. The
+		// emitted message names the INNER unknown ("Nope"), matching the Go
+		// oracle. Each shape is chosen with no init, so there's no E001/E003
+		// cascade to diverge on.
+		{"unknown-arrelem-param", "function f(a: Nope[]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"unknown-arrelem-nested-param", "function f(a: Nope[][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"unknown-genarg-param", "function f(m: Map[string, Nope]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"unknown-arrelem-field", "struct S { xs: Nope[] }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"unknown-genarg-field", "struct S { m: Map[string, Nope] }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"unknown-arrelem-var", "function main(): i32 { var xs: Nope[] = []; return 0; }\n", []string{"E064"}},
+		// Negative controls: a valid array-element / generic-argument type must
+		// NOT draw E064 — the widening only checks the INNER name, never the
+		// builtin generic base (Map / Cell), so these stay clean like native.
+		{"arrelem-ok-param", "function f(a: string[]): i32 { return a.len(); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"genarg-cell-ok-param", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"genarg-map-ok-param", "function f(m: Map[string, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"arrelem-ok-field", "struct S { xs: string[] }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop

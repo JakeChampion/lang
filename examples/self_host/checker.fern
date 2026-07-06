@@ -5472,6 +5472,54 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
     return is_unknown(type_from_name_with_names_and_unions(type_name, struct_names, union_names));
 }
 
+// e064_unknown_name is the recursive form of the E064 check (#4363 item 3): it
+// returns the FIRST unknown bare nominal name reachable through `type_name`'s
+// array-element and generic-argument structure, or "" when none is unknown. The
+// Go checker reports E064 for `Nope[]` (array element) and `Map[string, Nope]`
+// (generic arg) exactly as for a bare `Nope`, naming the inner "Nope";
+// e064_unknown_bare deliberately bailed on any non-identifier text, so those
+// inner positions went unflagged. Returning the inner NAME (not the outer
+// spelling) keeps the emitted message byte-matching native's `unknown type
+// "Nope"`.
+//
+// Decomposition (via parser.parse_type_ref, the single type-spelling scanner):
+//   - an array `E[]` reduces to its element E (so `E[][]` and `G[a][]` reduce
+//     correctly);
+//   - a generic instantiation `G[a, b]` checks each ARGUMENT — never the base
+//     G, because a builtin generic container (Map / Cell / Option / Result / a
+//     user generic struct) is not in struct_names and would false-positive;
+//   - a tuple is skipped (out of item-3 scope, and the simple resolver doesn't
+//     model tuple element text);
+//   - a bare leaf falls through to the same conservative e064_unknown_bare.
+// The callers restrict this to NON-generic, NON-method decls, so an inner bare
+// name is never an erased type parameter — a genuine typo, matching the oracle.
+function e064_unknown_name(type_name: string, struct_names: string[], union_names: string[]): string {
+    return e064_unknown_name_tref(parser.parse_type_ref(type_name), struct_names, union_names);
+}
+
+function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], union_names: string[]): string {
+    // Array `E[]` → element E (peel one level, keeping the base/args).
+    if (tr.array_depth > 0) {
+        var elem: parser.TypeRef = parser.TypeRef { base: tr.base, args: tr.args, array_depth: tr.array_depth - 1, is_tuple: tr.is_tuple };
+        return e064_unknown_name_tref(elem, struct_names, union_names);
+    }
+    // Tuple: out of scope for the array/generic-arg widening.
+    if (tr.is_tuple) { return ""; }
+    // Generic instantiation `G[a, b]`: check each arg (never the base).
+    if (tr.args.len() > 0) {
+        var i: i32 = 0;
+        while (i < tr.args.len()) {
+            var u: string = e064_unknown_name_tref(tr.args[i], struct_names, union_names);
+            if (u.len() > 0) { return u; }
+            i = i + 1;
+        }
+        return "";
+    }
+    // Bare leaf: the original conservative identifier check names the type.
+    if (e064_unknown_bare(tr.base, struct_names, union_names)) { return tr.base; }
+    return "";
+}
+
 // e064_var_diags walks a (non-generic, non-method) function body and reports
 // E064 for any `var x: T` annotation whose bare nominal type is undefined. It
 // recurses into control-flow blocks the same way dupvar_diags does, but not
@@ -5485,8 +5533,9 @@ function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_name
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (e064_unknown_bare(v.type_name, struct_names, union_names)) {
-                    out = out.append(dg_at("E064", "unknown type \"" + v.type_name + "\"", v.line, v.col));
+                var vu: string = e064_unknown_name(v.type_name, struct_names, union_names);
+                if (vu.len() > 0) {
+                    out = out.append(dg_at("E064", "unknown type \"" + vu + "\"", v.line, v.col));
                 }
             },
             parser.StmtIf(f) => {
@@ -5658,13 +5707,15 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         if (efn.type_params.len() == 0 && efn.type_param_count == 0 && efn.receiver_name.len() == 0) {
             var epi: i32 = 0;
             while (epi < efn.params.len()) {
-                if (e064_unknown_bare(efn.params[epi].type_name, struct_names, union_names)) {
-                    body_diags = body_diags.append(dg_at("E064", "unknown type \"" + efn.params[epi].type_name + "\"", efn.line, efn.col));
+                var pu: string = e064_unknown_name(efn.params[epi].type_name, struct_names, union_names);
+                if (pu.len() > 0) {
+                    body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"", efn.line, efn.col));
                 }
                 epi = epi + 1;
             }
-            if (e064_unknown_bare(efn.ret_type, struct_names, union_names)) {
-                body_diags = body_diags.append(dg_at("E064", "unknown type \"" + efn.ret_type + "\"", efn.line, efn.col));
+            var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names);
+            if (ru.len() > 0) {
+                body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"", efn.line, efn.col));
             }
             // Body `var x: T` annotations (same non-generic scope).
             body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names));
@@ -5677,8 +5728,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
             var efj: i32 = 0;
             while (efj < esd.fields.len()) {
-                if (e064_unknown_bare(esd.fields[efj].type_name, struct_names, union_names)) {
-                    body_diags = body_diags.append(dg_at("E064", "unknown type \"" + esd.fields[efj].type_name + "\"", esd.line, esd.col));
+                var fu: string = e064_unknown_name(esd.fields[efj].type_name, struct_names, union_names);
+                if (fu.len() > 0) {
+                    body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"", esd.line, esd.col));
                 }
                 efj = efj + 1;
             }
