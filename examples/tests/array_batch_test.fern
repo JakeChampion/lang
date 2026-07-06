@@ -1,0 +1,83 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_batch_test.fern — std/array batch-processing verbs
+// (#4416 / ROADMAP #12): slice (half-open range, clamped), chunks
+// (consecutive non-overlapping groups) and windows (overlapping sliding
+// groups). chunks/windows return i32[][], so this also exercises the
+// nested-array shape through the self-host IR path on real stdlib bodies.
+
+function test_slice_basic(): test.TestOutcome {
+    var s: i32[] = array.slice([10, 20, 30, 40, 50], 1, 4);
+    if (s.len() != 3) { return test.fail("slice length"); }
+    return test.assert_true(s[0] == 20 && s[1] == 30 && s[2] == 40);
+}
+
+function test_slice_clamped(): test.TestOutcome {
+    // Out-of-range bounds clamp to [0, len] instead of faulting.
+    var s: i32[] = array.slice([1, 2, 3], 0 - 3, 100);
+    return test.assert_true(s.len() == 3 && s[0] == 1 && s[2] == 3);
+}
+
+function test_slice_empty(): test.TestOutcome {
+    // start >= end (after clamping) is empty.
+    return test.assert_eq(array.slice([1, 2, 3], 2, 2).len(), 0);
+}
+
+function test_chunks_even(): test.TestOutcome {
+    var c: i32[][] = array.chunks([1, 2, 3, 4], 2);
+    if (c.len() != 2) { return test.fail("chunk count"); }
+    return test.assert_true(c[0][0] == 1 && c[0][1] == 2 && c[1][0] == 3 && c[1][1] == 4);
+}
+
+function test_chunks_uneven(): test.TestOutcome {
+    // A short final chunk when len isn't a multiple of size.
+    var c: i32[][] = array.chunks([1, 2, 3, 4, 5], 2);
+    if (c.len() != 3) { return test.fail("chunk count"); }
+    return test.assert_true(c[2].len() == 1 && c[2][0] == 5);
+}
+
+function test_chunks_nonpositive_size(): test.TestOutcome {
+    // size <= 0 is empty, not an infinite loop.
+    return test.assert_eq(array.chunks([1, 2, 3], 0).len(), 0);
+}
+
+function test_chunks_empty_input(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_eq(array.chunks(e, 3).len(), 0);
+}
+
+function test_windows_basic(): test.TestOutcome {
+    var w: i32[][] = array.windows([1, 2, 3, 4], 2);
+    if (w.len() != 3) { return test.fail("window count"); }
+    return test.assert_true(
+        w[0][0] == 1 && w[0][1] == 2
+        && w[1][0] == 2 && w[1][1] == 3
+        && w[2][0] == 3 && w[2][1] == 4);
+}
+
+function test_windows_too_wide(): test.TestOutcome {
+    // size > len yields no windows.
+    return test.assert_eq(array.windows([1, 2], 3).len(), 0);
+}
+
+function test_windows_full_width(): test.TestOutcome {
+    // size == len yields exactly one window (the whole array).
+    var w: i32[][] = array.windows([1, 2, 3], 3);
+    if (w.len() != 1) { return test.fail("window count"); }
+    return test.assert_true(w[0].len() == 3 && w[0][0] == 1 && w[0][2] == 3);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array batch");
+    r = r.it("slice basic",             test_slice_basic());
+    r = r.it("slice clamped",           test_slice_clamped());
+    r = r.it("slice empty",             test_slice_empty());
+    r = r.it("chunks even",             test_chunks_even());
+    r = r.it("chunks uneven",           test_chunks_uneven());
+    r = r.it("chunks size <= 0",        test_chunks_nonpositive_size());
+    r = r.it("chunks empty input",      test_chunks_empty_input());
+    r = r.it("windows basic",           test_windows_basic());
+    r = r.it("windows too wide",        test_windows_too_wide());
+    r = r.it("windows full width",      test_windows_full_width());
+    return r.finish();
+}

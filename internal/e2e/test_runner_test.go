@@ -667,6 +667,25 @@ func TestRunnerArrayHofExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_batch_test.fern` covers std/array's batch verbs
+// slice / chunks / windows (#4416) — half-open clamped range, even /
+// uneven / empty chunking, and overlapping / too-wide / full-width
+// windows, including the i32[][] nested-array return shape. Passing →
+// exit 0.
+func TestRunnerArrayBatchExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_batch_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array batch", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/iter_combinators_test.fern` covers the core/iter
 // combinators NOT in iter_test (sum/count/of/product/nth/last/min/max/
 // contains/count_value/fold/any/all/map/filter): to_array / take / skip /
