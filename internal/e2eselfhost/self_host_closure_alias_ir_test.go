@@ -19,11 +19,10 @@ import (
 // last owner (the alias name carries no capture kinds, so captures keep
 // the documented aliased-env leak).
 //
-// RC note: calling ANY closure through the hoisted (escaping) call path
-// over-decs its extracted captures per call — a pre-existing #4354
-// remaining slice (verified: the no-alias escaping shape ticks the
-// underflow detector identically on unmodified main), so these cases pin
-// VALUES and crash-freedom, not detector zero.
+// RC note: the hoisted call path's per-call capture over-dec these cases
+// originally had to tolerate is FIXED (the ENVCAP borrow exclusion —
+// see self_host_closure_capture_borrow_ir_test.go, which pins detector
+// zero on these shapes); these cases keep pinning values + crash-freedom.
 var closureAliasIRCases = []struct {
 	name string
 	src  string
