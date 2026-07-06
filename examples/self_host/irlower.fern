@@ -17783,6 +17783,110 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
     return "";
 }
 
+// struct_all_scalar_fields reports whether every field of `name` is a flat
+// leak-only SCALAR (reuse_field_is_scalar — i32/boolean/i64/f64/u32/u64), so a
+// box of this type carries no rc pointer field to release or retain. The
+// own-param donor path (own_param_reuse_sites) restricts to these: a scalar-only
+// donor box needs no old-field release on the reuse arm and no freshness gate on
+// the recipient's values, so an `own` struct PARAM (which has no bind literal for
+// donor_enum_fields_fresh / the array-freshness gate to inspect) is nonetheless a
+// sound donor. rc-pointer-field own-param donors are a later cut.
+function struct_all_scalar_fields(structs: parser.StructDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) {
+            if (structs[i].fields.len() == 0) { return false; }
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (!reuse_field_is_scalar(structs[i].fields[fi].type_name)) { return false; }
+                fi = fi + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// own_param_reuse_sites finds function-body top-level full-construction reuse
+// points whose donor is an `own` struct PARAMETER (#4356 divergence 3 — native's
+// computeReuseSources admits any freeEligible dead-after donor; the self-host had
+// only fresh-literal / strict-fresh-call LOCAL donors). An `own` param is moved
+// in (sole-owned; the caller relinquished it — under move semantics it is dead at
+// the call site), and a param is never exit-swept, so donating its box to a dead-
+// after construction is sound and the runtime __fern_rc_is_unique gate in
+// emit_cross_struct_reuse backstops it (a would-be-aliased box reads rc>=2 → fresh
+// alloc). Restricted to ALL-SCALAR donor + recipient boxes (struct_all_scalar_
+// fields), so the reuse arm releases nothing and needs no recipient freshness
+// gate. Pairing rules mirror cross_construction_donor: donor differs from the
+// recipient, box-class compatible (structs_reuse_compatible), never reassigned,
+// never escaping, dead from the construction onward, each own param consumed at
+// most once. A construction already owned by a self-overwrite / cross-local /
+// enum-donor site is skipped (checked against `reuse`/`xreuse`/`edon`).
+function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[], reuse: ReuseSites, xreuse: CrossReuseSites, edon: EnumDonorSites): CrossReuseSites {
+    var idxs: i32[] = [];
+    var donors: string[] = [];
+    var dtypes: string[] = [];
+    // Own struct params that are all-scalar and never reassigned / never
+    // escaping across the whole body — the donor candidate pool.
+    var reassigned: string[] = body_assign_targets(fn.body);
+    var allesc: string[] = walk_stmts_escapes(fn.body, []);
+    var consumed: string[] = [];
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        // Skip statements already claimed by another struct-construction reuse site.
+        var claimed: boolean = false;
+        var ci: i32 = 0;
+        while (ci < reuse.idxs.len()) { if (reuse.idxs[ci] == k) { claimed = true; } ci = ci + 1; }
+        var cj: i32 = 0;
+        while (cj < xreuse.idxs.len()) { if (xreuse.idxs[cj] == k) { claimed = true; } cj = cj + 1; }
+        var cl: i32 = 0;
+        while (cl < edon.idxs.len()) { if (edon.idxs[cl] == k) { claimed = true; } cl = cl + 1; }
+        if (!claimed) {
+            match (fn.body[k]) {
+                parser.StmtVar(v) => {
+                    match (v.init) {
+                        parser.ExprStructLit(slit) => {
+                            if (!slit.has_base && struct_all_scalar_fields(structs, slit.type_name)) {
+                                // Suffix ident set from k onward — the donor must be
+                                // dead here (covers c's own field values too).
+                                var sfx: string[] = [];
+                                var m: i32 = k;
+                                while (m < fn.body.len()) { sfx = astwalk.collect_idents_stmt(fn.body[m], sfx); m = m + 1; }
+                                // First eligible own param, in param order.
+                                var pi: i32 = 0;
+                                while (pi < fn.params.len()) {
+                                    var p: parser.ParamDecl = fn.params[pi];
+                                    if (p.own
+                                        && p.name != v.name
+                                        && struct_all_scalar_fields(structs, p.type_name)
+                                        && structs_reuse_compatible(structs, p.type_name, slit.type_name)
+                                        && util.index_of_str(consumed, p.name) < 0
+                                        && util.index_of_str(reassigned, p.name) < 0
+                                        && util.index_of_str(allesc, p.name) < 0
+                                        && util.index_of_str(sfx, p.name) < 0) {
+                                        idxs = idxs.append(k);
+                                        donors = donors.append(p.name);
+                                        dtypes = dtypes.append(p.type_name);
+                                        consumed = consumed.append(p.name);
+                                        pi = fn.params.len();
+                                    } else {
+                                        pi = pi + 1;
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        k = k + 1;
+    }
+    return CrossReuseSites { idxs: idxs, donors: donors, dtypes: dtypes };
+}
+
 // cross_reuse_sites computes the cross-statement full-construction reuse points.
 // It first computes the self-overwrite sites (so it never consumes a donor or a
 // construction those already own), then scans full no-base constructions of a
@@ -20419,6 +20523,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // survives to the reuse and is freed exactly once via c.
     var ecross: EnumCrossSites = EnumCrossSites { idxs: [], donors: [], enums: [] };
     if (!no_reuse) { ecross = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon); }
+    // Own-param struct donors (#4356 divergence 3): a full construction reusing a
+    // dead `own` struct PARAMETER's box (see own_param_reuse_sites). Lowered by the
+    // same emit_cross_struct_reuse as a cross-local donor (a param has a slot too);
+    // disjoint from every list above (its donor is a param, never a body local, and
+    // its recipient index is skipped when already claimed by reuse/xreuse/edon).
+    var ownxr: CrossReuseSites = CrossReuseSites { idxs: [], donors: [], dtypes: [] };
+    if (!no_reuse) { ownxr = own_param_reuse_sites(fn, structs, reuse, xreuse, edon); }
     // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
     // as a hole-passing loop instead of the recursive body — O(1) stack. The
     // emission is the complete body (its own return); everything below the
@@ -20453,6 +20564,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         while (xri < xreuse.idxs.len()) {
             if (xreuse.idxs[xri] == j) { xreuse_i = xri; }
             xri = xri + 1;
+        }
+        // Is statement j an own-param struct donor reuse site (`var c = T { ... }`
+        // reusing a dead `own` struct param's box)?
+        var ownxr_i: i32 = 0 - 1;
+        var oxi: i32 = 0;
+        while (oxi < ownxr.idxs.len()) {
+            if (ownxr.idxs[oxi] == j) { ownxr_i = oxi; }
+            oxi = oxi + 1;
         }
         // Is statement j a tuple cross-reuse site (`var c = (…)` reusing an earlier
         // dead same-arity donor tuple's box)?
@@ -20504,6 +20623,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         } else if (xreuse_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], xreuse.dtypes[xreuse_i], false, s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (ownxr_i >= 0) {
+            // Own-param struct donor (#4356 divergence 3): same emitter as the
+            // cross-local donor — the donor name resolves to a param slot.
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, ownxr.donors[ownxr_i], ownxr.dtypes[ownxr_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xtuple_i >= 0) {

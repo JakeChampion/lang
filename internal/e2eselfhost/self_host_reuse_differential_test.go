@@ -47,6 +47,14 @@ var reuseDifferentialCases = []struct {
 	// so this shape fresh-allocated every time.
 	{"cross-struct-callret-donor", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10, y: 20 }; return c.x + c.y + u; }`, 37, "call __fn___fern_alloc_reuse"},
 	{"cross-struct-callret-donor-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 2h — OWN-PARAM struct donor (#4356 divergence 3): a construction in a
+	// function with an `own` struct param reuses that param's box (moved in, sole-
+	// owned, dead after its last read). Restricted to all-scalar donor+recipient
+	// (own_param_reuse_sites); the __fern_rc_is_unique guard in the emitter backstops.
+	// Same type and cross-type (A donor → B recipient, same box class).
+	{"own-param-donor-same", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; return c.x + c.y + u; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 37, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-cross", `struct A { n: i32, m: i32 } struct B { p: i32, q: i32 } function f(own d: A): i32 { var u: i32 = d.n + d.m; var c = B { p: 10, q: 20 }; return c.p + c.q + u; } function main(): i32 { return f(A { n: 3, m: 4 }); }`, 37, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-detector", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 1b — functional-update self-overwrite with a CALL-RESULT base
 	// (#4356 divergence 3): same strict-fresh donor admission on the
 	// `var c = P { ...d, x: v }` path.

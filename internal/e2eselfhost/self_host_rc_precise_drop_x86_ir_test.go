@@ -1252,6 +1252,16 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"tuple-field-reuse-corruption-probe-detector", `struct P { id: i32, pr: (i32, i32) } function main(): i32 { var d = P { id: 1, pr: (10, 20) }; var c = P { ...d, pr: (7, 8) }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.pr.0 + c.pr.1 + c.id != 16) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); }`, 0},
 		{"option-field-reuse-carried-value", `struct Q { id: i32, o: Option[i32] } function main(): i32 { var d = Q { id: 1, o: Some(10) }; var c = Q { ...d, id: 2 }; var r: i32 = 0; match (c.o) { Some(v) => { r = v + c.id; }, None => { r = 0; } } return r; }`, 12},
 		{"option-field-reuse-override-detector", `struct Q { id: i32, o: Option[i32] } function main(): i32 { var d = Q { id: 1, o: Some(10) }; var c = Q { ...d, o: Some(30) }; var r: i32 = 0; match (c.o) { Some(v) => { r = v + c.id; }, None => { r = 0; } } if (r != 31) { return 99; } return __rc_underflow(); }`, 0},
+		// OWN-PARAM struct donors (#4356 slice 10 / divergence 3): a construction in
+		// a function with an `own` struct param reuses that param's (moved-in, sole-
+		// owned, dead-after) box. All-scalar donor+recipient (own_param_reuse_sites),
+		// so no old-field release; the value read from the reused box is intact, the
+		// detector clean (nothing over-released), and a fresh array next to the reuse
+		// reads back unpoisoned. Same type + cross-type (A→B same box class).
+		{"own-param-donor-value", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; return c.x + c.y + u; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 37},
+		{"own-param-donor-detector", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 0},
+		{"own-param-donor-cross-detector", `struct A { n: i32, m: i32 } struct B { p: i32, q: i32 } function f(own d: A): i32 { var u: i32 = d.n + d.m; var c = B { p: 10, q: 20 }; var s: i32 = c.p + c.q + u; if (s != 37) { return 99; } return __rc_underflow(); } function main(): i32 { return f(A { n: 3, m: 4 }); }`, 0},
+		{"own-param-donor-corruption-probe-detector", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var u: i32 = d.x + d.y; var c = P { x: 10, y: 20 }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.x + c.y + u != 37) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 0},
 		// IN-PLACE enum self-reassign reuse (FBIP, native parity): a loop-carried
 		// array-payload enum `var b = V0([..]); while(..) { b = V1([..]); b = V2([..]); }`
 		// whose enum has UNIFORM variant layout (every variant one array field) reuses
