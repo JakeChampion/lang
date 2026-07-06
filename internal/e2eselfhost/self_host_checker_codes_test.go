@@ -249,6 +249,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"genarg-cell-ok-param", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"genarg-map-ok-param", "function f(m: Map[string, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"arrelem-ok-field", "struct S { xs: string[] }\nfunction main(): i32 { return 0; }\n", nil},
+		// E021 (#4347): an impl that omits a REQUIRED (abstract) trait method.
+		// A complete impl and a default-only trait (whose default is synthesised
+		// onto the omitting impl) stay clean, matching the Go oracle.
+		{"impl-missing-method", "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-complete-ok", "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog { function hello(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"impl-default-omitted-ok", "trait Greet { function hi(): i32 { return 9; } }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n", nil},
+		{"impl-missing-one-of-two", "trait Two { function a(): i32; function b(): i32; }\nstruct S {}\nimpl Two for S { function a(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop

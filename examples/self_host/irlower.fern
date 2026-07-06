@@ -26048,7 +26048,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     // own defer handling is unchanged.
     var result: parser.Module = mod;
     if (acc.counter != 0) {
-        result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+        result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
     }
     return parser.lower_defers_module(result);
 }
