@@ -17894,6 +17894,118 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
     return CrossReuseSites { idxs: idxs, donors: donors, dtypes: dtypes };
 }
 
+// own_param_self_overwrite_sites finds function-body top-level FUNCTIONAL-UPDATE
+// reuse points whose base is an `own` struct PARAMETER (#4356 slice 12 — the
+// self-overwrite sibling of own_param_reuse_sites). `var c = T { ...own_d, f: v }`
+// where own_d is a dead-after `own` param reuses own_d's box in place. Same
+// soundness basis as the cross own-param donor: an `own` param is moved in / sole-
+// owned and never exit-swept, and emit_self_overwrite_reuse's __fern_rc_is_unique
+// guard backstops. Restricted to struct_fields_reusable (scalar / leak-safe array
+// / nested struct — NO enum/string, whose old-value release needs a donor bind
+// literal a param has none of), so no donor-side freshness gate is required. The
+// override / carried gates mirror self_overwrite_reuse_sites exactly: same-type
+// base, override values fresh (array literals / nested no-base struct lits), no
+// override value references d, d dead after the statement, never reassigned, and
+// escaping nowhere but the update base here. A statement already claimed by a
+// self-overwrite-local / cross-local / cross-own-param / enum-donor site is skipped.
+function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: parser.StructDecl[], reuse: ReuseSites, xreuse: CrossReuseSites, ownxr: CrossReuseSites, edon: EnumDonorSites): ReuseSites {
+    var idxs: i32[] = [];
+    var bases: string[] = [];
+    var reassigned: string[] = body_assign_targets(fn.body);
+    var i: i32 = 0;
+    while (i < fn.body.len()) {
+        // Skip statements already claimed by another reuse site.
+        var claimed: boolean = false;
+        var ci: i32 = 0;
+        while (ci < reuse.idxs.len()) { if (reuse.idxs[ci] == i) { claimed = true; } ci = ci + 1; }
+        var cj: i32 = 0;
+        while (cj < xreuse.idxs.len()) { if (xreuse.idxs[cj] == i) { claimed = true; } cj = cj + 1; }
+        var co: i32 = 0;
+        while (co < ownxr.idxs.len()) { if (ownxr.idxs[co] == i) { claimed = true; } co = co + 1; }
+        var cl: i32 = 0;
+        while (cl < edon.idxs.len()) { if (edon.idxs[cl] == i) { claimed = true; } cl = cl + 1; }
+        if (!claimed) {
+            match (fn.body[i]) {
+                parser.StmtVar(v) => {
+                    match (v.init) {
+                        parser.ExprStructLit(slit) => {
+                            if (slit.has_base) {
+                                match (slit.base) {
+                                    parser.ExprIdent(bid) => {
+                                        // Base must be an `own` struct param of the SAME
+                                        // type T, T being scalar/array/nested-reusable.
+                                        var is_own_p: boolean = false;
+                                        var pi: i32 = 0;
+                                        while (pi < fn.params.len()) {
+                                            var p: parser.ParamDecl = fn.params[pi];
+                                            if (p.name == bid.name && p.own && p.type_name == slit.type_name) { is_own_p = true; }
+                                            pi = pi + 1;
+                                        }
+                                        var ok: boolean = is_own_p
+                                            && struct_fields_reusable(structs, slit.type_name)
+                                            && v.name != bid.name
+                                            && util.index_of_str(reassigned, bid.name) < 0
+                                            && !name_escapes_outside_stmt(fn.body, bid.name, i);
+                                        // No override value may reference d.
+                                        if (ok) {
+                                            var fj: i32 = 0;
+                                            while (fj < slit.field_values.len()) {
+                                                var none: string[] = [];
+                                                if (util.index_of_str(astwalk.collect_idents_expr(slit.field_values[fj], none), bid.name) >= 0) { ok = false; }
+                                                fj = fj + 1;
+                                            }
+                                        }
+                                        // Every array override must be a FRESH array literal
+                                        // and every nested-struct override a FRESH no-base
+                                        // struct literal, so the reused box solely owns the
+                                        // new inner once the old one is dropped.
+                                        if (ok) {
+                                            var fk: i32 = 0;
+                                            while (fk < slit.field_names.len()) {
+                                                var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
+                                                if (is_leaksafe_array_field(fkt)) {
+                                                    match (slit.field_values[fk]) {
+                                                        parser.ExprArray(_) => {},
+                                                        _ => { ok = false; }
+                                                    }
+                                                } else if (decl_is_struct(structs, fkt)) {
+                                                    match (slit.field_values[fk]) {
+                                                        parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
+                                                        _ => { ok = false; }
+                                                    }
+                                                }
+                                                fk = fk + 1;
+                                            }
+                                        }
+                                        // d dead after this statement.
+                                        if (ok) {
+                                            var k: i32 = i + 1;
+                                            while (k < fn.body.len()) {
+                                                var none2: string[] = [];
+                                                if (util.index_of_str(astwalk.collect_idents_stmt(fn.body[k], none2), bid.name) >= 0) { ok = false; }
+                                                k = k + 1;
+                                            }
+                                        }
+                                        if (ok) {
+                                            idxs = idxs.append(i);
+                                            bases = bases.append(bid.name);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        i = i + 1;
+    }
+    return ReuseSites { idxs: idxs, bases: bases };
+}
+
 // cross_reuse_sites computes the cross-statement full-construction reuse points.
 // It first computes the self-overwrite sites (so it never consumes a donor or a
 // construction those already own), then scans full no-base constructions of a
@@ -20537,6 +20649,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // its recipient index is skipped when already claimed by reuse/xreuse/edon).
     var ownxr: CrossReuseSites = CrossReuseSites { idxs: [], donors: [], dtypes: [] };
     if (!no_reuse) { ownxr = own_param_reuse_sites(fn, structs, reuse, xreuse, edon); }
+    // Own-param functional-update bases (#4356 slice 12): `var c = T { ...own_d, .. }`
+    // reusing a dead `own` struct param's box in place. Lowered by the same
+    // emit_self_overwrite_reuse as a fresh-literal base; disjoint from every list
+    // above (its base is a param, and claimed indices are skipped inside).
+    var ownso: ReuseSites = ReuseSites { idxs: [], bases: [] };
+    if (!no_reuse) { ownso = own_param_self_overwrite_sites(fn, structs, reuse, xreuse, ownxr, edon); }
     // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
     // as a hole-passing loop instead of the recursive body — O(1) stack. The
     // emission is the complete body (its own return); everything below the
@@ -20579,6 +20697,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         while (oxi < ownxr.idxs.len()) {
             if (ownxr.idxs[oxi] == j) { ownxr_i = oxi; }
             oxi = oxi + 1;
+        }
+        // Is statement j an own-param functional-update reuse site
+        // (`var c = T { ...own_d, .. }` reusing a dead `own` param's box)?
+        var ownso_i: i32 = 0 - 1;
+        var osi: i32 = 0;
+        while (osi < ownso.idxs.len()) {
+            if (ownso.idxs[osi] == j) { ownso_i = osi; }
+            osi = osi + 1;
         }
         // Is statement j a tuple cross-reuse site (`var c = (…)` reusing an earlier
         // dead same-arity donor tuple's box)?
@@ -20637,6 +20763,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             // cross-local donor — the donor name resolves to a param slot.
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, ownxr.donors[ownxr_i], ownxr.dtypes[ownxr_i], false, s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (ownso_i >= 0) {
+            // Own-param functional-update base (#4356 slice 12): same emitter as a
+            // fresh-literal self-overwrite base — the base name resolves to a param slot.
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, ownso.bases[ownso_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xtuple_i >= 0) {
