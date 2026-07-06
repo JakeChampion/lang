@@ -813,6 +813,99 @@ pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
     return None;
 }
 
+// `__json_ptr_unescape(tok)` — decode a single RFC 6901 reference
+// token: `~1` -> `/` and `~0` -> `~`, in one left-to-right pass so
+// `~01` correctly decodes to `~1` (not `/`). A lone `~` not followed
+// by `0`/`1` is passed through literally (lenient). Tokens are short
+// keys, so the `out + …` build is fine and only runs on the rare
+// escape-bearing path (a `~`-free token returns unchanged).
+function __json_ptr_unescape(tok: string): string {
+    var n: i32 = tok.len();
+    var has: boolean = false;
+    var i: i32 = 0;
+    while (i < n) {
+        if (tok[i] == 126) { has = true; i = n; } else { i = i + 1; }   // '~' = 126
+    }
+    if (!has) { return tok; }
+    var out: string = "";
+    i = 0;
+    while (i < n) {
+        var c: i32 = tok[i];
+        if (c == 126 && i + 1 < n) {
+            var d: i32 = tok[i + 1];
+            if (d == 49)      { out = out + "/"; i = i + 2; }   // ~1 -> /
+            else if (d == 48) { out = out + "~"; i = i + 2; }   // ~0 -> ~
+            else              { out = out + tok[i : i + 1]; i = i + 1; }
+        } else {
+            out = out + tok[i : i + 1];
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// `__json_ptr_index(tok)` — parse an RFC 6901 array-index token to a
+// non-negative i32, or -1 if it isn't a valid index. Per §4 the token
+// must be `0` or `[1-9][0-9]*` — leading zeros, the `-` end-of-array
+// token, non-digits, and out-of-i32 magnitudes all yield -1 (a
+// guaranteed miss).
+function __json_ptr_index(tok: string): i32 {
+    var n: i32 = tok.len();
+    if (n == 0) { return 0 - 1; }
+    if (tok[0] == 48 && n > 1) { return 0 - 1; }   // leading zero
+    var acc: i64 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = tok[i];
+        if (b < 48 || b > 57) { return 0 - 1; }
+        acc = acc * 10 + ((b - 48) as i64);
+        if (acc > 2147483647) { return 0 - 1; }    // past any real array length
+        i = i + 1;
+    }
+    return acc as i32;
+}
+
+// `json_pointer(doc, pointer)` — resolve an RFC 6901 JSON Pointer
+// against a JsonValue tree. `""` selects the whole document; a
+// non-empty pointer must start with `/`, and each `/`-separated
+// reference token descends one level: a token indexes a JObject by
+// key or a JArray by numeric index (`~1`/`~0` unescape to `/`/`~` in
+// keys). Returns None on a missing key, an out-of-range or malformed
+// array index, a descent into a scalar, or a pointer that doesn't
+// begin with `/`.
+//
+//   json_pointer(doc, "/user/tags/0")   // first tag
+//   json_pointer(doc, "/a~1b")          // key literally "a/b"
+pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
+    var n: i32 = pointer.len();
+    if (n == 0) { return Some(doc); }
+    if (pointer[0] != 47) { return None; }   // must start with '/' = 47
+    var cur: JsonValue = doc;
+    var i: i32 = 1;                            // past the leading '/'
+    while (i <= n) {
+        // Token runs from i up to the next '/' (or the end).
+        var j: i32 = i;
+        while (j < n && pointer[j] != 47) { j = j + 1; }
+        var tok: string = __json_ptr_unescape(pointer[i : j]);
+        match (cur) {
+            JObject(m) => {
+                match (m.get(tok)) {
+                    Some(v) => { cur = v; },
+                    None => { return None; }
+                }
+            },
+            JArray(arr) => {
+                var idx: i32 = __json_ptr_index(tok);
+                if (idx < 0 || idx >= arr.len()) { return None; }
+                cur = arr[idx];
+            },
+            _ => { return None; }
+        }
+        i = j + 1;                            // past the terminating '/'
+    }
+    return Some(cur);
+}
+
 // `json_is_null(v)` — true iff `v` is JNull. Convenience
 // over the bare match for the common nullability check.
 pub function json_is_null(v: JsonValue): boolean {
