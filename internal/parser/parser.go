@@ -2634,10 +2634,19 @@ func (p *parser) branchStmtStart() bool {
 			return true
 		}
 	}
+	// #4522: an else-LESS `if` in a block body is a control-flow STATEMENT
+	// (`{ if (early) { return 0; } …; tail }`), not the value expression — an
+	// if-EXPRESSION requires `else`, so an else-less `if` can never be a tail
+	// value anyway. An `if` WITH `else` stays on the expression path so
+	// `{ …; if (c) { a } else { b } }` still yields a value and the else-if
+	// chain form is unaffected.
+	if t.Kind == lexer.Keyword && t.Text == "if" && !p.ifStmtHasElse() {
+		return true
+	}
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
-		// `if` / `match` are deliberately NOT listed: they can stand as
-		// the trailing value expression (`{ …; if (c) { a } else { b } }`),
+		// `if` (with else) / `match` are deliberately NOT listed: they can
+		// stand as the trailing value expression (`{ …; if (c) { a } else { b } }`),
 		// and the existing single-expr branch form
 		// `if (a) { … } else { if (c) { … } else { … } }` relies on the
 		// inner `if`/`match` parsing as an expression. The expr path in
@@ -2650,6 +2659,48 @@ func (p *parser) branchStmtStart() bool {
 		}
 	}
 	return false
+}
+
+// ifStmtHasElse reports whether the `if` the cursor is on has a trailing
+// `else` clause, by skipping its paren-balanced condition and brace-balanced
+// then-body and peeking for `else`. Used by branchStmtStart to route an
+// else-less `if` in a block body through the statement path (#4522) — such an
+// `if` cannot be a value expression, so it is control flow.
+func (p *parser) ifStmtHasElse() bool {
+	i := p.i + 1 // skip `if`
+	// Skip `( … )` (paren-balanced).
+	if i < len(p.tokens) && p.tokens[i].Kind == lexer.Punct && p.tokens[i].Text == "(" {
+		depth := 0
+		for ; i < len(p.tokens); i++ {
+			t := p.tokens[i]
+			if t.Kind == lexer.Punct && t.Text == "(" {
+				depth++
+			} else if t.Kind == lexer.Punct && t.Text == ")" {
+				depth--
+				if depth == 0 {
+					i++
+					break
+				}
+			}
+		}
+	}
+	// Skip `{ … }` (brace-balanced) then-body.
+	if i < len(p.tokens) && p.tokens[i].Kind == lexer.Punct && p.tokens[i].Text == "{" {
+		depth := 0
+		for ; i < len(p.tokens); i++ {
+			t := p.tokens[i]
+			if t.Kind == lexer.Punct && t.Text == "{" {
+				depth++
+			} else if t.Kind == lexer.Punct && t.Text == "}" {
+				depth--
+				if depth == 0 {
+					i++
+					break
+				}
+			}
+		}
+	}
+	return i < len(p.tokens) && p.tokens[i].Kind == lexer.Keyword && p.tokens[i].Text == "else"
 }
 
 // parseFor produces a real For node so that `continue` can jump to the

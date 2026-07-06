@@ -3016,3 +3016,39 @@ func TestParseValuePositionBlockExpr(t *testing.T) {
 		t.Errorf("`{ 7 }` must collapse to the bare expr `7`, not a BlockExpr")
 	}
 }
+
+// #4522: an else-LESS `if` inside a block body parses as a control-flow
+// STATEMENT (*ast.If among the block's Stmts), while an `if` WITH `else` stays
+// a value expression — the disambiguation that lets `{ if (c) { return } tail }`
+// carry control flow without breaking `{ …; if (c) { a } else { b } }`.
+func TestParseControlFlowInBlockExpr(t *testing.T) {
+	// else-less `if` in a value block → a leading *ast.If statement + a tail.
+	prog, err := Parse(`function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 9; } e + 1 }; return x; }`)
+	if err != nil {
+		t.Fatalf("parse control-flow block: %v", err)
+	}
+	be, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("init = %T, want *ast.BlockExpr", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init)
+	}
+	if len(be.Stmts) != 1 {
+		t.Fatalf("block-expr Stmts = %d, want 1 (the if-statement)", len(be.Stmts))
+	}
+	if _, ok := be.Stmts[0].(*ast.If); !ok {
+		t.Errorf("leading stmt = %T, want *ast.If (else-less if is control flow)", be.Stmts[0])
+	}
+	if be.Tail == nil {
+		t.Errorf("block-expr tail is nil, want the `e + 1` value")
+	}
+
+	// An `if` WITH `else` as the tail stays a value expression (an *ast.IfExpr
+	// tail, not a statement) — unchanged behaviour.
+	prog2, err := Parse(`function g(c: boolean): i32 { var x: i32 = if (c) { 1 } else { 2 }; return x; }`)
+	if err != nil {
+		t.Fatalf("parse if-expr branch: %v", err)
+	}
+	if _, ok := prog2.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.IfExpr); !ok {
+		t.Errorf("if-with-else init = %T, want *ast.IfExpr",
+			prog2.Funcs[0].Body.Stmts[0].(*ast.Var).Init)
+	}
+}
