@@ -25,6 +25,27 @@ function test_escape_c(): test.TestOutcome {
     return test.assert_eq("a\tb\\c".escape_c(), "a\\tb\\\\c");
 }
 
+// Every metacharacter back-to-back with no passthrough — exercises the two-pass
+// exact-size buffer on all five expanding escape_html branches at once (a
+// mis-sized buffer would truncate or leave gaps).
+function test_escape_html_all(): test.TestOutcome {
+    return test.assert_eq("&<>\"'".escape_html(), "&amp;&lt;&gt;&#34;&#39;");
+}
+
+// Empty and passthrough-only inputs — the buffer degenerates to size 0 / n.
+function test_escape_html_empty(): test.TestOutcome {
+    return test.assert_eq("".escape_html(), "");
+}
+function test_escape_html_plain(): test.TestOutcome {
+    return test.assert_eq("plain text 123".escape_html(), "plain text 123");
+}
+
+// All five writable escape_c escapes back-to-back (\ " \n \t \r) — every
+// 2-byte-expanding branch of the two-pass fill.
+function test_escape_c_all(): test.TestOutcome {
+    return test.assert_eq("\\\"\n\t\r".escape_c(), "\\\\\\\"\\n\\t\\r");
+}
+
 function test_escape_shell_plain(): test.TestOutcome {
     // no interior quote → just single-quote wrap.
     return test.assert_eq("abc".escape_shell(), "'abc'");
@@ -101,7 +122,11 @@ function test_starts_with_any_empty(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string escape + count");
     r = r.it("escape_html",          test_escape_html());
+    r = r.it("escape_html all",      test_escape_html_all());
+    r = r.it("escape_html empty",    test_escape_html_empty());
+    r = r.it("escape_html plain",    test_escape_html_plain());
     r = r.it("escape_c",             test_escape_c());
+    r = r.it("escape_c all",         test_escape_c_all());
     r = r.it("escape_shell plain",   test_escape_shell_plain());
     r = r.it("escape_shell quote",   test_escape_shell_quote());
     r = r.it("count_byte",           test_count_byte());
