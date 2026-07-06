@@ -1127,8 +1127,18 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 
 	retLabel := fmt.Sprintf(".Lret_%s_%d", fn.Name, g.fresh())
 	var scope []irScope
-	for _, op := range irFn.Ops {
-		if err := g.emitOp(op, retLabel, &scope); err != nil {
+	for i := 0; i < len(irFn.Ops); i++ {
+		// Compare-and-branch fusion (#4378): an integer comparison whose
+		// result flows directly into the OpIf / OpBrIf that follows it
+		// (through zero or more OpNots) emits `cmp; jcc` instead of
+		// materialising the boolean with setcc/movzx and re-testing it.
+		// Safe because the IR is single-use: the branch is the sole
+		// consumer of the comparison's pushed value.
+		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope); ok {
+			i += adv
+			continue
+		}
+		if err := g.emitOp(irFn.Ops[i], retLabel, &scope); err != nil {
 			return err
 		}
 	}
@@ -2429,6 +2439,109 @@ func (g *generator) emitPairFormMaker(width int, tag int) {
 	g.push()               // push tag
 	g.emit("mov rax, rcx") // restore payload
 	g.push()               // push payload
+}
+
+// isFusableCompare reports whether kind is an integer comparison whose
+// result is a 0/1 boolean the compare-and-branch fusion can turn into a
+// direct conditional jump. Float compares are excluded: NaN breaks the
+// negation identity (`!(a < b)` is not `a >= b` when either is NaN), so
+// their setcc/movzx materialisation stays.
+func isFusableCompare(k ir.OpKind) bool {
+	switch k {
+	case ir.OpEq, ir.OpNe, ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS:
+		return true
+	}
+	return false
+}
+
+// jccMnemonic maps an integer comparison to the x86 conditional-jump
+// mnemonic that fires when the comparison holds (whenTrue) or when it
+// does not (its negation). `unsigned` selects the below/above family
+// over less/greater. cmpForWidth has already emitted `cmp lhs, rhs`, so
+// the flags reflect lhs vs rhs.
+func jccMnemonic(k ir.OpKind, unsigned, whenTrue bool) string {
+	// direct = jump when the comparison is TRUE; neg = its inverse.
+	var direct, neg string
+	switch k {
+	case ir.OpEq:
+		direct, neg = "je", "jne"
+	case ir.OpNe:
+		direct, neg = "jne", "je"
+	case ir.OpLtS:
+		if unsigned {
+			direct, neg = "jb", "jae"
+		} else {
+			direct, neg = "jl", "jge"
+		}
+	case ir.OpLeS:
+		if unsigned {
+			direct, neg = "jbe", "ja"
+		} else {
+			direct, neg = "jle", "jg"
+		}
+	case ir.OpGtS:
+		if unsigned {
+			direct, neg = "ja", "jbe"
+		} else {
+			direct, neg = "jg", "jle"
+		}
+	case ir.OpGeS:
+		if unsigned {
+			direct, neg = "jae", "jb"
+		} else {
+			direct, neg = "jge", "jl"
+		}
+	}
+	if whenTrue {
+		return direct
+	}
+	return neg
+}
+
+// tryFuseCmpBranch fuses `cmp (Not)* {If|BrIf}` into `cmp; jcc`.
+// Returns the number of EXTRA ops consumed past index i (the caller
+// advances i by that amount) and whether the fusion fired. When it does
+// not fire the op stream is untouched and the normal per-op emission
+// runs. See the loop comment at the call site for the safety argument.
+func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	cmp := ops[i]
+	if !isFusableCompare(cmp.Kind) {
+		return 0, false
+	}
+	j := i + 1
+	nots := 0
+	for j < len(ops) && ops[j].Kind == ir.OpNot {
+		nots++
+		j++
+	}
+	if j >= len(ops) {
+		return 0, false
+	}
+	br := ops[j]
+	// OpBrIf jumps when the effective condition is TRUE; OpIf jumps to
+	// its else-label when the effective condition is FALSE. Each OpNot
+	// flips which comparison outcome that is.
+	whenTrue := br.Kind == ir.OpBrIf
+	if nots%2 == 1 {
+		whenTrue = !whenTrue
+	}
+	switch br.Kind {
+	case ir.OpIf:
+		g.binPop()
+		g.cmpForWidth(int(cmp.Width))
+		elseL := g.freshLabel("ifElse")
+		endL := g.freshLabel("ifEnd")
+		g.emit(fmt.Sprintf("%s %s", jccMnemonic(cmp.Kind, cmp.Unsigned, whenTrue), elseL))
+		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
+		return j - i, true
+	case ir.OpBrIf:
+		g.binPop()
+		g.cmpForWidth(int(cmp.Width))
+		target := (*scope)[len(*scope)-1-int(br.I32)].brTarget
+		g.emit(fmt.Sprintf("%s %s", jccMnemonic(cmp.Kind, cmp.Unsigned, whenTrue), target))
+		return j - i, true
+	}
+	return 0, false
 }
 
 func (g *generator) binPop() {
