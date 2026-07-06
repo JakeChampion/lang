@@ -5708,6 +5708,73 @@ function e021_diags(mod: parser.Module): Diag[] {
     return out;
 }
 
+// e021_object_unsafe_method returns the name of a required method that makes
+// `trait_name` NOT object-safe (so it can't be used as `dyn T`), or "" when the
+// trait is object-safe or unknown. A trait method breaks object-safety when it
+// is an associated function (no leading `self` receiver), returns `Self`, or is
+// generic — a `dyn` value has no statically-known Self, so none of those can
+// dispatch through a vtable. Conservative: only the trait's ABSTRACT methods
+// (trait_reqs.req_sigs) are inspected, so a default method that happens to be
+// object-unsafe is not caught here (never a false positive).
+function e021_object_unsafe_method(mod: parser.Module, trait_name: string): string {
+    var ti: i32 = 0;
+    while (ti < mod.trait_reqs.len()) {
+        if (mod.trait_reqs[ti].trait_name == trait_name) {
+            var sigs: parser.FuncDecl[] = mod.trait_reqs[ti].req_sigs;
+            var si: i32 = 0;
+            while (si < sigs.len()) {
+                var f: parser.FuncDecl = sigs[si];
+                if (f.params.len() == 0 || f.params[0].name != "self") { return f.name; }
+                if (f.ret_type == "Self") { return f.name; }
+                if (f.type_params.len() > 0 || f.type_param_count > 0) { return f.name; }
+                si = si + 1;
+            }
+            return "";
+        }
+        ti = ti + 1;
+    }
+    return "";
+}
+
+// e021_dyn_target returns the trait name of a `dyn T` type annotation (the text
+// after the `dyn ` prefix), or "" for any non-dyn type. A trailing `[]` (a
+// `dyn T[]` array) is stripped so the element trait is classified.
+function e021_dyn_target(type_name: string): string {
+    if (type_name.len() < 5 || type_name[0:4] != "dyn ") { return ""; }
+    var t: string = type_name[4:type_name.len()];
+    while (t.len() >= 2 && t[t.len() - 2] == 91 && t[t.len() - 1] == 93) { t = t[0:t.len() - 2]; }
+    return t;
+}
+
+// e021_object_safety_diags reports E021 for a `dyn T` annotation whose trait T
+// is not object-safe (#4347 slice 4). Scans function param + return type
+// positions — the sites the Go checker flags (a `dyn T` struct field is NOT
+// flagged there, so it's deliberately excluded to keep parity). A dyn of an
+// object-safe or unknown trait is left alone.
+function e021_object_safety_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var fn: parser.FuncDecl = mod.funcs[fi];
+        var pi: i32 = 0;
+        while (pi < fn.params.len()) {
+            var pt: string = e021_dyn_target(fn.params[pi].type_name);
+            if (pt.len() > 0) {
+                var pm: string = e021_object_unsafe_method(mod, pt);
+                if (pm.len() > 0) { out = out.append(dg("E021", "trait " + pt + " is not object-safe: method \"" + pm + "\"")); }
+            }
+            pi = pi + 1;
+        }
+        var rt: string = e021_dyn_target(fn.ret_type);
+        if (rt.len() > 0) {
+            var rm: string = e021_object_unsafe_method(mod, rt);
+            if (rm.len() > 0) { out = out.append(dg("E021", "trait " + rt + " is not object-safe: method \"" + rm + "\"")); }
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -5888,7 +5955,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis.
-    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_object_safety_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

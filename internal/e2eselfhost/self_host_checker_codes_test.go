@@ -269,6 +269,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"impl-supertrait-missing", "trait A { function a(self: Self): i32; }\ntrait B: A { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-supertrait-multi-missing", "trait A { function a(self: Self): i32; }\ntrait C { function c(self: Self): i32; }\ntrait B: A + C { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function a(self: Self): i32 { return 2; } }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-supertrait-satisfied-ok", "trait A { function a(self: Self): i32; }\ntrait B: A { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function a(self: Self): i32 { return 2; } }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
+		// object-safe draws E021 — T has an associated function (no self) or a
+		// Self-returning method, neither of which can dispatch through a dyn
+		// vtable. An object-safe trait (all methods take self, non-Self return)
+		// is fine as `dyn T`.
+		{"dyn-unsafe-assoc-fn", "trait T { function make(): Self; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"dyn-unsafe-self-return", "trait T { function m(self: Self): Self; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
