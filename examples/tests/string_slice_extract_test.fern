@@ -123,6 +123,16 @@ function test_indent(): test.TestOutcome {
     return test.assert_eq("a\nb".indent("  "), "  a\n  b");
 }
 
+// A trailing newline is NOT followed by a prefix (it ends no further line);
+// consecutive newlines each get one. These stress the two-pass buffer's exact
+// size — a miscount would truncate or over-pad.
+function test_indent_trailing_newline(): test.TestOutcome {
+    return test.assert_eq("x\n".indent("+"), "+x\n");
+}
+function test_indent_consecutive_newlines(): test.TestOutcome {
+    return test.assert_eq("\n\ny".indent("-"), "-\n-\n-y");
+}
+
 // ---- fixed-width slicing ----
 
 function test_chunks(): test.TestOutcome {
@@ -149,6 +159,8 @@ function main(): i32 {
     r = r.it("reverse_words",     test_reverse_words());
     r = r.it("wrap",              test_wrap());
     r = r.it("indent",            test_indent());
+    r = r.it("indent trailing nl", test_indent_trailing_newline());
+    r = r.it("indent consec nl",  test_indent_consecutive_newlines());
     r = r.it("chunks",            test_chunks());
     return r.finish();
 }
