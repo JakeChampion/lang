@@ -12,11 +12,11 @@ import (
 // (op_struct_copy, #4650) on the self-host x86-64 IR path. `T { ...base, f: v }`
 // on a struct_copy_eligible type (no nested-struct / enum / bare-string / 8-byte
 // scalar field — i.e. only scalar + array / string[] / map / option / tuple
-// fields) lowers its base copy to ONE `call __fern_struct_copy` (a shallow
+// fields) lowers its base copy to ONE `call __fn___fern_struct_copy` (a shallow
 // word-for-word box copy) plus a struct_set per overridden field, instead of N
 // inline struct_get/store pairs. Each case pins:
 //   - exit code == VALUE correctness (a wrong copy / lost override diverges);
-//   - copyAssert == the EMISSION contract: +1 requires ≥1 `call __fern_struct_copy`
+//   - copyAssert == the EMISSION contract: +1 requires ≥1 `call __fn___fern_struct_copy`
 //     (the compact path fired), -1 requires zero (an ineligible struct must stay
 //     on the inline path so the per-field retains still run).
 var structCopyIRCases = []struct {
@@ -74,10 +74,10 @@ func TestSelfHostStructCopyIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			copies := bytes.Count(asm, []byte("call __fern_struct_copy"))
+			copies := bytes.Count(asm, []byte("call __fn___fern_struct_copy"))
 			switch {
 			case tc.copyAssert > 0 && copies == 0:
-				t.Errorf("%s: expected op_struct_copy to fire (call __fern_struct_copy), found none — compact update path regressed", tc.name)
+				t.Errorf("%s: expected op_struct_copy to fire (call __fn___fern_struct_copy), found none — compact update path regressed", tc.name)
 			case tc.copyAssert < 0 && copies != 0:
 				t.Errorf("%s: expected NO struct_copy (ineligible struct must stay inline), found %d", tc.name, copies)
 			}

@@ -12176,7 +12176,7 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
 
 // struct_copy_eligible reports whether a functional update `T { ...base, f: v }`
 // of struct `sty` may lower its BASE COPY through the compact op_struct_copy path
-// (one `call __fern_struct_copy` per site) instead of the inline per-field
+// (one `call __fn___fern_struct_copy` per site) instead of the inline per-field
 // struct_get/store fan-out (#4650 — the self-host compiler's working set on the
 // x86_encode/x86_gas encoders otherwise OOMs the wasm driver). struct_copy is a
 // SHALLOW word-for-word box copy: it shares every field pointer with no rc-inc,

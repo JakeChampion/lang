@@ -727,7 +727,7 @@ pub function op_struct_make(type_name: string, nfields: i32): Op {
 // word copy of src (the same shape ptr @0 + all `nfields` field slots). It is the
 // compact lowering of a functional struct-update's base copy: `T { ...base, f: v }`
 // becomes struct_copy(base) then one struct_set per overridden field, so the copy
-// of the N unchanged fields is a single O(1) `call __fern_struct_copy` instead of N
+// of the N unchanged fields is a single O(1) `call __fn___fern_struct_copy` instead of N
 // inline struct_get/store pairs per update site (#4650 — the self-host compiler's
 // working set on the x86_encode/x86_gas encoders, ~90 update sites on an 8-field
 // struct, otherwise scales ~1.75x the compact __set_field form and OOMs the wasm

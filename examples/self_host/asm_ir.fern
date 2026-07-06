@@ -767,13 +767,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $16, %rax\n");
     s = s.write("    leave\n");
     s = s.write("    ret\n");
-    // __fern_struct_copy(%rdi = src box data, %rsi = nf) -> %rax = fresh box that is
+    // __fn___fern_struct_copy(%rdi = src box data, %rsi = nf) -> %rax = fresh box that is
     // a shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
     // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same free
     // size, byte-identical to struct_make's box; then copies nf+1 words src -> dst
     // (field pointers shared, matching the inline base-copy path). The compact base
     // copy of `T { ...base, f: v }` (#4650): one call instead of nf struct_get/store.
-    s = s.write("__fern_struct_copy:\n");
+    s = s.write("__fn___fern_struct_copy:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %rdi\n");                 // save src            [-8(%rbp)]
@@ -4348,11 +4348,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax)\n");
         } else if (o.kind_tag == 198) {  // struct_copy
             // pop src box; shallow-copy it into a fresh rc=1 box (nf+1 words) via
-            // __fern_struct_copy and push the copy. The O(1)-per-site base copy of a
+            // __fn___fern_struct_copy and push the copy. The O(1)-per-site base copy of a
             // functional update (#4650), replacing nf inline struct_get/store pairs.
             s = s.write("    popq %rdi\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n");
-            s = s.write("    call __fern_struct_copy\n");
+            s = s.write("    call __fn___fern_struct_copy\n");
             s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,

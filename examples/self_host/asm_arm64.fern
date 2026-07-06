@@ -5059,13 +5059,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add sp, sp, #16\n");          // pop saved cap
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        // __fern_struct_copy(x0 = src box data, x1 = nf) -> x0 = fresh box that is a
+        // __fn___fern_struct_copy(x0 = src box data, x1 = nf) -> x0 = fresh box that is a
         // shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
         // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same
         // free size, byte-identical to struct_make's box; copies nf+1 words src -> dst
         // (field pointers shared, matching the inline base-copy). The compact base copy
         // of `T { ...base, f: v }` (#4650) — one bl instead of nf ldr/str pairs/site.
-        s = s.write("__fern_struct_copy:\n");
+        s = s.write("__fn___fern_struct_copy:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x0, x1, [sp, #-16]!\n");   // save src, nf
