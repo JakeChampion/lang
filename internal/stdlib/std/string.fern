@@ -1887,26 +1887,56 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
 // non-overlapping occurrence of `old` with `new`.
 // Empty `old` is a no-op (returns the source unchanged)
 // to match the JS / Go conventions and avoid the
-// "insert N copies" pathology. Builds the result by
-// concatenation; the IR's `+` lowering handles the
-// allocation.
+// "insert N copies" pathology.
+//
+// Two passes over a single exact-size buffer (O(n)) rather than the
+// `out = out + s[start:i] + new` chain, which recopied the whole
+// prefix on every match (O(n²) — the #4379 hot path). Pass 1 counts
+// the non-overlapping matches to size the result exactly
+// (n + matches·(len(new) − len(old))); pass 2 fills it.
 pub function (s: string) replace(old: string, new: string): string {
     var n: i32 = s.len();
     var oLen: i32 = old.len();
     if (oLen == 0) { return s; }
-    var out: string = "";
-    var start: i32 = 0;
+    var matches: i32 = 0;
     var i: i32 = 0;
     while (i + oLen <= n) {
         if (__substr_eq(s, i, old, oLen)) {
-            out = out + s[start:i] + new;
+            matches = matches + 1;
             i = i + oLen;
-            start = i;
         } else {
             i = i + 1;
         }
     }
-    return out + s[start:n];
+    if (matches == 0) { return s; }
+    var nLen: i32 = new.len();
+    var out_len: i32 = n + matches * (nLen - oLen);
+    if (out_len == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(out_len);
+    var pos: i32 = 0;
+    i = 0;
+    while (i + oLen <= n) {
+        if (__substr_eq(s, i, old, oLen)) {
+            var k: i32 = 0;
+            while (k < nLen) {
+                buf = buf.with(pos, new[k] as u8);
+                pos = pos + 1;
+                k = k + 1;
+            }
+            i = i + oLen;
+        } else {
+            buf = buf.with(pos, s[i] as u8);
+            pos = pos + 1;
+            i = i + 1;
+        }
+    }
+    // Tail after the last position a match could start.
+    while (i < n) {
+        buf = buf.with(pos, s[i] as u8);
+        pos = pos + 1;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `(s: string) parse_bool()` — accepts the canonical
