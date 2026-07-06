@@ -415,6 +415,58 @@ function cb(): i32 {
 function main(): i32 { return cb(); }`,
 			anchor: map[string]map[string]string{"cb": {"reuseSources": "9:15<-a", "reuseConsumed": "a"}},
 		},
+		{
+			// OWN-PARAM donor function (#4356 slice 10): `bump(own d)` where a
+			// construction reuses d's box (own_param_reuse_sites). Both sides
+			// agree on freeEligible (c,d); NEITHER emits reuseSources — the
+			// self-host's own-param reuse rides own_param_reuse_sites (not the
+			// reuseSources dump path), native doesn't pair PARAMS as donors —
+			// a documented agreement. The recipient c is precise-dropped at its
+			// last use by the self-host (the known placement class native
+			// leaves to the exit sweep).
+			name: "ownparam-scalar-donor",
+			src: `struct P { x: i32, y: i32 }
+function bump(own d: P): i32 {
+	var u: i32 = d.x + d.y;
+	var c = P { x: 10, y: 20 };
+	return c.x + c.y + u;
+}
+function main(): i32 { return bump(P { x: 3, y: 4 }); }`,
+			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
+			diverge: map[string]map[string]divergence{
+				"bump": {"preciseDrops": {native: "", selfhost: "2=c"}},
+			},
+		},
+		{
+			// OWN-PARAM donor with an ARRAY field (#4356 slice 11): same table
+			// shape as the scalar own-param donor — the array-field reuse is a
+			// codegen concern, not an rcPlan-table one.
+			name: "ownparam-array-donor",
+			src: `struct H { id: i32, items: i32[] }
+function bump(own d: H): i32 {
+	var u: i32 = d.id + d.items[0];
+	var c = H { id: 5, items: [7, 8, 9] };
+	return c.id + c.items[0] + u;
+}
+function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`,
+			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
+			diverge: map[string]map[string]divergence{
+				"bump": {"preciseDrops": {native: "", selfhost: "2=c"}},
+			},
+		},
+		{
+			// OWN-PARAM self-overwrite base (#4356 slice 12): `var c = P{...own_d, x}`
+			// reuses d's box IN PLACE, so there is no separate recipient to
+			// precise-drop — the tables agree exactly (freeEligible c,d only).
+			name: "ownparam-selfoverwrite",
+			src: `struct P { x: i32, y: i32 }
+function bump(own d: P): i32 {
+	var c = P { ...d, x: 10 };
+	return c.x + c.y;
+}
+function main(): i32 { return bump(P { x: 3, y: 4 }); }`,
+			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
+		},
 	}
 
 	for _, tc := range cases {
