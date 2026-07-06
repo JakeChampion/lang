@@ -433,7 +433,12 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
         a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst)) };
         return a;
     }
-    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
+        if (dst.contains("(")) { // $imm -> mem (e.g. `movq $1, 8(%rax)`)
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            a = X86Asm { ...a, code: x86_mov_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
+            return a;
+        }
         a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
     }
