@@ -63,6 +63,13 @@ var reuseDifferentialCases = []struct {
 	{"own-param-donor-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2] + u; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 32, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-array-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; var s: i32 = c.id + c.items[0] + c.items[2] + u; if (s != 32) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-nested-detector", `struct Inner { a: i32, b: i32 } struct Outer { id: i32, inner: Inner } function bump(own d: Outer): i32 { var u: i32 = d.id + d.inner.a; var c = Outer { id: 5, inner: Inner { a: 7, b: 8 } }; var s: i32 = c.id + c.inner.a + c.inner.b + u; if (s != 23) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(Outer { id: 1, inner: Inner { a: 2, b: 3 } }); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 1g — OWN-PARAM base in the SELF-OVERWRITE family (#4356 slice 12):
+	// `var c = T { ...own_d, f: v }` functional-update of an owned param reuses
+	// its box in place. Scalar override, array override (fresh literal), and a
+	// CARRIED array field (moves with the reused box).
+	{"own-param-selfoverwrite-scalar", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { var c = P { ...d, x: 10 }; return c.x + c.y; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 14, "call __fn___fern_alloc_reuse"},
+	{"own-param-selfoverwrite-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var c = H { ...d, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2]; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 17, "call __fn___fern_alloc_reuse"},
+	{"own-param-selfoverwrite-carried-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var c = H { ...d, id: 5 }; var s: i32 = c.id + c.items[0] + c.items[1]; if (s != 35) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 1b — functional-update self-overwrite with a CALL-RESULT base
 	// (#4356 divergence 3): same strict-fresh donor admission on the
 	// `var c = P { ...d, x: v }` path.
