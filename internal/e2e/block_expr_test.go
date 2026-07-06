@@ -142,6 +142,45 @@ func TestBlockExprInterp(t *testing.T) {
 			}`,
 			8,
 		},
+		{
+			// #4522: a conditional `return` inside a value-position block — the
+			// early exit escapes the enclosing function; the else branch (with a
+			// reachable tail) yields the block's value. f(5): tail e+1 = 6.
+			"cf-conditional-return-tail",
+			`function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+			function main(): i32 { return f(5); }`,
+			6,
+		},
+		{
+			// #4522: the early-exit path is taken — `return` escapes the block
+			// AND the function. f(-1): return 99.
+			"cf-conditional-return-taken",
+			`function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+			function main(): i32 { return f(-1); }`,
+			99,
+		},
+		{
+			// #4522: a `break` inside a value-position block inside a loop
+			// escapes to the loop. i=1,2,3 add; break at 4. s = 6.
+			"cf-break-in-block",
+			`function main(): i32 {
+				var s: i32 = 0; var i: i32 = 0;
+				while (i < 10) { i = i + 1; var d: i32 = { if (i == 4) { break; } i }; s = s + d; }
+				return s;
+			}`,
+			6,
+		},
+		{
+			// #4522: a `continue` inside a value-position block skips the rest of
+			// the loop body. i=3 skipped: s = 1+2+4+5+6 = 18.
+			"cf-continue-in-block",
+			`function main(): i32 {
+				var s: i32 = 0; var i: i32 = 0;
+				while (i < 6) { i = i + 1; var d: i32 = { if (i == 3) { continue; } i }; s = s + d; }
+				return s;
+			}`,
+			18,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -191,6 +230,24 @@ function main(): i32 {
 }
 `
 	dynAllBackends(t, src, "n=12 s=foobar")
+}
+
+// #4522: control-flow (return / break / continue) inside a value-position
+// block-expression compiles + runs identically on every native backend. A
+// conditional `return` escapes the function; a `break` / `continue` inside a
+// block in a loop reaches the loop. The block's tail is produced only on the
+// fall-through path.
+func TestBlockExprCompiledControlFlow(t *testing.T) {
+	src := `import "std/i32";
+function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+function main(): i32 {
+	var s: i32 = 0; var i: i32 = 0;
+	while (i < 10) { i = i + 1; var d: i32 = { if (i == 4) { break; } i }; s = s + d; }
+	print("a=" + f(5).to_string() + " b=" + f(-1).to_string() + " s=" + s.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "a=6 b=99 s=6")
 }
 
 // A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.

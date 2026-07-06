@@ -2224,6 +2224,17 @@ type tryOpEarlyReturn struct{ val Value }
 
 func (t *tryOpEarlyReturn) Error() string { return "interp: TryOp early return" }
 
+// controlFlowSignal carries a non-normal flow (return / break / continue) out
+// of a value-position block-expression through expression evaluation (#4522).
+// A `return`/`break`/`continue` statement inside a `{ … }` used as a value
+// shows up in expression position but is a statement-level exit, so the
+// BlockExpr arm of evalExpr raises this and execStmt catches it, turning it
+// back into a normal result{flow} that the existing loop / callFunc
+// propagation already understands.
+type controlFlowSignal struct{ r result }
+
+func (c *controlFlowSignal) Error() string { return "interp: block-expression control flow" }
+
 type flowKind int
 
 const (
@@ -2345,7 +2356,23 @@ func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 	return result{flow: flowNormal}, nil
 }
 
+// execStmt runs one statement. It wraps execStmtInner to catch a
+// controlFlowSignal raised by a value-position block-expression somewhere in
+// the statement's expressions (#4522): a `return`/`break`/`continue` inside a
+// `{ … }` value unwinds through expression evaluation as that sentinel, and is
+// turned back into the normal result{flow} here so the enclosing loop /
+// callFunc handles it exactly like a top-level control-flow statement.
 func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
+	r, err := i.execStmtInner(s, e)
+	if err != nil {
+		if cf, ok := err.(*controlFlowSignal); ok {
+			return cf.r, nil
+		}
+	}
+	return r, err
+}
+
+func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 	switch x := s.(type) {
 	case *ast.Block:
 		return i.execBlock(x, e)
@@ -3137,12 +3164,13 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				return nil, err
 			}
 			if r.flow != flowNormal {
-				// A `return` / `break` / `continue` inside a
-				// value-position block-expr would need control flow
-				// threaded through expression evaluation, which slice 1
-				// doesn't do. The examples don't need it; surface a
-				// clear error rather than silently dropping the value.
-				return nil, fmt.Errorf("interp: control-flow statement (return/break/continue) inside a block-expression is not supported in slice 1")
+				// A `return` / `break` / `continue` inside a value-position
+				// block-expr is a statement-level exit surfacing in expression
+				// position (#4522). Unwind it through expression evaluation as
+				// a controlFlowSignal; execStmt catches it and turns it back
+				// into a result{flow} the enclosing loop / callFunc handles.
+				// The block's tail value is intentionally skipped on this path.
+				return nil, &controlFlowSignal{r: r}
 			}
 		}
 		if x.Tail == nil {
