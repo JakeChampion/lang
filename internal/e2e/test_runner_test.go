@@ -527,6 +527,25 @@ func TestRunnerJsonPointerExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/utf8_test.fern` covers std/utf8 — UTF-8 codepoint
+// decode (1..4-byte, plus the stray-continuation / truncated / overlong
+// / surrogate rejections), encode (widths + U+FFFD substitution),
+// codepoint_count / codepoints, is_valid_utf8, and the encode_all round
+// trip. Passing → exit 0.
+func TestRunnerUtf8ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/utf8_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/utf8", "# pass 16", "# fail 0", "1..16"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/uuid_test.fern` covers std/uuid's generators by
 // shape — v4/v7 length, hyphen positions, version + variant nibbles,
 // is_uuid, and distinctness. The output is random but the assertions are

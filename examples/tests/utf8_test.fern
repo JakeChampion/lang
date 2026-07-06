@@ -1,0 +1,142 @@
+import "std/test";
+import "std/utf8" as utf8;
+import "std/string";
+// examples/tests/utf8_test.fern — std/utf8 codepoint decode / encode /
+// count / validate (#4416). Multibyte inputs are built from explicit
+// byte sequences via string_from_bytes (so decode is tested against
+// known bytes, not against encode), and encode is checked by its output
+// byte length + a decode round-trip. Reference values:
+//   'A'  U+0041   [65]                     1 byte
+//   'é'  U+00E9   [195, 169]               2 bytes  (cp 233)
+//   '€'  U+20AC   [226, 130, 172]          3 bytes  (cp 8364)
+//   '😀' U+1F600  [240, 159, 152, 128]     4 bytes  (cp 128512)
+
+function mixed(): string {
+    // "A" + é + € + 😀 — 10 bytes, 4 codepoints.
+    var b: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
+        172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8];
+    return string_from_bytes(b);
+}
+
+function decode_cp(s: string, i: i32): i32 {
+    match (utf8.utf8_decode_at(s, i)) { Some(p) => { return p.0; }, None => { return 0 - 1; } }
+}
+
+function decode_len(s: string, i: i32): i32 {
+    match (utf8.utf8_decode_at(s, i)) { Some(p) => { return p.1; }, None => { return 0 - 1; } }
+}
+
+function test_decode_ascii(): test.TestOutcome {
+    return test.assert_true(decode_cp("A", 0) == 65 && decode_len("A", 0) == 1);
+}
+
+function test_decode_two_byte(): test.TestOutcome {
+    var s: string = string_from_bytes([195 as u8, 169 as u8]);   // é
+    return test.assert_true(decode_cp(s, 0) == 233 && decode_len(s, 0) == 2);
+}
+
+function test_decode_three_byte(): test.TestOutcome {
+    var s: string = string_from_bytes([226 as u8, 130 as u8, 172 as u8]);  // €
+    return test.assert_true(decode_cp(s, 0) == 8364 && decode_len(s, 0) == 3);
+}
+
+function test_decode_four_byte(): test.TestOutcome {
+    var s: string = string_from_bytes([240 as u8, 159 as u8, 152 as u8, 128 as u8]);  // 😀
+    return test.assert_true(decode_cp(s, 0) == 128512 && decode_len(s, 0) == 4);
+}
+
+function test_decode_at_offset(): test.TestOutcome {
+    // The € starts at byte 3 of the mixed string.
+    return test.assert_true(decode_cp(mixed(), 3) == 8364 && decode_len(mixed(), 3) == 3);
+}
+
+function test_decode_stray_continuation(): test.TestOutcome {
+    // A lone 0x80 continuation byte is invalid.
+    var s: string = string_from_bytes([128 as u8]);
+    return test.assert_eq(decode_cp(s, 0), 0 - 1);
+}
+
+function test_decode_truncated(): test.TestOutcome {
+    // First two bytes of a 3-byte sequence — no third byte.
+    var s: string = string_from_bytes([226 as u8, 130 as u8]);
+    return test.assert_eq(decode_cp(s, 0), 0 - 1);
+}
+
+function test_decode_overlong(): test.TestOutcome {
+    // Overlong encoding of U+0000 (C0 80) must be rejected.
+    var s: string = string_from_bytes([192 as u8, 128 as u8]);
+    return test.assert_eq(decode_cp(s, 0), 0 - 1);
+}
+
+function test_decode_surrogate(): test.TestOutcome {
+    // U+D800 encoded as ED A0 80 — a surrogate, not a scalar value.
+    var s: string = string_from_bytes([237 as u8, 160 as u8, 128 as u8]);
+    return test.assert_eq(decode_cp(s, 0), 0 - 1);
+}
+
+function test_encode_lengths(): test.TestOutcome {
+    // Each width encodes to the expected number of bytes.
+    return test.assert_true(
+        utf8.utf8_encode(65).len() == 1
+        && utf8.utf8_encode(233).len() == 2
+        && utf8.utf8_encode(8364).len() == 3
+        && utf8.utf8_encode(128512).len() == 4);
+}
+
+function test_encode_decode_roundtrip(): test.TestOutcome {
+    // Encode then decode recovers the codepoint, for every width.
+    return test.assert_true(
+        decode_cp(utf8.utf8_encode(8364), 0) == 8364
+        && decode_cp(utf8.utf8_encode(128512), 0) == 128512);
+}
+
+function test_encode_invalid_is_replacement(): test.TestOutcome {
+    // Out-of-range / surrogate codepoints encode as U+FFFD (65533).
+    return test.assert_true(
+        decode_cp(utf8.utf8_encode(0 - 1), 0) == 65533
+        && decode_cp(utf8.utf8_encode(55296), 0) == 65533
+        && decode_cp(utf8.utf8_encode(1114112), 0) == 65533);
+}
+
+function test_codepoint_count(): test.TestOutcome {
+    // Byte length is 10 but there are 4 codepoints.
+    return test.assert_true(mixed().len() == 10 && utf8.codepoint_count(mixed()) == 4);
+}
+
+function test_codepoints_array(): test.TestOutcome {
+    var cps: i32[] = utf8.codepoints(mixed());
+    if (cps.len() != 4) { return test.fail("codepoint count"); }
+    return test.assert_true(cps[0] == 65 && cps[1] == 233 && cps[2] == 8364 && cps[3] == 128512);
+}
+
+function test_is_valid(): test.TestOutcome {
+    // A well-formed mixed string is valid; a stray continuation isn't.
+    var bad: string = string_from_bytes([65 as u8, 128 as u8]);
+    return test.assert_true(utf8.is_valid_utf8(mixed()) && !utf8.is_valid_utf8(bad));
+}
+
+function test_encode_all_roundtrip(): test.TestOutcome {
+    // encode_all(codepoints(s)) == s for valid UTF-8.
+    return test.assert_eq(utf8.encode_all(utf8.codepoints(mixed())), mixed());
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/utf8");
+    r = r.it("decode ascii",            test_decode_ascii());
+    r = r.it("decode 2-byte",           test_decode_two_byte());
+    r = r.it("decode 3-byte",           test_decode_three_byte());
+    r = r.it("decode 4-byte",           test_decode_four_byte());
+    r = r.it("decode at offset",        test_decode_at_offset());
+    r = r.it("decode stray continuation", test_decode_stray_continuation());
+    r = r.it("decode truncated",        test_decode_truncated());
+    r = r.it("decode overlong",         test_decode_overlong());
+    r = r.it("decode surrogate",        test_decode_surrogate());
+    r = r.it("encode lengths",          test_encode_lengths());
+    r = r.it("encode/decode round trip", test_encode_decode_roundtrip());
+    r = r.it("encode invalid -> U+FFFD", test_encode_invalid_is_replacement());
+    r = r.it("codepoint count",         test_codepoint_count());
+    r = r.it("codepoints array",        test_codepoints_array());
+    r = r.it("is_valid_utf8",           test_is_valid());
+    r = r.it("encode_all round trip",   test_encode_all_roundtrip());
+    return r.finish();
+}
