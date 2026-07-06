@@ -5259,9 +5259,18 @@ function e049_append_nt(a: NameTy[], b: NameTy[]): NameTy[] {
     return out;
 }
 
+// e049_is_ref classifies a capture's TYPE NAME as reference-shaped (E049
+// applies) vs scalar (exempt). The scalar set must match native's
+// ast.IsPointerType exactly (internal/ast) — everything IsPointerType calls
+// false is exempt here: every numeric width (i32/i64 and the unsigned
+// u8/u32/u64/usize) plus boolean. IsPointerType-true names (string, arrays,
+// structs, enums, tuples, maps, dyn) fall through to `true`. An empty name
+// (an unannotated `var`) is handled by the caller (e049_scope infers the
+// init's shape); reaching here with "" stays conservatively scalar.
 function e049_is_ref(tn: string): boolean {
     if (tn.len() == 0) { return false; }
-    if (tn == "i32" || tn == "i64" || tn == "bool" || tn == "boolean" || tn == "f64" || tn == "f32") { return false; }
+    if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize"
+        || tn == "bool" || tn == "boolean" || tn == "f64" || tn == "f32") { return false; }
     return true;
 }
 
@@ -5276,15 +5285,43 @@ function e049_ref_capture(enclosing: NameTy[], name: string): boolean {
     return false;
 }
 
+// e049_init_ref_ty infers a reference-shaped type marker for an UNANNOTATED
+// `var x = <init>` whose init is an unambiguously pointer-shaped LITERAL —
+// a string / array / struct / tuple literal, each of which native's full
+// inference types as a reference (so a write-back capture of it is E049).
+// Returns "" for a scalar literal or any non-literal init (call / ident /
+// binary): those stay conservatively scalar here, matching the standalone
+// e049 pass's lack of full type inference. This closes the common
+// unannotated-capture parity gap (`var s = "x"`) against native without
+// threading the whole type environment into this pass. Returns a sentinel
+// e049_is_ref classifies as ref; the concrete name is irrelevant (NameTy.ty
+// is read only through e049_is_ref).
+function e049_init_ref_ty(init: parser.Expr): string {
+    match (init) {
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprArray(_) => { return "__e049_ref"; },
+        parser.ExprStructLit(_) => { return "__e049_ref"; },
+        parser.ExprTuple(_) => { return "__e049_ref"; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // e049_scope collects (name, type) for every `var` declared in stmts,
 // descending into control blocks but NOT into lambda bodies — the
-// function-level scope a directly-nested closure captures from.
+// function-level scope a directly-nested closure captures from. An
+// unannotated var's type is inferred from an obvious pointer-shaped literal
+// init (e049_init_ref_ty) so its write-back capture matches native.
 function e049_scope(stmts: parser.Stmt[]): NameTy[] {
     var out: NameTy[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { out = out.append(NameTy { nm: v.name, ty: v.type_name }); },
+            parser.StmtVar(v) => {
+                var vty: string = v.type_name;
+                if (vty.len() == 0) { vty = e049_init_ref_ty(v.init); }
+                out = out.append(NameTy { nm: v.name, ty: vty });
+            },
             parser.StmtIf(f) => { out = e049_append_nt(out, e049_scope(f.then_body)); out = e049_append_nt(out, e049_scope(f.else_body)); },
             parser.StmtWhile(w) => { out = e049_append_nt(out, e049_scope(w.body)); },
             parser.StmtFor(fr) => { out = e049_append_nt(out, e049_scope(fr.body)); },
