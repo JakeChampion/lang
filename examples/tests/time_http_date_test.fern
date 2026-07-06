@@ -1,0 +1,104 @@
+import "std/test";
+import "std/time" as time;
+// examples/tests/time_http_date_test.fern — RFC 9110 §5.6.7 IMF-fixdate
+// (`Sun, 06 Nov 1994 08:49:37 GMT`) formatting + parsing, plus the
+// weekday/month name tables added alongside it (#4388 item 5). This is
+// the HTTP `Date:` / `Expires:` / `If-Modified-Since` support an edge
+// handler needs. All values are computed from std/time's civil-date
+// arithmetic (`instant_from_unix` → serial days → Y/M/D + weekday), so
+// this exercises Instant, Option[Instant], and the name tables through
+// the self-host IR path on real stdlib bodies.
+
+// The RFC 9110 canonical example: 784111777 = 1994-11-06T08:49:37Z,
+// a Sunday. (verified: 784111777 / 86400 = 9075 days after 1970-01-01.)
+function test_format_canonical(): test.TestOutcome {
+    var i = time.instant_from_unix(784111777 as i64);
+    return test.assert_eq(i.format_http_date(), "Sun, 06 Nov 1994 08:49:37 GMT");
+}
+
+function test_format_epoch(): test.TestOutcome {
+    // The Unix epoch itself: 1970-01-01T00:00:00Z was a Thursday.
+    var i = time.instant_from_unix(0 as i64);
+    return test.assert_eq(i.format_http_date(), "Thu, 01 Jan 1970 00:00:00 GMT");
+}
+
+function test_format_drops_subsecond(): test.TestOutcome {
+    // HTTP-date is second-resolution; a half-second offset must not leak in.
+    var i = time.instant_from_unix(784111777 as i64).add_duration(time.duration_millis(500 as i64));
+    return test.assert_eq(i.format_http_date(), "Sun, 06 Nov 1994 08:49:37 GMT");
+}
+
+function test_parse_canonical(): test.TestOutcome {
+    match (time.http_date_parse("Sun, 06 Nov 1994 08:49:37 GMT")) {
+        Some(i) => { return test.assert_true(i.sec == (784111777 as i64) && i.nsec == 0); },
+        None => { return test.fail("http_date_parse expected Some"); }
+    }
+}
+
+function test_round_trip(): test.TestOutcome {
+    // format then parse recovers the same second count.
+    var i = time.instant_from_unix(1720000000 as i64);
+    match (time.http_date_parse(i.format_http_date())) {
+        Some(j) => { return test.assert_true(j.sec == (1720000000 as i64)); },
+        None => { return test.fail("round-trip parse failed"); }
+    }
+}
+
+function test_parse_bad_len(): test.TestOutcome {
+    match (time.http_date_parse("Sun, 06 Nov 1994 08:49:37")) {
+        Some(i) => { return test.fail("expected None for short string"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_bad_month(): test.TestOutcome {
+    match (time.http_date_parse("Sun, 06 Xxx 1994 08:49:37 GMT")) {
+        Some(i) => { return test.fail("expected None for unknown month"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_bad_zone(): test.TestOutcome {
+    // Anything but a "GMT" suffix is rejected.
+    match (time.http_date_parse("Sun, 06 Nov 1994 08:49:37 UTC")) {
+        Some(i) => { return test.fail("expected None for non-GMT zone"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_bad_sep(): test.TestOutcome {
+    // Missing comma after the weekday.
+    match (time.http_date_parse("Sun  06 Nov 1994 08:49:37 GMT")) {
+        Some(i) => { return test.fail("expected None for wrong separator"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_month_name(): test.TestOutcome {
+    if (time.month_name(11) != "November") { return test.fail("month_name(11)"); }
+    if (time.month_name(1) != "January") { return test.fail("month_name(1)"); }
+    if (time.month_name(0) != "") { return test.fail("month_name(0) out of range"); }
+    return test.assert_eq(time.month_name(12), "December");
+}
+
+function test_weekday_name(): test.TestOutcome {
+    // 1994-11-06 is a Sunday; 1970-01-01 a Thursday.
+    if (time.date_make(1994, 11, 6).weekday_name() != "Sunday") { return test.fail("nov 6 1994"); }
+    return test.assert_eq(time.date_make(1970, 1, 1).weekday_name(), "Thursday");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/time http-date");
+    r = r.it("format canonical",       test_format_canonical());
+    r = r.it("format epoch",           test_format_epoch());
+    r = r.it("format drops subsecond", test_format_drops_subsecond());
+    r = r.it("parse canonical",        test_parse_canonical());
+    r = r.it("round trip",             test_round_trip());
+    r = r.it("parse bad len",          test_parse_bad_len());
+    r = r.it("parse bad month",        test_parse_bad_month());
+    r = r.it("parse bad zone",         test_parse_bad_zone());
+    r = r.it("parse bad sep",          test_parse_bad_sep());
+    r = r.it("month_name",             test_month_name());
+    r = r.it("weekday_name",           test_weekday_name());
+    return r.finish();
+}
