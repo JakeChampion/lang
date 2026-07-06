@@ -499,6 +499,161 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
 }
 
 // ============================================================
+// HTTP-date (RFC 9110 §5.6.7 IMF-fixdate) + weekday/month name
+// tables. IMF-fixdate is the format HTTP senders MUST generate
+// for `Date:` / `Expires:` / `Last-Modified:` and recipients
+// parse from `If-Modified-Since` — a fixed-width, always-GMT
+// stamp: `Sun, 06 Nov 1994 08:49:37 GMT`. Emitting and parsing
+// it is what lets an edge handler answer conditional requests and
+// set cache headers, the "killer use case" this module was built
+// toward (#4388 item 5).
+// ============================================================
+
+// `__weekday_short(n)` — three-letter English weekday for a
+// `weekday()` value (0=Sun … 6=Sat). Out of range → "".
+function __weekday_short(n: i32): string {
+    if (n == 0) { return "Sun"; }
+    if (n == 1) { return "Mon"; }
+    if (n == 2) { return "Tue"; }
+    if (n == 3) { return "Wed"; }
+    if (n == 4) { return "Thu"; }
+    if (n == 5) { return "Fri"; }
+    if (n == 6) { return "Sat"; }
+    return "";
+}
+
+// `__month_short(m)` — three-letter English month name for a
+// 1..12 month number. Out of range → "".
+function __month_short(m: i32): string {
+    if (m == 1) { return "Jan"; }
+    if (m == 2) { return "Feb"; }
+    if (m == 3) { return "Mar"; }
+    if (m == 4) { return "Apr"; }
+    if (m == 5) { return "May"; }
+    if (m == 6) { return "Jun"; }
+    if (m == 7) { return "Jul"; }
+    if (m == 8) { return "Aug"; }
+    if (m == 9) { return "Sep"; }
+    if (m == 10) { return "Oct"; }
+    if (m == 11) { return "Nov"; }
+    if (m == 12) { return "Dec"; }
+    return "";
+}
+
+// `month_name(m)` — full English month name for a 1..12 month
+// number (`month_name(11)` → "November"). Out of range → "".
+pub function month_name(m: i32): string {
+    if (m == 1) { return "January"; }
+    if (m == 2) { return "February"; }
+    if (m == 3) { return "March"; }
+    if (m == 4) { return "April"; }
+    if (m == 5) { return "May"; }
+    if (m == 6) { return "June"; }
+    if (m == 7) { return "July"; }
+    if (m == 8) { return "August"; }
+    if (m == 9) { return "September"; }
+    if (m == 10) { return "October"; }
+    if (m == 11) { return "November"; }
+    if (m == 12) { return "December"; }
+    return "";
+}
+
+// `(d).weekday_name()` — full English weekday name for the date
+// ("Monday"). Built on `weekday()` (0=Sun … 6=Sat).
+pub function (d: Date) weekday_name(): string {
+    var n: i32 = d.weekday();
+    if (n == 0) { return "Sunday"; }
+    if (n == 1) { return "Monday"; }
+    if (n == 2) { return "Tuesday"; }
+    if (n == 3) { return "Wednesday"; }
+    if (n == 4) { return "Thursday"; }
+    if (n == 5) { return "Friday"; }
+    return "Saturday";
+}
+
+// `(i).format_http_date()` — emit the RFC 9110 IMF-fixdate for
+// this instant, in GMT: `Sun, 06 Nov 1994 08:49:37 GMT`. Suitable
+// verbatim for an HTTP `Date:` / `Expires:` / `Last-Modified:`
+// value. Sub-second precision is dropped (HTTP-date is
+// second-resolution). Decomposition mirrors `format_rfc3339`.
+pub function (i: Instant) format_http_date(): string {
+    var sec: i64 = i.sec;
+    var spd: i64 = 86400 as i64;
+    var days: i64 = sec / spd;
+    var sec_in_day: i64 = sec - days * spd;
+    if (sec_in_day < (0 as i64)) {
+        sec_in_day = sec_in_day + spd;
+        days = days - (1 as i64);
+    }
+    var d: Date = __civil_from_days(days as i32);
+    var sid: i32 = sec_in_day as i32;
+    var h: i32 = sid / 3600;
+    var rem: i32 = sid - h * 3600;
+    var mn: i32 = rem / 60;
+    var s: i32 = rem - mn * 60;
+    return __weekday_short(d.weekday()) + ", " + __pad2(d.day) + " "
+        + __month_short(d.month) + " " + __pad4(d.year) + " "
+        + __pad2(h) + ":" + __pad2(mn) + ":" + __pad2(s) + " GMT";
+}
+
+// `__month_from_short(s, start)` — the 1..12 month number for the
+// three-letter English month name at `[start, start+3)`, or -1 if
+// it isn't one. Case-sensitive (IMF-fixdate is `Nov`, not `NOV`).
+function __month_from_short(s: string, start: i32): i32 {
+    if (start + 3 > s.len()) { return -1; }
+    var m: string = s[start : start + 3];
+    if (m == "Jan") { return 1; }
+    if (m == "Feb") { return 2; }
+    if (m == "Mar") { return 3; }
+    if (m == "Apr") { return 4; }
+    if (m == "May") { return 5; }
+    if (m == "Jun") { return 6; }
+    if (m == "Jul") { return 7; }
+    if (m == "Aug") { return 8; }
+    if (m == "Sep") { return 9; }
+    if (m == "Oct") { return 10; }
+    if (m == "Nov") { return 11; }
+    if (m == "Dec") { return 12; }
+    return -1;
+}
+
+// `http_date_parse(s)` — parse an RFC 9110 IMF-fixdate
+// (`Sun, 06 Nov 1994 08:49:37 GMT`) to an `Option[Instant]`.
+// Returns None on any structural deviation: the string must be
+// exactly 29 bytes with the fixed punctuation, a known
+// three-letter month, all-digit numeric fields, and the `GMT`
+// suffix. The leading weekday name is advisory (it's redundant
+// with the date) and is NOT validated — a wrong weekday still
+// parses, matching lenient recipient behaviour.
+//
+// The two obsolete HTTP-date forms RFC 9110 says recipients
+// SHOULD also accept — RFC 850 (`Sunday, 06-Nov-94 …`) and
+// asctime (`Sun Nov  6 …`) — are not handled here; senders MUST
+// emit IMF-fixdate, so it's the form that matters in practice.
+pub function http_date_parse(s: string): Option[Instant] {
+    if (s.len() != 29) { return None; }
+    // Fixed punctuation: `Xxx, 00 Xxx 0000 00:00:00 GMT`.
+    if (s[3] != 44) { return None; }                    // ',' = 44
+    if (s[4] != 32 || s[7] != 32 || s[11] != 32
+        || s[16] != 32 || s[25] != 32) { return None; } // ' ' = 32
+    if (s[19] != 58 || s[22] != 58) { return None; }    // ':' = 58
+    // Trailing "GMT" — the only zone IMF-fixdate permits.
+    if (s[26] != 71 || s[27] != 77 || s[28] != 84) { return None; } // 'G''M''T'
+    var day: i32 = __parse_digits(s, 5, 7);
+    var mo: i32 = __month_from_short(s, 8);
+    var year: i32 = __parse_digits(s, 12, 16);
+    var h: i32 = __parse_digits(s, 17, 19);
+    var mn: i32 = __parse_digits(s, 20, 22);
+    var sc: i32 = __parse_digits(s, 23, 25);
+    if (day < 0 || mo < 0 || year < 0 || h < 0 || mn < 0 || sc < 0) { return None; }
+    var days: i32 = __days_from_civil(year, mo, day);
+    var spd: i64 = 86400 as i64;
+    var sec: i64 = (days as i64) * spd
+        + ((h * 3600 + mn * 60 + sc) as i64);
+    return Some(Instant { sec: sec, nsec: 0 });
+}
+
+// ============================================================
 // TimeZone + Zoned — Phase 5 per docs/STDLIB-DESIGN-RESEARCH.md
 // Rec §4. Fixed-offset zones only in this PR — IANA tzdb
 // lookup (with DST transition tables) lands separately.
