@@ -84,11 +84,12 @@ pub function new_json_logger(min_level: i32): Logger {
     return Logger { min_level: min_level, json: true };
 }
 
-// `__log_json_escape(s)` — minimal JSON string escaping: backslash and
-// double-quote are backslash-escaped, and the C0 controls that JSON
-// forbids bare (newline / carriage-return / tab) get their short
-// escapes. Enough to keep a `msg` / field value from breaking the
-// surrounding JSON object.
+// `__log_json_escape(s)` — JSON string escaping: backslash and
+// double-quote are backslash-escaped; newline / carriage-return / tab
+// get their short escapes; every other C0 control (0x00-0x08, 0x0B,
+// 0x0C, 0x0E-0x1F) — forbidden bare in a JSON string — is emitted as
+// `\u00XX`. Without the `\u00XX` arm a `msg`/field value carrying an
+// odd byte produced unparseable JSON-lines exactly when it mattered.
 function __log_json_escape(s: string): string {
     var out: string = "";
     var i: i32 = 0;
@@ -99,10 +100,27 @@ function __log_json_escape(s: string): string {
         else if (c == 10) { out = out + "\\n"; }
         else if (c == 13) { out = out + "\\r"; }
         else if (c == 9) { out = out + "\\t"; }
+        else if (c < 32) {
+            var esc: u8[] = [
+                92 as u8,    // '\'
+                117 as u8,   // 'u'
+                48 as u8,    // '0'
+                48 as u8,    // '0'
+                __log_hex_lower((c >> 4) & 15) as u8,
+                __log_hex_lower(c & 15) as u8
+            ];
+            out = out + string_from_bytes(esc);
+        }
         else { out = out + s[i : i + 1]; }
         i = i + 1;
     }
     return out;
+}
+
+// Lowercase hex character byte for a nibble (0-15).
+function __log_hex_lower(d: i32): i32 {
+    if (d < 10) { return 48 + d; }   // '0'..'9'
+    return 87 + d;                    // 10 -> 'a' (97)
 }
 
 // A `LogEntry` is a pending record: a level plus accumulated structured

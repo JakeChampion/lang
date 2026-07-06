@@ -1596,7 +1596,8 @@ func TestRunnerLogExample(t *testing.T) {
 		"ok 6 - json fields",
 		"ok 7 - json escaping",
 		"ok 9 - at explicit level",
-		"# pass 9",
+		"ok 10 - json escaping control",
+		"# pass 10",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
