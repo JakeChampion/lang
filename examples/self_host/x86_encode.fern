@@ -715,6 +715,23 @@ function x86_mov_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
     return a;
 }
 
+// x86_alu_load_rip_label: `<alu>q sym(%rip), <dst>` — the load-form ALU
+// (cmp 0x3B / add 0x03 / sub 0x2B) with a rip-relative source and a deferred
+// fixup, the ALU sibling of x86_mov_load_rip_label. asm.fern emits this for e.g.
+// `cmpq __fern_heap_end(%rip), %rdi` in the bump allocator; without a rip-aware
+// path x86_gas_alu encoded it as base %rax (mod=00 rm=000), comparing against
+// [%rax] instead of the symbol, so the alloc bounds check misfired.
+function x86_alu_load_rip_label(a: X86Asm, opcode: i32, dst: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
+    a = X86Asm { ...a, code: a.code.append(opcode) };
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
 // x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup.
 function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {

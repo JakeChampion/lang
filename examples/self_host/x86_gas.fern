@@ -314,12 +314,30 @@ function x86_gas_atoi(tok: string): i32 {
         i = 1;
     }
     var v: i32 = 0;
-    while (i < s.len()) {
-        var c: i32 = s[i];
-        if (c >= 48 && c <= 57) {
-            v = v * 10 + (c - 48);
+    // `0x…` hex (mirrors x86_gas_atoi64). Without this the `x` was skipped as a
+    // non-digit and the hex digits read as DECIMAL — e.g. `$0x22` (the mmap
+    // MAP_PRIVATE|MAP_ANONYMOUS flags asm.fern emits) parsed to 22, not 34, so
+    // the heap mmap got bad flags (EBADF) and every alloc-using program's
+    // runtime OOM-exited 137 (the capstone string / heap cases).
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + d; }
+            i = i + 1;
         }
-        i = i + 1;
+    } else {
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            if (c >= 48 && c <= 57) {
+                v = v * 10 + (c - 48);
+            }
+            i = i + 1;
+        }
     }
     if (neg) {
         return 0 - v;
@@ -391,6 +409,14 @@ function x86_gas_parse_mem(op: string): GasMem {
         var sc: i32 = x86_gas_atoi(x86_gas_trim(parts[2]));
         return GasMem { is_rip: false, label: "", base: bb, disp: d, has_index: true, index: ix, scale: sc };
     }
+    // Two-element SIB `(%base,%index)` — an implicit scale of 1 (asm.fern emits
+    // this for byte-element indexing, e.g. `movzbl (%rax,%rcx), %eax`). Without
+    // this the whole `%base,%index` string resolved to a single -1 register.
+    if (parts.len() == 2) {
+        var bb2: i32 = x86_gas_reg(x86_gas_trim(parts[0]));
+        var ix2: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
+        return GasMem { is_rip: false, label: "", base: bb2, disp: d, has_index: true, index: ix2, scale: 1 };
+    }
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1 };
 }
 
@@ -456,6 +482,9 @@ function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
         var op: i32 = 3; // add 0x03
         if (slash == 5) { op = 43; } // sub 0x2B
         if (slash == 7) { op = 59; } // cmp 0x3B
+        if (m.is_rip) { // `<alu>q sym(%rip), %reg` — rip-relative + fixup
+            return x86_alu_load_rip_label(a, op, x86_gas_reg(dst), m.label);
+        }
         a = X86Asm { ...a, code: x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
@@ -657,6 +686,11 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
     if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
     if (mnem == "movzbq") { return x86_gas_movzbq(a, src, dst); }
+    // movzbl (byte -> 32-bit dest, zero-extended) — asm.fern emits it for the
+    // char/byte load `s[i]`. The zero-extended value is identical to movzbq's
+    // (the upper 32 bits are cleared either way), so route to the same encoder;
+    // without this the mnemonic was unhandled and no load was emitted.
+    if (mnem == "movzbl") { return x86_gas_movzbq(a, src, dst); }
     if (mnem == "movsd") {
         if (dst.contains("(")) { // store: movsd %xmm, mem
             var sm: GasMem = x86_gas_parse_mem(dst);
