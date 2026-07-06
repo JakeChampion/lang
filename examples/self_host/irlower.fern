@@ -22221,6 +22221,30 @@ function rc_fe_expr_type(e: parser.Expr, types_n: string[], types_t: string[], s
             }
             return "";
         },
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprLambda(_) => { return "fn"; },
+        parser.ExprBinary(b) => {
+            // string concat (`a + b` where an operand is a string) yields a fresh
+            // owned string, mirroring native rhsTainted's IsStringConcat.
+            if (b.op == "+" && (rc_fe_expr_type(b.left, types_n, types_t, structs) == "string" || rc_fe_expr_type(b.right, types_n, types_t, structs) == "string")) { return "string"; }
+            return "";
+        },
+        parser.ExprCall(c) => {
+            // an array-preserving method (`arr.with(i, v)`, chained) returns the
+            // receiver's array type — native knows this from the checker; the
+            // dump infers it so a `.with`-bound local reaches the eligibility
+            // type-switch (else it stays "" and is wrongly dropped).
+            match (c.callee) {
+                parser.ExprFieldAccess(mfa) => {
+                    if (mfa.field == "with") {
+                        var rt: string = rc_fe_expr_type(mfa.obj, types_n, types_t, structs);
+                        if (is_array_type_name(rt)) { return rt; }
+                    }
+                },
+                _ => {}
+            }
+            return "";
+        },
         _ => { return ""; }
     }
     return "";
@@ -22340,6 +22364,12 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                             },
                             _ => {}
                         }
+                        // Fallback for the init forms the explicit cases above
+                        // don't name (string literal / concat, bare lambda,
+                        // array-preserving method call) — rc_fe_expr_type reads
+                        // the locals collected so far, so a chained `.with` off an
+                        // earlier array local resolves.
+                        if (t.len() == 0) { t = rc_fe_expr_type(v.init, st.types_n, st.types_t, structs); }
                     }
                     st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t) };
                 }
@@ -22566,6 +22596,7 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
         parser.ExprArray(_) => { return false; },
         parser.ExprStructLit(_) => { return false; },
         parser.ExprTuple(_) => { return false; },
+        parser.ExprLambda(_) => { return false; },   // a fresh closure is owned (native MakeClosure arm)
         parser.ExprIdent(id) => { return util.index_of_str(tainted, id.name) >= 0; },
         parser.ExprNumber(_) => { return false; },
         parser.ExprBool(_) => { return false; },
@@ -22668,6 +22699,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[])
             else if (rc_struct_decl_index(structs, t) >= 0) { ok = true; }             // user struct
             else if (rc_fe_is_enum_name(structs, t)) { ok = true; }
             else if (t == "string" && !is_param) { ok = true; }                        // locals on every ptrW
+            else if (t == "fn") { ok = true; }                                          // owned closure frees its env (native FuncType arm)
             if (ok) { out = out.append(nm); }
         }
         ti = ti + 1;
