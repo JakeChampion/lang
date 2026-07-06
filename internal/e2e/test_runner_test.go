@@ -1206,10 +1206,12 @@ func TestRunnerHelpersExample(t *testing.T) {
 // float arithmetic, comparison, casts, and the f32_bits /
 // f32_from_bits reinterpret pair.
 //
-// Eleven cases cover: tolerance-equal vs exact-equal,
+// Twelve cases cover: tolerance-equal vs exact-equal,
 // f32 precision-loss tolerance (the 0.1+0.1+0.1 != 0.3
 // textbook example), NaN detection + the NaN-unequal-to-
-// itself property, ±0.0, ±Inf, and f32_bits round-trips.
+// itself property, ±0.0, ±Inf, f32_bits round-trips, and
+// the to_string digit-formatting paths incl. the >= 2^63
+// __float_int_part branch (#4379).
 func TestRunnerFloatExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/float_test.fern")
@@ -1223,7 +1225,8 @@ func TestRunnerFloatExample(t *testing.T) {
 		"ok 6 - NaN detection",
 		"ok 8 - f32_bits gives expected pattern",
 		"ok 11 - Inf vs Inf",
-		"# pass 11",
+		"ok 12 - to_string digit paths",
+		"# pass 12",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
