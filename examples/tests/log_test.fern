@@ -53,6 +53,14 @@ function test_json_escaping(): test.TestOutcome {
     return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"a\\\"b\\\\c\"}\n");
 }
 
+// Newline / CR / tab take the 2-byte named escapes (\n \r \t), not \u00XX —
+// exercises the escaper's 2-byte-expansion branch on the whitespace controls.
+function test_json_escaping_whitespace(): test.TestOutcome {
+    var lg: log.Logger = log.new_json_logger(log.level_trace());
+    var line: string = lg.info_().render("x\ny\rz\tw");
+    return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"x\\ny\\rz\\tw\"}\n");
+}
+
 // A C0 control byte with no short escape must render as \u00XX so the
 // JSON-lines record stays parseable (#4388) — previously it passed
 // through raw, producing invalid JSON.
@@ -89,6 +97,7 @@ function main(): i32 {
     r = r.it("json escaping",              test_json_escaping());
     r = r.it("level names",                test_level_names());
     r = r.it("at explicit level",          test_at_explicit_level());
+    r = r.it("json escaping whitespace",   test_json_escaping_whitespace());
     r = r.it("json escaping control",      test_json_escaping_control());
     return r.finish();
 }
