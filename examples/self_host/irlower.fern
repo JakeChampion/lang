@@ -4309,11 +4309,31 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             var slit_own: i32[] = field_ownerships(slit, s);
             var slit_reclaim: boolean = struct_has_reclaim_array_field(s.structs, slit.type_name);
             var sm: LowerState = s;
+            // COMPACT functional-update lowering (#4650): when the struct's fields all
+            // copy with no per-field rc-inc (struct_copy_eligible), the N unchanged
+            // fields are copied by ONE op_struct_copy(base) instead of N inline
+            // struct_get/store pairs per update site — the fresh box is stashed in a
+            // result temp, each overridden field is written with op_struct_set, and the
+            // temp is the result. This collapses the ~1.75x working-set blow-up the
+            // per-field fan-out costs across the encoders' ~90 update sites. Only the
+            // BASE COPY changes; each override still lowers through the identical
+            // value/alias-inc path below.
+            var compact: boolean = false;
+            var result_slot: i32 = 0 - 1;
             // Spill a non-ident functional-update base into a scratch local once
             // (composed of existing store/load_local ops, so every backend +
             // eval_ops handle it for free — the same pattern as emit_arr_store).
             var base_tmp: i32 = 0 - 1;
-            if (slit.has_base && !base_is_ident) {
+            if (slit.has_base && struct_copy_eligible(s.structs, slit.type_name)) {
+                compact = true;
+                var rscratch: string = "$scp" + util.i32_to_string(sm.locals.len());
+                sm = sm.add_local(rscratch);
+                result_slot = sm.slot_of(rscratch);
+                sm = lower_expr(slit.base, sm);
+                if (!sm.ok) { return sm; }
+                sm = sm.emit(ir.op_struct_copy(ndecl));
+                sm = sm.emit(ir.op_store_local(result_slot));
+            } else if (slit.has_base && !base_is_ident) {
                 var bscratch: string = "$fub" + util.i32_to_string(sm.locals.len());
                 sm = sm.add_local(bscratch);
                 base_tmp = sm.slot_of(bscratch);
@@ -4600,6 +4620,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             && found < slit_own.len() && slit_own[found] != 0) {
                         fav_alias_inc = true;
                     }
+                    // COMPACT: load the copied result box UNDER the value so struct_set
+                    // (pops [box, value]) can write this overridden field in place. The
+                    // struct_copy above already seeded every field from the base; only
+                    // the overrides are re-stored. struct_copy_eligible excludes i64/f64
+                    // fields, so an override is always a 4-byte / pointer store.
+                    if (compact) {
+                        sm = sm.emit(ir.op_load_local(result_slot));
+                    }
                     // An i64 field value is an 8-byte i64 (a bare integer literal
                     // isn't self-evidently i64), so lower it via lower_i64.
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) {
@@ -4618,7 +4646,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (fav_alias_inc) {
                         sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
-                } else if (slit.has_base) {
+                    // COMPACT: [box, value] on the stack -> store the override in place.
+                    if (compact) {
+                        sm = sm.emit(ir.op_struct_set(di, struct_field_width(s.structs, slit.type_name, di)));
+                    }
+                } else if (slit.has_base && !compact) {
                     // copy decl field di from the base: base then struct_get(di).
                     // An ident base re-reads its slot; a non-ident base loads the
                     // scratch local it was spilled into. An i64 field copies 8
@@ -4665,11 +4697,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cpft == "string" && slit_reclaim) {
                         sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
-                } else {
+                } else if (!slit.has_base) {
                     // a non-update literal must set every field
                     return s.fail();
                 }
+                // else (compact + un-overridden field): op_struct_copy already seeded
+                // it from the base — nothing to emit.
                 di = di + 1;
+            }
+            // COMPACT: the result box is the struct_copy'd temp, mutated in place by the
+            // per-override struct_sets — push it. Otherwise build the box from the N
+            // field values now on the operand stack.
+            if (compact) {
+                return sm.emit(ir.op_load_local(result_slot));
             }
             return sm.emit(ir.op_struct_make(slit.type_name, ndecl));
         },
@@ -12132,6 +12172,40 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
         fi = fi + 1;
     }
     return false;
+}
+
+// struct_copy_eligible reports whether a functional update `T { ...base, f: v }`
+// of struct `sty` may lower its BASE COPY through the compact op_struct_copy path
+// (one `call __fn___fern_struct_copy` per site) instead of the inline per-field
+// struct_get/store fan-out (#4650 — the self-host compiler's working set on the
+// x86_encode/x86_gas encoders otherwise OOMs the wasm driver). struct_copy is a
+// SHALLOW word-for-word box copy: it shares every field pointer with no rc-inc,
+// exactly like the inline base-copy path leaves array fields "as-is". So it is
+// admissible ONLY when the inline path would ALSO emit no per-field retain on the
+// copied fields — i.e. the struct carries no field that the base-copy arm inc's:
+//   - a DIRECT nested-struct field (retained, k_struct drop) — excluded,
+//   - a DIRECT enum field (retained, k_enum drop) — excluded,
+//   - a bare `string` field (retained on a reclaimable struct) — excluded.
+// Array / string[] / map / option / tuple / scalar fields are copied with no inc
+// on both paths, so they are fine. 8-byte SCALAR fields (i64 / u64 / f64) are two
+// 4-byte slots on wasm, whereas the copy helper is slot-count driven off the field
+// COUNT; keep the first cut to fields that occupy exactly one slot per backend so
+// the word/slot copy is unambiguous (the encoders are all i32 + array fields). An
+// override on any admitted field lowers to op_struct_set (4-byte / pointer store).
+pub function struct_copy_eligible(structs: parser.StructDecl[], sty: string): boolean {
+    if (!decl_is_struct(structs, sty)) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    if (n == 0) { return false; }
+    var fi: i32 = 0;
+    while (fi < n) {
+        var t: string = decl_field_type_at(structs, sty, fi);
+        if (decl_is_struct(structs, t)) { return false; }
+        if (decl_is_enum(structs, t)) { return false; }
+        if (t == "string") { return false; }
+        if (t == "i64" || t == "u64" || t == "f64") { return false; }
+        fi = fi + 1;
+    }
+    return true;
 }
 
 // struct_is_scalar_only reports whether struct type `sty` has ONLY flat scalar
@@ -23886,6 +23960,30 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
                 sfi = sfi - 1;
             }
             stack = stack.with(sp, sbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 198) {  // struct_copy
+            // pop src box; allocate a fresh [rc, shape, f0..f(nf-1)] box (bump-grow,
+            // rc=1) and copy the shape slot + all nf field slots word-for-word from
+            // src, then push the new base. Shallow: field pointers are shared, exactly
+            // like the inline base-copy path (struct_get per field) this replaces.
+            sp = sp - 1;
+            var scpsrc: i32 = stack[sp];
+            var scpnf: i32 = o.i32_imm;
+            var scpraw: i32 = heap.len() * 4;
+            var scpnw: i32 = scpnf + 2;
+            var scpq: i32 = 0;
+            while (scpq < scpnw) { heap = heap.append(0); scpq = scpq + 1; }
+            var scpbase: i32 = scpraw + 4;
+            heap = heap.with((scpbase - 4) / 4, 1);                    // rc = 1
+            heap = heap.with(scpbase / 4, heap[scpsrc / 4]);           // shape/type id
+            var scpi: i32 = 0;
+            while (scpi < scpnf) {
+                heap = heap.with((scpbase + 4 + scpi * 4) / 4, heap[(scpsrc + 4 + scpi * 4) / 4]);
+                scpi = scpi + 1;
+            }
+            stack = stack.with(sp, scpbase);
             sp = sp + 1;
             pc = pc + 1;
         }

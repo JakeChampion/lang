@@ -1607,6 +1607,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             } else {
                 out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             }
+        } else if (o.kind_tag == 198) {  // struct_copy
+            // stack: src box -> a fresh rc=1 box that is a byte-for-byte copy (the
+            // type_id@0 + nf 8-byte field slots, total 8+nf*8 bytes, matching
+            // struct_make). Alloc via $__fern_str_box(size) then memory.copy the whole
+            // box (field pointers shared, exactly like the inline base-copy). The
+            // compact base copy of `T { ...base, f: v }` (#4650). $eltmp holds src,
+            // $arrtmp the dst, across the alloc.
+            var scpsz: i32 = 8 + o.i32_imm * 8;
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    i32.const " + util.i32_to_string(scpsz) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(scpsz) + "\n    memory.copy\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind_tag == 144) {  // tuple_set
             // stack: box, val -> store val at box + index*8 (tuples have NO shape
             // slot, unlike struct_set's box+8+index*8). Uniform 8-byte slots; the
