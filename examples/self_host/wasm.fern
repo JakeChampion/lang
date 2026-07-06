@@ -7489,7 +7489,7 @@ pub function stat_import(): string {
 pub function stat_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_stat (param $path i32) (param $fstype i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $buf i32) (local $ft i32) (local $sz i32) (local $fs i32) (local $res i32)\n";
+    o = o + "    (local $err i32) (local $buf i32) (local $ft i32) (local $sz i64) (local $fs i32) (local $res i32)\n";
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 64)))\n";
     o = o + "    (local.set $err (call $path_filestat_get (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (local.get $buf)))\n";
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
@@ -7498,12 +7498,15 @@ pub function stat_func(): string {
     o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $res))))\n";
     o = o + "    (local.set $ft (i32.load8_u (i32.add (local.get $buf) (i32.const 16))))\n";
-    o = o + "    (local.set $sz (i32.load (i32.add (local.get $buf) (i32.const 32))))\n";
+    // WASI filestat size is an i64 at buf+32; FileStat.size is i64, so load the
+    // full 8 bytes and i64.store it into the size@24 slot (a >2 GiB file would
+    // truncate under the old low-32-bit i32 load/store).
+    o = o + "    (local.set $sz (i64.load (i32.add (local.get $buf) (i32.const 32))))\n";
     o = o + "    (local.set $fs (call $__fern_str_box (i32.const 32)))\n";
     o = o + "    (i32.store (local.get $fs) (local.get $fstype))\n";
     o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 8)) (i32.eq (local.get $ft) (i32.const 4)))\n";
     o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 16)) (i32.eq (local.get $ft) (i32.const 3)))\n";
-    o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 24)) (local.get $sz))\n";
+    o = o + "    (i64.store (i32.add (local.get $fs) (i32.const 24)) (local.get $sz))\n";
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $fs))\n";

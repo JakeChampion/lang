@@ -54,7 +54,7 @@ enum IoError {
 // FileStat — returned by stat(path). The emitter resolves
 // is_file/is_dir/size to slot offsets from this layout, and interns the
 // shape pointer as the name "FileStat".
-struct FileStat { is_file: boolean, is_dir: boolean, size: i32 }
+struct FileStat { is_file: boolean, is_dir: boolean, size: i64 }
 
 // ProcessResult — returned by subprocess(cmd, args, stdin).
 struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }

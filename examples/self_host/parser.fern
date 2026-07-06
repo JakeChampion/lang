@@ -4322,7 +4322,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var fsf: StructFieldDecl[] = [];
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean" });
-        fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i32" });
+        fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64" });
         structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
