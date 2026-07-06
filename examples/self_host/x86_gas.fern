@@ -680,6 +680,13 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
     if (mnem == "testq") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    // testl (32-bit test reg,reg) — asm.fern emits it for zero/nonzero checks on
+    // 32-bit values (map bucket counts / indices, all zero-extended). Was
+    // unhandled, so the test was dropped and the following jz/jnz read stale
+    // flags → the string-keyed-map lookup took the wrong branch and dereferenced
+    // a null key (SIGSEGV). The operands are zero-extended, so the full-width
+    // testq gives the same ZF; route to it (as movzbl routes to movzbq).
+    if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     if (mnem == "shlq") { a = X86Asm { ...a, code: x86_shl_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
     if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
     if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
