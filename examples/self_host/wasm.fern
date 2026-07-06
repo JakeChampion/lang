@@ -1147,16 +1147,16 @@ function array_field_elem_is_ptr(ft: string, cx: Ctx): boolean {
 // every `call $__struct_drop_<T>` / `call $__field_reclaim_<T>` the lowered IR
 // inserts — without this the driver linked against undefined helpers and any
 // struct program with a deep-drop trapped (`unknown func $__struct_drop_<T>`).
-pub function emit_ir_rc_bodies(mod: parser.Module): string {
+pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[]): string {
     var out: string = "";
     var rc_cx: Ctx = release_module_ctx(mod.structs, collect_method_types(mod), mod.funcs);
-    var frt: string[] = wasm_ir.field_reclaim_types(mod);
+    var frt: string[] = wasm_ir.field_reclaim_types(cache);
     var frti: i32 = 0;
     while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(mod));
+        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(cache));
         frti = frti + 1;
     }
-    var sdt: string[] = wasm_ir.struct_drop_types(mod);
+    var sdt: string[] = wasm_ir.struct_drop_types(cache, mod.structs);
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
         out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx);
@@ -1166,7 +1166,7 @@ pub function emit_ir_rc_bodies(mod: parser.Module): string {
     // for each struct-array element type E reachable from a struct_drop type. Emitted
     // after the struct_drop bodies they call (order is irrelevant for wasm funcs, but
     // struct_drop_types already added each E so $__struct_drop_<E> exists).
-    var aet: string[] = wasm_ir.struct_arr_elems_drop_types(mod);
+    var aet: string[] = wasm_ir.struct_arr_elems_drop_types(cache, mod.structs);
     var aeti: i32 = 0;
     while (aeti < aet.len()) {
         out = out + emit_wasm_struct_arr_elems_drop_body(aet[aeti], rc_cx);
@@ -12210,7 +12210,20 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // modes and out-of-subset modules (strings, structs, methods, …) fall
     // through to the AST emitter below, so the bootstrap is unaffected.
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
-    if (!component && wasm_ir.should_use_ir(lm)) {
+    // Lower every function ONCE into `ir_cache` and thread it through the whole
+    // IR emit path (the gate deferral checks + all the module_uses_* / str_values
+    // / fn_value_table collect passes below), instead of re-lowering the module
+    // ~30× (once per query) — the O(functions²) × O(passes) blowup that OOMed the
+    // self-host wasm compile of large modules (#4652). The cheap AST-only
+    // should_use_ir_core gate runs FIRST so an ineligible bootstrap module is
+    // never lowered here; only an eligible module pays the single lowering.
+    var ir_ok: boolean = !component && wasm_ir.should_use_ir_core(lm);
+    var ir_cache: irlower.LowerResult[] = [];
+    if (ir_ok) {
+        ir_cache = wasm_ir.lower_all_for(lm);
+        ir_ok = wasm_ir.wasm_ir_deferrals_ok(ir_cache);
+    }
+    if (ir_ok) {
         // Hoist no-capture lambda call-args (closures slice 2a) before emit;
         // lambda-free modules are unchanged, and the AST path below keeps `mod`.
         mod = lm;
@@ -12218,19 +12231,19 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         // print_int / print_str / eprint_str / putchar write via WASI fd_write
         // — import it only when the module writes to stdout or stderr.
-        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_i64") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
+        if (wasm_ir.module_emits_op_cached(ir_cache, "print_int") || wasm_ir.module_emits_op_cached(ir_cache, "print_i64") || wasm_ir.module_emits_op_cached(ir_cache, "print_str") || wasm_ir.module_emits_op_cached(ir_cache, "eprint_str") || wasm_ir.module_emits_op_cached(ir_cache, "putchar")) {
             ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         // random_bytes / random_i32 fill a CSPRNG buffer via the wasi random_get
         // import — emit it only when the module draws randomness.
-        if (wasm_ir.module_uses_random(mod)) {
+        if (wasm_ir.module_uses_random(ir_cache)) {
             ir_out = ir_out + random_get_import();
         }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
         // supplies the distinct values + offsets; the byte encoding reuses this
         // module's le32_escape / wat_escape so it matches the AST path.
-        var sv: string[] = wasm_ir.str_values(mod);
+        var sv: string[] = wasm_ir.str_values(ir_cache);
         var di: i32 = 0;
         while (di < sv.len()) {
             ir_out = ir_out + "  (data (i32.const " + util.i32_to_string(wasm_ir.str_offset(sv, di)) + ") \""
@@ -12240,43 +12253,43 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // i32.to_string() allocates its decimal-text box, so it needs the heap
         // allocator even in an otherwise alloc-free module (mirrors asm_ir's
         // has_need("i32_to_string") gate on the register backend).
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod)) {
-            ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
-            ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(mod));
+        if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache)) {
+            ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
+            ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
         }
         // $__fern_strbuf_* (global string-builder): growable bump-heap buffer +
         // reset/append/take. Heap-backed (str_box / alloc), emitted above.
-        if (wasm_ir.module_uses_strbuf(mod)) { ir_out = ir_out + strbuf_helpers(); }
+        if (wasm_ir.module_uses_strbuf(ir_cache)) { ir_out = ir_out + strbuf_helpers(); }
         // Per-type $__field_reclaim_<T> + $__struct_drop_<T> bodies (#3457).
         // Factored into emit_ir_rc_bodies so the differential wasm_ir_run driver
         // (which orchestrates the IR helper emission itself) emits the same RC
         // helper definitions — otherwise a struct program whose deep-drop inserts
         // a `call $__struct_drop_<T>` links against an undefined function.
-        ir_out = ir_out + emit_ir_rc_bodies(mod);
-        if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
-        if (wasm_ir.module_uses_i64_divrem(mod)) { ir_out = ir_out + divrem64_helpers(); }
+        ir_out = ir_out + emit_ir_rc_bodies(mod, ir_cache);
+        if (wasm_ir.module_uses_divrem(ir_cache)) { ir_out = ir_out + divrem_helpers(); }
+        if (wasm_ir.module_uses_i64_divrem(ir_cache)) { ir_out = ir_out + divrem64_helpers(); }
         // $__fern_strcat + $__fern_streq; references $__fern_str_box from
         // heap_alloc_helpers (module_allocates pulls it in for string programs).
-        if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + strcat_streq_helpers(); }
+        if (wasm_ir.module_uses_strings(ir_cache) || wasm_ir.module_uses_maps(ir_cache)) { ir_out = ir_out + strcat_streq_helpers(); }
         // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
         // IR call_direct("__fern_i32_to_string") to it).
-        if (wasm_ir.module_uses_i32_to_string(mod)) { ir_out = ir_out + to_string_helpers(); }
+        if (wasm_ir.module_uses_i32_to_string(ir_cache)) { ir_out = ir_out + to_string_helpers(); }
         // $__fern_str_to_i32 backs str_to_i32(s) (the default wasm_helper_symbol
         // names it $__fern_str_to_i32). Allocation-free, so gated on its own scan.
-        if (wasm_ir.module_uses_str_to_i32(mod)) { ir_out = ir_out + str_to_i32_helper(); }
+        if (wasm_ir.module_uses_str_to_i32(ir_cache)) { ir_out = ir_out + str_to_i32_helper(); }
         // $__fern_chr backs chr(n) (the default wasm_helper_symbol names it
         // $__fern_chr). Allocates its 1-char box, so the heap gate above also
         // ORs in module_uses_chr.
-        if (wasm_ir.module_uses_chr(mod)) { ir_out = ir_out + chr_helper(); }
+        if (wasm_ir.module_uses_chr(ir_cache)) { ir_out = ir_out + chr_helper(); }
         // $__fern_random_bytes (a `[len][bytes]` string block — needs $__fern_str_box
         // from the heap runtime, which module_allocates pulls in for random_bytes)
         // and $__fern_random_i32 (fills the low scratch). Each gated on its own op.
-        if (wasm_ir.module_emits_op(mod, "random_bytes")) { ir_out = ir_out + random_bytes_ir_func(); }
-        if (wasm_ir.module_emits_op(mod, "random_i32")) { ir_out = ir_out + random_i32_func(); }
-        if (wasm_ir.module_uses_str_cmp(mod)) { ir_out = ir_out + strcmp_helper(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "random_bytes")) { ir_out = ir_out + random_bytes_ir_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "random_i32")) { ir_out = ir_out + random_i32_func(); }
+        if (wasm_ir.module_uses_str_cmp(ir_cache)) { ir_out = ir_out + strcmp_helper(); }
         // $__fern_substr backs str_slice AND str_split (the split helper slices
         // each segment), so emit it for either — but only ONCE.
-        if (wasm_ir.module_uses_str_slice(mod) || wasm_ir.module_emits_op(mod, "str_split") || wasm_ir.module_uses_str_lines(mod)) { ir_out = ir_out + substr_helper(); }
+        if (wasm_ir.module_uses_str_slice(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "str_split") || wasm_ir.module_uses_str_lines(ir_cache)) { ir_out = ir_out + substr_helper(); }
         // $__fern_arr_push backs the IR `.append` (op "arr_push"). The AST
         // path's full arr_helpers bundle is not on the IR path, so emit this
         // narrow helper here — but ONLY when str_split is absent, because
@@ -12285,7 +12298,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // arr_push_owned (the sole-owner self-append) also lowers to a
         // $__fern_arr_push call on wasm (reclaim-on-grow is x86-only so far), so a
         // module with only owned appends still needs the helper emitted.
-        if ((wasm_ir.module_emits_op(mod, "arr_push") || wasm_ir.module_emits_op(mod, "arr_push_owned")) && !wasm_ir.module_emits_op(mod, "str_split")) {
+        if ((wasm_ir.module_emits_op_cached(ir_cache, "arr_push") || wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) && !wasm_ir.module_emits_op_cached(ir_cache, "str_split")) {
             ir_out = ir_out + arr_push_helper();
         }
         // $__fern_arr_push_owned (the sole-owner self-append) reclaims the old
@@ -12293,61 +12306,61 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // present; its deps $__fern_arr_push (above, or bundled by str_split_helper)
         // and $__fern_arr_dec (heap_alloc_helpers, gated on module_allocates which
         // the append implies) are co-present.
-        if (wasm_ir.module_emits_op(mod, "arr_push_owned")) {
+        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) {
             ir_out = ir_out + arr_push_owned_helper();
         }
         // 8-byte i64[]/u64[] push — its own helper ($__fern_arr_push_i64), no
         // str_split entanglement (str_split builds 4-byte arrays).
-        if (wasm_ir.module_emits_op(mod, "arr_push_i64")) {
+        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_i64")) {
             ir_out = ir_out + arr_push_i64_helper();
         }
         // f64[] push — its own helper ($__fern_arr_push_f64), parallel to the
         // i64 one above (8-byte slots, f64-typed value/store).
-        if (wasm_ir.module_emits_op(mod, "arr_push_f64")) {
+        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_f64")) {
             ir_out = ir_out + arr_push_f64_helper();
         }
         // $__fern_str_split (bundles its own $__fern_arr_push via arr_push_helper).
-        if (wasm_ir.module_emits_op(mod, "str_split") || wasm_ir.module_uses_str_lines(mod)) { ir_out = ir_out + str_split_helper(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "str_split") || wasm_ir.module_uses_str_lines(ir_cache)) { ir_out = ir_out + str_split_helper(); }
         // Scalar string search predicates (starts_with / ends_with / index_of /
         // contains) — self-contained, emitted only when used.
-        if (wasm_ir.module_uses_str_predicate(mod)) { ir_out = ir_out + str_predicate_helpers(); }
+        if (wasm_ir.module_uses_str_predicate(ir_cache)) { ir_out = ir_out + str_predicate_helpers(); }
         // ASCII case transforms (to_upper / to_lower) — self-contained, emitted
         // only when used.
-        if (wasm_ir.module_uses_str_case(mod)) { ir_out = ir_out + str_case_helpers(); }
+        if (wasm_ir.module_uses_str_case(ir_cache)) { ir_out = ir_out + str_case_helpers(); }
         // String repeat — self-contained, emitted only when used.
-        if (wasm_ir.module_uses_str_repeat(mod)) { ir_out = ir_out + str_repeat_helper(); }
+        if (wasm_ir.module_uses_str_repeat(ir_cache)) { ir_out = ir_out + str_repeat_helper(); }
         // String trim — self-contained, emitted only when used (IR-only on wasm).
-        if (wasm_ir.module_uses_str_trim(mod)) { ir_out = ir_out + str_trim_helper(); }
+        if (wasm_ir.module_uses_str_trim(ir_cache)) { ir_out = ir_out + str_trim_helper(); }
         // String reverse — self-contained, emitted only when used (IR-only on wasm).
-        if (wasm_ir.module_uses_str_reverse(mod)) { ir_out = ir_out + str_reverse_helper(); }
+        if (wasm_ir.module_uses_str_reverse(ir_cache)) { ir_out = ir_out + str_reverse_helper(); }
         // String replace — self-contained, emitted only when used (IR-only on wasm).
-        if (wasm_ir.module_uses_str_replace(mod)) { ir_out = ir_out + str_replace_helper(); }
+        if (wasm_ir.module_uses_str_replace(ir_cache)) { ir_out = ir_out + str_replace_helper(); }
         // String chars — self-contained, emitted only when used (IR-only on wasm).
-        if (wasm_ir.module_uses_str_chars(mod)) { ir_out = ir_out + str_chars_helper(); }
+        if (wasm_ir.module_uses_str_chars(ir_cache)) { ir_out = ir_out + str_chars_helper(); }
         // String lines — split on \n + trailing-empty trim (IR-only on wasm).
-        if (wasm_ir.module_uses_str_lines(mod)) { ir_out = ir_out + str_lines_helper(); }
-        if (wasm_ir.module_uses_arr_slice(mod)) { ir_out = ir_out + arr_slice_helper(); }
-        if (wasm_ir.module_uses_arr_slice8(mod)) { ir_out = ir_out + arr_slice8_helper(); }
-        if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }
+        if (wasm_ir.module_uses_str_lines(ir_cache)) { ir_out = ir_out + str_lines_helper(); }
+        if (wasm_ir.module_uses_arr_slice(ir_cache)) { ir_out = ir_out + arr_slice_helper(); }
+        if (wasm_ir.module_uses_arr_slice8(ir_cache)) { ir_out = ir_out + arr_slice8_helper(); }
+        if (wasm_ir.module_uses_maps(ir_cache)) { ir_out = ir_out + map_helpers(); }
         // print_int's $__fern_print_int: the digit buffer sits in the 16-byte
         // scratch reserved just past the string blocks (the `+16` in
         // wasm_ir.fl_base_for); the fd_write iovec uses the low-24 scratch (memory
         // 0/4/8), which the data section starts above (str_offset base 24).
-        if (wasm_ir.module_emits_op(mod, "print_int")) {
+        if (wasm_ir.module_emits_op_cached(ir_cache, "print_int")) {
             ir_out = ir_out + print_int_helper(wasm_ir.str_offset(sv, sv.len()));
         }
         // $__fern_print_int64 for print_int(i64): a 24-byte scratch buffer 16 bytes
         // past print_int's (matching the AST path's tab.next + 16 offset) so the two
         // never clobber when a module prints both widths.
-        if (wasm_ir.module_emits_op(mod, "print_i64")) {
+        if (wasm_ir.module_emits_op_cached(ir_cache, "print_i64")) {
             ir_out = ir_out + print_int64_helper(wasm_ir.str_offset(sv, sv.len()) + 16);
         }
-        if (wasm_ir.module_emits_op(mod, "print_str")) { ir_out = ir_out + print_str_helper(); }
-        if (wasm_ir.module_emits_op(mod, "eprint_str")) { ir_out = ir_out + eprint_str_helper(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "print_str")) { ir_out = ir_out + print_str_helper(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "eprint_str")) { ir_out = ir_out + eprint_str_helper(); }
         // Function-value support (the $fn<N> types, funcref table + elem segment);
         // empty for non-closure modules so their output is byte-unchanged.
-        ir_out = ir_out + wasm_ir.fn_support_section(mod);
-        ir_out = ir_out + wasm_ir.emit_functions(mod);
+        ir_out = ir_out + wasm_ir.fn_support_section(ir_cache);
+        ir_out = ir_out + wasm_ir.emit_functions(mod, ir_cache);
         ir_out = ir_out + "  (func $_start (call $proc_exit (call $main)))\n";
         ir_out = ir_out + "  (export \"_start\" (func $_start)))\n";
         return ir_out;
