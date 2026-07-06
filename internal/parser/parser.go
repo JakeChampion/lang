@@ -4948,6 +4948,25 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				return nil, err
 			}
 			return &ast.ArrayLit{P: open.Pos, Elems: elems}, nil
+		case "{":
+			// General value-position block-expression (#4521): a bare
+			// `{ stmts; tail }` where a value is expected — the RHS of
+			// `var x = { … }`, a call argument, an array/struct-field
+			// value, etc. Reuses parseBranchBody (the same machinery the
+			// if/match branch form uses), so the contents, the E061
+			// value-less check, and the single-expr `{ e }` passthrough all
+			// behave identically to a branch block.
+			//
+			// Gated on !noStructLit exactly like the `Ident { … }`
+			// struct-literal case above: in a loop/if/while HEADER (`for x
+			// in expr {`, `while cond {`) the trailing `{` opens the body,
+			// not a block-expression, so the header's expression parse
+			// (which sets noStructLit) must not consume it here. Fern has
+			// no anonymous/record struct literals, so a bare `{` in a
+			// value position is otherwise unambiguous.
+			if !p.noStructLit {
+				return p.parseBranchBody()
+			}
 		}
 	}
 	return nil, p.errorfCode(t.Pos, "P001", "unexpected token %q", t.Text)
