@@ -322,10 +322,17 @@ function main(): i32 {
     }
 
     // `-ir-probe`: report the IR-eligibility frontier of the whole loaded
-    // program (lambda-lifted to match what the emitter routes on) and stop —
-    // no codegen, no checker gate.
+    // program and stop — no codegen, no checker gate. Runs the SAME
+    // module_with_builtins pipeline `-decide` and emit_module route on
+    // (monomorphise + builtin-enum injection), so the frontier reflects the
+    // module codegen actually sees. Without it the probe scanned the RAW
+    // merged module, whose un-instantiated bounded-generic TEMPLATES
+    // (core/cmp's min[T:Ord] etc.) are still present — their `a.cmp(b)` on a
+    // type-param receiver bails, so the probe reported `module: AST` for a
+    // program that in fact routes IR once monomorphise drops those templates
+    // (#4374). Lambda-lifted last, matching what the emitter routes on.
     if (probe) {
-        var lifted: parser.Module = asm_ir.lift_lambdas(merged);
+        var lifted: parser.Module = asm_ir.lift_lambdas(parser.module_with_builtins(merged));
         if (probe_start >= 0) {
             write(asm_ir.eligibility_report_range(lifted, probe_start, probe_count));
         } else {
