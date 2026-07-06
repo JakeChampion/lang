@@ -245,7 +245,7 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 // 0x3C=60, 0xBF=191, 0x2A=42, 0x48=72, 0x89=137, 0xF8=248, 0x01=1,
 // 0xC8=200, 0x29=41, 0x55=85, 0x5D=93, 0x0F=15, 0x05=5, 0xC3=195.
 const x86EncodeSelfTestMain = `
-function main(): i32 {
+function x86enc_selftest_1(): i32 {
     // mov eax, 60  ->  B8 3C 00 00 00
     var a: i32[] = x86_mov_r32_imm32([], x86_rax(), 60);
     if (a.len() != 5 || a[0] != 184 || a[1] != 60 || a[2] != 0 || a[3] != 0 || a[4] != 0) { return 1; }
@@ -274,6 +274,10 @@ function main(): i32 {
     if (i.len() != 1 || i[0] != 195) { return 9; }
     // ModR/M direct-form helper: mod=3, reg=rdi(7), rm=rax(0) -> 0xF8.
     if (x86_modrm(3, x86_rdi(), x86_rax()) != 248) { return 10; }
+    return 0;
+}
+
+function x86enc_selftest_2(): i32 {
     // add rax, 6 -> 48 81 C0 06 00 00 00
     var j: i32[] = x86_add_r64_imm32([], x86_rax(), 6);
     if (j.len() != 7 || j[0] != 72 || j[1] != 129 || j[2] != 192 || j[3] != 6 || j[4] != 0) { return 11; }
@@ -302,6 +306,10 @@ function main(): i32 {
     if (q.len() != 5 || q[0] != 232 || q[1] != 10 || q[2] != 0 || q[3] != 0 || q[4] != 0) { return 19; }
     // forward-ref rel: target 22, rel32 field at 15 -> 3.
     if (x86_rel_to(22, 15) != 3) { return 20; }
+    return 0;
+}
+
+function x86enc_selftest_3(): i32 {
     // patch a placeholder: jne rel=0 then patch its rel32 (offset 2) to 3.
     var r: i32[] = x86_jne_rel32([], 0);
     r = x86_patch_rel32(r, 2, 3);
@@ -333,6 +341,10 @@ function main(): i32 {
     // slice 2h integer ops (verified vs as/objdump):
     var aa: i32[] = x86_inc_r64([], x86_rax());   // 48 FF C0
     if (aa.len() != 3 || aa[0] != 72 || aa[1] != 255 || aa[2] != 192) { return 30; }
+    return 0;
+}
+
+function x86enc_selftest_4(): i32 {
     var bb: i32[] = x86_dec_r64([], x86_rcx());   // 48 FF C9
     if (bb[2] != 201) { return 31; }
     var cc2: i32[] = x86_neg_r64([], x86_rax());  // 48 F7 D8
@@ -353,6 +365,10 @@ function main(): i32 {
     if (jj[2] != 241) { return 39; }
     var kk: i32[] = x86_cqo([]);                  // 48 99
     if (kk.len() != 2 || kk[0] != 72 || kk[1] != 153) { return 40; }
+    return 0;
+}
+
+function x86enc_selftest_5(): i32 {
     var ll: i32[] = x86_shl_r64_imm8([], x86_rax(), 3); // 48 C1 E0 03
     if (ll.len() != 4 || ll[1] != 193 || ll[2] != 224 || ll[3] != 3) { return 41; }
     // slice 2i extended registers r8..r15 (verified vs as/objdump):
@@ -373,6 +389,10 @@ function main(): i32 {
     if (rg.len() != 4 || rg[0] != 73 || rg[1] != 139 || rg[2] != 69 || rg[3] != 0) { return 49; }
     var rh: i32[] = x86_mov_store_r64([], 12, 0, x86_rax()); // mov [r12],rax -> 49 89 04 24
     if (rh.len() != 4 || rh[0] != 73 || rh[1] != 137 || rh[2] != 4 || rh[3] != 36) { return 50; }
+    return 0;
+}
+
+function x86enc_selftest_6(): i32 {
     var rk: i32[] = x86_imul_r64_r64([], 8, 9); // imul r8,r9 -> 4D 0F AF C1
     if (rk.len() != 4 || rk[0] != 77 || rk[1] != 15 || rk[2] != 175 || rk[3] != 193) { return 51; }
     // slice 2j SIB-index addressing (verified vs as/objdump):
@@ -394,6 +414,10 @@ function main(): i32 {
     if (bd.len() != 5 || bd[0] != 65 || bd[1] != 198 || bd[2] != 4 || bd[3] != 28 || bd[4] != 102) { return 59; }
     var be: i32[] = x86_movb_reg_mem([], 0, 6, false, 0, 1, 0); // movb %al,(%rsi) -> 88 06
     if (be.len() != 2 || be[0] != 136 || be[1] != 6) { return 60; }
+    return 0;
+}
+
+function x86enc_selftest_7(): i32 {
     var bf: i32[] = x86_movb_reg_mem([], 0, 11, false, 0, 1, 0); // movb %al,(%r11) -> 41 88 03
     if (bf.len() != 3 || bf[0] != 65 || bf[1] != 136 || bf[2] != 3) { return 61; }
     var bg: i32[] = x86_movzbq_mem([], x86_rax(), x86_rax(), false, 0, 1, 0); // movzbq (%rax),%rax -> 48 0F B6 00
@@ -416,6 +440,10 @@ function main(): i32 {
     if (sh[3] != 126 || sh[4] != 192) { return 69; }
     var si2: i32[] = x86_sse_rr([], 94, 0, 1); // divsd %xmm1,%xmm0 -> F2 0F 5E C1
     if (si2.len() != 4 || si2[0] != 242 || si2[1] != 15 || si2[2] != 94 || si2[3] != 193) { return 70; }
+    return 0;
+}
+
+function x86enc_selftest_8(): i32 {
     var sj: i32[] = x86_cvttsd2si([], 0, 0); // F2 48 0F 2C C0
     if (sj.len() != 5 || sj[0] != 242 || sj[1] != 72 || sj[2] != 15 || sj[3] != 44 || sj[4] != 192) { return 71; }
     var sk2: i32[] = x86_cvtsi2sd([], 0, 0); // F2 48 0F 2A C0
@@ -444,6 +472,10 @@ function main(): i32 {
     // new jcc cc codes feed the same 0F 80+cc encoder: js rel=0 -> 0F 88 00*4.
     var sjs: i32[] = x86_jcc_rel32([], x86_cc_s(), 0);
     if (sjs.len() != 6 || sjs[0] != 15 || sjs[1] != 136) { return 80; }
+    return 0;
+}
+
+function x86enc_selftest_9(): i32 {
     var sja: i32[] = x86_jcc_rel32([], x86_cc_a(), 0); // 0F 87
     if (sja[1] != 135) { return 81; }
     // slice 2q: 32-bit ALU / moves / extends / cmov / testb / rep / xorpd.
@@ -465,6 +497,10 @@ function main(): i32 {
     if (th.len() != 4 || th[0] != 72 || th[1] != 15 || th[2] != 76 || th[3] != 194) { return 89; }
     var ti: i32[] = x86_movslq_load([], x86_rax(), x86_rax(), false, 0, 1, 0); // 48 63 00
     if (ti.len() != 3 || ti[0] != 72 || ti[1] != 99 || ti[2] != 0) { return 90; }
+    return 0;
+}
+
+function x86enc_selftest_10(): i32 {
     var tj: i32[] = x86_movzwq_load([], x86_rax(), 13, true, 15, 1, 16); // movzwq 16(%r13,%r15,1),%rax -> 4B 0F B7 44 3D 10
     if (tj.len() != 6 || tj[0] != 75 || tj[1] != 15 || tj[2] != 183 || tj[3] != 68 || tj[4] != 61 || tj[5] != 16) { return 91; }
     var tk: i32[] = x86_xorpd([], 0, 1); // xorpd %xmm1,%xmm0 -> 66 0F 57 C1
@@ -486,6 +522,21 @@ function main(): i32 {
     if (tq.len() != 4 || tq[0] != 242 || tq[1] != 15 || tq[2] != 81 || tq[3] != 192) { return 98; }
     var tr: i32[] = x86_roundsd([], 0, 0, 1);
     if (tr.len() != 6 || tr[0] != 102 || tr[1] != 15 || tr[2] != 58 || tr[3] != 11 || tr[4] != 192 || tr[5] != 1) { return 99; }
+    return 0;
+}
+
+function main(): i32 {
+    var r: i32 = 0;
+    r = x86enc_selftest_1(); if (r != 0) { return r; }
+    r = x86enc_selftest_2(); if (r != 0) { return r; }
+    r = x86enc_selftest_3(); if (r != 0) { return r; }
+    r = x86enc_selftest_4(); if (r != 0) { return r; }
+    r = x86enc_selftest_5(); if (r != 0) { return r; }
+    r = x86enc_selftest_6(); if (r != 0) { return r; }
+    r = x86enc_selftest_7(); if (r != 0) { return r; }
+    r = x86enc_selftest_8(); if (r != 0) { return r; }
+    r = x86enc_selftest_9(); if (r != 0) { return r; }
+    r = x86enc_selftest_10(); if (r != 0) { return r; }
     return 0;
 }
 `

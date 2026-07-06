@@ -12239,6 +12239,15 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_random(ir_cache)) {
             ir_out = ir_out + random_get_import();
         }
+        // read_file opens a path under preopen fd 3 (path_open + fd_read + fd_close).
+        // The imports must precede the memory + function sections. The differential
+        // wasm_ir_run driver gates these identically; emit_module_mode previously
+        // omitted them, so an IR-eligible module calling read_file (e.g. the
+        // x86_gas capstone driver reading its .s once x86_gas is E048-migrated and
+        // thus IR-eligible) linked against undefined $__fern_read_file / imports.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) {
+            ir_out = ir_out + file_imports();
+        }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
         // supplies the distinct values + offsets; the byte encoding reuses this
@@ -12339,6 +12348,17 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_str_chars(ir_cache)) { ir_out = ir_out + str_chars_helper(); }
         // String lines — split on \n + trailing-empty trim (IR-only on wasm).
         if (wasm_ir.module_uses_str_lines(ir_cache)) { ir_out = ir_out + str_lines_helper(); }
+        // $__fern_string_from_bytes: op_str_from_bytes emits the call, so its helper
+        // must be present. Allocates its box via $__fern_str_box (heap runtime,
+        // pulled in by module_allocates). The differential wasm_ir_run driver gates
+        // this identically; without it an IR-eligible module that calls
+        // string_from_bytes (e.g. the x86_encode/x86_gas encoders emitting a byte
+        // string) links against an undefined function under wasmtime.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "str_from_bytes")) { ir_out = ir_out + string_from_bytes_helper(); }
+        // $__fern_read_file: path_open + fd_read loop + fd_close, boxing the file
+        // bytes as a string. Its wasi imports are gated above; the differential
+        // wasm_ir_run driver emits this same helper on the read_file op.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) { ir_out = ir_out + readfile_func(); }
         if (wasm_ir.module_uses_arr_slice(ir_cache)) { ir_out = ir_out + arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(ir_cache)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(ir_cache)) { ir_out = ir_out + map_helpers(); }
