@@ -5059,6 +5059,31 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add sp, sp, #16\n");          // pop saved cap
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
+        // __fn___fern_struct_copy(x0 = src box data, x1 = nf) -> x0 = fresh box that is a
+        // shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
+        // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same
+        // free size, byte-identical to struct_make's box; copies nf+1 words src -> dst
+        // (field pointers shared, matching the inline base-copy). The compact base copy
+        // of `T { ...base, f: v }` (#4650) — one bl instead of nf ldr/str pairs/site.
+        s = s.write("__fn___fern_struct_copy:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");   // save src, nf
+        s = s.write("    add x0, x1, #1\n");            // cap = nf+1 words
+        s = s.write("    bl __fern_arr_box\n");         // x0 = dst data (rc=1)
+        s = s.write("    ldp x2, x3, [sp], #16\n");     // x2=src, x3=nf
+        s = s.write("    add x3, x3, #1\n");            // nf+1 words (shape + fields)
+        s = s.write("    mov x4, #0\n");                // i = 0
+        s = s.write(".Lfern_scp_loop:\n");
+        s = s.write("    cmp x4, x3\n");
+        s = s.write("    b.ge .Lfern_scp_done\n");
+        s = s.write("    ldr x5, [x2, x4, lsl #3]\n");
+        s = s.write("    str x5, [x0, x4, lsl #3]\n");
+        s = s.write("    add x4, x4, #1\n");
+        s = s.write("    b .Lfern_scp_loop\n");
+        s = s.write(".Lfern_scp_done:\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
         // __fern_str_box(x0 = data, x1 = len) -> x0 = box (rc-HEADERED, #2649 Option A
         // A1b). Block = [rc=1@base, data@base+8, len@base+16] (24B, freelist class 3);
         // box = base+8, so data@box+0 / len@box+8 are UNCHANGED (every string consumer

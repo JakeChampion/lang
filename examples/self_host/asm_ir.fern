@@ -767,6 +767,33 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $16, %rax\n");
     s = s.write("    leave\n");
     s = s.write("    ret\n");
+    // __fn___fern_struct_copy(%rdi = src box data, %rsi = nf) -> %rax = fresh box that is
+    // a shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
+    // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same free
+    // size, byte-identical to struct_make's box; then copies nf+1 words src -> dst
+    // (field pointers shared, matching the inline base-copy path). The compact base
+    // copy of `T { ...base, f: v }` (#4650): one call instead of nf struct_get/store.
+    s = s.write("__fn___fern_struct_copy:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rdi\n");                 // save src            [-8(%rbp)]
+    s = s.write("    pushq %rsi\n");                 // save nf             [-16(%rbp)]
+    s = s.write("    leaq 1(%rsi), %rdi\n");         // cap = nf+1 words
+    s = s.write("    call __fern_arr_box\n");        // %rax = dst data (rc=1)
+    s = s.write("    movq -8(%rbp), %rsi\n");        // src
+    s = s.write("    movq -16(%rbp), %rcx\n");       // nf
+    s = s.write("    incq %rcx\n");                  // nf+1 words (shape + fields)
+    s = s.write("    xorq %rdx, %rdx\n");            // i = 0
+    s = s.write(".Lfern_scp_loop:\n");
+    s = s.write("    cmpq %rcx, %rdx\n");
+    s = s.write("    jge .Lfern_scp_done\n");
+    s = s.write("    movq (%rsi,%rdx,8), %r8\n");
+    s = s.write("    movq %r8, (%rax,%rdx,8)\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write("    jmp .Lfern_scp_loop\n");
+    s = s.write(".Lfern_scp_done:\n");
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
     // __fern_str_box(%rdi = data ptr, %rsi = len) -> %rax = box (rc-HEADERED, #2649
     // Option A). Block = [rc=1@base, data@base+8, len@base+16] (24 bytes, freelist
     // class 3); box = base+8, so data@box+0 / len@box+8 (byte-identical to the old
@@ -4319,6 +4346,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 140) {  // struct_set
             // pop val (top), box; store val at field (index+1)*8.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax)\n");
+        } else if (o.kind_tag == 198) {  // struct_copy
+            // pop src box; shallow-copy it into a fresh rc=1 box (nf+1 words) via
+            // __fn___fern_struct_copy and push the copy. The O(1)-per-site base copy of a
+            // functional update (#4650), replacing nf inline struct_get/store pairs.
+            s = s.write("    popq %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n");
+            s = s.write("    call __fn___fern_struct_copy\n");
+            s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,
             // unlike struct_set). One 8-byte movq for EVERY element kind (i32 / i64
