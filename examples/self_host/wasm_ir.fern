@@ -51,14 +51,59 @@ pub function heap_base(): i32 { return 40 + 65536 * 4; }
 // wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
 // wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
 
+// lower_all_for lowers EVERY function of `mod` to its IR ops ONCE, returning the
+// per-function LowerResult list in mod.funcs order. It is the cache the wasm IR
+// emit path threads through its two dozen collect / gate passes (str_values,
+// module_uses_*, module_emits_op_cached, field_reclaim_types, fn_value_table, …)
+// so a module is lowered a single time instead of once per pass — killing the
+// O(functions²) × O(passes) re-lowering that OOMed the self-host wasm compile of
+// large / many-function modules (#4652).
+//
+// Each element is byte-identical to irlower.lower_func_for(fn, …): the ~20
+// `*_of(funcs)` side-tables are pure functions of mod.funcs / mod.structs, so
+// hoisting them out of the per-function loop (computed once here, not once per
+// call) yields the same ops, and the argument vector otherwise mirrors
+// lower_func_for's exactly (including the empty consume_safe_params — the query
+// passes deliberately use the per-function borrowability, NOT the interprocedural
+// fixpoint the emit path threads through emit_function_ir).
+pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
+    var arf: string[] = asm_ir.array_ret_fns(mod);
+    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var cnf: string[] = irlower.const_fns_of(mod.funcs);
+    var bp: string[] = irlower.borrowable_params_of(mod.funcs);
+    var fnames: string[] = irlower.fn_names_of(mod.funcs);
+    var frsf: string[] = irlower.fresh_struct_ret_fns_of(mod.funcs, mod.structs);
+    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(mod.funcs, mod.structs);
+    var sfrf: string[] = irlower.str_fresh_ret_fns_of(mod.funcs);
+    var out: irlower.LowerResult[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bp, fnames, frsf, [], rfrsf, sfrf));
+        fi = fi + 1;
+    }
+    return out;
+}
+
 // str_values collects the module's distinct string literals (first-seen order,
 // deduped) from the lowered IR. Both the caller's data-section emission and the
 // per-function const_str offset lookup walk this same list, so offsets agree.
-pub function str_values(mod: parser.Module): string[] {
+pub function str_values(cache: irlower.LowerResult[]): string[] {
     var vals: string[] = [];
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 5) {  // const_str
@@ -102,19 +147,19 @@ function offset_of_value(vals: string[], v: string): i32 {
 
 // fl_base_for / heap_base_for recompute the freelist + heap bases including the
 // literal blocks (heap_extra = 0 in the IR subset — no i64 / print buffers).
-pub function fl_base_for(mod: parser.Module): i32 {
-    return (str_offset(str_values(mod), str_values(mod).len()) + 16 + 7) / 8 * 8;
+pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
+    return (str_offset(str_values(cache), str_values(cache).len()) + 16 + 7) / 8 * 8;
 }
-pub function heap_base_for(mod: parser.Module): i32 {
-    return fl_base_for(mod) + fl_cells() * 4;
+pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
+    return fl_base_for(cache) + fl_cells() * 4;
 }
 
 // module_uses_strings reports whether any function uses a string op (literal,
 // len, concat, eq) — gates the data section + strcat/streq helper emission.
-pub function module_uses_strings(mod: parser.Module): boolean {
+pub function module_uses_strings(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var kt: i32 = r.ops[i].kind_tag;
@@ -130,10 +175,10 @@ pub function module_uses_strings(mod: parser.Module): boolean {
 // module_uses_str_cmp reports whether any function emits a str_cmp op (string
 // ordering < <= > >=). Such modules need the FULL string-helper bundle, which
 // includes $__fern_strcmp (the narrow strcat_streq bundle omits it).
-pub function module_uses_str_cmp(mod: parser.Module): boolean {
+pub function module_uses_str_cmp(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 100) { return true; }  // str_cmp
@@ -146,10 +191,10 @@ pub function module_uses_str_cmp(mod: parser.Module): boolean {
 
 // module_uses_str_slice reports whether any function uses `s[start:end]` (the
 // str_slice op), gating emission of the $__fern_substr copy helper.
-pub function module_uses_maps(mod: parser.Module): boolean {
+pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 124 || r.ops[i].kind_tag == 125 || r.ops[i].kind_tag == 126) { return true; }  // map_new, map_set, map_len
@@ -160,10 +205,10 @@ pub function module_uses_maps(mod: parser.Module): boolean {
     return false;
 }
 
-pub function module_uses_str_slice(mod: parser.Module): boolean {
+pub function module_uses_str_slice(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 102) { return true; }  // str_slice
@@ -322,10 +367,10 @@ function wasm_helper_symbol(name: string): string {
 
 // module_allocates reports whether any function uses an array/alloc op (so the
 // heap + RC runtime needs emitting).
-pub function module_allocates(mod: parser.Module): boolean {
+pub function module_allocates(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // Any allocating op needs the heap + RC runtime. ir.op_allocates is
@@ -340,7 +385,7 @@ pub function module_allocates(mod: parser.Module): boolean {
     // program, so $__fern_str_box (in heap_alloc_helpers) must be present. This
     // also covers the str_len/str_eq/str_cmp/str_index ops that don't allocate
     // themselves but still pull the heap in via $__fern_strcat.
-    return module_uses_strings(mod);
+    return module_uses_strings(cache);
 }
 
 // field_reclaim_types returns the distinct struct types `T` for which a
@@ -348,11 +393,11 @@ pub function module_allocates(mod: parser.Module): boolean {
 // wasm emits a per-type PASS-THROUGH body for each (no reclaim yet — leak-safe,
 // mirroring __fern_snapshot_dec); collected by scanning lowered call_direct ops
 // rather than a need-set, matching wasm's module_calls-style gating.
-pub function field_reclaim_types(mod: parser.Module): string[] {
+pub function field_reclaim_types(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 149 && asm_ir.is_field_reclaim_name(r.ops[i].str)) {  // call_direct
@@ -373,11 +418,11 @@ pub function field_reclaim_types(mod: parser.Module): string[] {
 // deep-dropping rc-array + acyclic nested-struct fields); collected by scanning
 // lowered call_direct ops (the same gating field_reclaim_types uses) plus the
 // transitive nested-struct closure below.
-pub function struct_drop_types(mod: parser.Module): string[] {
+pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 149 && asm_ir.is_struct_drop_name(r.ops[i].str)) {  // call_direct
@@ -399,20 +444,20 @@ pub function struct_drop_types(mod: parser.Module): string[] {
     var di: i32 = 0;
     while (di < out.len()) {
         var dt: string = out[di];
-        var fc: i32 = irlower.decl_field_count(mod.structs, dt);
+        var fc: i32 = irlower.decl_field_count(structs, dt);
         var k: i32 = 0;
         while (k < fc) {
-            var ft: string = irlower.decl_field_type_at(mod.structs, dt, k);
-            if (irlower.decl_is_struct(mod.structs, ft) && irlower.nested_field_deep_drop_ok(mod.structs, ft)) {
+            var ft: string = irlower.decl_field_type_at(structs, dt, k);
+            if (irlower.decl_is_struct(structs, ft) && irlower.nested_field_deep_drop_ok(structs, ft)) {
                 if (util.index_of_str(out, ft) < 0) { out = out.append(ft); }
             }
             // A struct-ARRAY field `X[]` whose element X is deep-drop-ok: the array-element
             // deep-drop helper ($__struct_arr_elems_drop_X) calls $__struct_drop_X, so X
             // must be a struct_drop type too. Add it here (the index-driven loop then
             // expands X's own reclaimable fields transitively).
-            if (irlower.is_struct_array_field_type(mod.structs, ft)) {
+            if (irlower.is_struct_array_field_type(structs, ft)) {
                 var aelem: string = ft[0 : ft.len() - 2];
-                if (irlower.nested_field_deep_drop_ok(mod.structs, aelem)) {
+                if (irlower.nested_field_deep_drop_ok(structs, aelem)) {
                     if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem); }
                 }
             }
@@ -429,18 +474,18 @@ pub function struct_drop_types(mod: parser.Module): string[] {
 // struct_drop_types already includes each such E as a struct_drop type (so the
 // $__struct_drop_<E> the helper calls exists), so this walk over that closure finds
 // every needed helper.
-pub function struct_arr_elems_drop_types(mod: parser.Module): string[] {
-    var sdt: string[] = struct_drop_types(mod);
+pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: parser.StructDecl[]): string[] {
+    var sdt: string[] = struct_drop_types(cache, structs);
     var out: string[] = [];
     var i: i32 = 0;
     while (i < sdt.len()) {
-        var fc: i32 = irlower.decl_field_count(mod.structs, sdt[i]);
+        var fc: i32 = irlower.decl_field_count(structs, sdt[i]);
         var k: i32 = 0;
         while (k < fc) {
-            var ft: string = irlower.decl_field_type_at(mod.structs, sdt[i], k);
-            if (irlower.is_struct_array_field_type(mod.structs, ft)) {
+            var ft: string = irlower.decl_field_type_at(structs, sdt[i], k);
+            if (irlower.is_struct_array_field_type(structs, ft)) {
                 var elem: string = ft[0 : ft.len() - 2];
-                if (irlower.nested_field_deep_drop_ok(mod.structs, elem) && util.index_of_str(out, elem) < 0) {
+                if (irlower.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
                     out = out.append(elem);
                 }
             }
@@ -451,16 +496,18 @@ pub function struct_arr_elems_drop_types(mod: parser.Module): string[] {
     return out;
 }
 
-// module_emits_op reports whether any lowered function emits an op of `kind` —
-// the shared scanner the random/byte-source helper gates use (issue #2747).
-pub function module_emits_op(mod: parser.Module, kind: string): boolean {
-    // The public API still takes the op-kind by string; resolve it to the
-    // integer tag once so the inner scan is an int compare (Op no longer
-    // carries the string kind).
+// module_emits_op_cached reports whether any lowered function emits an op of
+// `kind` — the shared scanner the random/byte-source helper gates use (issue
+// #2747). It reads the pre-lowered cache (lower_all_for) rather than re-lowering
+// the module: the emit drivers call it dozens of times per compile, so scanning
+// the shared cache once (not re-lowering every function per call) is what makes
+// the wasm self-host compile linear (#4652). The op-kind arrives by string;
+// resolve it to the integer tag once so the inner scan is an int compare.
+pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string): boolean {
     var ktag: i32 = ir.kind_id(kind);
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == ktag) { return true; }
@@ -474,53 +521,53 @@ pub function module_emits_op(mod: parser.Module, kind: string): boolean {
 // module_uses_str_predicate reports whether any function emits a scalar string
 // search predicate op (starts_with / ends_with / index_of, the latter also
 // backing `contains`), so wasm.str_predicate_helpers is emitted for the IR path.
-pub function module_uses_str_predicate(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_starts_with")
-        || module_emits_op(mod, "str_ends_with")
-        || module_emits_op(mod, "str_index_of");
+pub function module_uses_str_predicate(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_starts_with")
+        || module_emits_op_cached(cache, "str_ends_with")
+        || module_emits_op_cached(cache, "str_index_of");
 }
 
 // module_uses_str_case reports whether any function emits an ASCII case-transform
 // op (to_upper / to_lower), so wasm.str_case_helpers is emitted for the IR path.
-pub function module_uses_str_case(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_to_upper") || module_emits_op(mod, "str_to_lower");
+pub function module_uses_str_case(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_to_upper") || module_emits_op_cached(cache, "str_to_lower");
 }
 
 // module_uses_str_repeat reports whether any function emits the str_repeat op, so
 // wasm.str_repeat_helper is emitted for the IR path.
-pub function module_uses_str_repeat(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_repeat");
+pub function module_uses_str_repeat(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_repeat");
 }
 
 // module_uses_str_trim reports whether any function emits the str_trim op, so
 // wasm.str_trim_helper is emitted for the IR path. (wasm's AST path has no trim,
 // so this is IR-only — no AST counterpart to differential-test against.)
-pub function module_uses_str_trim(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_trim");
+pub function module_uses_str_trim(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_trim");
 }
 
 // module_uses_str_reverse reports whether any function emits the str_reverse op,
 // so wasm.str_reverse_helper is emitted for the IR path. (IR-only, like trim.)
-pub function module_uses_str_reverse(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_reverse");
+pub function module_uses_str_reverse(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_reverse");
 }
 
 // module_uses_str_replace reports whether any function emits the str_replace op,
 // so wasm.str_replace_helper is emitted for the IR path. (IR-only, like trim.)
-pub function module_uses_str_replace(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_replace");
+pub function module_uses_str_replace(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_replace");
 }
 
 // module_uses_str_chars reports whether any function emits the str_chars op, so
 // wasm.str_chars_helper is emitted for the IR path. (IR-only, like trim.)
-pub function module_uses_str_chars(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_chars");
+pub function module_uses_str_chars(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_chars");
 }
 
 // module_uses_str_lines reports whether any function emits the str_lines op, so
 // wasm.str_lines_helper (and the str_split/substr it depends on) are emitted.
-pub function module_uses_str_lines(mod: parser.Module): boolean {
-    return module_emits_op(mod, "str_lines");
+pub function module_uses_str_lines(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "str_lines");
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -528,10 +575,10 @@ pub function module_uses_str_lines(mod: parser.Module): boolean {
 // $__fern_i32_to_str helper (wasm.to_string_helpers) are emitted, even for an
 // otherwise alloc-free module. (module_emits_op keys on op.kind, not the
 // call_direct symbol, so this needs its own scan.)
-pub function module_uses_i32_to_string(mod: parser.Module): boolean {
+pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_i32_to_string") { return true; }  // call_direct
@@ -546,10 +593,10 @@ pub function module_uses_i32_to_string(mod: parser.Module): boolean {
 // runtime call (a call_direct to __fern_str_to_i32) — so wasm.str_to_i32_helper
 // is emitted. Allocation-free, so it has no heap dependency. (module_emits_op
 // keys on op.kind, not the call_direct symbol, so this needs its own scan.)
-pub function module_uses_str_to_i32(mod: parser.Module): boolean {
+pub function module_uses_str_to_i32(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_str_to_i32") { return true; }  // call_direct
@@ -565,18 +612,18 @@ pub function module_uses_str_to_i32(mod: parser.Module): boolean {
 // heap allocator are emitted. strbuf_take boxes its result via $__fern_str_box,
 // so the strbuf gate also pulls the heap in (folds into the heap gate alongside
 // module_allocates / module_uses_i32_to_string / module_uses_chr).
-pub function module_uses_strbuf(mod: parser.Module): boolean {
-    return module_emits_op(mod, "strbuf_reset") || module_emits_op(mod, "strbuf_append")
-        || module_emits_op(mod, "strbuf_take");
+pub function module_uses_strbuf(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "strbuf_reset") || module_emits_op_cached(cache, "strbuf_append")
+        || module_emits_op_cached(cache, "strbuf_take");
 }
 
 // module_uses_chr reports whether any function emits the chr(n) runtime call (a
 // call_direct to __fern_chr) — so wasm.chr_helper + the heap allocator are
 // emitted. chr allocates its 1-char box, so the chr gate also pulls the heap in.
-pub function module_uses_chr(mod: parser.Module): boolean {
+pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_chr") { return true; }  // call_direct
@@ -589,16 +636,16 @@ pub function module_uses_chr(mod: parser.Module): boolean {
 
 // module_uses_random reports whether the module calls random_bytes or random_i32
 // (so the wasi random_get import is emitted).
-pub function module_uses_random(mod: parser.Module): boolean {
-    return module_emits_op(mod, "random_bytes") || module_emits_op(mod, "random_i32");
+pub function module_uses_random(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "random_bytes") || module_emits_op_cached(cache, "random_i32");
 }
 
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
 // non-trapping $__fern_idiv / $__fern_irem helpers need emitting).
-pub function module_uses_divrem(mod: parser.Module): boolean {
+pub function module_uses_divrem(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 24 || r.ops[i].kind_tag == 26) { return true; }  // div_s, rem_s
@@ -613,10 +660,10 @@ pub function module_uses_divrem(mod: parser.Module): boolean {
 // the $__fern_idiv64 / $__fern_irem64 helpers (divrem64_helpers) need emitting.
 // module_uses_arr_slice reports whether any function emits a 4-byte-element
 // arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
-pub function module_uses_arr_slice(mod: parser.Module): boolean {
+pub function module_uses_arr_slice(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 96 && r.ops[i].width != 64) { return true; }  // arr_slice
@@ -630,10 +677,10 @@ pub function module_uses_arr_slice(mod: parser.Module): boolean {
 // arr_slice op (width 64, f64[]), so the $__fern_arr_slice8 helper needs
 // emitting. Distinct from module_uses_arr_slice so a program slicing only one
 // element width pulls in only the helper it calls.
-pub function module_uses_arr_slice8(mod: parser.Module): boolean {
+pub function module_uses_arr_slice8(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 96 && r.ops[i].width == 64) { return true; }  // arr_slice
@@ -644,10 +691,10 @@ pub function module_uses_arr_slice8(mod: parser.Module): boolean {
     return false;
 }
 
-pub function module_uses_i64_divrem(mod: parser.Module): boolean {
+pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if ((r.ops[i].kind_tag == 24 || r.ops[i].kind_tag == 26) && r.ops[i].width == 64) { return true; }  // div_s, rem_s
@@ -702,7 +749,20 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // neither a transcendental instruction nor an IR runtime for them, so a module
     // calling one stays on the wasm AST path (where it is already deferred — see
     // wasm.fern: "sin/cos/exp/log/pow have no primitive and are deferred"). #2691.
-    return asm_ir.eligible_core(mod)
+    if (!asm_ir.eligible_core(mod)) { return false; }
+    return wasm_ir_deferrals_ok(lower_all_for(mod));
+}
+
+// wasm_ir_deferrals_ok is the non-eligible_core half of wasm_eligible evaluated
+// over a pre-lowered cache: the set of ops that DON'T yet lower on the wasm IR
+// backend (poll / timer_fd / the tcp_* socket set / subprocess / wasm_poll — the
+// component-model / socket runtime the bare core-wasm+preview1 backend doesn't
+// wire). Split out of wasm_eligible so the emit dispatch can build the cache
+// ONCE — after the cheap eligible_core AST gate passes — and reuse it for both
+// this deferral gate AND emit, instead of re-lowering the whole module ~10× via
+// the mod-taking module_emits_op. Byte-identical to the old inline chain (#4652).
+pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
+    return true
         // poll has no wasm IR runtime: real readiness on wasm needs the
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
@@ -710,11 +770,11 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         // a poll module stays on the wasm AST path. (sleep_ms, by contrast, needs
         // only a single-clock poll_oneoff and DOES lower on the wasm IR path — see
         // $__fern_sleep_ms; it is no longer deferred.)
-        && !module_emits_op(mod, "poll")
+        && !module_emits_op_cached(cache, "poll")
         // timer_fd is the native timerfd (fd-based); it has no direct wasm
         // preview2 analog (the wasm reactor uses wasm_timer_pollable instead), so
         // a timer_fd module stays on the wasm AST path for now.
-        && !module_emits_op(mod, "timer_fd")
+        && !module_emits_op_cached(cache, "timer_fd")
         // wasm_timer_pollable / wasm_pollable_drop / wasm_block DO lower on the
         // wasm IR path now (#3457 / #4317): wasm_ir emits direct preview2 calls
         // (wasi:clocks/monotonic-clock.subscribe-duration, wasi:io/poll
@@ -731,25 +791,32 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         // prerequisite for poll AND the tcp stream/resource imports) is the next
         // slice. wasm_poll DOES lower on every other backend (native x86-64/arm64
         // + interp + the self-host register IR paths) as a -1 portability shim.
-        && !module_emits_op(mod, "wasm_poll")
+        && !module_emits_op_cached(cache, "wasm_poll")
         // tcp_* client primitives: native lowers them via the IR (socket
         // syscalls + the self-host string ABI for recv/send), but the
         // self-host wasm backend has no socket runtime (wasm sockets need the
         // component-model wasi:sockets interfaces), so a tcp module stays on the
         // wasm AST path. Same deferral as poll/timer_fd.
-        && !module_emits_op(mod, "tcp_connect")
-        && !module_emits_op(mod, "tcp_send")
-        && !module_emits_op(mod, "tcp_recv")
-        && !module_emits_op(mod, "tcp_close")
-        && !module_emits_op(mod, "tcp_pollable")
-        && !module_emits_op(mod, "subprocess");
+        && !module_emits_op_cached(cache, "tcp_connect")
+        && !module_emits_op_cached(cache, "tcp_send")
+        && !module_emits_op_cached(cache, "tcp_recv")
+        && !module_emits_op_cached(cache, "tcp_close")
+        && !module_emits_op_cached(cache, "tcp_pollable")
+        && !module_emits_op_cached(cache, "subprocess");
 }
 
-// should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
-// dispatch wasm.emit_module consults to route eligible modules through the IR.
-// Uses wasm_eligible (not all_eligible) so function-value modules lower on wasm.
-pub function should_use_ir(mod: parser.Module): boolean {
-    return asmcore.new_state().use_ir && wasm_eligible(mod);
+// should_use_ir_core is the CHEAP gate the emit dispatch (wasm.emit_module)
+// consults to route a module through the IR: the use_ir default is on AND the
+// module passes the AST-only eligible_core gate, WITHOUT the module_emits_op
+// deferral checks (those need the lowered cache). The dispatch calls this first;
+// only if it passes does it build the LowerResult cache (lower_all_for) ONCE and
+// finish the gate with wasm_ir_deferrals_ok(cache) — so an IR-eligible module is
+// lowered a single time for gate+emit instead of the old ~10× (deferral scan) +
+// ~20× (emit collect passes). eligible_core is a pure AST walk, so bailing here
+// keeps the ineligible-module bootstrap path from ever lowering (#4652). Uses
+// eligible_core (not all_eligible) so function-value modules lower on wasm.
+pub function should_use_ir_core(mod: parser.Module): boolean {
+    return asmcore.new_state().use_ir && asm_ir.eligible_core(mod);
 }
 
 // Preview-2 component-model imports for the wasm reactor's timer-pollable ops
@@ -797,11 +864,11 @@ pub function pipe_after(s: string): string {
     return s[i + 1 : s.len()];
 }
 
-pub function fn_value_table(mod: parser.Module): string[] {
+pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 6 && util.index_of_str(out, r.ops[i].str) < 0) {  // const_func
@@ -827,11 +894,11 @@ pub function fn_value_table(mod: parser.Module): string[] {
 // indirect_arities collects the distinct argument counts used by call_indirect
 // ops across the module (deduped), so fn_support_section declares one
 // `$fn<argc>` signature type per arity actually dispatched.
-function indirect_arities(mod: parser.Module): i32[] {
+function indirect_arities(cache: irlower.LowerResult[]): i32[] {
     var out: i32[] = [];
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 150 && !slot_in_list(out, r.ops[i].i32_imm)) {  // call_indirect
@@ -846,7 +913,7 @@ function indirect_arities(mod: parser.Module): i32[] {
     // emitted whenever ANY map is used, not just a struct-keyed one. So both
     // signature types must exist for every map-using module or the (dead, for
     // i32/string keys) call_indirect fails validation. #2671.
-    if (module_uses_maps(mod)) {
+    if (module_uses_maps(cache)) {
         if (!slot_in_list(out, 1)) { out = out.append(1); }
         if (!slot_in_list(out, 2)) { out = out.append(2); }
     }
@@ -858,9 +925,9 @@ function indirect_arities(mod: parser.Module): i32[] {
 // `(table <M> funcref)` sized to the address-taken set, and an `(elem (i32.const
 // 0) $f0 $f1 …)` filling it in fn_value_table order. Empty string when the
 // module has no function values, so non-closure modules are byte-unchanged.
-pub function fn_support_section(mod: parser.Module): string {
-    var ft: string[] = fn_value_table(mod);
-    var arities: i32[] = indirect_arities(mod);
+pub function fn_support_section(cache: irlower.LowerResult[]): string {
+    var ft: string[] = fn_value_table(cache);
+    var arities: i32[] = indirect_arities(cache);
     if (ft.len() == 0 && arities.len() == 0) { return ""; }
     var out: string = "";
     var ai: i32 = 0;
@@ -1817,12 +1884,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
 // (wasm.emit_module, or the differential driver). Keeping the runtime on the
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
-pub function emit_functions(mod: parser.Module): string {
+pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging matches the AST path (parity with the
     // x86 IR path in asm_ir.emit_module_ir).
     mod = parser.infer_ret_types_module(mod);
-    var str_vals: string[] = str_values(mod);
+    var str_vals: string[] = str_values(cache);
     var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
     var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
@@ -1833,7 +1900,7 @@ pub function emit_functions(mod: parser.Module): string {
     var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var ft: string[] = fn_value_table(mod);
+    var ft: string[] = fn_value_table(cache);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
     var arf: string[] = asm_ir.array_ret_fns(mod);
