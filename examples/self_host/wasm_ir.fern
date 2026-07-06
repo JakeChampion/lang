@@ -1928,3 +1928,69 @@ function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
     }
     return 0;
 }
+
+// build_io_error_func emits $__fern_build_io_error(errno, path) -> IoError enum
+// box — the self-host wasm sibling of native wasmbin's __build_io_error and the
+// register backends' __fern_io_error (asm_ir). Maps a small set of WASI
+// preview-1 errnos to the matching IoError variant, carrying the offending path
+// string on the single-string variants; everything else lands in
+// Other(path, ""). A self-host wasm variant box is [variant_id@0][payload@4...]
+// (the variant's struct_type_id at offset 0, payload fields at +4 each — the
+// same shape op_enum_new / the match dispatch use); a string payload is a single
+// [len][bytes] block pointer, so the caller's path block is stored directly. The
+// variant ids are baked from the module's struct table (same table the match
+// arms read, so ids agree). errno→variant matches native wasmbin: ENOENT(44) →
+// NotFound(path), EACCES(2) → PermissionDenied(path), EEXIST(20) →
+// AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) → Unsupported.
+// Boxes via $__fern_str_box (the same rc-headered variant shape op_enum_new
+// builds): [variant_id@0 (8-byte header slot)][field i @ 8 + i*8], sized
+// 8 + nfields*8 — so 16 for a single-string variant, 8 for a payloadless one,
+// 24 for two-field Other. A string field is a single [len][bytes] block pointer.
+pub function build_io_error_func(structs: parser.StructDecl[]): string {
+    var nf: i32 = struct_type_id(structs, "NotFound");
+    var pd: i32 = struct_type_id(structs, "PermissionDenied");
+    var ae: i32 = struct_type_id(structs, "AlreadyExists");
+    var it: i32 = struct_type_id(structs, "Interrupted");
+    var un: i32 = struct_type_id(structs, "Unsupported");
+    var ot: i32 = struct_type_id(structs, "Other");
+    var o: string = "";
+    o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
+    o = o + "    (local $r i32) (local $e i32)\n";
+    // ENOENT(44) -> NotFound(path)
+    o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(nf) + "))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "      (return (local.get $r))))\n";
+    // EACCES(2) -> PermissionDenied(path)
+    o = o + "    (if (i32.eq (local.get $errno) (i32.const 2)) (then\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(pd) + "))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "      (return (local.get $r))))\n";
+    // EEXIST(20) -> AlreadyExists(path)
+    o = o + "    (if (i32.eq (local.get $errno) (i32.const 20)) (then\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(ae) + "))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "      (return (local.get $r))))\n";
+    // EINTR(27) -> Interrupted (payloadless)
+    o = o + "    (if (i32.eq (local.get $errno) (i32.const 27)) (then\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(it) + "))\n";
+    o = o + "      (return (local.get $r))))\n";
+    // ENOTSUP(58) -> Unsupported (payloadless)
+    o = o + "    (if (i32.eq (local.get $errno) (i32.const 58)) (then\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(un) + "))\n";
+    o = o + "      (return (local.get $r))))\n";
+    // default -> Other(path, "") — the empty message is a valid [len=0] block.
+    o = o + "    (local.set $e (call $__fern_alloc (i32.const 4)))\n";
+    o = o + "    (i32.store (local.get $e) (i32.const 0))\n";
+    o = o + "    (local.set $r (call $__fern_str_box (i32.const 24)))\n";
+    o = o + "    (i32.store (local.get $r) (i32.const " + util.i32_to_string(ot) + "))\n";
+    o = o + "    (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "    (i32.store (i32.add (local.get $r) (i32.const 16)) (local.get $e))\n";
+    o = o + "    (local.get $r))\n";
+    return o;
+}
