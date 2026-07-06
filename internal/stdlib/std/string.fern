@@ -1042,16 +1042,31 @@ pub function (s: string) is_hex_string(): boolean {
 pub function (s: string) indent(prefix: string): string {
     var n: i32 = s.len();
     if (n == 0) { return ""; }
-    var out: string = prefix;
+    var pl: i32 = prefix.len();
+    // Two-pass exact-size buffer (#4379): the output is the input plus one prefix
+    // at the start and after every NON-final newline. Replaces the O(n²)
+    // `out = out + …` that recopied the growing result each byte.
+    var nl: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        out = out + s[i:i + 1];
+        if (s[i] == 10 && i + 1 < n) { nl = nl + 1; }
+        i = i + 1;
+    }
+    var buf: u8[] = __alloc_u8(pl * (1 + nl) + n);
+    var pos: i32 = 0;
+    buf = put_bytes(buf, pos, prefix);
+    pos = pos + pl;
+    i = 0;
+    while (i < n) {
+        buf = buf.with(pos, s[i] as u8);
+        pos = pos + 1;
         if (s[i] == 10 && i + 1 < n) {
-            out = out + prefix;
+            buf = put_bytes(buf, pos, prefix);
+            pos = pos + pl;
         }
         i = i + 1;
     }
-    return out;
+    return string_from_bytes(buf);
 }
 
 pub function (s: string) trim(): string {
