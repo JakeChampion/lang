@@ -217,21 +217,49 @@ pub function (s: string) word_count(): i32 {
 // special meaning in HTML / XML: & < > " '. Produces a
 // string safe to splice into element bodies and attribute
 // values; matches Go html.EscapeString.
+// put_bytes writes src's bytes into buf starting at pos and returns the buffer;
+// the caller advances pos by src.len(). buf must already have room. Used by the
+// escapers' exact-size second pass so an expanding escape appends in O(len(src))
+// instead of the O(n²) `out = out + esc` that recopied the whole result each byte.
+function put_bytes(buf: u8[], pos: i32, src: string): u8[] {
+    var b: u8[] = buf;
+    var j: i32 = 0;
+    while (j < src.len()) {
+        b = b.with(pos + j, src[j] as u8);
+        j = j + 1;
+    }
+    return b;
+}
+
 pub function (s: string) escape_html(): string {
     var n: i32 = s.len();
-    var out: string = "";
+    // Two passes over one exact-size buffer instead of `out = out + …`, which
+    // recopied the growing result each byte (O(n²) — #4379). Pass 1 sizes the
+    // output (the five metacharacters expand to 4–5 bytes, everything else is
+    // 1:1); pass 2 fills it.
+    var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        if (b == 38)      { out = out + "&amp;"; }    // &
-        else if (b == 60) { out = out + "&lt;"; }     // <
-        else if (b == 62) { out = out + "&gt;"; }     // >
-        else if (b == 34) { out = out + "&#34;"; }    // "
-        else if (b == 39) { out = out + "&#39;"; }    // '
-        else              { out = out + s[i:i + 1]; }
+        if (b == 38 || b == 34 || b == 39) { total = total + 5; }   // &amp; &#34; &#39;
+        else if (b == 60 || b == 62)       { total = total + 4; }   // &lt; &gt;
+        else                               { total = total + 1; }
         i = i + 1;
     }
-    return out;
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 38)      { buf = put_bytes(buf, pos, "&amp;"); pos = pos + 5; }   // &
+        else if (b == 60) { buf = put_bytes(buf, pos, "&lt;");  pos = pos + 4; }   // <
+        else if (b == 62) { buf = put_bytes(buf, pos, "&gt;");  pos = pos + 4; }   // >
+        else if (b == 34) { buf = put_bytes(buf, pos, "&#34;"); pos = pos + 5; }   // "
+        else if (b == 39) { buf = put_bytes(buf, pos, "&#39;"); pos = pos + 5; }   // '
+        else              { buf = buf.with(pos, s[i] as u8); pos = pos + 1; }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `s.strip_quotes()` — if s starts and ends with the same
@@ -316,20 +344,32 @@ pub function (s: string) hash_djb2(): u32 {
 // code-ready string literals.
 pub function (s: string) escape_c(): string {
     var n: i32 = s.len();
-    var out: string = "";
+    // Two-pass exact-size buffer (same as escape_html): the six escaped bytes
+    // (\ " \n \t \r \0) each become 2 bytes, everything else passes through 1:1.
+    // Replaces the O(n²) `out = out + …` accumulation (#4379).
+    var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        if (b == 92)       { out = out + "\\\\"; }
-        else if (b == 34)  { out = out + "\\\""; }
-        else if (b == 10)  { out = out + "\\n"; }
-        else if (b == 9)   { out = out + "\\t"; }
-        else if (b == 13)  { out = out + "\\r"; }
-        else if (b == 0)   { out = out + "\\0"; }
-        else               { out = out + s[i:i + 1]; }
+        if (b == 92 || b == 34 || b == 10 || b == 9 || b == 13 || b == 0) { total = total + 2; }
+        else { total = total + 1; }
         i = i + 1;
     }
-    return out;
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 92)       { buf = put_bytes(buf, pos, "\\\\"); pos = pos + 2; }
+        else if (b == 34)  { buf = put_bytes(buf, pos, "\\\""); pos = pos + 2; }
+        else if (b == 10)  { buf = put_bytes(buf, pos, "\\n");  pos = pos + 2; }
+        else if (b == 9)   { buf = put_bytes(buf, pos, "\\t");  pos = pos + 2; }
+        else if (b == 13)  { buf = put_bytes(buf, pos, "\\r");  pos = pos + 2; }
+        else if (b == 0)   { buf = put_bytes(buf, pos, "\\0");  pos = pos + 2; }
+        else               { buf = buf.with(pos, s[i] as u8); pos = pos + 1; }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `(s: string) escape_shell()` — POSIX-shell-safe quoting.

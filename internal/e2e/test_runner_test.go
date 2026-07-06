@@ -431,7 +431,7 @@ func TestRunnerStringEscapeCountExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/string escape + count", "# pass 15", "# fail 0", "1..15"} {
+	for _, w := range []string{"# Suite: std/string escape + count", "# pass 19", "# fail 0", "1..19"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
