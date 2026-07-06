@@ -1001,11 +1001,13 @@ pub function __mapiter_advance_impl(it: usize) {
 // → empty array.
 pub function (m: Map[K, V]) entries(): (K, V)[] {
     var out: (K, V)[] = [];
-    for k in m.keys() {
-        match (m.get(k)) {
-            Some(v) => { out = out.append((k, v)); },
-            None => {}
-        }
+    // Ride the MapIter cursor (`for (k, v) in m`) rather than snapshotting
+    // `keys()` and re-`get()`ing each key: the cursor visits the columns in
+    // the same storage order with NO per-call `K[]` snapshot and no per-key
+    // hash lookup — O(n) with a single pass instead of O(n) lookups plus an
+    // O(n) throwaway array. Order is unchanged (#4388).
+    for (k, v) in m {
+        out = out.append((k, v));
     }
     return out;
 }
@@ -1016,11 +1018,12 @@ pub function (m: Map[K, V]) entries(): (K, V)[] {
 // mutated.
 pub function (m: Map[K, V]) merge(other: Map[K, V]): Map[K, V] {
     var out: Map[K, V] = m;
-    for k in other.keys() {
-        match (other.get(k)) {
-            Some(v) => { out = out.insert(k, v); },
-            None => {}
-        }
+    // Same cursor rewrite as `entries()`: fold `other`'s pairs in storage
+    // order off the MapIter cursor rather than a `keys()` snapshot + per-key
+    // `get()`. Left-to-right order preserved, so other-wins semantics are
+    // unchanged (#4388).
+    for (k, v) in other {
+        out = out.insert(k, v);
     }
     return out;
 }
