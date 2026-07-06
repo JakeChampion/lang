@@ -67,6 +67,27 @@ function x86_gas_reg(tok: string): i32 {
     if (s == "r13") { return 13; }
     if (s == "r14") { return 14; }
     if (s == "r15") { return 15; }
+    // 32-bit GP register names (`%eax`, …) map to the same register numbers as
+    // their 64-bit counterparts — asm.fern emits the 32-bit form for e.g. the
+    // cvttsd2si destination (`cvttsd2si %xmm0, %eax`). Without these the token
+    // resolved to -1, encoding a garbage reg field (7) + REX.R, so the truncated
+    // result landed in %rdi not %eax (the capstone float / int-convert path).
+    if (s == "eax") { return 0; }
+    if (s == "ecx") { return 1; }
+    if (s == "edx") { return 2; }
+    if (s == "ebx") { return 3; }
+    if (s == "esp") { return 4; }
+    if (s == "ebp") { return 5; }
+    if (s == "esi") { return 6; }
+    if (s == "edi") { return 7; }
+    if (s == "r8d") { return 8; }
+    if (s == "r9d") { return 9; }
+    if (s == "r10d") { return 10; }
+    if (s == "r11d") { return 11; }
+    if (s == "r12d") { return 12; }
+    if (s == "r13d") { return 13; }
+    if (s == "r14d") { return 14; }
+    if (s == "r15d") { return 15; }
     return 0 - 1;
 }
 
@@ -126,23 +147,23 @@ function x86_gas_reg32(tok: string): i32 {
 // reg->mem (store), all 32-bit.
 function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg
-        a.code = x86_mov_r32_imm32(a.code, x86_gas_reg32(dst), x86_gas_atoi(src));
+        a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) };
         return a;
     }
     var src_mem: boolean = src.contains("(");
     var dst_mem: boolean = dst.contains("(");
     if (!src_mem && !dst_mem) { // reg -> reg
-        a.code = x86_mov_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src));
+        a = X86Asm { ...a, code: x86_mov_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) };
         return a;
     }
     if (src_mem && !dst_mem) { // mem -> reg (load)
         var m: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_movl_load(a.code, x86_gas_reg32(dst), m.base, m.has_index, m.index, m.scale, m.disp);
+        a = X86Asm { ...a, code: x86_movl_load(a.code, x86_gas_reg32(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
     if (!src_mem && dst_mem) { // reg -> mem (store)
         var m2: GasMem = x86_gas_parse_mem(dst);
-        a.code = x86_movl_store(a.code, m2.base, m2.has_index, m2.index, m2.scale, m2.disp, x86_gas_reg32(src));
+        a = X86Asm { ...a, code: x86_movl_store(a.code, m2.base, m2.has_index, m2.index, m2.scale, m2.disp, x86_gas_reg32(src)) };
         return a;
     }
     return a;
@@ -152,10 +173,10 @@ function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
 // the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
 function x86_gas_alu32(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) {
-        a.code = x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src));
+        a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src)) };
         return a;
     }
-    a.code = x86_binop_r32_r32(a.code, regop, x86_gas_reg32(dst), x86_gas_reg32(src));
+    a = X86Asm { ...a, code: x86_binop_r32_r32(a.code, regop, x86_gas_reg32(dst), x86_gas_reg32(src)) };
     return a;
 }
 
@@ -293,12 +314,30 @@ function x86_gas_atoi(tok: string): i32 {
         i = 1;
     }
     var v: i32 = 0;
-    while (i < s.len()) {
-        var c: i32 = s[i];
-        if (c >= 48 && c <= 57) {
-            v = v * 10 + (c - 48);
+    // `0x…` hex (mirrors x86_gas_atoi64). Without this the `x` was skipped as a
+    // non-digit and the hex digits read as DECIMAL — e.g. `$0x22` (the mmap
+    // MAP_PRIVATE|MAP_ANONYMOUS flags asm.fern emits) parsed to 22, not 34, so
+    // the heap mmap got bad flags (EBADF) and every alloc-using program's
+    // runtime OOM-exited 137 (the capstone string / heap cases).
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + d; }
+            i = i + 1;
         }
-        i = i + 1;
+    } else {
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            if (c >= 48 && c <= 57) {
+                v = v * 10 + (c - 48);
+            }
+            i = i + 1;
+        }
     }
     if (neg) {
         return 0 - v;
@@ -370,6 +409,14 @@ function x86_gas_parse_mem(op: string): GasMem {
         var sc: i32 = x86_gas_atoi(x86_gas_trim(parts[2]));
         return GasMem { is_rip: false, label: "", base: bb, disp: d, has_index: true, index: ix, scale: sc };
     }
+    // Two-element SIB `(%base,%index)` — an implicit scale of 1 (asm.fern emits
+    // this for byte-element indexing, e.g. `movzbl (%rax,%rcx), %eax`). Without
+    // this the whole `%base,%index` string resolved to a single -1 register.
+    if (parts.len() == 2) {
+        var bb2: i32 = x86_gas_reg(x86_gas_trim(parts[0]));
+        var ix2: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
+        return GasMem { is_rip: false, label: "", base: bb2, disp: d, has_index: true, index: ix2, scale: 1 };
+    }
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1 };
 }
 
@@ -379,21 +426,21 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
     var src_xmm: boolean = x86_gas_is_xmm(src);
     var dst_xmm: boolean = x86_gas_is_xmm(dst);
     if (dst_xmm && !src_xmm) { // movq %gpr, %xmm
-        a.code = x86_movq_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg(src));
+        a = X86Asm { ...a, code: x86_movq_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) };
         return a;
     }
     if (src_xmm && !dst_xmm) { // movq %xmm, %gpr
-        a.code = x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst));
+        a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst)) };
         return a;
     }
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg
-        a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));
+        a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
     }
     var src_mem: boolean = src.contains("(");
     var dst_mem: boolean = dst.contains("(");
     if (!src_mem && !dst_mem) { // reg -> reg
-        a.code = x86_mov_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src));
+        a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) };
         return a;
     }
     if (src_mem && !dst_mem) { // mem -> reg (load)
@@ -402,9 +449,9 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
             return x86_mov_load_rip_label(a, x86_gas_reg(dst), m.label);
         }
         if (m.has_index) {
-            a.code = x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp);
+            a = X86Asm { ...a, code: x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp) };
         } else {
-            a.code = x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp);
+            a = X86Asm { ...a, code: x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp) };
         }
         return a;
     }
@@ -414,9 +461,9 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
             return x86_mov_store_rip_label(a, x86_gas_reg(src), m2.label);
         }
         if (m2.has_index) {
-            a.code = x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src));
+            a = X86Asm { ...a, code: x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src)) };
         } else {
-            a.code = x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src));
+            a = X86Asm { ...a, code: x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src)) };
         }
         return a;
     }
@@ -427,7 +474,7 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
 // `$imm, %reg`, a memory *source* `mem, %reg`, or `%reg, %reg`.
 function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg
-        a.code = x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src));
+        a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
     }
     if (src.contains("(")) { // mem -> reg (load-form ALU)
@@ -435,18 +482,21 @@ function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
         var op: i32 = 3; // add 0x03
         if (slash == 5) { op = 43; } // sub 0x2B
         if (slash == 7) { op = 59; } // cmp 0x3B
-        a.code = x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp);
+        if (m.is_rip) { // `<alu>q sym(%rip), %reg` — rip-relative + fixup
+            return x86_alu_load_rip_label(a, op, x86_gas_reg(dst), m.label);
+        }
+        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
     var d: i32 = x86_gas_reg(dst);
     var s: i32 = x86_gas_reg(src);
     if (slash == 0) {
-        a.code = x86_add_r64_r64(a.code, d, s);
+        a = X86Asm { ...a, code: x86_add_r64_r64(a.code, d, s) };
     } else {
         if (slash == 5) {
-            a.code = x86_sub_r64_r64(a.code, d, s);
+            a = X86Asm { ...a, code: x86_sub_r64_r64(a.code, d, s) };
         } else {
-            a.code = x86_cmp_r64_r64(a.code, d, s);
+            a = X86Asm { ...a, code: x86_cmp_r64_r64(a.code, d, s) };
         }
     }
     return a;
@@ -456,10 +506,10 @@ function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
 // imm32 form (slash 4/1/6), `%reg, %reg` the reg-reg opcode (0x21/09/31).
 function x86_gas_logic(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) {
-        a.code = x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src));
+        a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
     }
-    a.code = x86_binop_r64_r64(a.code, regop, x86_gas_reg(dst), x86_gas_reg(src));
+    a = X86Asm { ...a, code: x86_binop_r64_r64(a.code, regop, x86_gas_reg(dst), x86_gas_reg(src)) };
     return a;
 }
 
@@ -492,17 +542,17 @@ function x86_gas_top_comma(s: string): i32 {
 function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> mem
         var m: GasMem = x86_gas_parse_mem(dst);
-        a.code = x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src));
+        a = X86Asm { ...a, code: x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src)) };
         return a;
     }
     if (src.contains("(")) { // mem -> reg8 (load)
         var ms: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_movb_mem_reg(a.code, x86_gas_reg8(dst), ms.base, ms.has_index, ms.index, ms.scale, ms.disp);
+        a = X86Asm { ...a, code: x86_movb_mem_reg(a.code, x86_gas_reg8(dst), ms.base, ms.has_index, ms.index, ms.scale, ms.disp) };
         return a;
     }
     // reg8 -> mem (store)
     var md: GasMem = x86_gas_parse_mem(dst);
-    a.code = x86_movb_reg_mem(a.code, x86_gas_reg8(src), md.base, md.has_index, md.index, md.scale, md.disp);
+    a = X86Asm { ...a, code: x86_movb_reg_mem(a.code, x86_gas_reg8(src), md.base, md.has_index, md.index, md.scale, md.disp) };
     return a;
 }
 
@@ -510,39 +560,39 @@ function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
 function x86_gas_movzbq(a: X86Asm, src: string, dst: string): X86Asm {
     if (src.contains("(")) {
         var m: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_movzbq_mem(a.code, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp);
+        a = X86Asm { ...a, code: x86_movzbq_mem(a.code, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
-    a.code = x86_movzbq_reg(a.code, x86_gas_reg(dst), x86_gas_reg8(src));
+    a = X86Asm { ...a, code: x86_movzbq_reg(a.code, x86_gas_reg(dst), x86_gas_reg8(src)) };
     return a;
 }
 
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
 function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // zero-operand
-    if (mnem == "ret") { a.code = x86_ret(a.code); return a; }
-    if (mnem == "syscall") { a.code = x86_syscall(a.code); return a; }
-    if (mnem == "leave") { a.code = x86_leave(a.code); return a; }
-    if (mnem == "cqto") { a.code = x86_cqo(a.code); return a; }
-    if (mnem == "cld") { a.code = x86_cld(a.code); return a; }
+    if (mnem == "ret") { a = X86Asm { ...a, code: x86_ret(a.code) }; return a; }
+    if (mnem == "syscall") { a = X86Asm { ...a, code: x86_syscall(a.code) }; return a; }
+    if (mnem == "leave") { a = X86Asm { ...a, code: x86_leave(a.code) }; return a; }
+    if (mnem == "cqto") { a = X86Asm { ...a, code: x86_cqo(a.code) }; return a; }
+    if (mnem == "cld") { a = X86Asm { ...a, code: x86_cld(a.code) }; return a; }
     if (mnem == "rep") { // `rep stosb` / `rep movsb`
-        if (rest == "stosb") { a.code = x86_rep_stosb(a.code); }
-        else { if (rest == "movsb") { a.code = x86_rep_movsb(a.code); } }
+        if (rest == "stosb") { a = X86Asm { ...a, code: x86_rep_stosb(a.code) }; }
+        else { if (rest == "movsb") { a = X86Asm { ...a, code: x86_rep_movsb(a.code) }; } }
         return a;
     }
     // setCC <reg8>: store a condition flag as 0/1.
-    if (mnem == "sete" || mnem == "setz") { a.code = x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setne" || mnem == "setnz") { a.code = x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setl") { a.code = x86_setcc_reg8(a.code, 156, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setle") { a.code = x86_setcc_reg8(a.code, 158, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setg") { a.code = x86_setcc_reg8(a.code, 159, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setge") { a.code = x86_setcc_reg8(a.code, 157, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setb") { a.code = x86_setcc_reg8(a.code, 146, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setbe") { a.code = x86_setcc_reg8(a.code, 150, x86_gas_reg8(rest)); return a; }
-    if (mnem == "seta") { a.code = x86_setcc_reg8(a.code, 151, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setae") { a.code = x86_setcc_reg8(a.code, 147, x86_gas_reg8(rest)); return a; }
-    if (mnem == "sets") { a.code = x86_setcc_reg8(a.code, 152, x86_gas_reg8(rest)); return a; }
-    if (mnem == "setns") { a.code = x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)); return a; }
+    if (mnem == "sete" || mnem == "setz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setne" || mnem == "setnz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setl") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 156, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setle") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 158, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setg") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 159, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setge") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 157, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setb") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 146, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setbe") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 150, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "seta") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 151, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setae") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 147, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "sets") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 152, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setns") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)) }; return a; }
     // branch / call: one operand = a label
     if (mnem == "jmp") { return x86_jmp_label(a, rest); }
     if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }
@@ -562,13 +612,13 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
         if (rest.len() > 0 && rest[0] == 36) { // $imm
-            a.code = x86_push_imm32(a.code, x86_gas_atoi(rest));
+            a = X86Asm { ...a, code: x86_push_imm32(a.code, x86_gas_atoi(rest)) };
         } else {
             if (rest.contains("(")) {
                 var pm: GasMem = x86_gas_parse_mem(rest);
-                a.code = x86_push_mem(a.code, pm.base, pm.has_index, pm.index, pm.scale, pm.disp);
+                a = X86Asm { ...a, code: x86_push_mem(a.code, pm.base, pm.has_index, pm.index, pm.scale, pm.disp) };
             } else {
-                a.code = x86_push_r64(a.code, x86_gas_reg(rest));
+                a = X86Asm { ...a, code: x86_push_r64(a.code, x86_gas_reg(rest)) };
             }
         }
         return a;
@@ -576,9 +626,9 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "popq") {
         if (rest.contains("(")) {
             var qm: GasMem = x86_gas_parse_mem(rest);
-            a.code = x86_pop_mem(a.code, qm.base, qm.has_index, qm.index, qm.scale, qm.disp);
+            a = X86Asm { ...a, code: x86_pop_mem(a.code, qm.base, qm.has_index, qm.index, qm.scale, qm.disp) };
         } else {
-            a.code = x86_pop_r64(a.code, x86_gas_reg(rest));
+            a = X86Asm { ...a, code: x86_pop_r64(a.code, x86_gas_reg(rest)) };
         }
         return a;
     }
@@ -591,9 +641,9 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         if (c2 >= 0) {
             var rs: string = x86_gas_trim(remn[0:c2]);       // %src
             var rd: string = x86_gas_trim(remn[c2 + 1:remn.len()]); // %dst
-            a.code = x86_imul_r64_r64_imm32(a.code, x86_gas_reg(rd), x86_gas_reg(rs), x86_gas_atoi(op0));
+            a = X86Asm { ...a, code: x86_imul_r64_r64_imm32(a.code, x86_gas_reg(rd), x86_gas_reg(rs), x86_gas_atoi(op0)) };
         } else {
-            a.code = x86_imul_r64_r64(a.code, x86_gas_reg(x86_gas_trim(remn)), x86_gas_reg(op0));
+            a = X86Asm { ...a, code: x86_imul_r64_r64(a.code, x86_gas_reg(x86_gas_trim(remn)), x86_gas_reg(op0)) };
         }
         return a;
     }
@@ -605,14 +655,14 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         var rc2: i32 = x86_gas_top_comma(rrem);
         var rsrc: string = x86_gas_trim(rrem[0:rc2]);
         var rdst: string = x86_gas_trim(rrem[rc2 + 1:rrem.len()]);
-        a.code = x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode));
+        a = X86Asm { ...a, code: x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode)) };
         return a;
     }
-    if (mnem == "incq") { a.code = x86_inc_r64(a.code, x86_gas_reg(rest)); return a; }
-    if (mnem == "decq") { a.code = x86_dec_r64(a.code, x86_gas_reg(rest)); return a; }
-    if (mnem == "negq") { a.code = x86_neg_r64(a.code, x86_gas_reg(rest)); return a; }
-    if (mnem == "divq") { a.code = x86_div_r64(a.code, x86_gas_reg(rest)); return a; }
-    if (mnem == "idivq") { a.code = x86_idiv_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "incq") { a = X86Asm { ...a, code: x86_inc_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "decq") { a = X86Asm { ...a, code: x86_dec_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "negq") { a = X86Asm { ...a, code: x86_neg_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "divq") { a = X86Asm { ...a, code: x86_div_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "idivq") { a = X86Asm { ...a, code: x86_idiv_r64(a.code, x86_gas_reg(rest)) }; return a; }
     // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
     var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {
@@ -622,28 +672,51 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     var dst: string = x86_gas_trim(rest[ci + 1:rest.len()]);
     if (mnem == "leaq") {
         var m: GasMem = x86_gas_parse_mem(src);
-        return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+        if (m.is_rip) { // `leaq sym(%rip), %reg`
+            return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+        }
+        // `leaq disp(%base)` / `disp(%base,%index,scale)` — a plain address
+        // computation (lea 0x8D, same reg-mem encoding as the ALU loads). asm.fern
+        // emits this for stack-local addresses, e.g. `leaq -32(%rbp), %rdi` (the
+        // buffer __fern_str_eq zeroes with rep stosq). This handler previously
+        // assumed EVERY leaq source was a rip-relative label, so a base+disp lea
+        // got a bogus rip fixup (an empty label → address 0) and loaded a garbage
+        // pointer — which crashed the string-keyed-map compare (mapstr).
+        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, 141, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
-    if (mnem == "movabsq") { a.code = x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)); return a; }
+    if (mnem == "movabsq") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
     if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
-    if (mnem == "testq") { a.code = x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "shlq") { a.code = x86_shl_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)); return a; }
+    if (mnem == "testq") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    // testl (32-bit test reg,reg) — asm.fern emits it for zero/nonzero checks on
+    // 32-bit values (map bucket counts / indices, all zero-extended). Was
+    // unhandled, so the test was dropped and the following jz/jnz read stale
+    // flags → the string-keyed-map lookup took the wrong branch and dereferenced
+    // a null key (SIGSEGV). The operands are zero-extended, so the full-width
+    // testq gives the same ZF; route to it (as movzbl routes to movzbq).
+    if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
+    if (mnem == "shlq") { a = X86Asm { ...a, code: x86_shl_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
     if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
     if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
     if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
     if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
     if (mnem == "movzbq") { return x86_gas_movzbq(a, src, dst); }
+    // movzbl (byte -> 32-bit dest, zero-extended) — asm.fern emits it for the
+    // char/byte load `s[i]`. The zero-extended value is identical to movzbq's
+    // (the upper 32 bits are cleared either way), so route to the same encoder;
+    // without this the mnemonic was unhandled and no load was emitted.
+    if (mnem == "movzbl") { return x86_gas_movzbq(a, src, dst); }
     if (mnem == "movsd") {
         if (dst.contains("(")) { // store: movsd %xmm, mem
             var sm: GasMem = x86_gas_parse_mem(dst);
-            a.code = x86_movsd_store(a.code, sm.base, sm.has_index, sm.index, sm.scale, sm.disp, x86_gas_xmm(src));
+            a = X86Asm { ...a, code: x86_movsd_store(a.code, sm.base, sm.has_index, sm.index, sm.scale, sm.disp, x86_gas_xmm(src)) };
             return a;
         }
         if (!src.contains("(")) { // reg-reg: movsd %xmm, %xmm
-            a.code = x86_movsd_rr(a.code, x86_gas_xmm(dst), x86_gas_xmm(src));
+            a = X86Asm { ...a, code: x86_movsd_rr(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) };
             return a;
         }
         // load into xmm (dst is xmm) from memory / rip
@@ -651,18 +724,18 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         if (lm.is_rip) {
             return x86_movsd_load_rip_label(a, x86_gas_xmm(dst), lm.label);
         }
-        a.code = x86_movsd_load(a.code, x86_gas_xmm(dst), lm.base, lm.has_index, lm.index, lm.scale, lm.disp);
+        a = X86Asm { ...a, code: x86_movsd_load(a.code, x86_gas_xmm(dst), lm.base, lm.has_index, lm.index, lm.scale, lm.disp) };
         return a;
     }
-    if (mnem == "addsd") { a.code = x86_sse_rr(a.code, 88, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "subsd") { a.code = x86_sse_rr(a.code, 92, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "mulsd") { a.code = x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "divsd") { a.code = x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "ucomisd") { a.code = x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "xorpd") { a.code = x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "sqrtsd") { a.code = x86_sqrtsd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "cvttsd2si") { a.code = x86_cvttsd2si(a.code, x86_gas_reg(dst), x86_gas_xmm(src)); return a; }
-    if (mnem == "cvtsi2sd") { a.code = x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "addsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 88, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "subsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 92, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "mulsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "divsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "ucomisd") { a = X86Asm { ...a, code: x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "xorpd") { a = X86Asm { ...a, code: x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "sqrtsd") { a = X86Asm { ...a, code: x86_sqrtsd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "cvttsd2si") { a = X86Asm { ...a, code: x86_cvttsd2si(a.code, x86_gas_reg(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "cvtsi2sd") { a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) }; return a; }
     // 32-bit ALU + moves + extends + cmov + testb (slice 2q).
     if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
     if (mnem == "addl") { return x86_gas_alu32(a, 0, 1, src, dst); }
@@ -671,38 +744,38 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "orl") { return x86_gas_alu32(a, 1, 9, src, dst); }
     if (mnem == "xorl") { return x86_gas_alu32(a, 6, 49, src, dst); }
     if (mnem == "cmpl") { return x86_gas_alu32(a, 7, 57, src, dst); }
-    if (mnem == "shrl") { a.code = x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)); return a; }
+    if (mnem == "shrl") { a = X86Asm { ...a, code: x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) }; return a; }
     if (mnem == "testb") {
         if (src.len() > 0 && src[0] == 36) {
-            a.code = x86_testb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src));
+            a = X86Asm { ...a, code: x86_testb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
         } else {
-            a.code = x86_testb_reg8_reg8(a.code, x86_gas_reg8(dst), x86_gas_reg8(src));
+            a = X86Asm { ...a, code: x86_testb_reg8_reg8(a.code, x86_gas_reg8(dst), x86_gas_reg8(src)) };
         }
         return a;
     }
-    if (mnem == "cmovl") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "cmovle") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "cmovg") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "cmovge") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "cmove" || mnem == "cmovz") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "cmovne" || mnem == "cmovnz") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "cmovle") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "cmovg") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "cmovge") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "cmove" || mnem == "cmovz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "cmovne" || mnem == "cmovnz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
     if (mnem == "movslq") {
         if (src.contains("(")) {
             var sm: GasMem = x86_gas_parse_mem(src);
-            a.code = x86_movslq_load(a.code, x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp);
+            a = X86Asm { ...a, code: x86_movslq_load(a.code, x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp) };
         } else {
-            a.code = x86_movslq_rr(a.code, x86_gas_reg(dst), x86_gas_reg32(src));
+            a = X86Asm { ...a, code: x86_movslq_rr(a.code, x86_gas_reg(dst), x86_gas_reg32(src)) };
         }
         return a;
     }
     if (mnem == "movzwq") {
         var zm: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp);
+        a = X86Asm { ...a, code: x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp) };
         return a;
     }
     if (mnem == "cmpb") {
         if (src.len() > 0 && src[0] == 36) {
-            a.code = x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src));
+            a = X86Asm { ...a, code: x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
         }
         return a;
     }
@@ -769,9 +842,9 @@ function x86_gas_assemble(src: string): X86Asm {
                     a = x86_rodata_quad(a, x86_gas_atoi(x86_gas_trim(line[6:line.len()])), 0);
                 }
             } else if (line.starts_with(".double")) {
-                a.rodata = x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(line[8:line.len()]))));
+                a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(line[8:line.len()])))) };
             } else if (line.starts_with(".ascii")) {
-                a.rodata = x86_gas_ascii(a.rodata, line);
+                a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
             } else if (line.starts_with(".skip")) {
                 if (section == 2) {
                     a = x86_bss_skip(a, x86_gas_atoi(x86_gas_trim(line[5:line.len()])));
@@ -782,7 +855,7 @@ function x86_gas_assemble(src: string): X86Asm {
                     if (section == 2) {
                         while ((a.bss_size % an) != 0) { a = x86_bss_skip(a, 1); }
                     } else if (section == 1) {
-                        while ((a.rodata.len() % an) != 0) { a.rodata = a.rodata.append(0); }
+                        while ((a.rodata.len() % an) != 0) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; }
                     }
                 }
             }
