@@ -571,8 +571,8 @@ func TestRunnerCliExamplePasses(t *testing.T) {
 // COMBINATOR surface (distinct from option_and_set_ops_test, which covers the
 // std/test Option assertion helpers) — is_some / is_none / unwrap_or /
 // unwrap_or_else / map / and_then / or_else / filter / ok_or / map_or /
-// is_some_and / or / and, including the closure-taking generic methods.
-// Passing suite → exit 0.
+// is_some_and / or / and / ok_or_else / map_or_else / zip / xor, including
+// the closure-taking generic methods. Passing suite → exit 0.
 func TestRunnerOptionCombinatorsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/option_combinators_test.fern")
@@ -580,7 +580,7 @@ func TestRunnerOptionCombinatorsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/option combinators", "# pass 14", "# fail 0", "1..14"} {
+	for _, w := range []string{"# Suite: std/option combinators", "# pass 18", "# fail 0", "1..18"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -591,7 +591,8 @@ func TestRunnerOptionCombinatorsExamplePasses(t *testing.T) {
 // COMBINATOR surface (distinct from result_assertions_test, which covers the
 // std/test Result assertion helpers) — is_ok / is_err / unwrap_or /
 // unwrap_or_else / map / and_then / map_err / ok / err / map_or / is_ok_and /
-// is_err_and / or, including the closure-taking generic methods. Passing → exit 0.
+// is_err_and / or / and / or_else / map_or_else, including the
+// closure-taking generic methods. Passing → exit 0.
 func TestRunnerResultCombinatorsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/result_combinators_test.fern")
@@ -599,7 +600,7 @@ func TestRunnerResultCombinatorsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/result combinators", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/result combinators", "# pass 15", "# fail 0", "1..15"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

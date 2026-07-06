@@ -95,6 +95,50 @@ function test_ok_or(): test.TestOutcome {
     }
 }
 
+function test_ok_or_else(): test.TestOutcome {
+    // None takes the lazy error arm; Some ignores it and yields Ok.
+    var n: Option[i32] = None;
+    match (n.ok_or_else(function (): i32 { return 99; })) {
+        Ok(v) => { return test.fail("expected Err for None"); },
+        Err(e) => { return test.assert_eq(e, 99); }
+    }
+}
+
+function test_map_or_else(): test.TestOutcome {
+    // Some routes through `f`; None computes the lazy default.
+    var s: Option[i32] = Some(5);
+    var n: Option[i32] = None;
+    var a: i32 = s.map_or_else(function (): i32 { return 0; }, function (x: i32): i32 { return x + 1; });
+    var b: i32 = n.map_or_else(function (): i32 { return 0; }, function (x: i32): i32 { return x + 1; });
+    return test.assert_true(a == 6 && b == 0);
+}
+
+function test_zip(): test.TestOutcome {
+    var a: Option[i32] = Some(1);
+    var b: Option[i32] = Some(2);
+    var n: Option[i32] = None;
+    // Both present -> Some((1, 2)); either None -> None.
+    match (a.zip(b)) {
+        Some(p) => {
+            if (!(p.0 == 1 && p.1 == 2)) { return test.fail("zip pair wrong"); }
+        },
+        None => { return test.fail("expected Some pair"); }
+    }
+    return test.assert_true(a.zip(n).is_none() && n.zip(a).is_none());
+}
+
+function test_xor(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var t: Option[i32] = Some(9);
+    var n: Option[i32] = None;
+    // Exactly one present -> that one; both or neither -> None.
+    return test.assert_true(
+        s.xor(n).unwrap_or(0) == 5
+        && n.xor(s).unwrap_or(0) == 5
+        && s.xor(t).is_none()
+        && n.xor(n).is_none());
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/option combinators");
     r = r.it("is_some / is_none",   test_is_some_is_none());
@@ -111,5 +155,9 @@ function main(): i32 {
     r = r.it("or",                  test_or());
     r = r.it("and",                 test_and());
     r = r.it("ok_or",               test_ok_or());
+    r = r.it("ok_or_else",          test_ok_or_else());
+    r = r.it("map_or_else",         test_map_or_else());
+    r = r.it("zip",                 test_zip());
+    r = r.it("xor",                 test_xor());
     return r.finish();
 }
