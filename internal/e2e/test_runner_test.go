@@ -1530,11 +1530,11 @@ func TestRunnerArrayReductionsExample(t *testing.T) {
 // generic array combinators added as free functions over a
 // parametric T[] to std/array: `map` / `filter` / `fold` /
 // `any` / `all` / `find` / `enumerate` (STDLIB-ROADMAP item
-// #1). Twenty cases cover the happy path, empty-array
+// #1). Twenty-two cases cover the happy path, empty-array
 // semantics, element-type-changing map (i32 -> string),
 // accumulator-type-differing fold, a captured-variable closure
-// through filter, both Option arms of find, and a map-then-fold
-// pipeline.
+// through filter, both Option arms of find, a map-then-fold
+// pipeline, and the byte-exact join / join_with_last edges (#4379).
 func TestRunnerArrayCombinatorsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/array_combinators_test.fern")
@@ -1552,7 +1552,8 @@ func TestRunnerArrayCombinatorsExample(t *testing.T) {
 		"ok 18 - enumerate",
 		"ok 20 - map then fold",
 		"ok 21 - join edges",
-		"# pass 21",
+		"ok 22 - join_with_last edges",
+		"# pass 22",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

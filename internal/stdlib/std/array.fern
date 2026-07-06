@@ -670,13 +670,44 @@ pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep:
     if (n == 0) { return ""; }
     if (n == 1) { return arr[0]; }
     if (n == 2) { return arr[0] + last_sep + arr[1]; }
-    var out: string = arr[0];
-    var i: i32 = 1;
-    while (i < n - 1) {
-        out = out + sep + arr[i];
+    // Two-pass exact-size buffer (#4379), mirroring __method_Array_join:
+    // the gap before element i is `sep` for the inner joins and `last_sep`
+    // before the final element, so size = sum(elem lens) + sep*(n-2) +
+    // last_sep. Replaces the `out = out + …` chain that recopied the whole
+    // prefix each step (O(total²)). Byte-for-byte identical output.
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        total = total + arr[i].len();
         i = i + 1;
     }
-    return out + last_sep + arr[n - 1];
+    total = total + sep.len() * (n - 2) + last_sep.len();
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        if (i > 0) {
+            var sp: string = sep;
+            if (i == n - 1) { sp = last_sep; }
+            var spl: i32 = sp.len();
+            var j: i32 = 0;
+            while (j < spl) {
+                buf = buf.with(pos, sp[j] as u8);
+                pos = pos + 1;
+                j = j + 1;
+            }
+        }
+        var e: string = arr[i];
+        var el: i32 = e.len();
+        var k: i32 = 0;
+        while (k < el) {
+            buf = buf.with(pos, e[k] as u8);
+            pos = pos + 1;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `(arr: i32[]) sum_abs()` — sum of |x| for each element.
