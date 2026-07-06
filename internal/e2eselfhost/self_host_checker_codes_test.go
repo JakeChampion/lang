@@ -263,6 +263,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"impl-sig-ret", "trait T { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self): string { return \"x\"; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-sig-paramtype", "trait T { function m(self: Self, x: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, x: string): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-sig-correct-ok", "trait T { function m(self: Self, x: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, x: i32): i32 { return x; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// E021 supertrait conformance (#4347 slice 3): `impl B for S` where
+		// `trait B: A` requires a separate `impl A for S`. Missing it (or any one
+		// of several supertraits) draws E021; providing all of them is clean.
+		{"impl-supertrait-missing", "trait A { function a(self: Self): i32; }\ntrait B: A { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-supertrait-multi-missing", "trait A { function a(self: Self): i32; }\ntrait C { function c(self: Self): i32; }\ntrait B: A + C { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function a(self: Self): i32 { return 2; } }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-supertrait-satisfied-ok", "trait A { function a(self: Self): i32; }\ntrait B: A { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function a(self: Self): i32 { return 2; } }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
