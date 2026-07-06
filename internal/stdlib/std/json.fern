@@ -45,35 +45,46 @@ function __json_hex_lower(d: i32): i32 {
 }
 
 function __json_escape(s: string): string {
-    var out: string = "";
     var n: i32 = s.len();
+    // Two-pass exact-size buffer (#4379): the five named escapes (" \ \n \r \t)
+    // expand to 2 bytes, any other control byte (<32) to a 6-byte \u00XX, and
+    // everything else passes through 1:1. Replaces the O(n²) `out = out + …` that
+    // recopied the growing result each byte.
+    var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        if (b == 34) { out = out + "\\\""; }
-        else if (b == 92) { out = out + "\\\\"; }
-        else if (b == 10) { out = out + "\\n"; }
-        else if (b == 13) { out = out + "\\r"; }
-        else if (b == 9) { out = out + "\\t"; }
+        if (b == 34 || b == 92 || b == 10 || b == 13 || b == 9) { total = total + 2; }
+        else if (b < 32) { total = total + 6; }
+        else { total = total + 1; }
+        i = i + 1;
+    }
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 34)      { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 34 as u8);  pos = pos + 2; }   // \"
+        else if (b == 92) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 92 as u8);  pos = pos + 2; }   // \\
+        else if (b == 10) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 110 as u8); pos = pos + 2; }   // \n
+        else if (b == 13) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 114 as u8); pos = pos + 2; }   // \r
+        else if (b == 9)  { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 116 as u8); pos = pos + 2; }   // \t
         else if (b < 32) {
             // \u00XX with lowercase hex.
-            var hi: i32 = (b >> 4) & 15;
-            var lo: i32 = b & 15;
-            var trip: u8[] = [
-                92 as u8,
-                117 as u8,
-                48 as u8,
-                48 as u8,
-                __json_hex_lower(hi) as u8,
-                __json_hex_lower(lo) as u8
-            ];
-            out = out + string_from_bytes(trip);
+            buf = buf.with(pos, 92 as u8);       // \
+            buf = buf.with(pos + 1, 117 as u8);  // u
+            buf = buf.with(pos + 2, 48 as u8);   // 0
+            buf = buf.with(pos + 3, 48 as u8);   // 0
+            buf = buf.with(pos + 4, __json_hex_lower((b >> 4) & 15) as u8);
+            buf = buf.with(pos + 5, __json_hex_lower(b & 15) as u8);
+            pos = pos + 6;
         } else {
-            out = out + s[i:i+1];
+            buf = buf.with(pos, s[i] as u8);
+            pos = pos + 1;
         }
         i = i + 1;
     }
-    return out;
+    return string_from_bytes(buf);
 }
 
 pub function json_encode(v: JsonValue): string {
