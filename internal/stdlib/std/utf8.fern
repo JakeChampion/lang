@@ -160,3 +160,73 @@ pub function encode_all(cps: i32[]): string {
     }
     return out;
 }
+
+// `codepoint_at(s, byte_index)` — the codepoint whose encoding starts
+// at `byte_index`, or None when the index is out of range or not a
+// valid sequence start. The length-free companion to `utf8_decode_at`
+// for callers that want only the scalar value, not the byte width.
+pub function codepoint_at(s: string, byte_index: i32): Option[i32] {
+    match (utf8_decode_at(s, byte_index)) {
+        Some(pair) => { return Some(pair.0); },
+        None => { return None; }
+    }
+}
+
+// `char_at(s, index)` — the single character at codepoint index `index`
+// (0-based) as a one-character string, or None when `index` is negative
+// or past the last codepoint. This is the "Nth character" byte indexing
+// can't do: `s[i]` is a byte, `char_at(s, i)` is a whole character. A
+// valid character comes back as its exact original bytes; a malformed
+// byte counts as one U+FFFD character (matching `codepoints`).
+pub function char_at(s: string, index: i32): Option[string] {
+    if (index < 0) { return None; }
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    var cp_idx: i32 = 0;
+    while (i < n) {
+        var start: i32 = i;
+        var valid: boolean = true;
+        match (utf8_decode_at(s, i)) {
+            Some(pair) => { i = i + pair.1; },
+            None => { i = i + 1; valid = false; }
+        }
+        if (cp_idx == index) {
+            if (valid) { return Some(s[start : i]); }
+            return Some(utf8_encode(65533));   // U+FFFD for a malformed byte
+        }
+        cp_idx = cp_idx + 1;
+    }
+    return None;
+}
+
+// `substring(s, start, end)` — the text spanning codepoint indices
+// `[start, end)` (0-based, half-open) as a string. Bounds are clamped
+// to `[0, codepoint_count]` and start-past-end yields "", so out-of-
+// range indices never fault. This is the codepoint-aware analogue of a
+// byte slice `s[a:b]` — which would split multibyte characters and
+// produce invalid UTF-8. A single O(n) scan records the byte offsets
+// where the codepoint cursor crosses `start` and `end`.
+pub function substring(s: string, start: i32, end: i32): string {
+    var n: i32 = s.len();
+    var lo: i32 = start;
+    if (lo < 0) { lo = 0; }
+    var i: i32 = 0;
+    var cp_idx: i32 = 0;
+    var byte_start: i32 = 0 - 1;   // sentinel: `lo` not reached
+    var byte_end: i32 = n;         // default: `end` at/after the string
+    while (i < n) {
+        if (cp_idx == lo) { byte_start = i; }
+        if (cp_idx == end) { byte_end = i; }
+        match (utf8_decode_at(s, i)) {
+            Some(pair) => { i = i + pair.1; },
+            None => { i = i + 1; }
+        }
+        cp_idx = cp_idx + 1;
+    }
+    // Boundaries landing exactly at the end-of-string (cp_idx == count).
+    if (cp_idx == lo) { byte_start = i; }
+    if (cp_idx == end) { byte_end = i; }
+    if (byte_start < 0) { return ""; }          // `start` past the last codepoint
+    if (byte_end < byte_start) { return ""; }   // `end` <= `start`
+    return s[byte_start : byte_end];
+}

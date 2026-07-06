@@ -120,6 +120,51 @@ function test_encode_all_roundtrip(): test.TestOutcome {
     return test.assert_eq(utf8.encode_all(utf8.codepoints(mixed())), mixed());
 }
 
+// The individual characters of mixed(), built from their bytes so the
+// char_at / substring expectations don't depend on encode.
+function e_acute(): string { return string_from_bytes([195 as u8, 169 as u8]); }               // é
+function euro(): string { return string_from_bytes([226 as u8, 130 as u8, 172 as u8]); }        // €
+function emoji(): string { return string_from_bytes([240 as u8, 159 as u8, 152 as u8, 128 as u8]); }  // 😀
+
+function cp_or(s: string, i: i32): i32 {
+    match (utf8.codepoint_at(s, i)) { Some(c) => { return c; }, None => { return 0 - 1; } }
+}
+
+function char_or(s: string, i: i32): string {
+    match (utf8.char_at(s, i)) { Some(c) => { return c; }, None => { return "<none>"; } }
+}
+
+function test_codepoint_at(): test.TestOutcome {
+    // Byte-indexed: byte 0 is 'A', byte 3 starts the € (3-byte) char.
+    return test.assert_true(
+        cp_or(mixed(), 0) == 65
+        && cp_or(mixed(), 3) == 8364
+        && cp_or(mixed(), 100) == 0 - 1);
+}
+
+function test_char_at(): test.TestOutcome {
+    // Codepoint-indexed: the Nth character, whole and exact.
+    if (char_or(mixed(), 0) != "A") { return test.fail("char 0"); }
+    if (char_or(mixed(), 1) != e_acute()) { return test.fail("char 1 (é)"); }
+    if (char_or(mixed(), 2) != euro()) { return test.fail("char 2 (€)"); }
+    return test.assert_eq(char_or(mixed(), 3), emoji());
+}
+
+function test_char_at_bounds(): test.TestOutcome {
+    // Past the last codepoint (there are 4) and negative both give None.
+    return test.assert_true(char_or(mixed(), 4) == "<none>" && char_or(mixed(), 0 - 1) == "<none>");
+}
+
+function test_substring(): test.TestOutcome {
+    // Codepoint-range slice: [1,3) is é+€; the full range is the input;
+    // an over-long end clamps; end <= start and start-past-end are "".
+    if (utf8.substring(mixed(), 1, 3) != e_acute() + euro()) { return test.fail("[1,3)"); }
+    if (utf8.substring(mixed(), 0, 4) != mixed()) { return test.fail("full range"); }
+    if (utf8.substring(mixed(), 2, 100) != euro() + emoji()) { return test.fail("clamped end"); }
+    if (utf8.substring(mixed(), 3, 1) != "") { return test.fail("end <= start"); }
+    return test.assert_eq(utf8.substring(mixed(), 10, 12), "");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/utf8");
     r = r.it("decode ascii",            test_decode_ascii());
@@ -138,5 +183,9 @@ function main(): i32 {
     r = r.it("codepoints array",        test_codepoints_array());
     r = r.it("is_valid_utf8",           test_is_valid());
     r = r.it("encode_all round trip",   test_encode_all_roundtrip());
+    r = r.it("codepoint_at",            test_codepoint_at());
+    r = r.it("char_at",                 test_char_at());
+    r = r.it("char_at bounds",          test_char_at_bounds());
+    r = r.it("substring",               test_substring());
     return r.finish();
 }
