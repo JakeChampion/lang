@@ -66,7 +66,17 @@ import "std/i32";
 // keeps the type story trivial.
 pub function format(fmt: string, args: string[]): string {
     var n: i32 = fmt.len();
-    var out: string = "";
+    // Accumulate into a growable u8[] and materialise once (#4379): the old
+    // `out = out + …` appended each literal byte / spec result onto an immutable
+    // string, recopying the whole growing result every step — O(output²) on the
+    // hot formatting path. `out` is a LOCAL, so `out = out.append(byte)` grows
+    // the buffer in place (amortized O(1), the rc-gated self-push); the byte
+    // copies are inlined rather than routed through a helper precisely so they
+    // stay on the local (a borrowed-param `buf.append` would copy the whole
+    // buffer per call, reintroducing the quadratic). Byte indexing (`fmt[i]`)
+    // and single-byte appends preserve the byte-for-byte (UTF-8-agnostic)
+    // behaviour of the old 1-byte `fmt[i:i+1]` slices.
+    var out: u8[] = [];
     var i: i32 = 0;
     var argi: i32 = 0;
     while (i < n) {
@@ -75,10 +85,10 @@ pub function format(fmt: string, args: string[]): string {
         // before the `{}` placeholder so `{{}}` renders the literal "{}" rather
         // than consuming an arg, and `{{{}}}` renders "{<arg>}".
         if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
-            out = out + "{";
+            out = out.append(123 as u8);   // '{'
             i = i + 2;
         } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
-            out = out + "}";
+            out = out.append(125 as u8);   // '}'
             i = i + 2;
         } else if (fmt[i] == 123) {
             // Opening brace: scan for the matching `}` and decide whether the
@@ -96,24 +106,31 @@ pub function format(fmt: string, args: string[]): string {
             }
             if (isPlaceholder) {
                 if (argi < args.len()) {
-                    out = out + __format_apply_spec(args[argi], spec);
+                    var piece: string = __format_apply_spec(args[argi], spec);
+                    var pl: i32 = piece.len();
+                    var pk: i32 = 0;
+                    while (pk < pl) { out = out.append(piece[pk] as u8); pk = pk + 1; }
                     argi = argi + 1;
                 } else {
                     // Missing arg — emit the placeholder verbatim so callers
                     // can spot the underflow at runtime.
-                    out = out + "{" + spec + "}";
+                    out = out.append(123 as u8);   // '{'
+                    var sl: i32 = spec.len();
+                    var sk: i32 = 0;
+                    while (sk < sl) { out = out.append(spec[sk] as u8); sk = sk + 1; }
+                    out = out.append(125 as u8);   // '}'
                 }
                 i = j + 1;
             } else {
-                out = out + fmt[i:i + 1];
+                out = out.append(fmt[i] as u8);
                 i = i + 1;
             }
         } else {
-            out = out + fmt[i:i + 1];
+            out = out.append(fmt[i] as u8);
             i = i + 1;
         }
     }
-    return out;
+    return string_from_bytes(out);
 }
 
 // __format_apply_spec applies a `:`-prefixed format spec to an
