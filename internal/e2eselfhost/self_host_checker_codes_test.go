@@ -709,6 +709,24 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-scalar-ok", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { n = 2; return n; }; return f(); }\n", nil},
 		{"cap-read-ref-ok", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { return s.len(); }; return f(); }\n", nil},
 		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
+		// #4410: the closure-capture contract (docs/CLOSURE-CAPTURE.md). The
+		// scalar/reference split must be BYTE-identical to native's
+		// ast.IsPointerType. These pin the two former divergences the parity
+		// review surfaced: (1) the unsigned widths u8/u32/u64/usize are scalars
+		// (native never flagged them; the self-host used to), and (2) an
+		// unannotated var bound to a pointer-shaped LITERAL is reference-typed
+		// (native infers it; the self-host used to skip unannotated captures).
+		{"cap-assign-u32-ok", "function main(): i32 { var n: u32 = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-u64-ok", "function main(): i32 { var n: u64 = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-u8-ok", "function main(): i32 { var n: u8 = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-usize-ok", "function main(): i32 { var n: usize = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-f64-ok", "function main(): i32 { var x: f64 = 1.5; var f = function(): i32 { x = 2.5; return 0; }; return f(); }\n", nil},
+		{"cap-assign-bool-ok", "function main(): i32 { var b: boolean = true; var f = function(): i32 { b = false; return 0; }; return f(); }\n", nil},
+		{"cap-assign-unann-string", "function main(): i32 { var s = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-array", "function main(): i32 { var a = [1]; var f = function(): i32 { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; var f = function(): i32 { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-tuple", "function main(): i32 { var t = (1, 2); var f = function(): i32 { t = (3, 4); return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-scalar-ok", "function main(): i32 { var n = 5; var f = function(): i32 { n = 7; return 0; }; return f(); }\n", nil},
 		// E002 inside lambda bodies: a lambda's `return` is checked against
 		// the lambda's OWN declared return type, not the enclosing function's
 		// (ret_diags stops at the lambda boundary). lret_stmts/lret_expr fill
