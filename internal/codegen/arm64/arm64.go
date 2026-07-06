@@ -269,6 +269,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
+	// Size-neutral IR pass battery (#4377 slice 1) — mirrors the x86-64
+	// backend: in-place per-function rewrites that keep ip.Funcs index-
+	// aligned with prog.Funcs for the parallel walk below. OptimizeCleanup
+	// (Fold) is held back to slice 1b — it segfaults the tuple_elem_tag_run
+	// self-host driver on both natives (a latent emitter assumption Fold's
+	// output violates); ir.Inline + the whole-function cull are slice 2.
+	ir.FuseTee(ip)
+	ir.FlattenBranches(ip)
+	ir.EliminateDeadCode(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn

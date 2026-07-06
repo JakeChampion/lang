@@ -183,6 +183,23 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
+	// Size-neutral IR pass battery (#4377 slice 1) — per-function rewrites
+	// the wasm backend runs that neither add nor remove functions, so the
+	// emitFunc AST↔IR parallel-index walk below stays valid. FuseTee fuses
+	// store+reload into OpTeeLocal (both natives already emit it);
+	// FlattenBranches drops `if (false) { … }` bodies before they reach asm;
+	// EliminateDeadCode trims ops after a terminator.
+	//
+	// OptimizeCleanup (copyprop/constprop/Fold/strength) is deliberately NOT
+	// here yet: enabling it segfaults the tuple_elem_tag_run self-host driver
+	// (bisected to ir.Fold) — a latent native-emitter assumption Fold's
+	// output violates, which the wasm backend never exercised. That is slice
+	// 1b, gated on diagnosing + fixing the emitter interaction (#4377).
+	// ir.Inline and the whole-function IR cull are slice 2 (parallel-index
+	// refactor).
+	ir.FuseTee(ip)
+	ir.FlattenBranches(ip)
+	ir.EliminateDeadCode(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
