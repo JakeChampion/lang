@@ -1,0 +1,112 @@
+import "std/test";
+import "std/json";
+import "std/option";
+// examples/tests/json_pointer_test.fern — RFC 6901 JSON Pointer
+// resolution over the built-in JsonValue tree (#4416). Docs are built
+// with json_parse and navigated with json_pointer; leaf values are
+// asserted by matching the resolved JsonValue's payload. Exercises
+// object descent, array indexing, the ~1/~0 key escapes, the empty
+// reference (whole doc) and empty-key ("/") cases, and the miss paths.
+
+// Extract a JNumber's raw payload string, or "" if the value isn't a
+// JNumber — lets a test assert a resolved leaf without json_get_i32.
+function num_of(v: JsonValue): string {
+    match (v) { JNumber(s) => { return s; }, _ => { return ""; } }
+}
+
+function str_of(v: JsonValue): string {
+    match (v) { JString(s) => { return s; }, _ => { return ""; } }
+}
+
+// Resolve `ptr` against `doc` and return the JNumber payload, or a
+// sentinel ("<none>" / "<not-num>") describing why it didn't.
+function ptr_num(doc: JsonValue, ptr: string): string {
+    match (json.json_pointer(doc, ptr)) {
+        Some(v) => { return num_of(v); },
+        None => { return "<none>"; }
+    }
+}
+
+function ptr_str(doc: JsonValue, ptr: string): string {
+    match (json.json_pointer(doc, ptr)) {
+        Some(v) => { return str_of(v); },
+        None => { return "<none>"; }
+    }
+}
+
+function doc_main(): JsonValue {
+    return json.json_parse("{\"user\":{\"id\":42,\"tags\":[\"a\",\"b\",\"c\"]}}").unwrap_or(JNull);
+}
+
+function test_whole_doc(): test.TestOutcome {
+    // "" selects the whole document — here a JObject.
+    match (json.json_pointer(doc_main(), "")) {
+        Some(v) => {
+            match (v) { JObject(m) => { return test.pass(); }, _ => { return test.fail("expected JObject"); } }
+        },
+        None => { return test.fail("empty pointer should select the doc"); }
+    }
+}
+
+function test_nested_object(): test.TestOutcome {
+    return test.assert_eq(ptr_num(doc_main(), "/user/id"), "42");
+}
+
+function test_array_index(): test.TestOutcome {
+    var d: JsonValue = doc_main();
+    if (ptr_str(d, "/user/tags/0") != "a") { return test.fail("index 0"); }
+    if (ptr_str(d, "/user/tags/2") != "c") { return test.fail("index 2"); }
+    return test.assert_eq(ptr_str(d, "/user/tags/1"), "b");
+}
+
+function test_missing_key(): test.TestOutcome {
+    return test.assert_eq(ptr_num(doc_main(), "/user/nope"), "<none>");
+}
+
+function test_array_out_of_range(): test.TestOutcome {
+    return test.assert_eq(ptr_str(doc_main(), "/user/tags/9"), "<none>");
+}
+
+function test_descend_into_scalar(): test.TestOutcome {
+    // Can't descend past a number.
+    return test.assert_eq(ptr_num(doc_main(), "/user/id/x"), "<none>");
+}
+
+function test_bad_array_index(): test.TestOutcome {
+    var d: JsonValue = doc_main();
+    if (ptr_str(d, "/user/tags/x") != "<none>") { return test.fail("non-numeric index"); }
+    // Leading zero is not a valid RFC 6901 index.
+    return test.assert_eq(ptr_str(d, "/user/tags/01"), "<none>");
+}
+
+function test_must_start_with_slash(): test.TestOutcome {
+    return test.assert_eq(ptr_num(doc_main(), "user/id"), "<none>");
+}
+
+function test_escaped_keys(): test.TestOutcome {
+    // Key "a/b" is written "/a~1b"; key "m~n" is "/m~0n".
+    var d: JsonValue = json.json_parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
+    if (ptr_num(d, "/a~1b") != "1") { return test.fail("~1 (slash) escape"); }
+    return test.assert_eq(ptr_num(d, "/m~0n"), "2");
+}
+
+function test_empty_key(): test.TestOutcome {
+    // "/" refers to the value at the empty-string key.
+    var d: JsonValue = json.json_parse("{\"\":7}").unwrap_or(JNull);
+    return test.assert_eq(ptr_num(d, "/"), "7");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/json pointer");
+    r = r.it("whole doc (empty pointer)", test_whole_doc());
+    r = r.it("nested object",            test_nested_object());
+    r = r.it("array index",              test_array_index());
+    r = r.it("missing key",              test_missing_key());
+    r = r.it("array out of range",       test_array_out_of_range());
+    r = r.it("descend into scalar",      test_descend_into_scalar());
+    r = r.it("bad array index",          test_bad_array_index());
+    r = r.it("must start with slash",    test_must_start_with_slash());
+    r = r.it("escaped keys ~1 ~0",       test_escaped_keys());
+    r = r.it("empty key",                test_empty_key());
+    return r.finish();
+}
