@@ -398,21 +398,36 @@ pub function (s: string) kebab_case(): string {
 
 function __case_separator(s: string, sep_byte: i32): string {
     var n: i32 = s.len();
-    var out: string = "";
+    // Two-pass exact-size buffer (#4379): an internal uppercase emits sep + its
+    // lowercase (2 bytes), every other byte emits 1 (a space becomes the
+    // separator, anything else its lowercase). Replaces the O(n²) `out = out + …`
+    // accumulation that recopied the growing result each byte.
+    var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        if (b.is_upper() && i > 0) {
-            out = out + sep_byte.to_ascii_string();
-        }
-        if (b == 32) {
-            out = out + sep_byte.to_ascii_string();
-        } else {
-            out = out + b.to_lower().to_ascii_string();
-        }
+        if (b.is_upper() && i > 0) { total = total + 2; }
+        else { total = total + 1; }
         i = i + 1;
     }
-    return out;
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b.is_upper() && i > 0) {
+            buf = buf.with(pos, sep_byte as u8);
+            pos = pos + 1;
+        }
+        if (b == 32) {
+            buf = buf.with(pos, sep_byte as u8);
+        } else {
+            buf = buf.with(pos, b.to_lower() as u8);
+        }
+        pos = pos + 1;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `s.is_valid_identifier()` — true if s matches lang's /
