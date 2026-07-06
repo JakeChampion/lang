@@ -89,3 +89,25 @@ pub function (r: Result[T, E]) is_err_and(pred: (E) => boolean): boolean {
 pub function (r: Result[T, E]) or(other: Result[T, E]): Result[T, E] {
     match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return other; } }
 }
+
+// and returns `other` if this result is `Ok`, else the original `Err`
+// — the eager counterpart of `and_then`, mirroring `Option.and`. The
+// `Ok` type may change (`Result[T, E]` -> `Result[U, E]`).
+pub function (r: Result[T, E]) and[U](other: Result[U, E]): Result[U, E] {
+    match (r) { Ok(x) => { return other; }, Err(e) => { return Err(e); } }
+}
+
+// or_else returns this result if `Ok`, else computes a recovery result
+// from the error — the lazy counterpart of `or`, and the error-side
+// dual of `and_then`. The error type may change (`Result[T, E]` ->
+// `Result[T, F]`).
+pub function (r: Result[T, E]) or_else[F](f: (E) => Result[T, F]): Result[T, F] {
+    match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return f(e); } }
+}
+
+// map_or_else applies `f` to the `Ok` value, or computes a fallback
+// from the error via `default_fn` — the lazy counterpart of `map_or`
+// (both arms are functions, so nothing is built on the unused path).
+pub function (r: Result[T, E]) map_or_else[U](default_fn: (E) => U, f: (T) => U): U {
+    match (r) { Ok(x) => { return f(x); }, Err(e) => { return default_fn(e); } }
+}

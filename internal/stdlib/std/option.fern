@@ -94,3 +94,44 @@ pub function (o: Option[T]) or(other: Option[T]): Option[T] {
 pub function (o: Option[T]) and[U](other: Option[U]): Option[U] {
     match (o) { Some(x) => { return other; }, None => { return None; } }
 }
+
+// ok_or_else converts to a `Result`, building the error lazily:
+// `Some(v)` -> `Ok(v)`, `None` -> `Err(f())`. The lazy counterpart of
+// `ok_or` (use when the error is expensive to construct — `f` is only
+// called on the `None` path).
+pub function (o: Option[T]) ok_or_else[E](f: () => E): Result[T, E] {
+    match (o) { Some(x) => { return Ok(x); }, None => { return Err(f()); } }
+}
+
+// map_or_else applies `f` to the contained value, or computes a fallback
+// from `default_fn` when empty — the lazy counterpart of `map_or`, so
+// the fallback is built only on the `None` path.
+pub function (o: Option[T]) map_or_else[U](default_fn: () => U, f: (T) => U): U {
+    match (o) { Some(x) => { return f(x); }, None => { return default_fn(); } }
+}
+
+// zip pairs this option with `other`: `Some(a).zip(Some(b))` ->
+// `Some((a, b))`; if either side is `None`, the result is `None`.
+pub function (o: Option[T]) zip[U](other: Option[U]): Option[(T, U)] {
+    match (o) {
+        Some(a) => {
+            match (other) {
+                Some(b) => { return Some((a, b)); },
+                None => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+}
+
+// xor yields a value only when EXACTLY one of the two options is
+// present: `Some` xor `None` (either order) -> that `Some`; two `Some`s
+// or two `None`s -> `None`.
+pub function (o: Option[T]) xor(other: Option[T]): Option[T] {
+    match (o) {
+        Some(x) => {
+            match (other) { Some(y) => { return None; }, None => { return Some(x); } }
+        },
+        None => { return other; }
+    }
+}
