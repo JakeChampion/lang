@@ -389,6 +389,32 @@ function ifr(f: i32): i32 {
 function main(): i32 { return ifr(1); }`,
 			anchor: map[string]map[string]string{"ifr": {"reuseSources": "7:14<-a", "reuseConsumed": "a"}},
 		},
+		{
+			// CROSS-BLOCK reuse: donor `a` declared in the while body, recipient
+			// `b` nested in an if inside that body — paired by lower_block's
+			// xblock_pairings_for (donor one block above the recipient). Native
+			// computeReuseSources' cross-block pass emits the same; the dump's
+			// reuse_xblock_pairs pass mirrors it. reuseSources keys on b's lit.
+			name: "cross-block-reuse",
+			src: `struct P { x: i32, y: i32 }
+function cb(): i32 {
+	var sum: i32 = 0;
+	var i: i32 = 0;
+	while (i < 4) {
+		var a: P = P { x: i, y: i + 1 };
+		var s: i32 = a.x + a.y;
+		if (i > 0) {
+			var b: P = P { x: i, y: 3 };
+			sum = sum + b.x + b.y;
+		}
+		sum = sum + s;
+		i = i + 1;
+	}
+	return sum;
+}
+function main(): i32 { return cb(); }`,
+			anchor: map[string]map[string]string{"cb": {"reuseSources": "9:15<-a", "reuseConsumed": "a"}},
+		},
 	}
 
 	for _, tc := range cases {

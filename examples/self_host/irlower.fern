@@ -22969,12 +22969,142 @@ pub function array_set_incs_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // per nested block at lowering time; nested pairings are a documented
 // omission until the dump threads block context).
 
-// reuse_sources_of: "line:col<-donor" per top-level cross-struct /
-// cross-tuple pairing; empty when the reuse layer is disabled (native's
-// RcReuseEnabled gate).
+// reuse_sources_of: "line:col<-donor" per cross-struct / cross-tuple pairing;
+// empty when the reuse layer is disabled (native's RcReuseEnabled gate).
+// Native computeReuseSources runs TWO passes over every block — a same-block
+// pass then a cross-block pass — so the dump does the same: same-block first
+// (reuse_sources_block), then cross-block (reuse_xblock_pairs), deduped by
+// recipient position (native skips a recipient the same-block pass claimed).
 pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
     if (reuse_layer_disabled()) { return []; }
-    return reuse_sources_block(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs), []);
+    var fresh_ret: string[] = return_fresh_struct_ret_fns_of(funcs, structs);
+    var same: string[] = reuse_sources_block(fn.body, structs, fresh_ret, []);
+    var xb: string[] = reuse_xblock_pairs(fn.body, structs, fresh_ret, []);
+    var out: string[] = same;
+    var i: i32 = 0;
+    while (i < xb.len()) {
+        // xb entry is "pos<-donor"; skip if the same-block pass already claimed
+        // this recipient position (native's already-paired node check).
+        if (!reuse_pos_claimed(out, xb[i])) { out = out.append(xb[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// reuse_arrow_pos: the recipient-position prefix of a "pos<-donor" entry.
+function reuse_arrow_pos(entry: string): string {
+    var i: i32 = 0;
+    while (i + 1 < entry.len()) {
+        if (entry[i] == 60 && entry[i + 1] == 45) { return entry[0 : i]; }   // "<-"
+        i = i + 1;
+    }
+    return entry;
+}
+
+// reuse_arrow_donor: the donor-name suffix of a "pos<-donor" entry.
+function reuse_arrow_donor(entry: string): string {
+    var i: i32 = 0;
+    while (i + 1 < entry.len()) {
+        if (entry[i] == 60 && entry[i + 1] == 45) { return entry[i + 2 : entry.len()]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// reuse_pos_claimed: some entry in `existing` names the same recipient position
+// as `entry` ("pos<-...").
+function reuse_pos_claimed(existing: string[], entry: string): boolean {
+    var pos: string = reuse_arrow_pos(entry);
+    var i: i32 = 0;
+    while (i < existing.len()) {
+        if (reuse_arrow_pos(existing[i]) == pos) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// xblock_recip_pos: the construction-lit "line:col" of recipient `recip`
+// inside if-statement `iff`'s then / else arm (the cross-block pairing places
+// the recipient one block below the donor). "" if not found.
+function xblock_recip_pos(iff: parser.StmtIf, recip: string): string {
+    var p: string = xblock_recip_pos_in(iff.then_body, recip);
+    if (p.len() > 0) { return p; }
+    return xblock_recip_pos_in(iff.else_body, recip);
+}
+function xblock_recip_pos_in(stmts: parser.Stmt[], recip: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == recip) {
+                    match (v.init) {
+                        parser.ExprStructLit(sl) => { return util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col); },
+                        parser.ExprTuple(tu) => { return util.i32_to_string(tu.line) + ":" + util.i32_to_string(tu.col); },
+                        _ => {}
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// reuse_xblock_pairs: the cross-block pairings of every block — for each
+// if-statement, xblock_pairings_for yields "recip|donor|dtype"; the recipient
+// lit lives in the if-arm one block below. Mirrors lower_block's per-block
+// xblock_pairings_for(stmts, structs, k, so.bases, same-block-donors, fresh_ret).
+function reuse_xblock_pairs(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
+    var acc: string[] = out;
+    var so: ReuseSites = self_overwrite_reuse_sites(stmts, structs, fresh_ret);
+    var xr: CrossReuseSites = cross_reuse_sites(stmts, structs, fresh_ret);
+    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(stmts);
+    var xbcons: string[] = xr.donors;
+    var t: i32 = 0;
+    while (t < xt.donors.len()) { xbcons = xbcons.append(xt.donors[t]); t = t + 1; }
+    var k: i32 = 0;
+    while (k < stmts.len()) {
+        match (stmts[k]) {
+            parser.StmtIf(iff) => {
+                var pairs: string[] = xblock_pairings_for(stmts, structs, k, so.bases, xbcons, fresh_ret);
+                var p: i32 = 0;
+                while (p < pairs.len()) {
+                    var e: string = pairs[p];
+                    // "recip|donor|dtype" — split on the first two '|' (124).
+                    var b1: i32 = 0;
+                    while (b1 < e.len() && e[b1] != 124) { b1 = b1 + 1; }
+                    var recip: string = e[0 : b1];
+                    var rest: string = e[b1 + 1 : e.len()];
+                    var b2: i32 = 0;
+                    while (b2 < rest.len() && rest[b2] != 124) { b2 = b2 + 1; }
+                    var donor: string = rest[0 : b2];
+                    var pos: string = xblock_recip_pos(iff, recip);
+                    if (pos.len() > 0) { acc = acc.append(pos + "<-" + donor); }
+                    p = p + 1;
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    // recurse into nested blocks (a cross-block pairing whose donor is in an
+    // inner loop / arm and recipient in an if nested there).
+    var r: i32 = 0;
+    while (r < stmts.len()) {
+        match (stmts[r]) {
+            parser.StmtIf(f) => { acc = reuse_xblock_pairs(f.then_body, structs, fresh_ret, acc); acc = reuse_xblock_pairs(f.else_body, structs, fresh_ret, acc); },
+            parser.StmtWhile(w) => { acc = reuse_xblock_pairs(w.body, structs, fresh_ret, acc); },
+            parser.StmtFor(fo) => { acc = reuse_xblock_pairs(fo.body, structs, fresh_ret, acc); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = reuse_xblock_pairs(m.arms[ai].body, structs, fresh_ret, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        r = r + 1;
+    }
+    return acc;
 }
 
 // rc_child_blocks: the nested statement lists of `st` (if arms, loop / for
@@ -23048,6 +23178,14 @@ pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 
 function reuse_consumed_block(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
     var acc: string[] = out;
+    // cross-block donors of THIS block first (dedup handled per-name below).
+    var xbp: string[] = reuse_xblock_pairs(stmts, structs, fresh_ret, []);
+    var xi: i32 = 0;
+    while (xi < xbp.len()) {
+        var dn: string = reuse_arrow_donor(xbp[xi]);
+        if (dn.len() > 0 && util.index_of_str(acc, dn) < 0) { acc = acc.append(dn); }
+        xi = xi + 1;
+    }
     var xr: CrossReuseSites = cross_reuse_sites(stmts, structs, fresh_ret);
     var i: i32 = 0;
     while (i < xr.idxs.len()) {
