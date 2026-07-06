@@ -33,18 +33,32 @@ import "std/i64";
 // represent the integer exactly, which is inherent to f64 and not
 // something this formatter can recover.
 function __float_int_part(n: f64): string {
+    if (n < 1.0) { return "0"; }
     var digits: string = "0123456789";
-    var out: string = "";
+    // Two-pass exact-size buffer (#4379). Digits peel off least-significant
+    // first, so the old `out = digits[d] + out` prepended each one — recopying
+    // the whole growing string every step, O(digits²) (up to ~309 digits for
+    // the largest f64 magnitudes). Instead: a counting pass sizes the result,
+    // then a fill pass writes each digit straight into its final slot from the
+    // right. Byte-for-byte identical output.
+    var count: i32 = 0;
+    var m: f64 = n;
+    while (m >= 1.0) {
+        m = __floor_f64(m / 10.0);
+        count = count + 1;
+    }
+    var buf: u8[] = __alloc_u8(count);
+    var pos: i32 = count - 1;
     while (n >= 1.0) {
         var q: f64 = __floor_f64(n / 10.0);
         var d: i32 = (n - q * 10.0) as i32;
         if (d < 0) { d = 0; }
         if (d > 9) { d = 9; }
-        out = digits[d:d + 1] + out;
+        buf = buf.with(pos, digits[d] as u8);
+        pos = pos - 1;
         n = q;
     }
-    if (out == "") { return "0"; }
-    return out;
+    return string_from_bytes(buf);
 }
 
 function __float_to_string(n: f64, k: i32): string {

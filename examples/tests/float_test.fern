@@ -91,6 +91,22 @@ function test_inf_handling(): test.TestOutcome {
     return test.assert_eq_f64_near(inf, also_inf, 0.0);
 }
 
+// to_string over the digit-formatting paths, incl. the large-magnitude
+// branch (|n| >= 2^63) that routes through __float_int_part — the
+// count-then-fill-backward buffer rewritten in #4379. Small integrals and a
+// fractional value exercise the ordinary i64 path; the >= 2^63 values exercise
+// the float-domain integer formatter whose digit builder is the one that was
+// quadratic.
+function test_to_string_paths(): test.TestOutcome {
+    if ((42.0).to_string() != "42") { return test.fail("42.0"); }
+    if ((1000000.0).to_string() != "1000000") { return test.fail("1e6"); }
+    if ((3.25).to_string() != "3.25") { return test.fail("3.25"); }
+    if ((0.0 - 42.5).to_string() != "-42.5") { return test.fail("-42.5"); }
+    if ((9223372036854775808.0).to_string() != "9223372036854776000") { return test.fail("2^63"); }
+    if ((1e20).to_string() != "100000000000000000000") { return test.fail("1e20"); }
+    return test.assert_eq((1.5e30).to_string(), "1500000000000000600000000000000");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("floats");
     r = r.it("f64 addition",                    test_f64_addition());
@@ -104,5 +120,6 @@ function main(): i32 {
     r = r.it("f32_from_bits round trips",       test_f32_from_bits_round_trips());
     r = r.it("negative zero",                   test_negative_zero());
     r = r.it("Inf vs Inf",                      test_inf_handling());
+    r = r.it("to_string digit paths",           test_to_string_paths());
     return r.finish();
 }
