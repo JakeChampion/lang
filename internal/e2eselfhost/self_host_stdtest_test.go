@@ -305,6 +305,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"time_calendar", langSrcAbs(t, "examples/tests/time_calendar_test.fern"), ""},
 		{"time_http_date", langSrcAbs(t, "examples/tests/time_http_date_test.fern"), ""},
 		{"string_replace_split", langSrcAbs(t, "examples/tests/string_replace_split_test.fern"), ""},
+		{"utf8", langSrcAbs(t, "examples/tests/utf8_test.fern"), ""},
 		{"string_escape_count", langSrcAbs(t, "examples/tests/string_escape_count_test.fern"), ""},
 		{"string_slice_extract", langSrcAbs(t, "examples/tests/string_slice_extract_test.fern"), ""},
 		{"string_classify_transform", langSrcAbs(t, "examples/tests/string_classify_transform_test.fern"), ""},
