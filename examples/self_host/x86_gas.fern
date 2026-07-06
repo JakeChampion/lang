@@ -672,7 +672,18 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     var dst: string = x86_gas_trim(rest[ci + 1:rest.len()]);
     if (mnem == "leaq") {
         var m: GasMem = x86_gas_parse_mem(src);
-        return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+        if (m.is_rip) { // `leaq sym(%rip), %reg`
+            return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+        }
+        // `leaq disp(%base)` / `disp(%base,%index,scale)` — a plain address
+        // computation (lea 0x8D, same reg-mem encoding as the ALU loads). asm.fern
+        // emits this for stack-local addresses, e.g. `leaq -32(%rbp), %rdi` (the
+        // buffer __fern_str_eq zeroes with rep stosq). This handler previously
+        // assumed EVERY leaq source was a rip-relative label, so a base+disp lea
+        // got a bogus rip fixup (an empty label → address 0) and loaded a garbage
+        // pointer — which crashed the string-keyed-map compare (mapstr).
+        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, 141, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
     if (mnem == "movabsq") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
