@@ -5652,6 +5652,17 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
     return true;
 }
 
+// e021_has_impl reports whether the module contains an `impl <trait_name> for
+// <impl_type>` — used for the supertrait-conformance check (#4347 slice 3).
+function e021_has_impl(mod: parser.Module, trait_name: string, impl_type: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.impls.len()) {
+        if (mod.impls[i].trait_name == trait_name && mod.impls[i].impl_type == impl_type) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function e021_diags(mod: parser.Module): Diag[] {
     var out: Diag[] = [];
     var i: i32 = 0;
@@ -5660,6 +5671,16 @@ function e021_diags(mod: parser.Module): Diag[] {
         var ti: i32 = 0;
         while (ti < mod.trait_reqs.len()) {
             if (mod.trait_reqs[ti].trait_name == im.trait_name) {
+                // Supertrait conformance: `impl B for T` where `trait B: A`
+                // requires a separate `impl A for T` (#4347 slice 3).
+                var sup: string[] = mod.trait_reqs[ti].supertraits;
+                var si: i32 = 0;
+                while (si < sup.len()) {
+                    if (!e021_has_impl(mod, sup[si], im.impl_type)) {
+                        out = out.append(dg("E021", "impl " + im.trait_name + " for " + im.impl_type + " also requires `impl " + sup[si] + " for " + im.impl_type + "` (supertrait of " + im.trait_name + ")"));
+                    }
+                    si = si + 1;
+                }
                 var reqs: string[] = mod.trait_reqs[ti].methods;
                 var sigs: parser.FuncDecl[] = mod.trait_reqs[ti].req_sigs;
                 var ri: i32 = 0;

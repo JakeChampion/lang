@@ -258,7 +258,7 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // is the parallel full signatures (same length/order) so the checker can also
 // diagnose an impl method whose arity / param types / return type disagree with
 // the trait's declaration (Self resolves to the impl type at the check site).
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[] }
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -10547,6 +10547,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
     var defaults: TraitDefault[] = [];
     var required: string[] = [];
     var required_sigs: FuncDecl[] = [];
+    var supertraits: string[] = [];
     p = p.advance(); // `trait`
     var tname: string = p.peek_ident();
     if (tname.len() > 0) { p = p.advance(); } // name
@@ -10570,18 +10571,21 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
         }
     }
     // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
-    // `mod.Trait`). The self-host dispatches by receiver type and doesn't
-    // validate conformance, so supertraits carry no weight here — they're
-    // parsed and discarded. See docs/TRAITS.md.
+    // `mod.Trait`). Dispatch is still by receiver type, but the supertrait
+    // NAMES are retained for the E021 conformance check (#4347): an
+    // `impl B for T` where `trait B: A` also requires an `impl A for T`.
+    // See docs/TRAITS.md.
     if (p.peek_punct() == ":") {
         p = p.advance();
         var go_sup: boolean = true;
         while (go_sup && !p.at_end()) {
-            if (p.peek_ident().len() > 0) { p = p.advance(); }
+            var sup_name: string = "";
+            if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); p = p.advance(); }
             if (p.peek_punct() == ".") {
                 p = p.advance();
-                if (p.peek_ident().len() > 0) { p = p.advance(); }
+                if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); p = p.advance(); }
             }
+            if (sup_name.len() > 0) { supertraits = supertraits.append(derive_simple_name(sup_name)); }
             if (p.peek_punct() == "+") { p = p.advance(); } else { go_sup = false; }
         }
     }
@@ -10613,7 +10617,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
-    return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs }, p);
+    return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits }, p);
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
@@ -10777,7 +10781,10 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 tdi = tdi + 1;
             }
             // Retain the trait's required (abstract) method set for E021 (#4347).
-            if (tpr_req.methods.len() > 0) { trait_reqs = trait_reqs.append(tpr_req); }
+            // Retain a trait's requirement record when it has abstract methods
+            // OR supertraits — a supertrait-only trait (`trait Num: Add + …{}`)
+            // has no methods but still drives the E021 supertrait-impl check.
+            if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0) { trait_reqs = trait_reqs.append(tpr_req); }
             continue;
         }
         if (kw == "impl") {
