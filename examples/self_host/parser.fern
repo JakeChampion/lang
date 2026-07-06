@@ -242,7 +242,18 @@ pub struct Import { path: string, is_reexport: boolean, reexport_names: string[]
 // checker treat funcs first (build a signature table) and then
 // either dispatch to `main` if it exists or fall back to the
 // top-level stmt stream as the entry point.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[] }
+// impls / trait_reqs carry the trait-conformance data the checker needs for
+// E021 (#4347): trait_reqs lists each trait's REQUIRED (abstract, body-less)
+// method names, and impls records every `impl Trait for Type` block with the
+// methods it explicitly provides. parse_module populates both; the
+// transformation passes propagate them unchanged.
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[] }
+
+// TraitReq is one trait's required-method set: the abstract (body-less)
+// signatures an `impl` MUST provide. A defaulted (bodied) method is NOT
+// required (the default is synthesised onto impls that omit it), so it never
+// appears here. Drives the E021 missing-method check (#4347).
+pub struct TraitReq { trait_name: string, methods: string[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -686,7 +697,7 @@ pub function resolve_labels_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 
@@ -5740,7 +5751,9 @@ pub function register_array_method_generics(mod: Module): Module {
         top_stmts: mod.top_stmts,
         enums: mod.enums,
         resources: mod.resources,
-        exports: mod.exports
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
     };
 }
 
@@ -5852,7 +5865,9 @@ pub function register_map_method_generics(mod: Module): Module {
         top_stmts: mod.top_stmts,
         enums: mod.enums,
         resources: mod.resources,
-        exports: mod.exports
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
     };
 }
 
@@ -5932,7 +5947,9 @@ pub function monomorphize_module(mod: Module): Module {
         top_stmts: tr.rstmts,
         enums: mod.enums,
         resources: mod.resources,
-        exports: mod.exports
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
     };
 }
 
@@ -6517,7 +6534,9 @@ pub function monomorphize_structs(mod: Module): Module {
         top_stmts: tr.rstmts,
         enums: mod.enums,
         resources: mod.resources,
-        exports: mod.exports
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
     };
 }
 
@@ -7324,7 +7343,9 @@ pub function monomorphize_enums(mod: Module): Module {
         top_stmts: tr.rstmts,
         enums: out_enums,
         resources: mod.resources,
-        exports: mod.exports
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
     };
 }
 
@@ -7886,7 +7907,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     var top_body: Stmt[] = hl_apply_lifts(tr_stmts, tr_lifts);
     var j: i32 = 0;
     while (j < hoisted.len()) { funcs = funcs.append(hoisted[j]); j = j + 1; }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {
@@ -7942,7 +7963,7 @@ pub function lower_defers_module(mod: Module): Module {
         funcs = funcs.append(lower_defers_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
@@ -8137,7 +8158,7 @@ pub function insert_resource_drops(mod: Module): Module {
         });
         k = k + 1;
     }
-    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // ---------------------------------------------------------------------------
@@ -8247,7 +8268,7 @@ pub function desugar_ranges_module(mod: Module): Module {
         funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // desugar_prepass_module fuses the three leading whole-module DESUGAR passes —
@@ -8288,7 +8309,7 @@ pub function desugar_prepass_module(mod: Module): Module {
     var tops: Stmt[] = resolve_labels_block(mod.top_stmts, none);
     if (need_fda) { tops = fda_stmts(tops, mod.funcs); }
     tops = desugar_ranges_block(tops);
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tops, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tops, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // ---------------------------------------------------------------------------
@@ -8654,7 +8675,7 @@ pub function fill_default_args_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // ---- return-type inference -----------------------------------------
@@ -8822,7 +8843,7 @@ pub function infer_ret_types_module(mod: Module): Module {
         }
         pass = pass + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // ---- call-only 0-arg fn-value inlining ------------------------------
@@ -9210,7 +9231,7 @@ pub function inline_callonly_fn_values(mod: Module): Module {
         });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 // ===== #3640 slice B.2: use-directed struct-fn-value-local inference =====
@@ -9375,7 +9396,7 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
 
 pub function module_with_builtins(mod: Module): Module {
@@ -9396,7 +9417,9 @@ pub function module_with_builtins(mod: Module): Module {
         top_stmts: mono.top_stmts,
         enums: mono.enums,
         resources: mono.resources,
-        exports: mono.exports
+        exports: mono.exports,
+        impls: mono.impls,
+        trait_reqs: mono.trait_reqs
     };
 }
 
@@ -10511,8 +10534,9 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
 // method parses with the ordinary parse_func_decl machinery (no receiver
 // clause; its first parameter is `self: Self`); an abstract one ends at
 // `;` and so comes back with an empty body, which we skip.
-function parse_trait_decl(p: Par): (TraitDefault[], Par) {
+function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
     var defaults: TraitDefault[] = [];
+    var required: string[] = [];
     p = p.advance(); // `trait`
     var tname: string = p.peek_ident();
     if (tname.len() > 0) { p = p.advance(); } // name
@@ -10563,6 +10587,11 @@ function parse_trait_decl(p: Par): (TraitDefault[], Par) {
                 // is treated as abstract — it would synthesise a no-op.)
                 if (fr_func.body.len() > 0) {
                     defaults = defaults.append(TraitDefault { trait_name: simple, method: fr_func });
+                } else {
+                    // Abstract (body-less) signature: a REQUIRED method every
+                    // impl must provide (#4347 E021). Bodied defaults above are
+                    // NOT required (synthesised onto omitting impls).
+                    required = required.append(fr_func.name);
                 }
             } else {
                 // Defensive: don't stall on an unexpected token.
@@ -10571,13 +10600,14 @@ function parse_trait_decl(p: Par): (TraitDefault[], Par) {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
-    return (defaults, p);
+    return (defaults, TraitReq { trait_name: simple, methods: required }, p);
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
+    var trait_reqs: TraitReq[] = [];
     var impl_infos: ImplInfo[] = [];
     var structs: StructDecl[] = [];
     var aliases: TypeAlias[] = [];
@@ -10726,13 +10756,15 @@ pub function parse_module(toks: lexer.Token[]): Module {
             continue;
         }
         if (kw == "trait") {
-            var (tpr_defaults, tpr_p) = parse_trait_decl(p);
+            var (tpr_defaults, tpr_req, tpr_p) = parse_trait_decl(p);
             p = tpr_p;
             var tdi: i32 = 0;
             while (tdi < tpr_defaults.len()) {
                 trait_defaults = trait_defaults.append(tpr_defaults[tdi]);
                 tdi = tdi + 1;
             }
+            // Retain the trait's required (abstract) method set for E021 (#4347).
+            if (tpr_req.methods.len() > 0) { trait_reqs = trait_reqs.append(tpr_req); }
             continue;
         }
         if (kw == "impl") {
@@ -10795,7 +10827,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
     // driver/backend pipeline sees break/continue tags already baked in (the
     // per-driver prep pipelines diverge, so doing it here is the universal spot).
     // Idempotent: re-running on already-resolved tags recomputes the same depth.
-    return resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports });
+    return resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs });
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -10822,6 +10854,12 @@ pub function merge_module(into: Module, from: Module): Module {
     var nexports: ExportBinding[] = into.exports;
     var xi: i32 = 0;
     while (xi < from.exports.len()) { nexports = nexports.append(from.exports[xi]); xi = xi + 1; }
+    var nimpls: ImplInfo[] = into.impls;
+    var nii: i32 = 0;
+    while (nii < from.impls.len()) { nimpls = nimpls.append(from.impls[nii]); nii = nii + 1; }
+    var ntreqs: TraitReq[] = into.trait_reqs;
+    var nti: i32 = 0;
+    while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
@@ -10830,7 +10868,9 @@ pub function merge_module(into: Module, from: Module): Module {
         top_stmts: into.top_stmts,
         enums: concat_enums(into.enums, from.enums),
         resources: nresources,
-        exports: nexports
+        exports: nexports,
+        impls: nimpls,
+        trait_reqs: ntreqs
     };
 }
 
@@ -10884,6 +10924,12 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
         nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit });
         xi = xi + 1;
     }
+    var nimpls: ImplInfo[] = into.impls;
+    var nii: i32 = 0;
+    while (nii < from.impls.len()) { nimpls = nimpls.append(from.impls[nii]); nii = nii + 1; }
+    var ntreqs: TraitReq[] = into.trait_reqs;
+    var nti: i32 = 0;
+    while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
@@ -10892,7 +10938,9 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
         top_stmts: into.top_stmts,
         enums: concat_enums(into.enums, from.enums),
         resources: nresources,
-        exports: nexports
+        exports: nexports,
+        impls: nimpls,
+        trait_reqs: ntreqs
     };
 }
 

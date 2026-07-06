@@ -657,7 +657,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         }),
         enums: mangle_enum_decls(mod.enums, ctx),
         resources: mod.resources,
-        exports: mod.exports
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
     };
 }
 
@@ -800,6 +802,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var enums: parser.EnumDecl[] = [];
     var resources: parser.ResourceDecl[] = [];
     var exports: parser.ExportBinding[] = [];
+    var impls: parser.ImplInfo[] = [];
+    var trait_reqs: parser.TraitReq[] = [];
     // Build the imported-enum-variant → mangled-name map once, from
     // every import's parsed (pre-mangle) variant structs. A variant is
     // an enum-member struct decl (`enum_owner != ""`); its bundled name
@@ -836,6 +840,10 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (ri < m.resources.len()) { resources = resources.append(m.resources[ri]); ri = ri + 1; }
         var mxi: i32 = 0;
         while (mxi < m.exports.len()) { exports = exports.append(m.exports[mxi]); mxi = mxi + 1; }
+        var mii: i32 = 0;
+        while (mii < m.impls.len()) { impls = impls.append(m.impls[mii]); mii = mii + 1; }
+        var mti: i32 = 0;
+        while (mti < m.trait_reqs.len()) { trait_reqs = trait_reqs.append(m.trait_reqs[mti]); mti = mti + 1; }
         i = i + 1;
     }
     var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
@@ -847,6 +855,10 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     while (rj < e.resources.len()) { resources = resources.append(e.resources[rj]); rj = rj + 1; }
     var exj: i32 = 0;
     while (exj < e.exports.len()) { exports = exports.append(e.exports[exj]); exj = exj + 1; }
+    var eii: i32 = 0;
+    while (eii < e.impls.len()) { impls = impls.append(e.impls[eii]); eii = eii + 1; }
+    var eti: i32 = 0;
+    while (eti < e.trait_reqs.len()) { trait_reqs = trait_reqs.append(e.trait_reqs[eti]); eti = eti + 1; }
     var no_imports: parser.Import[] = [];
     return parser.Module {
         funcs: funcs,
@@ -856,7 +868,9 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         top_stmts: e.top_stmts,
         enums: enums,
         resources: resources,
-        exports: exports
+        exports: exports,
+        impls: impls,
+        trait_reqs: trait_reqs
     };
 }
 

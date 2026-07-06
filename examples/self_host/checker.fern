@@ -5559,6 +5559,59 @@ function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_name
     return out;
 }
 
+// e021_diags reports E021 (#4347): an `impl Trait for Type` block that omits a
+// REQUIRED (abstract, non-defaulted) trait method. mod.trait_reqs carries each
+// trait's abstract method set; mod.impls records each impl's explicitly-provided
+// methods. For every impl, every required method of its trait that the impl
+// doesn't provide draws E021 — matching native's `Type does not implement
+// Trait: missing method "m"`. A defaulted method is never in trait_reqs (the
+// default is synthesised onto the impl), so a complete-via-default impl is
+// never falsely flagged. This is the first slice of the E021 family; arity /
+// object-safety / supertrait / bound conformance (+ E060 / E062) are follow-ups.
+// e021_type_has_method reports whether `ty` already has a receiver method named
+// `m` anywhere in the module — an inherent method (a builtin like i32.to_string
+// from core/int, or another impl's method), matching native's conformance rule:
+// an EMPTY `impl Display for i32 { }` is valid because i32 already carries
+// to_string, so the required method is "adopted", not missing. Without this the
+// core/cmp empty impls (Display/Eq/… for the numeric + string types) draw a
+// spurious E021 that native never reports.
+function e021_type_has_method(mod: parser.Module, ty: string, m: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (f.receiver_type.len() > 0 && f.name == m && util.base_type_name(f.receiver_type) == ty) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function e021_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < mod.impls.len()) {
+        var im: parser.ImplInfo = mod.impls[i];
+        var ti: i32 = 0;
+        while (ti < mod.trait_reqs.len()) {
+            if (mod.trait_reqs[ti].trait_name == im.trait_name) {
+                var reqs: string[] = mod.trait_reqs[ti].methods;
+                var ri: i32 = 0;
+                while (ri < reqs.len()) {
+                    // Satisfied if the impl block writes it OR the type already
+                    // has an inherent / cross-impl method of that name (native's
+                    // "adopt the existing method" rule).
+                    if (!name_in(reqs[ri], im.method_names) && !e021_type_has_method(mod, im.impl_type, reqs[ri])) {
+                        out = out.append(dg("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\""));
+                    }
+                    ri = ri + 1;
+                }
+            }
+            ti = ti + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -5739,7 +5792,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis.
-    var dd: Diag[] = append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

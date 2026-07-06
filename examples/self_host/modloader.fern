@@ -161,7 +161,9 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
                 top_stmts: merged.top_stmts,
                 enums: append_enums(merged.enums, bmod.enums),
                 resources: merged.resources,
-                exports: merged.exports
+                exports: merged.exports,
+                impls: merged.impls,
+                trait_reqs: merged.trait_reqs
             };
         },
         Err(e) => { return merged; },

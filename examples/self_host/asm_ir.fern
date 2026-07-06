@@ -4744,7 +4744,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
 // and bails every function that uses one.
 pub function lift_lambdas(mod: parser.Module): parser.Module {
     var lifted: parser.Module = irlower.lift_lambdas(mod);
-    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports };
+    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs };
 }
 
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The
