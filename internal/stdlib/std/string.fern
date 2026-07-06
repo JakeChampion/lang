@@ -43,13 +43,23 @@ pub function (s: string) to_string(): string {
 // memcpy via a `__memcpy` shim.
 pub function (s: string) repeat(n: i32): string {
     if (n <= 0) { return ""; }
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < n) {
-        out = out + s;
-        i = i + 1;
+    var sl: i32 = s.len();
+    if (sl == 0) { return ""; }
+    // Fill one exact-size (sl·n) buffer instead of `out = out + s`,
+    // which recopied the growing prefix each step (O((sl·n)²) — #4379).
+    var buf: u8[] = __alloc_u8(sl * n);
+    var pos: i32 = 0;
+    var k: i32 = 0;
+    while (k < n) {
+        var j: i32 = 0;
+        while (j < sl) {
+            buf = buf.with(pos, s[j] as u8);
+            pos = pos + 1;
+            j = j + 1;
+        }
+        k = k + 1;
     }
-    return out;
+    return string_from_bytes(buf);
 }
 
 // `s.starts_with(prefix)` / `s.ends_with(suffix)` /
@@ -1837,13 +1847,33 @@ pub function (s: string) count_lines(): i32 {
 // "x, x, x". n <= 0 returns empty.
 pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
     if (n <= 0) { return ""; }
-    var out: string = s;
-    var i: i32 = 1;
-    while (i < n) {
-        out = out + sep + s;
-        i = i + 1;
+    var sl: i32 = s.len();
+    var pl: i32 = sep.len();
+    // n copies of s + (n-1) separators — a known size, so fill one
+    // buffer (O(total)) instead of the O(total²) `out = out + sep + s`.
+    var total: i32 = sl * n + pl * (n - 1);
+    if (total == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    var k: i32 = 0;
+    while (k < n) {
+        if (k > 0) {
+            var pj: i32 = 0;
+            while (pj < pl) {
+                buf = buf.with(pos, sep[pj] as u8);
+                pos = pos + 1;
+                pj = pj + 1;
+            }
+        }
+        var j: i32 = 0;
+        while (j < sl) {
+            buf = buf.with(pos, s[j] as u8);
+            pos = pos + 1;
+            j = j + 1;
+        }
+        k = k + 1;
     }
-    return out;
+    return string_from_bytes(buf);
 }
 
 // `s.replace(old, new)` — substitutes every
