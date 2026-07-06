@@ -54,6 +54,20 @@ func TestSelfHostStatIR(t *testing.T) {
 	}
 	missing := filepath.Join(dir, "stat_does_not_exist")
 
+	// A sparse >2 GiB file (#4624 item 3): FileStat.size is i64, so the full
+	// st_size must survive the typed read — an i32-typed field would report
+	// 2147483653 as 5 (low 32 bits). Sparse, so no real disk is consumed.
+	const sparseSize = int64(2147483653) // 2 GiB + 5
+	sparsePath := filepath.Join(dir, "stat_sparse.bin")
+	if f, err := os.Create(sparsePath); err != nil {
+		t.Fatalf("create sparse: %v", err)
+	} else {
+		f.Close()
+	}
+	if err := os.Truncate(sparsePath, sparseSize); err != nil {
+		t.Fatalf("truncate sparse: %v", err)
+	}
+
 	// Embed the absolute paths into the program source. The match binds the Ok
 	// payload `s` as FileStat; s.is_file / s.is_dir / s.size read its fields.
 	src := fmt.Sprintf(`function main(): i32 {
@@ -68,7 +82,15 @@ func TestSelfHostStatIR(t *testing.T) {
                     if (d.is_file) { return 5; }
                     match (stat(%q)) {
                         Ok(_) => { return 6; },
-                        Err(_) => { return 0; },
+                        Err(_) => {
+                            match (stat(%q)) {
+                                Ok(b) => {
+                                    if (b.size != %d) { return 9; }
+                                    return 0;
+                                },
+                                Err(_) => { return 10; },
+                            }
+                        },
                     }
                 },
                 Err(_) => { return 7; },
@@ -76,7 +98,7 @@ func TestSelfHostStatIR(t *testing.T) {
         },
         Err(_) => { return 8; },
     }
-}`, filePath, len(fileBytes), subDir, missing)
+}`, filePath, len(fileBytes), subDir, missing, sparsePath, sparseSize)
 
 	cmd := exec.Command(driverBin, "-ir")
 	cmd.Stdin = bytes.NewReader([]byte(src))
@@ -130,6 +152,21 @@ func TestSelfHostStatIRWasm(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "stat_subdir"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	// Sparse >2 GiB file (#4624 item 3): the wasm stat runtime used to
+	// truncate st_size to the low i32 (i32.load of the i64 at buf+32); with
+	// FileStat.size i64 it must carry the full width (i64.load + i64.store
+	// into the 8-byte field slot). 2147483653's low 32 bits are 5, so an
+	// i32-truncating path fails the size check loudly.
+	const sparseSize = int64(2147483653)
+	sparsePath := filepath.Join(dir, "stat_sparse.bin")
+	if f, err := os.Create(sparsePath); err != nil {
+		t.Fatalf("create sparse: %v", err)
+	} else {
+		f.Close()
+	}
+	if err := os.Truncate(sparsePath, sparseSize); err != nil {
+		t.Fatalf("truncate sparse: %v", err)
+	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	// Relative paths — resolved against the preopen (the temp dir, mapped to guest /).
@@ -145,7 +182,15 @@ func TestSelfHostStatIRWasm(t *testing.T) {
                     if (d.is_file) { return 5; }
                     match (stat("stat_does_not_exist")) {
                         Ok(_) => { return 6; },
-                        Err(_) => { return 0; },
+                        Err(_) => {
+                            match (stat("stat_sparse.bin")) {
+                                Ok(b) => {
+                                    if (b.size != %d) { return 9; }
+                                    return 0;
+                                },
+                                Err(_) => { return 10; },
+                            }
+                        },
                     }
                 },
                 Err(_) => { return 7; },
@@ -153,7 +198,7 @@ func TestSelfHostStatIRWasm(t *testing.T) {
         },
         Err(_) => { return 8; },
     }
-}`, len(fileBytes))
+}`, len(fileBytes), sparseSize)
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {

@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"bytes"
 	"debug/macho"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -213,9 +214,11 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	// Linux). stat_file: a regular file reports is_file + its size; stat_dir:
 	// a directory reports is_dir; stat_missing: a bad path hits the Err arm
 	// (needs the errno normalization too).
+	// fs.size is i64 (#4624 item 3), so it can't `return` from i32 main
+	// directly (E002 on native) — compare against the expected size instead.
 	runCase("stat_file",
-		`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { return fs.size; } return 1; }, Err(e) => { return 99; } } }`,
-		len(rfContent))
+		fmt.Sprintf(`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { if (fs.size == %d) { return 7; } return 2; } return 1; }, Err(e) => { return 99; } } }`, len(rfContent)),
+		7)
 	runCase("stat_dir",
 		`function main(): i32 { match (stat("`+dir+`")) { Ok(fs) => { if (fs.is_dir) { return 7; } return 1; }, Err(e) => { return 99; } } }`,
 		7)

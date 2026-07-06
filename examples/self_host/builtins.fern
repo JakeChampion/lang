@@ -53,8 +53,11 @@ enum IoError {
 
 // FileStat — returned by stat(path). The emitter resolves
 // is_file/is_dir/size to slot offsets from this layout, and interns the
-// shape pointer as the name "FileStat".
-struct FileStat { is_file: boolean, is_dir: boolean, size: i32 }
+// shape pointer as the name "FileStat". `size` is i64, matching native's
+// declaration (#4624 item 3): the register backends already store the
+// full 64-bit st_size in the 8-byte slot, and files past 2 GiB would
+// mis-report through an i32-typed read.
+struct FileStat { is_file: boolean, is_dir: boolean, size: i64 }
 
 // ProcessResult — returned by subprocess(cmd, args, stdin).
 struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }

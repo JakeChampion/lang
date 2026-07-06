@@ -4317,12 +4317,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
     // size@24]) — the __fern_stat runtime helper builds a struct whose
     // shape pointer is the interned "FileStat" name, matching the arm
-    // that field access emits for is_file / is_dir / size.
+    // that field access emits for is_file / is_dir / size. `size` is
+    // i64 (native parity, #4624 item 3) — the runtimes store the full
+    // 64-bit st_size, so the typed read must be 64-bit too.
     if (!struct_declared(structs, "FileStat")) {
         var fsf: StructFieldDecl[] = [];
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean" });
-        fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i32" });
+        fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64" });
         structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
