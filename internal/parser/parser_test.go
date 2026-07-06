@@ -2973,3 +2973,46 @@ func TestParseDowncastVsCast(t *testing.T) {
 		t.Fatalf("plain `as` must not parse to DowncastExpr")
 	}
 }
+
+// #4521: a bare `{ … }` in a general value position parses as a block-expr,
+// while `Ident { … }` stays a struct literal and a loop/if HEADER's trailing
+// `{` still opens the body (not a block-expr) — the disambiguation contract.
+func TestParseValuePositionBlockExpr(t *testing.T) {
+	// Bare `{ stmts; tail }` on a `var` RHS → *ast.BlockExpr.
+	prog, err := Parse(`function f(): i32 { var n: i32 = { var k = 3; k * 2 }; return n; }`)
+	if err != nil {
+		t.Fatalf("parse value-position block: %v", err)
+	}
+	v := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	be, ok := v.Init.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("value-position `{ … }` init = %T, want *ast.BlockExpr", v.Init)
+	}
+	if len(be.Stmts) != 1 || be.Tail == nil {
+		t.Errorf("block-expr shape = %d stmts, tail=%v; want 1 stmt + a tail", len(be.Stmts), be.Tail != nil)
+	}
+
+	// `Ident { … }` in the same position stays a struct literal.
+	prog2, err := Parse(`struct P { x: i32 } function g(): i32 { var p: P = P { x: 1 }; return p.x; }`)
+	if err != nil {
+		t.Fatalf("parse struct lit: %v", err)
+	}
+	if _, ok := prog2.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.StructLit); !ok {
+		t.Fatalf("`P { x: 1 }` must stay a *ast.StructLit, got %T",
+			prog2.Funcs[0].Body.Stmts[0].(*ast.Var).Init)
+	}
+
+	// A `for … in expr {` header's `{` opens the loop body, not a block-expr —
+	// the noStructLit gate keeps the new rule out of loop/if headers.
+	if _, err := Parse(`function h(xs: i32[]): i32 { var s = 0; for x in xs { s = s + x; } return s; }`); err != nil {
+		t.Fatalf("for-in header must still parse (its `{` is the body): %v", err)
+	}
+	// Single-expr `{ e }` stays a bare expression (branch-form passthrough).
+	prog3, err := Parse(`function k(): i32 { var n: i32 = { 7 }; return n; }`)
+	if err != nil {
+		t.Fatalf("parse single-expr block: %v", err)
+	}
+	if _, ok := prog3.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.BlockExpr); ok {
+		t.Errorf("`{ 7 }` must collapse to the bare expr `7`, not a BlockExpr")
+	}
+}

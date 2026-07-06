@@ -112,6 +112,36 @@ func TestBlockExprInterp(t *testing.T) {
 			}`,
 			30,
 		},
+		{
+			// #4521: a general value-position block-expression (not an
+			// if/match branch) — the RHS of `var`. Leading statements then
+			// a trailing value; 3*4 = 12.
+			"value-position-var-rhs",
+			`function main(): i32 {
+				var n: i32 = { var k = 3; var m = 4; k * m };
+				return n;
+			}`,
+			12,
+		},
+		{
+			// #4521: a bare value-position block as a call argument.
+			"value-position-call-arg",
+			`function id(x: i32): i32 { return x; }
+			function main(): i32 {
+				return id({ var a = 40; a + 2 });
+			}`,
+			42,
+		},
+		{
+			// #4521: a single-expr value block `{ e }` is just `e` (the
+			// branch-form passthrough), so it stays a plain expression.
+			"value-position-single-expr",
+			`function main(): i32 {
+				var n: i32 = { 7 };
+				return n + 1;
+			}`,
+			8,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -145,6 +175,22 @@ function main(): i32 {
 }
 `
 	dynAllBackends(t, src, "x=6")
+}
+
+// #4521: a general value-position block-expression (the RHS of a `var`, not
+// an if/match branch) compiles + runs identically on every native backend.
+// Leading statements then a trailing value; k*m = 12, and a string-tail block
+// to exercise the RC-survives-exit-sweep path in value position too.
+func TestBlockExprCompiledValuePosition(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var n: i32 = { var k = 3; var m = 4; k * m };
+	var s: string = { var a = "foo"; var b = "bar"; a + b };
+	print("n=" + n.to_string() + " s=" + s);
+	return 0;
+}
+`
+	dynAllBackends(t, src, "n=12 s=foobar")
 }
 
 // A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.
