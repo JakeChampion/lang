@@ -168,6 +168,25 @@ function test_join_edges(): test.TestOutcome {
         && uni.join(" & ") == "Glóin & Þórin");
 }
 
+// join_with_last edge cases — locks in the byte-identical output of the
+// preallocated-buffer rewrite (#4379) for the Oxford-comma variant: empty,
+// single, the two-element `last_sep`-only shape, the 3+ path that mixes
+// `sep` and `last_sep`, empty separators, and multi-byte (UTF-8) content.
+function test_join_with_last_edges(): test.TestOutcome {
+    var empty: string[] = [];
+    var one: string[] = ["solo"];
+    var two: string[] = ["x", "y"];
+    var many: string[] = ["a", "b", "c", "d"];
+    var uni: string[] = ["Glóin", "Óin", "Þórin"];
+    return test.assert_true(
+        empty.join_with_last(", ", " and ") == ""
+        && one.join_with_last(", ", " and ") == "solo"
+        && two.join_with_last(", ", " and ") == "x and y"
+        && many.join_with_last(", ", " and ") == "a, b, c and d"
+        && (["1", "2", "3"]).join_with_last("", "") == "123"
+        && uni.join_with_last(", ", " & ") == "Glóin, Óin & Þórin");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("array combinators");
     r = r.it("map",                  test_map());
@@ -191,5 +210,6 @@ function main(): i32 {
     r = r.it("enumerate empty",      test_enumerate_empty());
     r = r.it("map then fold",        test_map_then_fold());
     r = r.it("join edges",           test_join_edges());
+    r = r.it("join_with_last edges", test_join_with_last_edges());
     return r.finish();
 }
