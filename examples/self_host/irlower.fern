@@ -22973,16 +22973,31 @@ pub function array_set_incs_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // cross-tuple pairing; empty when the reuse layer is disabled (native's
 // RcReuseEnabled gate).
 pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
-    var out: string[] = [];
-    if (reuse_layer_disabled()) { return out; }
-    var xr: CrossReuseSites = cross_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs));
+    if (reuse_layer_disabled()) { return []; }
+    return reuse_sources_block(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs), []);
+}
+
+// rc_child_blocks: the nested statement lists of `st` (if arms, loop / for
+// bodies, match arm bodies). lower_block runs the per-block reuse pass on each
+// of these, so the dump must recurse into them too — same-block pairings in a
+// loop body (the canonical FBIP `while(..){ var a=T{}; ..; var b=T{} }`) fire
+// at lowering but were invisible to a fn.body-top-level-only scan.
+// Encoded flat (no nested arrays): callers pattern-match `st` themselves.
+
+// reuse_sources_block: the same-block cross-struct / cross-tuple pairings of
+// `stmts` (recipient-lit position <- donor name), then recurse into nested
+// blocks. Mirrors lower_block's per-block cross_reuse_sites /
+// cross_tuple_reuse_sites invocation.
+function reuse_sources_block(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
+    var acc: string[] = out;
+    var xr: CrossReuseSites = cross_reuse_sites(stmts, structs, fresh_ret);
     var i: i32 = 0;
     while (i < xr.idxs.len()) {
-        match (fn.body[xr.idxs[i]]) {
+        match (stmts[xr.idxs[i]]) {
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprStructLit(sl) => {
-                        out = out.append(util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col) + "<-" + xr.donors[i]);
+                        acc = acc.append(util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col) + "<-" + xr.donors[i]);
                     },
                     _ => {}
                 }
@@ -22991,14 +23006,14 @@ pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
         }
         i = i + 1;
     }
-    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
+    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(stmts);
     var j: i32 = 0;
     while (j < xt.idxs.len()) {
-        match (fn.body[xt.idxs[j]]) {
+        match (stmts[xt.idxs[j]]) {
             parser.StmtVar(v2) => {
                 match (v2.init) {
                     parser.ExprTuple(tu) => {
-                        out = out.append(util.i32_to_string(tu.line) + ":" + util.i32_to_string(tu.col) + "<-" + xt.donors[j]);
+                        acc = acc.append(util.i32_to_string(tu.line) + ":" + util.i32_to_string(tu.col) + "<-" + xt.donors[j]);
                     },
                     _ => {}
                 }
@@ -23007,26 +23022,59 @@ pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
         }
         j = j + 1;
     }
-    return out;
+    // recurse into nested blocks.
+    var k: i32 = 0;
+    while (k < stmts.len()) {
+        match (stmts[k]) {
+            parser.StmtIf(f) => { acc = reuse_sources_block(f.then_body, structs, fresh_ret, acc); acc = reuse_sources_block(f.else_body, structs, fresh_ret, acc); },
+            parser.StmtWhile(w) => { acc = reuse_sources_block(w.body, structs, fresh_ret, acc); },
+            parser.StmtFor(fo) => { acc = reuse_sources_block(fo.body, structs, fresh_ret, acc); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = reuse_sources_block(m.arms[ai].body, structs, fresh_ret, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return acc;
 }
 
-// reuse_consumed_of: the donor-name set of the same pairings.
+// reuse_consumed_of: the donor-name set of the same pairings (all blocks).
 pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
-    var out: string[] = [];
-    if (reuse_layer_disabled()) { return out; }
-    var xr: CrossReuseSites = cross_reuse_sites(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs));
+    if (reuse_layer_disabled()) { return []; }
+    return reuse_consumed_block(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs), []);
+}
+
+function reuse_consumed_block(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
+    var acc: string[] = out;
+    var xr: CrossReuseSites = cross_reuse_sites(stmts, structs, fresh_ret);
     var i: i32 = 0;
     while (i < xr.idxs.len()) {
-        if (util.index_of_str(out, xr.donors[i]) < 0) { out = out.append(xr.donors[i]); }
+        if (util.index_of_str(acc, xr.donors[i]) < 0) { acc = acc.append(xr.donors[i]); }
         i = i + 1;
     }
-    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
+    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(stmts);
     var j: i32 = 0;
     while (j < xt.idxs.len()) {
-        if (util.index_of_str(out, xt.donors[j]) < 0) { out = out.append(xt.donors[j]); }
+        if (util.index_of_str(acc, xt.donors[j]) < 0) { acc = acc.append(xt.donors[j]); }
         j = j + 1;
     }
-    return out;
+    var k: i32 = 0;
+    while (k < stmts.len()) {
+        match (stmts[k]) {
+            parser.StmtIf(f) => { acc = reuse_consumed_block(f.then_body, structs, fresh_ret, acc); acc = reuse_consumed_block(f.else_body, structs, fresh_ret, acc); },
+            parser.StmtWhile(w) => { acc = reuse_consumed_block(w.body, structs, fresh_ret, acc); },
+            parser.StmtFor(fo) => { acc = reuse_consumed_block(fo.body, structs, fresh_ret, acc); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = reuse_consumed_block(m.arms[ai].body, structs, fresh_ret, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return acc;
 }
 
 // --- consumingMatchReuse port (#4482, the last rcPlan table) -----------------
@@ -23042,12 +23090,16 @@ pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // corpus case, documenting both gaps. Entries are the arm CTOR call
 // positions, matching native nodePos of the ctor *ast.Call.
 pub function consuming_match_reuse_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
-    var out: string[] = [];
-    if (reuse_layer_disabled()) { return out; }
-    var sites: InArmReuseSites = consumed_inarm_reuse_sites(fn.body, structs);
+    if (reuse_layer_disabled()) { return []; }
+    return consuming_match_reuse_block(fn.body, structs, []);
+}
+
+function consuming_match_reuse_block(stmts: parser.Stmt[], structs: parser.StructDecl[], out: string[]): string[] {
+    var acc: string[] = out;
+    var sites: InArmReuseSites = consumed_inarm_reuse_sites(stmts, structs);
     var i: i32 = 0;
     while (i < sites.idxs.len()) {
-        match (fn.body[sites.idxs[i]]) {
+        match (stmts[sites.idxs[i]]) {
             parser.StmtVar(v) => {
                 var arms: parser.MatchArm[] = inarm_iife_match(v.init, structs);
                 var ai: i32 = 0;
@@ -23057,7 +23109,7 @@ pub function consuming_match_reuse_of(fn: parser.FuncDecl, structs: parser.Struc
                             parser.StmtReturn(r) => {
                                 match (r.value) {
                                     parser.ExprCall(c) => {
-                                        out = out.append(util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col));
+                                        acc = acc.append(util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col));
                                     },
                                     _ => {}
                                 }
@@ -23072,7 +23124,21 @@ pub function consuming_match_reuse_of(fn: parser.FuncDecl, structs: parser.Struc
         }
         i = i + 1;
     }
-    return out;
+    var k: i32 = 0;
+    while (k < stmts.len()) {
+        match (stmts[k]) {
+            parser.StmtIf(f) => { acc = consuming_match_reuse_block(f.then_body, structs, acc); acc = consuming_match_reuse_block(f.else_body, structs, acc); },
+            parser.StmtWhile(w) => { acc = consuming_match_reuse_block(w.body, structs, acc); },
+            parser.StmtFor(fo) => { acc = consuming_match_reuse_block(fo.body, structs, acc); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = consuming_match_reuse_block(m.arms[ai].body, structs, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return acc;
 }
 
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no

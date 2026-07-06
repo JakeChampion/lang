@@ -349,6 +349,46 @@ function main(): i32 { return go(); }`,
 				"go": {"consumingMatchReuse": {native: "", selfhost: "4:34,4:62"}},
 			},
 		},
+		{
+			// NESTED (loop-body) reuse: the canonical FBIP shape — donor `a`
+			// and recipient `b` both declared in the while body, paired every
+			// iteration. Previously the self-host dump under-reported this
+			// (fn.body-top-level only); now both compilers walk the nested
+			// block. reuseSources keys on the recipient struct-lit position.
+			name: "nested-loop-reuse",
+			src: `struct P { x: i32, y: i32 }
+function loopr(): i32 {
+	var sum: i32 = 0;
+	var i: i32 = 0;
+	while (i < 4) {
+		var a: P = P { x: i, y: i + 1 };
+		var s: i32 = a.x + a.y;
+		var b: P = P { x: i * 2, y: 3 };
+		sum = sum + s + b.x + b.y;
+		i = i + 1;
+	}
+	return sum;
+}
+function main(): i32 { return loopr(); }`,
+			anchor: map[string]map[string]string{"loopr": {"reuseSources": "8:14<-a", "reuseConsumed": "a"}},
+		},
+		{
+			// NESTED (if-arm) reuse: donor + recipient inside an if-then block.
+			name: "nested-if-reuse",
+			src: `struct P { x: i32, y: i32 }
+function ifr(f: i32): i32 {
+	var r: i32 = 0;
+	if (f > 0) {
+		var a: P = P { x: 10, y: 20 };
+		var s: i32 = a.x + a.y;
+		var b: P = P { x: 3, y: 4 };
+		r = s + b.x + b.y;
+	}
+	return r;
+}
+function main(): i32 { return ifr(1); }`,
+			anchor: map[string]map[string]string{"ifr": {"reuseSources": "7:14<-a", "reuseConsumed": "a"}},
+		},
 	}
 
 	for _, tc := range cases {
