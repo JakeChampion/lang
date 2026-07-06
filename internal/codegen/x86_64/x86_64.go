@@ -183,22 +183,25 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	// Size-neutral IR pass battery (#4377 slice 1) — per-function rewrites
-	// the wasm backend runs that neither add nor remove functions, so the
-	// emitFunc AST↔IR parallel-index walk below stays valid. FuseTee fuses
-	// store+reload into OpTeeLocal (both natives already emit it);
+	// Size-neutral IR pass battery (#4377 slice 1 / 1b) — per-function
+	// rewrites the wasm backend runs that neither add nor remove functions,
+	// so the emitFunc AST↔IR parallel-index walk below stays valid. FuseTee
+	// fuses store+reload into OpTeeLocal (both natives already emit it);
 	// FlattenBranches drops `if (false) { … }` bodies before they reach asm;
 	// EliminateDeadCode trims ops after a terminator.
 	//
-	// OptimizeCleanup (copyprop/constprop/Fold/strength) is deliberately NOT
-	// here yet: enabling it segfaults the tuple_elem_tag_run self-host driver
-	// (bisected to ir.Fold) — a latent native-emitter assumption Fold's
-	// output violates, which the wasm backend never exercised. That is slice
-	// 1b, gated on diagnosing + fixing the emitter interaction (#4377).
+	// OptimizeCleanup (copyprop/constprop/Fold/strength) landed in slice 1b.
+	// Enabling it first segfaulted the tuple_elem_tag_run self-host driver:
+	// ir.Fold folds `0 - 1` to a single i32 const, and `mov eax, imm` loads
+	// it zero-extended so the value's 64-bit stack slot has a dirty high half
+	// (0x0000_0000_FFFF_FFFF for -1). The array/slice/string index helper
+	// then bounds-checked the low 32 bits but scaled the full 64-bit index —
+	// a mismatch now fixed (emitInlineIdxHelper zero-extends the index).
 	// ir.Inline and the whole-function IR cull are slice 2 (parallel-index
 	// refactor).
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
+	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole}
 	// Pre-scan call sites for runtime-helper use-flags before
@@ -3422,6 +3425,22 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	// second.
 	g.emit("mov rcx, [rsp]") // idx
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+	// Canonicalise the index to 32 bits. Array / slice / string lengths
+	// are all 32-bit here (the length prefix is a 4-byte field), so an
+	// index is an i32 — and an i32 value only carries meaning in its low
+	// 32 bits: arithmetic overflow, or a folded constant like -1 loaded
+	// with `mov eax, imm` (zero-extending), can leave the high 32 bits
+	// dirty. The bounds checks below compare the low 32 bits
+	// (`cmp ecx, edx`), but the address scaling uses the full 64-bit rcx
+	// (`lea rax, [rax + rcx*8]`). Without this `mov ecx, ecx` zero-extend
+	// a dirty high half slips an out-of-range effective index past the
+	// check straight into a wild `base + idx*stride` dereference (e.g.
+	// `0x1_0000_0000`: low 32 = 0 passes `< len`, but ×8 lands 32 GiB
+	// out). It must be a standalone `mov ecx, ecx` — folding the
+	// truncation into the pop above (`mov ecx, [rsp]`) is undone by the
+	// streaming peephole, which fuses the push/pop into a mixed-width
+	// `mov ecx, rax`.
+	g.emit("mov ecx, ecx") // clear the high 32 bits of the index
 	g.emit("mov rax, [rsp]") // base
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	switch name {

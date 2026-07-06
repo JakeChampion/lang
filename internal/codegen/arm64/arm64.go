@@ -269,14 +269,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	// Size-neutral IR pass battery (#4377 slice 1) — mirrors the x86-64
-	// backend: in-place per-function rewrites that keep ip.Funcs index-
-	// aligned with prog.Funcs for the parallel walk below. OptimizeCleanup
-	// (Fold) is held back to slice 1b — it segfaults the tuple_elem_tag_run
-	// self-host driver on both natives (a latent emitter assumption Fold's
-	// output violates); ir.Inline + the whole-function cull are slice 2.
+	// Size-neutral IR pass battery (#4377 slice 1 / 1b) — mirrors the
+	// x86-64 backend: in-place per-function rewrites that keep ip.Funcs
+	// index-aligned with prog.Funcs for the parallel walk below.
+	// OptimizeCleanup (copyprop/constprop/Fold/strength) landed in slice 1b
+	// once the latent index-scaling bug it exposed was fixed: Fold can turn
+	// `0 - 1` into a folded i32 const whose 64-bit slot has a dirty high
+	// half, and the array/slice/string index helpers used to scale the full
+	// 64-bit index while only bounds-checking its low 32 bits (now fixed to
+	// scale `w0, uxtw`). ir.Inline + the whole-function cull are slice 2.
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
+	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole}
 	for _, fn := range prog.Funcs {
@@ -2626,8 +2630,10 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("ldr x1, [sp], #%d", slotBytes) // len
 		g.emit("ldr x2, [sp], #%d", slotBytes) // data
 		g.emit("tbnz x1, #63, %s", inlineLbl)
-		// Heap form: byte address = data + idx.
-		g.emit("add x0, x2, x0")
+		// Heap form: byte address = data + idx. `w0, uxtw` uses only
+		// the low 32 bits of the index (see __arr_idx_1 for why a
+		// dirty i32 high half must not reach 64-bit address math).
+		g.emit("add x0, x2, w0, uxtw")
 		g.emit("b %s", doneLbl)
 		g.label(inlineLbl)
 		// Inline form: spill (data, len) at the 16-byte
@@ -2637,7 +2643,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.adrpAdd("x3", "__fern_str_idx_scratch")
 		g.emit("str x2, [x3]")     // data bytes at scratch[0..7]
 		g.emit("str x1, [x3, #8]") // len bytes at scratch[8..15]
-		g.emit("add x0, x3, x0")
+		g.emit("add x0, x3, w0, uxtw")
 		g.label(doneLbl)
 		g.push()
 		return nil
@@ -2658,12 +2664,12 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		inlineLbl := fmt.Sprintf(".Lstridx_inline_%d", id)
 		doneLbl := fmt.Sprintf(".Lstridx_done_%d", id)
 		g.emit("tbnz x1, #0, %s", inlineLbl)
-		g.emit("add x0, x1, x0")
+		g.emit("add x0, x1, w0, uxtw")
 		g.emit("b %s", doneLbl)
 		g.label(inlineLbl)
 		g.adrpAdd("x2", "__fern_str_idx_scratch")
 		g.emit("str x1, [x2]")
-		g.emit("add x0, x2, x0")
+		g.emit("add x0, x2, w0, uxtw")
 		g.emit("add x0, x0, #1")
 		g.label(doneLbl)
 	case "__arr_idx_1":
@@ -2671,18 +2677,27 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// idx. Split from $__str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `tbnz` check.
+		//
+		// The scaled add takes `w0, uxtw` — only the low 32 bits of
+		// the index, zero-extended. An i32 index carries meaning only
+		// in its low 32 bits (arithmetic overflow, or a folded const
+		// like -1, can leave the high half dirty); the bounds check
+		// above compares `w0` (32-bit), so scaling `x0` (64-bit) would
+		// let a dirty high half slip an out-of-range effective index
+		// past the check into a wild `base + idx*stride`. See the
+		// x86-64 sibling for the worked example.
 		g.emitArrBoundsCheck()
-		g.emit("add x0, x1, x0")
+		g.emit("add x0, x1, w0, uxtw")
 	case "__arr_idx":
 		g.emitArrBoundsCheck()
-		g.emit("add x0, x1, x0, lsl #2")
+		g.emit("add x0, x1, w0, uxtw #2")
 	case "__arr_idx_8":
 		g.emitArrBoundsCheck()
-		g.emit("add x0, x1, x0, lsl #3")
+		g.emit("add x0, x1, w0, uxtw #3")
 	case "__arr_idx_16":
 		// 16-byte stride — two-word `string[]` element load.
 		g.emitArrBoundsCheck()
-		g.emit("add x0, x1, x0, lsl #4")
+		g.emit("add x0, x1, w0, uxtw #4")
 	// Slice indexing first bounds-checks `i` against the slice
 	// header's len (at [slice+4]), then dereferences its 32-bit
 	// data_ptr field (at [slice+0]) and does the same
@@ -2690,19 +2705,19 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	case "__slice_idx_1":
 		g.emitSliceBoundsCheck()
 		g.emit("ldr x1, [x1]") // data_ptr (8-byte pointer)
-		g.emit("add x0, x1, x0")
+		g.emit("add x0, x1, w0, uxtw")
 	case "__slice_idx":
 		g.emitSliceBoundsCheck()
 		g.emit("ldr x1, [x1]")
-		g.emit("add x0, x1, x0, lsl #2")
+		g.emit("add x0, x1, w0, uxtw #2")
 	case "__slice_idx_8":
 		g.emitSliceBoundsCheck()
 		g.emit("ldr x1, [x1]")
-		g.emit("add x0, x1, x0, lsl #3")
+		g.emit("add x0, x1, w0, uxtw #3")
 	case "__slice_idx_16":
 		g.emitSliceBoundsCheck()
 		g.emit("ldr x1, [x1]")
-		g.emit("add x0, x1, x0, lsl #4")
+		g.emit("add x0, x1, w0, uxtw #4")
 	default:
 		return fmt.Errorf("arm64: unknown index helper %q", name)
 	}
