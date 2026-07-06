@@ -7409,7 +7409,7 @@ pub function readfile_func(): string {
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $err))\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
     o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
     // Growable read buffer: a [len][bytes] block whose data capacity starts
@@ -7456,7 +7456,7 @@ pub function writefile_func(): string {
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 0))\n";
-    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $err))\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
     o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
     o = o + "    (i32.store (i32.const 0) (i32.add (local.get $cp) (i32.const 4)))\n";
@@ -7495,7 +7495,7 @@ pub function stat_func(): string {
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
     o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $res))))\n";
     o = o + "    (local.set $ft (i32.load8_u (i32.add (local.get $buf) (i32.const 16))))\n";
     o = o + "    (local.set $sz (i32.load (i32.add (local.get $buf) (i32.const 32))))\n";
@@ -7536,7 +7536,7 @@ pub function remove_file_func(): string {
     o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
     o = o + "      (return (local.get $res))))\n";
     o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "    (local.get $res))\n";
     return o;
 }
@@ -7572,7 +7572,7 @@ pub function read_dir_func(): string {
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
     o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $err))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $res))))\n";
     o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
     // Empty string[] (len = cap = 0); $__fern_arr_push grows it.
@@ -7676,7 +7676,7 @@ pub function remove_dir_func(): string {
     o = o + "      (if (i32.eq (local.get $err) (i32.const 54)) (then\n";
     o = o + "        (drop (call $path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
     o = o + "        (return (call $__rda_none))))\n";
-    o = o + "      (return (call $__rda_some (local.get $err)))))\n";
+    o = o + "      (return (call $__rda_some (call $__fern_build_io_error (local.get $err) (local.get $path))))))\n";
     o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
     // Enumerate all child names into a string[] (empty to grow).
     o = o + "    (local.set $names (call $__fern_arr_box (i32.const 0)))\n";
@@ -8019,7 +8019,7 @@ pub function temp_dir_func(): string {
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
     o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $blk)))\n";
     o = o + "      (return (local.get $res))))\n";
     // Ok(path).
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
@@ -12358,7 +12358,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // $__fern_read_file: path_open + fd_read loop + fd_close, boxing the file
         // bytes as a string. Its wasi imports are gated above; the differential
         // wasm_ir_run driver emits this same helper on the read_file op.
-        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) { ir_out = ir_out + readfile_func(); }
+        // $__fern_build_io_error(errno, path) backs read_file's Err payload
+        // (and every other fs helper's) with a real IoError variant box — emit
+        // it whenever the helper is present so the WAT reference resolves.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) { ir_out = ir_out + wasm_ir.build_io_error_func(mod.structs) + readfile_func(); }
         if (wasm_ir.module_uses_arr_slice(ir_cache)) { ir_out = ir_out + arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(ir_cache)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(ir_cache)) { ir_out = ir_out + map_helpers(); }
@@ -12600,6 +12603,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     if (has_args) {
         if (io) { out = out + args_func_p2(); } else { out = out + args_func(); }
     }
+    // Preview-1 read_file/write_file box their Err payload via
+    // $__fern_build_io_error; emit it once for either. (The preview-2 _p2
+    // helpers keep their own shape.)
+    if (!fs && (has_readfile || has_writefile)) { out = out + wasm_ir.build_io_error_func(mod.structs); }
     if (has_readfile) {
         if (fs) { out = out + readfile_func_p2(); } else { out = out + readfile_func(); }
     }

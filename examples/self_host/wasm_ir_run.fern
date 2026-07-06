@@ -225,6 +225,12 @@ function main(): i32 {
         // Option[string] (Some(value)/None). Heap-backed (allocates the value +
         // box), so the heap gate above folds env in.
         if (wasm_ir.module_emits_op_cached(ir_cache, "env")) { o = o + wasm.env_func(); }
+        // $__fern_build_io_error(errno, path): map a WASI errno to a real
+        // IoError variant box, shared by every fs helper's error path (the wasm
+        // sibling of native wasmbin's __build_io_error / asm_ir's
+        // __fern_io_error). Emit it once whenever any fs op is present so the
+        // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "read_file") || wasm_ir.module_emits_op_cached(ir_cache, "write_file")) { o = o + wasm_ir.build_io_error_func(mod.structs); }
         // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
         // Result box. Heap-backed (allocates the buffer + boxes), so folded into
         // the heap gate above.
