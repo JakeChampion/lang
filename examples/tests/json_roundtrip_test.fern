@@ -149,6 +149,17 @@ function test_encode_string_escape(): test.TestOutcome {
     }
 }
 
+// Every escape branch back-to-back — the five named escapes (" \ \n \r \t) plus
+// a control byte (, the 6-byte branch) — re-encodes byte-for-byte. Guards
+// the two-pass exact-size buffer: a miscount would corrupt or truncate here.
+function test_encode_string_escape_all(): test.TestOutcome {
+    var j: string = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
+    match (json.json_parse(j)) {
+        Some(v) => { return test.assert_eq(json.json_encode(v), j); },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
 function test_parse_invalid(): test.TestOutcome {
     // Trailing garbage → None.
     match (json.json_parse("{\"a\":1} trailing")) {
@@ -262,6 +273,7 @@ function main(): i32 {
     r = r.it("encode array round trip", test_encode_array_round_trip());
     r = r.it("encode scalars",    test_encode_scalars());
     r = r.it("encode string escape", test_encode_string_escape());
+    r = r.it("encode string escape all", test_encode_string_escape_all());
     r = r.it("parse invalid",     test_parse_invalid());
     r = r.it("depth ok",          test_depth_ok());
     r = r.it("depth limit",       test_depth_limit());
