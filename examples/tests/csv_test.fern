@@ -36,6 +36,16 @@ function test_join_empty(): test.TestOutcome {
     return test.assert_eq(csv.csv_join([]), "");
 }
 
+// Many fields mixing pass-through, comma-quoted, quote-doubled, empty,
+// and newline-quoted content — exercises the two-pass exact-size buffer
+// (#4379) growing path where csv_join used to recopy the whole record
+// per field.
+function test_join_many(): test.TestOutcome {
+    var row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
+    return test.assert_eq(csv.csv_join(row),
+        "plain,\"has,comma\",\"has\"\"quote\",,\"line\nbreak\"");
+}
+
 function test_parse_plain(): test.TestOutcome {
     return test.assert_eq_array(csv.csv_parse_line("a,b,c"), ["a", "b", "c"]);
 }
@@ -68,6 +78,7 @@ function main(): i32 {
     r = r.it("join",                    test_join());
     r = r.it("join escapes fields",     test_join_escapes());
     r = r.it("join empty",              test_join_empty());
+    r = r.it("join many mixed",         test_join_many());
     r = r.it("parse plain",             test_parse_plain());
     r = r.it("parse quoted comma",      test_parse_quoted_comma());
     r = r.it("parse doubled quote",     test_parse_doubled_quote());

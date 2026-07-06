@@ -31,14 +31,31 @@ pub function csv_escape(s: string): string {
 
 pub function csv_join(arr: string[]): string {
     var n: i32 = arr.len();
-    var out: string = "";
+    if (n == 0) { return ""; }
+    // Two-pass exact-size buffer (#4379): the naive `out = out + csv_escape(…)`
+    // recopied the whole growing record on every field — O(total²). csv_escape
+    // is a pure O(len) transform, so a sizing pass that escapes once per field
+    // (plus the `,` separators) stays O(total) overall, then a fill pass
+    // re-escapes into one __alloc_u8 buffer. Byte-for-byte identical output.
+    var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        if (i > 0) { out = out + ","; }
-        out = out + csv_escape(arr[i]);
+        if (i > 0) { total = total + 1; }       // ","
+        total = total + csv_escape(arr[i]).len();
         i = i + 1;
     }
-    return out;
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        if (i > 0) { buf = buf.with(pos, 44 as u8); pos = pos + 1; }   // ','
+        var f: string = csv_escape(arr[i]);
+        var fl: i32 = f.len();
+        var j: i32 = 0;
+        while (j < fl) { buf = buf.with(pos, f[j] as u8); pos = pos + 1; j = j + 1; }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `csv_parse_line(s)` — RFC 4180 parser for a single line.
