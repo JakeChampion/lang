@@ -69,6 +69,16 @@ function test_roundtrip(): test.TestOutcome {
     return test.assert_eq_array(csv.csv_parse_line(csv.csv_join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
 }
 
+// Exercises the field builder rewritten to a growable u8[] (#4379): a
+// multi-byte UTF-8 field (byte-at-a-time append must reassemble it intact), a
+// leading empty field, and a long unquoted field that grows the buffer across
+// reallocations. Byte-identical to the old char-concat behaviour.
+function test_parse_multibyte_and_growth(): test.TestOutcome {
+    return test.assert_eq_array(
+        csv.csv_parse_line(",Glóin,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Þórin"),
+        ["", "Glóin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Þórin"]);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/csv");
     r = r.it("escape plain",            test_escape_plain());
@@ -84,5 +94,6 @@ function main(): i32 {
     r = r.it("parse doubled quote",     test_parse_doubled_quote());
     r = r.it("parse empty",             test_parse_empty());
     r = r.it("round-trip join/parse",   test_roundtrip());
+    r = r.it("parse multibyte + growth", test_parse_multibyte_and_growth());
     return r.finish();
 }
