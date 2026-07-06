@@ -1442,29 +1442,36 @@ pub function (s: string) is_uuid(): boolean {
 // would need codepoint handling we don't have yet. Empty `ch`
 // degenerates to no padding (returns the original).
 pub function (s: string) pad_start(n: i32, ch: string): string {
-    if (s.len() >= n) { return s; }
+    var sl: i32 = s.len();
+    if (sl >= n) { return s; }
     if (ch.len() == 0) { return s; }
-    var pad: string = "";
-    var need: i32 = n - s.len();
+    // Result is exactly n bytes; fill one buffer (O(n)) instead of the
+    // `pad = pad + ch[0:1]` loop, which recopied the growing pad each
+    // step (O(need²) — the #4379 hot path). `need` fill bytes, then s.
+    var c: i32 = ch[0];
+    var need: i32 = n - sl;
+    var buf: u8[] = __alloc_u8(n);
     var i: i32 = 0;
-    while (i < need) {
-        pad = pad + ch[0:1];
-        i = i + 1;
-    }
-    return pad + s;
+    while (i < need) { buf = buf.with(i, c as u8); i = i + 1; }
+    var j: i32 = 0;
+    while (j < sl) { buf = buf.with(need + j, s[j] as u8); j = j + 1; }
+    return string_from_bytes(buf);
 }
 
 pub function (s: string) pad_end(n: i32, ch: string): string {
-    if (s.len() >= n) { return s; }
+    var sl: i32 = s.len();
+    if (sl >= n) { return s; }
     if (ch.len() == 0) { return s; }
-    var pad: string = "";
-    var need: i32 = n - s.len();
+    // Result is exactly n bytes; fill one buffer (O(n)). s, then `need`
+    // fill bytes.
+    var c: i32 = ch[0];
+    var need: i32 = n - sl;
+    var buf: u8[] = __alloc_u8(n);
+    var j: i32 = 0;
+    while (j < sl) { buf = buf.with(j, s[j] as u8); j = j + 1; }
     var i: i32 = 0;
-    while (i < need) {
-        pad = pad + ch[0:1];
-        i = i + 1;
-    }
-    return s + pad;
+    while (i < need) { buf = buf.with(sl + i, c as u8); i = i + 1; }
+    return string_from_bytes(buf);
 }
 
 // `s.split_once(sep)` — splits at the FIRST occurrence of
