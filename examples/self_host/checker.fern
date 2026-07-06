@@ -5568,21 +5568,51 @@ function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_name
 // default is synthesised onto the impl), so a complete-via-default impl is
 // never falsely flagged. This is the first slice of the E021 family; arity /
 // object-safety / supertrait / bound conformance (+ E060 / E062) are follow-ups.
-// e021_type_has_method reports whether `ty` already has a receiver method named
-// `m` anywhere in the module — an inherent method (a builtin like i32.to_string
-// from core/int, or another impl's method), matching native's conformance rule:
-// an EMPTY `impl Display for i32 { }` is valid because i32 already carries
-// to_string, so the required method is "adopted", not missing. Without this the
-// core/cmp empty impls (Display/Eq/… for the numeric + string types) draw a
-// spurious E021 that native never reports.
-function e021_type_has_method(mod: parser.Module, ty: string, m: string): boolean {
+// e021_recv_method_idx returns the index in mod.funcs of the receiver method
+// named `m` on base type `ty`, or -1. This is the impl's PROVIDING method — a
+// written impl method OR an inherent method an empty impl adopts (a builtin like
+// i32.to_string from core/int, matching native's "empty impls adopt the existing
+// method" rule: `impl Display for i32 { }` is valid because i32 already carries
+// to_string). A -1 with no in-block method_names entry is the missing-method
+// E021; a hit additionally drives the signature check.
+function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
-        if (f.receiver_type.len() > 0 && f.name == m && util.base_type_name(f.receiver_type) == ty) { return true; }
+        if (f.receiver_type.len() > 0 && f.name == m && util.base_type_name(f.receiver_type) == ty) { return i; }
         i = i + 1;
     }
-    return false;
+    return 0 - 1;
+}
+
+// e021_sig_matches compares a trait's required method signature `req` against
+// the impl's providing method `impl_fn` (Self resolved to impl_type). It is
+// DELIBERATELY conservative — returns true (no diagnostic) whenever it can't
+// compare with certainty — so it never false-positives on the self-host bundle:
+//   - only receiver-shaped trait methods (a leading `self` param) are compared;
+//     associated functions (Default.default etc.) are skipped;
+//   - a generic trait method OR impl method (type params present) is skipped,
+//     since a bare type-name string compare can't see the erased params;
+// otherwise the trait's post-`self` param type list + return type (each rewritten
+// Self -> impl_type via the same parser.subst_self finalize_impl_method used on
+// the impl side) must equal the impl method's params + return, or it's a
+// mismatch (native E021 "wrong signature").
+function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string): boolean {
+    if (req.type_params.len() > 0 || req.type_param_count > 0) { return true; }
+    if (impl_fn.type_params.len() > 0 || impl_fn.type_param_count > 0) { return true; }
+    if (req.params.len() == 0) { return true; }
+    if (req.params[0].name != "self") { return true; }
+    // Trait's post-self param count must equal the impl method's param count
+    // (the impl peeled its own `self` into the receiver).
+    if (req.params.len() - 1 != impl_fn.params.len()) { return false; }
+    var i: i32 = 1;
+    while (i < req.params.len()) {
+        var want: string = parser.subst_self(req.params[i].type_name, impl_type);
+        if (want != impl_fn.params[i - 1].type_name) { return false; }
+        i = i + 1;
+    }
+    if (parser.subst_self(req.ret_type, impl_type) != impl_fn.ret_type) { return false; }
+    return true;
 }
 
 function e021_diags(mod: parser.Module): Diag[] {
@@ -5594,13 +5624,21 @@ function e021_diags(mod: parser.Module): Diag[] {
         while (ti < mod.trait_reqs.len()) {
             if (mod.trait_reqs[ti].trait_name == im.trait_name) {
                 var reqs: string[] = mod.trait_reqs[ti].methods;
+                var sigs: parser.FuncDecl[] = mod.trait_reqs[ti].req_sigs;
                 var ri: i32 = 0;
                 while (ri < reqs.len()) {
                     // Satisfied if the impl block writes it OR the type already
                     // has an inherent / cross-impl method of that name (native's
                     // "adopt the existing method" rule).
-                    if (!name_in(reqs[ri], im.method_names) && !e021_type_has_method(mod, im.impl_type, reqs[ri])) {
+                    var midx: i32 = e021_recv_method_idx(mod, im.impl_type, reqs[ri]);
+                    if (!name_in(reqs[ri], im.method_names) && midx < 0) {
                         out = out.append(dg("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\""));
+                    } else if (midx >= 0 && ri < sigs.len()) {
+                        // Provided as a receiver method — check its signature
+                        // against the trait's declaration (#4347 slice 2).
+                        if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type)) {
+                            out = out.append(dg("E021", im.impl_type + "." + reqs[ri] + " has the wrong signature for trait " + im.trait_name));
+                        }
                     }
                     ri = ri + 1;
                 }
