@@ -11013,6 +11013,33 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                 aps = lower_expr(wc.args[0], aps);
                                 if (!aps.ok) { return aps; }
                             }
+                            // #4702: a bare OWNED pointer-array ELEMENT
+                            // (`out.append(grp)`, grp an `i32[]` local) ESCAPES
+                            // into the container — arr_push[_owned] stores its
+                            // buffer pointer with no counted reference, so grp's
+                            // loop-rebind reinit-drop (emit_arr_store's cow-guarded
+                            // dec) / exit sweep would free a buffer `out` still
+                            // holds, and the next `var grp = []` reuses it — every
+                            // appended group then aliases the last. Retain it here
+                            // (the same Perceus dup the struct-field construction
+                            // applies to a bare array-ident field, #3292/4579): the
+                            // container now holds a counted reference, so grp's dec
+                            // just returns it (rc 2→1, out keeps 1), never frees it
+                            // early. A borrowed param simply leaks (never over-
+                            // frees); a fresh literal / call element is not an ident,
+                            // so it is not inc'd. The inc is on a real rc-headered
+                            // array box (is_arr_slot), never a header-less string.
+                            match (wc.args[0]) {
+                                parser.ExprIdent(apel) => {
+                                    var apelslot: i32 = s.slot_of(apel.name);
+                                    if (apelslot >= 0 && s.is_arr_slot(apelslot)) {
+                                        aps = aps.emit(ir.op_load_local(apelslot));
+                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                        aps = aps.emit(ir.op_drop());
+                                    }
+                                },
+                                _ => {}
+                            }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
                             // buffer has no surviving reference, so on a grow-
                             // realloc reclaim it (arr_push_owned) instead of
