@@ -9030,9 +9030,46 @@ function discardable_scalar_arr_lit(arr: parser.ExprArray, s: LowerState): boole
     if (arr.elements.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < arr.elements.len()) {
-        var e: parser.Expr = arr.elements[i];
-        if (expr_is_str(e, s) || expr_is_strarr(e, s) || expr_is_arr_src(e, s) || expr_struct_type(e, s) != "") { return false; }
+        if (!expr_scalar_leaf(arr.elements[i], s)) { return false; }
         i = i + 1;
+    }
+    return true;
+}
+
+// expr_scalar_leaf reports whether `e` produces a flat SCALAR value (i32 / i64 /
+// f64 / boolean) rather than a heap pointer — not a string, string-array, array,
+// or struct. Gates a discarded array / tuple literal's in-place box release: a
+// scalar-only box is single-level, so a shallow __fern_rc_dec fully reclaims it.
+function expr_scalar_leaf(e: parser.Expr, s: LowerState): boolean {
+    return !expr_is_str(e, s) && !expr_is_strarr(e, s) && !expr_is_arr_src(e, s) && expr_struct_type(e, s) == "";
+}
+
+// discardable_scalar_tuple_lit is the tuple analogue of discardable_scalar_arr_lit:
+// a discarded `(e0, e1, …);` whose elements are all scalar. A tuple box is a rc=1
+// sole owner with a single-level scalar payload, so the shallow __fern_rc_dec
+// fully reclaims it.
+function discardable_scalar_tuple_lit(tup: parser.ExprTuple, s: LowerState): boolean {
+    if (tup.elements.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < tup.elements.len()) {
+        if (!expr_scalar_leaf(tup.elements[i], s)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// struct_lit_all_scalar reports whether every field of struct `name` is a flat
+// scalar — so a discarded fresh `T { … };` box is single-level and a shallow
+// __fern_rc_dec fully reclaims it (no rc-field deep-drop needed). Structs with
+// array / string / nested-struct fields bail (their box dec would leave the
+// field payloads on the safe-leak floor — a later cut using __struct_drop).
+function struct_lit_all_scalar(structs: parser.StructDecl[], name: string): boolean {
+    var nf: i32 = decl_field_count(structs, name);
+    if (nf == 0) { return false; }
+    var fi: i32 = 0;
+    while (fi < nf) {
+        if (!reuse_field_is_scalar(decl_field_type_at(structs, name, fi))) { return false; }
+        fi = fi + 1;
     }
     return true;
 }
@@ -9379,6 +9416,22 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             match (es.value) {
                 parser.ExprArray(dae) => {
                     if (discardable_scalar_arr_lit(dae, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                },
+                // A discarded fresh scalar TUPLE / STRUCT literal box is likewise a
+                // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
+                parser.ExprTuple(dte) => {
+                    if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                },
+                parser.ExprStructLit(dse) => {
+                    if (!dse.has_base && struct_lit_all_scalar(s.structs, dse.type_name)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                },
+                // A discarded fresh STRING CONCAT (`a + b;`) allocates a new owned
+                // buffer that leaks if merely dropped — release it with the rc-aware
+                // __fern_str_free (box + heap data at rc==1; .rodata-guarded; a shared
+                // box just decs). The operands stay owned by their locals (concat
+                // reads them, produces a fresh buffer), so this frees only the temp.
+                parser.ExprBinary(dbe) => {
+                    if (dbe.op == "+" && expr_is_str(es.value, s)) { se = se.emit(ir.op_call_direct("__fern_str_free", 1)); }
                 },
                 _ => {}
             }
