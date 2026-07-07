@@ -10891,6 +10891,27 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // would emit. Loop-body re-binds free the prior iteration's box; the
     // final value is freed by the exit string sweep.
     if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot); }
+    // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
+    // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
+    // + "x" }; }`): the loop-rebind must DEEP-drop the prior box's STRING too, else
+    // the string box leaks every iteration (the array-only __field_reclaim path
+    // below skips strings; #4357). Route through __struct_drop + box dec
+    // (emit_struct_deep_reinit_store), which frees the k_str field. Gated on
+    // struct_lit_all_string_fields_fresh so old's string is provably sole-owned
+    // (rc=1) — an ALIASED string field would over-release (strdrop-two-alias), so
+    // it falls through to the array-only path (string leak-safe). The exit sweep is
+    // NOT widened (it can't see the construction site), so a non-fresh string still
+    // rides its existing balanced path; only this per-iteration reclaim is added.
+    match (v.init) {
+        parser.ExprStructLit(dsl) => {
+            if (!dsl.has_base && slot_is_reclaimable_struct(sb, slot)
+                && struct_has_string_field(sb.structs, struct_ty)
+                && struct_lit_all_string_fields_fresh(sb.structs, dsl, sb)) {
+                return emit_struct_deep_reinit_store(sb, slot, struct_ty);
+            }
+        },
+        _ => {}
+    }
     // A reclaimable struct LOOP-LOCAL with rc-array fields (`while { var t = f(i)
     // / P { .., xs: [..] }; … }`): the loop-rebind must DEEP-drop the prior
     // iteration's box — free its rc-array field buffers before freeing the box —
@@ -12503,6 +12524,42 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
     return false;
 }
 
+// struct_has_string_field reports whether struct `sty` has a bare `string` field.
+// __struct_drop's k_str arm frees such a field (rc-aware __fern_str_free), but only
+// when the field's constructed value is provably FRESH (sole-owned) — an ALIASED
+// bare-ident string field is retained by the caller, so freeing it double-releases
+// (the two-alias case). struct_lit_all_string_fields_fresh proves that per-site.
+pub function struct_has_string_field(structs: parser.StructDecl[], sty: string): boolean {
+    if (sty.len() == 0) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (decl_field_type_at(structs, sty, fi) == "string") { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// struct_lit_all_string_fields_fresh reports whether EVERY `string`-typed field of
+// a struct literal is set from a FRESH, sole-owned heap string (expr_is_fresh_str
+// — a concat / fresh-producer call, NOT a bare ident / field copy / view). Only
+// then is deep-dropping the string field balanced (rc=1 → freed once), so the
+// literal's box can ride emit_struct_deep_reinit_store's __struct_drop. A non-fresh
+// string field would be retained by an aliasing owner, so freeing it over-releases
+// (the strdrop-two-alias case). Missing / non-string field positions are skipped;
+// a struct with no string field returns true (vacuous — the caller pairs this with
+// struct_has_string_field).
+function struct_lit_all_string_fields_fresh(structs: parser.StructDecl[], slit: parser.ExprStructLit, s: LowerState): boolean {
+    var i: i32 = 0;
+    while (i < slit.field_names.len()) {
+        if (decl_field_type(structs, slit.type_name, slit.field_names[i]) == "string") {
+            if (!expr_is_fresh_str(slit.field_values[i], s)) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // struct_copy_eligible reports whether a functional update `T { ...base, f: v }`
 // of struct `sty` may lower its BASE COPY through the compact op_struct_copy path
 // (one `call __fn___fern_struct_copy` per site) instead of the inline per-field
@@ -12645,6 +12702,37 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
         st = st.emit(ir.op_const_i32(0));                       // snap = null (local reclaim)
     }
     st = st.emit(ir.op_call_direct("__field_reclaim_" + sty, 3));   // frees replaced fields + box; returns new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// emit_struct_deep_reinit_store stores `new` (on the operand stack) into a
+// reclaimable struct slot and DEEP-drops the OLD box first — __struct_drop_<T>
+// releases ALL of old's rc fields (arrays via the is_unique-gated k_arr/k_box
+// walk, STRINGS via k_str's rc-aware __fern_str_free, nested via k_struct), then
+// __fern_rc_dec frees the old box. Unlike emit_field_reclaim_store (arrays only,
+// per-field cow-walk) this reclaims the STRING field too. Used only when the caller
+// proves the init is a fresh no-base struct literal whose string fields are all
+// FRESH (struct_lit_all_string_fields_fresh) — so old's string is sole-owned
+// (rc=1) and freeing it is balanced (no aliasing owner). __struct_drop and
+// __fern_rc_dec both null-guard, so the first-iteration null `old` is a no-op; the
+// whole-box cow guard (`old != new`) skips a self-store. The scratch stashes `new`.
+function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): LowerState {
+    var scratch: string = "$sdr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_load_local(tmp));             // new
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != new (cow guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drop old's rc fields (null-guarded); returns box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));          // free old box (null-guarded)
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
 
