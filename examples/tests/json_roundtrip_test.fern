@@ -160,6 +160,19 @@ function test_encode_string_escape_all(): test.TestOutcome {
     }
 }
 
+// A nested array-of-objects with mixed scalars re-encodes byte-for-byte through
+// the recursive JArray + JObject arms — the ones whose per-level accumulation
+// moved from `out = out + …` to the growable-u8[] buffer (#4379). Exercises the
+// comma separators, quoted+escaped keys, and the nested-object recursion in one
+// shot; a buffer miscount here would reorder or truncate the output.
+function test_encode_nested_round_trip(): test.TestOutcome {
+    var j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
+    match (json.json_parse(j)) {
+        Some(v) => { return test.assert_eq(json.json_encode(v), j); },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
 function test_parse_invalid(): test.TestOutcome {
     // Trailing garbage → None.
     match (json.json_parse("{\"a\":1} trailing")) {
@@ -274,6 +287,7 @@ function main(): i32 {
     r = r.it("encode scalars",    test_encode_scalars());
     r = r.it("encode string escape", test_encode_string_escape());
     r = r.it("encode string escape all", test_encode_string_escape_all());
+    r = r.it("encode nested round trip", test_encode_nested_round_trip());
     r = r.it("parse invalid",     test_parse_invalid());
     r = r.it("depth ok",          test_depth_ok());
     r = r.it("depth limit",       test_depth_limit());
