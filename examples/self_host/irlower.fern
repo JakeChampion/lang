@@ -14679,11 +14679,19 @@ function collect_fresh_ret_call_names(stmts: parser.Stmt[], structs: parser.Stru
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
+                // A fresh-ret-CALL struct local (`var t: P = f(i)`, f strict-fresh)
+                // is reclaim-safe whether or not it carries an rc-array field: a
+                // SCALAR-only struct box is freed by a shallow rc-dec (emit_arr_store
+                // at loop-rebind / the exit sweep), an rc-field one by the deep
+                // __field_reclaim / __struct_drop path. The former was previously
+                // excluded by the struct_has_reclaim_array_field gate, so a scalar
+                // `var t = mk(i)` LEAKED its box every iteration (#4357 follow-up).
+                // The body_unsafe_for escape gate (applied by reclaimable_names_of)
+                // still proves non-escape before any box is freed.
                 if (v.type_name.len() > 0
                     && util.index_of_str(reassigned, v.name) < 0
                     && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)
-                    && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
-                    && struct_has_reclaim_array_field(structs, v.type_name)) {
+                    && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)) {
                     a = push_str_unique(a, v.name);
                 }
             },
