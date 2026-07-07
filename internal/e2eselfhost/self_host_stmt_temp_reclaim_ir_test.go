@@ -116,6 +116,22 @@ function main(): i32 {
 }`
 }
 
+// A discarded STRICT fresh-struct-returning call whose return type carries an
+// rc-ARRAY field (`mk(i) -> H { id, xs: [..] };`) sole-owns every field buffer
+// (the strict-fresh registry guarantees no aliased inner buffers), so the ExprCall
+// reclaim DEEP-drops it — __struct_drop_<H> releases xs, then __fern_rc_dec frees
+// the box — instead of freeing only the box and leaking xs.
+func stmtTempFreshCallRcFieldBumpSrc(n string) string {
+	return `struct H { id: i32, xs: i32[] }
+function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { mk(i); i = i + 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // Detectors: the discarded temp reclaims its OWN box while a live value built
 // from the same operands stays intact — a wrong "owned" verdict that freed a
 // shared box would corrupt the sum (999) or trip __rc_underflow (> 0). Sums:
@@ -193,6 +209,25 @@ function main(): i32 {
     return __rc_underflow();
 }`
 
+// The discarded rc-field-returning call `mk(i);` deep-drops its box AND xs while
+// the live `p = mk(i+1)` (its own fresh box + buffers) stays intact: p from
+// mk(i+1) has id=i+1, xs=[i+1,i+2,i+3]; acc += (i+1)+(i+1)+(i+2)+(i+3) = 4i+7
+// over 0..199 = 4*19900 + 1400 = 81000. The box-return-register clobber this
+// guards would double-free xs and trip __rc_underflow (> 0), not the sum.
+const stmtTempFreshCallRcFieldDetectorSrc = `struct H { id: i32, xs: i32[] }
+function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
+function main(): i32 {
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        mk(i);
+        var p: H = mk(i + 1);
+        acc = acc + p.id + p.xs[0] + p.xs[1] + p.xs[2];
+        i = i + 1;
+    }
+    if (acc != 81000) { return 999; }
+    return __rc_underflow();
+}`
+
 // TestSelfHostStmtTempReclaimIRX86_64 builds the self-host x86-64 IR driver once
 // and drives the two programs through it.
 func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
@@ -234,6 +269,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"rc-field-struct", stmtTempRcFieldStructBumpSrc},
 		{"string-concat", stmtTempStrConcatBumpSrc},
 		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
+		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldBumpSrc},
 	}
 	for _, sh := range fixpointShapes {
 		t.Run("fixpoint-bounded/"+sh.name, func(t *testing.T) {
@@ -258,6 +294,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"rc-field-struct", stmtTempRcFieldStructDetectorSrc},
 		{"string-concat", stmtTempStrConcatDetectorSrc},
 		{"fresh-call-struct", stmtTempFreshCallDetectorSrc},
+		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldDetectorSrc},
 	}
 	for _, sh := range detectorShapes {
 		t.Run("no-over-release/"+sh.name, func(t *testing.T) {

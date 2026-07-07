@@ -9476,14 +9476,34 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 // slice 2 / is_fresh_ret_binding), which leaks if merely dropped.
                 // Release the box with the shallow rc-guarded __fern_rc_dec (the
                 // native ownedCallResultType reclaim). A scalar-only result is fully
-                // reclaimed; a result carrying rc fields leaks only those payloads
-                // on the safe-leak floor (a deep-drop follow-up). Method / builtin /
-                // variant-constructor callees are excluded — they are not in the
-                // strict-fresh registry, so an in-place aliased result is never freed.
+                // reclaimed; a result whose return struct carries rc-array / nested-
+                // struct fields is DEEP-dropped — because the STRICT-fresh registry
+                // guarantees the returned box SOLE-owns every field buffer (no aliased
+                // inner buffers, unlike the looser fresh_struct_ret_fns), so
+                // __struct_drop_<RetT> reclaims those buffers with no double-free, then
+                // __fern_rc_dec frees the box (same composition as the ExprStructLit
+                // arm; box stashed in a scratch local because __struct_drop_<T>'s inner
+                // arr_dec clobbers the box return register). Method / builtin / variant-
+                // constructor callees are excluded — not in the strict-fresh registry.
                 parser.ExprCall(dce) => {
                     match (dce.callee) {
                         parser.ExprIdent(dcid) => {
-                            if (util.index_of_str(s.return_fresh_struct_ret_fns, dcid.name) >= 0) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                            if (util.index_of_str(s.return_fresh_struct_ret_fns, dcid.name) >= 0) {
+                                var crt: string = s.struct_ret_type(dcid.name);
+                                if (crt.len() > 0 && struct_fields_reusable(s.structs, crt) && struct_has_reclaim_array_field(s.structs, crt)) {
+                                    var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
+                                    se = se.add_local(fcd);
+                                    var fcslot: i32 = se.slot_of(fcd);
+                                    se = se.emit(ir.op_store_local(fcslot));                          // stash box
+                                    se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
+                                    se = se.emit(ir.op_call_direct("__struct_drop_" + crt, 1));       // deep-drop rc fields
+                                    se = se.emit(ir.op_drop());                                       // discard clobbered return
+                                    se = se.emit(ir.op_load_local(fcslot));                           // box again
+                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));              // free the box
+                                } else {
+                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                                }
+                            }
                         },
                         _ => {}
                     }
