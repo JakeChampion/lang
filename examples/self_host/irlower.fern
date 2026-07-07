@@ -8904,6 +8904,28 @@ function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): Lower
     return s.fail();
 }
 
+// discardable_scalar_arr_lit reports whether an array literal is a fresh
+// SCALAR-element buffer (i32 / i64 / f64 / boolean elements — no string /
+// string-array / nested-array / struct element), so a bare discarded
+// `[e0, e1, …];` statement can release its box in place: the literal is a
+// rc=1 sole owner (never bound / aliased), its buffer is single-level (scalar
+// elements need no deep-drop), and __fern_rc_dec is rc-guarded, so this frees
+// exactly the freshly-allocated buffer. Excludes pointer-element arrays (their
+// buffers hold rc payloads a shallow box dec would leak — a later cut) to keep
+// the discarded-temp reclaim (statement-temporary reclamation, stage a) a
+// COMPLETE, no-leak reclaim. String / struct / enum elements bail to the plain
+// leak-on-drop, exactly as before.
+function discardable_scalar_arr_lit(arr: parser.ExprArray, s: LowerState): boolean {
+    if (arr.elements.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < arr.elements.len()) {
+        var e: parser.Expr = arr.elements[i];
+        if (expr_is_str(e, s) || expr_is_strarr(e, s) || expr_is_arr_src(e, s) || expr_struct_type(e, s) != "") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // lower_stmt lowers one top-level statement of the i32 subset.
 pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -9232,8 +9254,23 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => {}
             }
             // General expression statement: lower the value, drop the result.
+            // Statement-temporary reclamation, stage (a): a discarded bare
+            // `[e0, e1, …];` whose value is a FRESH scalar-element array literal
+            // is a rc=1 sole owner that leaks every iteration if merely dropped
+            // (unbounded in a hot loop). Release its buffer with the rc-guarded
+            // __fern_rc_dec before the drop — the self-host sibling of native's
+            // emitOwnedTempStackDrop (docs/RC-PERCEUS-PLAN.md). Ident / field /
+            // index reads are borrowed views (an upstream owner / the exit sweep
+            // accounts for them) and never match discardable_scalar_arr_lit, so
+            // they keep leaking-safe on the plain drop.
             var se: LowerState = lower_expr(es.value, s);
             if (!se.ok) { return se; }
+            match (es.value) {
+                parser.ExprArray(dae) => {
+                    if (discardable_scalar_arr_lit(dae, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                },
+                _ => {}
+            }
             return se.emit(ir.op_drop());
         },
         parser.StmtMatch(m) =>{ return lower_stmt_match(m, s); },
