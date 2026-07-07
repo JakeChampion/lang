@@ -494,6 +494,24 @@ func TestRunnerTimeHttpDateExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/time_timezone_test.fern` covers std/time's zone lookup
+// (timezone_iana standard-time offsets, incl. the half-hour Kolkata
+// offset and the unknown-zone None) and the DST-awareness predicate
+// timezone_observes_dst (#4388 item 5). Passing → exit 0.
+func TestRunnerTimeTimezoneExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/time_timezone_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time timezone", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/json_roundtrip_test.fern")

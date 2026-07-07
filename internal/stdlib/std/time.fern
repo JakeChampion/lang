@@ -976,7 +976,9 @@ pub function (d: Date) days_until(other: Date): Span {
 // where the local-time-in-summer matters (Europe / North
 // America / Australia / NZ) will surface a wrong wall-clock
 // during DST months; UTC-based handler code that just stamps
-// timestamps doesn't notice.
+// timestamps doesn't notice. Call `timezone_observes_dst(name)`
+// to detect those zones and fall back (e.g. to UTC) rather than
+// trust a silently-wrong local time (#4388).
 //
 // Coverage in this PR — the ~80% of wall-clock-relevant zones
 // for edge-handler workloads:
@@ -1036,4 +1038,43 @@ pub function timezone_iana(name: string): Option[TimeZone] {
     if (name == "Pacific/Honolulu") { return Some(timezone_fixed_offset(0 - 10 * 3600)); }
     if (name == "Pacific/Auckland") { return Some(timezone_fixed_offset(12 * 3600)); }
     return None;
+}
+
+// `timezone_observes_dst(name)` — true for a known zone whose
+// `timezone_iana` offset is its STANDARD-time offset and is therefore
+// wrong during that zone's daylight-saving months (this module has no
+// DST transition tables, #4388). It converts `timezone_iana`'s silent
+// half-the-year wrongness into something a caller can detect: wall-clock
+// conversions can check this and fall back (refuse, or use UTC) instead
+// of trusting a local time that may be an hour off; UTC-stamping callers
+// can ignore it. Returns false for genuinely fixed-offset zones (UTC,
+// most of Asia, Arizona/Hawaii, post-2019 Brazil, post-2014 Russia) and
+// for any name `timezone_iana` doesn't know. Accurate as of 2026 —
+// like the lookup table, it needs revisiting if a zone changes policy.
+pub function timezone_observes_dst(name: string): boolean {
+    // North America — US / Canada observe DST.
+    if (name == "America/New_York") { return true; }
+    if (name == "America/Toronto") { return true; }
+    if (name == "America/Chicago") { return true; }
+    if (name == "America/Denver") { return true; }
+    if (name == "America/Los_Angeles") { return true; }
+    if (name == "America/Anchorage") { return true; }
+    // America/Phoenix (Arizona), America/Honolulu, Pacific/Honolulu,
+    // and America/Sao_Paulo (Brazil dropped DST in 2019) do NOT.
+    // Europe — EU / UK observe DST.
+    if (name == "Europe/London") { return true; }
+    if (name == "Europe/Dublin") { return true; }
+    if (name == "Europe/Paris") { return true; }
+    if (name == "Europe/Berlin") { return true; }
+    if (name == "Europe/Madrid") { return true; }
+    if (name == "Europe/Rome") { return true; }
+    if (name == "Europe/Amsterdam") { return true; }
+    // Europe/Moscow has not observed DST since 2014.
+    // Africa / Middle East — Egypt reinstated DST in 2023.
+    if (name == "Africa/Cairo") { return true; }
+    // Australasia — Southern-Hemisphere DST.
+    if (name == "Australia/Sydney") { return true; }
+    if (name == "Australia/Melbourne") { return true; }
+    if (name == "Pacific/Auckland") { return true; }
+    return false;
 }
