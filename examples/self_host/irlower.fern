@@ -7512,7 +7512,16 @@ function iife_any_return_i64(st: parser.Stmt, s: LowerState): boolean {
 function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState, force_i64: boolean): LowerState {
     if (c.args.len() != 0) { return s.fail(); }
     if (lam.params.len() != 0) { return s.fail(); }
-    if (lam.body.len() != 1) { return s.fail(); }
+    // A MULTI-statement IIFE body is a value-position BLOCK: general
+    // block-expressions (#4521, `{ var k = …; tail }`) and control-flow blocks
+    // (#4522, `{ if (early) { return 0; } tail }`). Lower it INLINE — the
+    // leading statements run in the current function (so a user
+    // return/break/continue escapes to the function/loop, exactly like the
+    // native *ast.BlockExpr arm) and only the FINAL synthetic `return tail`
+    // becomes the value temp. The if/match-EXPRESSION desugar is a
+    // single-statement body (its arm returns ARE the value) and stays on the
+    // path below. See lower_value_block.
+    if (lam.body.len() != 1) { return lower_value_block(lam.body, s, force_i64); }
     match (lam.body[0]) {
         parser.StmtIf(iff) => {
             var tmp: string = "$ife" + util.i32_to_string(s.locals.len());
@@ -7540,6 +7549,51 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState, f
         // (the full variant dispatch), then loading tmp — see lower_iife_match.
         parser.StmtMatch(mm) => {
             return lower_iife_match(mm, s, force_i64);
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// lower_value_block lowers a MULTI-statement value-position block IIFE body —
+// `[leading…, s_return(tail)]` — INLINE, the self-host analogue of the native
+// *ast.BlockExpr arm (#4521 general value blocks + #4522 control flow inside
+// them). The leading statements lower via lower_stmt in the CURRENT function,
+// so a user `return`/`break`/`continue` among them emits op_return / op_br and
+// escapes to the enclosing function/loop (NOT captured as the block's value);
+// the final synthetic `return tail` is rewritten to `tmp = tail` (a store into
+// a fresh value temp, exactly as lower_iife_match rewrites its arm tails), and
+// the temp is loaded as the block's value. Bails to the AST emitter when the
+// last statement isn't a value-return (a divergent no-tail block — parse_
+// branch_body appends an s_unknown there).
+function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolean): LowerState {
+    var n: i32 = body.len();
+    if (n == 0) { return s.fail(); }
+    var last: parser.Stmt = body[n - 1];
+    match (last) {
+        parser.StmtReturn(r) => {
+            // Fresh value temp, classified from the tail expression's width —
+            // f64 (8-byte), i64 (force_i64 when the binding context is i64/u64,
+            // else inferred), string (pointer), else the default i32. The slot
+            // type steers the rewritten `tmp = tail` store, mirroring lower_iife.
+            var tmp: string = "$vbi" + util.i32_to_string(s.locals.len());
+            var ts: LowerState = s.add_local(tmp);
+            var tslot: i32 = ts.slot_of(tmp);
+            if (expr_is_f64(r.value, ts)) { ts = ts.mark_f64(tslot, true); }
+            else if (force_i64 || infer_expr_width(r.value, ts) == 64) { ts = ts.mark_i64(tslot, true); }
+            else if (expr_is_str(r.value, ts)) { ts = ts.mark_str(tslot, true); }
+            // Leading statements run inline — user control flow escapes here.
+            var i: i32 = 0;
+            while (i < n - 1) {
+                ts = lower_stmt(body[i], ts);
+                if (!ts.ok) { return ts; }
+                i = i + 1;
+            }
+            // Final `return tail` -> `tmp = tail`, then load the temp.
+            var assign: parser.Stmt = parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 };
+            ts = lower_stmt(assign, ts);
+            if (!ts.ok) { return ts; }
+            return ts.emit(ir.op_load_local(tslot));
         },
         _ => { return s.fail(); }
     }

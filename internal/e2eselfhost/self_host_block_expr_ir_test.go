@@ -73,6 +73,31 @@ function main(): i32 { return f(); }`},
 	{"value-position-single-expr", `function main(): i32 { var n: i32 = { 7 }; return n + 1; }`},
 	// #4521: a string-tail value-position block, then .len(). "foobar" -> 6.
 	{"value-position-string-tail", `function main(): i32 { var s: string = { var a = "foo"; var b = "bar"; a + b }; return s.len(); }`},
+	// #4522: a conditional `return` inside a value-position block — the
+	// else-LESS `if` parses as a control-flow STATEMENT (branch_stmt_start),
+	// lowers INLINE (lower_value_block), and the reachable tail yields the
+	// block's value. f(5): early exit not taken, tail e+1 = 6.
+	{"cf-conditional-return-tail", `function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+function main(): i32 { return f(5); }`},
+	// #4522: the early-exit path is taken — the inline `return` escapes the
+	// block AND the enclosing function. f(-1): return 99.
+	{"cf-conditional-return-taken", `function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+function main(): i32 { return f(-1); }`},
+	// #4522: a `break` inside a value-position block inside a loop escapes to
+	// the loop (the inline lowering emits a real op_br). i=1,2,3 add; break at
+	// 4. s = 6.
+	{"cf-break-in-block", `function main(): i32 {
+	var s: i32 = 0; var i: i32 = 0;
+	while (i < 10) { i = i + 1; var d: i32 = { if (i == 4) { break; } i }; s = s + d; }
+	return s;
+}`},
+	// #4522: a `continue` inside a value-position block skips the rest of the
+	// loop body. i=3 skipped: s = 1+2+4+5+6 = 18.
+	{"cf-continue-in-block", `function main(): i32 {
+	var s: i32 = 0; var i: i32 = 0;
+	while (i < 6) { i = i + 1; var d: i32 = { if (i == 3) { continue; } i }; s = s + d; }
+	return s;
+}`},
 }
 
 // TestSelfHostBlockExprIRX86_64 routes each block-expression case through the

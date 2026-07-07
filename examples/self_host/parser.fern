@@ -873,6 +873,57 @@ function (p: Par) ident_at(idx: i32): string {
     }
     return "";
 }
+// keyword_at returns the keyword text of the token at absolute index
+// `idx` ("" when out of range or not a keyword token). Used by the
+// if_stmt_has_else lookahead (#4522), which scans past an `if`'s
+// paren-balanced condition and brace-balanced then-body to peek for
+// a trailing `else`.
+function (p: Par) keyword_at(idx: i32): string {
+    if (idx < 0 || idx >= p.toks.len()) { return ""; }
+    var t: lexer.Token = p.toks[idx];
+    match (t) {
+        lexer.TokKeyword(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+// if_stmt_has_else reports whether the `if` the cursor is on has a
+// trailing `else` clause, by skipping its paren-balanced condition and
+// brace-balanced then-body and peeking for `else`. Used by
+// branch_stmt_start (#4522) to route an else-LESS `if` in a block body
+// through the statement path — such an `if` cannot be a value expression
+// (an if-EXPRESSION requires `else`), so it is control flow. Mirrors the
+// Go parser's ifStmtHasElse.
+function (p: Par) if_stmt_has_else(): boolean {
+    var i: i32 = p.pos + 1;  // skip `if`
+    // Skip `( … )` (paren-balanced).
+    if (p.punct_at(i) == "(") {
+        var depth: i32 = 0;
+        while (i < p.toks.len()) {
+            var pt: string = p.punct_at(i);
+            if (pt == "(") { depth = depth + 1; }
+            else if (pt == ")") {
+                depth = depth - 1;
+                if (depth == 0) { i = i + 1; break; }
+            }
+            i = i + 1;
+        }
+    }
+    // Skip `{ … }` (brace-balanced) then-body.
+    if (p.punct_at(i) == "{") {
+        var bdepth: i32 = 0;
+        while (i < p.toks.len()) {
+            var bt: string = p.punct_at(i);
+            if (bt == "{") { bdepth = bdepth + 1; }
+            else if (bt == "}") {
+                bdepth = bdepth - 1;
+                if (bdepth == 0) { i = i + 1; break; }
+            }
+            i = i + 1;
+        }
+    }
+    return p.keyword_at(i) == "else";
+}
 
 // arrow_lambda_at reports whether the cursor (sitting on `(`) begins an
 // arrow lambda — `() => …`, `(): R => …`, or `(IDENT: TYPE, …) [: R] => …`
@@ -1987,6 +2038,13 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
 function branch_stmt_start(p: Par): boolean {
     if (p.peek_punct() == "{") { return true; }
     var kw: string = p.peek_keyword();
+    // #4522: an else-LESS `if` in a block body is a control-flow STATEMENT
+    // (`{ if (early) { return 0; } …; tail }`), not the value expression — an
+    // if-EXPRESSION requires `else`, so an else-less `if` can never be a tail
+    // value. An `if` WITH `else` stays on the expression path so
+    // `{ …; if (c) { a } else { b } }` still yields a value and the else-if
+    // chain form is unaffected.
+    if (kw == "if" && !p.if_stmt_has_else()) { return true; }
     if (kw == "while" || kw == "loop" || kw == "for" || kw == "break"
         || kw == "continue" || kw == "return" || kw == "defer"
         || kw == "errdefer" || kw == "var" || kw == "let"
