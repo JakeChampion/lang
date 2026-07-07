@@ -3378,6 +3378,14 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
         // the 4-byte i32 path, so on wasm `a[lo:hi][i]` loaded at a 4-byte
         // stride instead of f64's 8-byte stride (#2908).
         parser.ExprSlice(sl) => { return expr_is_f64arr(sl.array, s); },
+        // Direct index of an f64 array LITERAL `[1.0, 2.0][i]`: the ExprArray
+        // construction builds it at an 8-byte f64 stride (ewidth=64 when
+        // elements[0] is f64), so the read must match — mirror that same
+        // first-element probe. Without this the read defaulted to the 4-byte
+        // i32 path and mis-strode the f64 literal on wasm (the ExprArray sibling
+        // of the #2908 ExprSlice gap; register backends use 8-byte slots so only
+        // wasm was affected).
+        parser.ExprArray(al) => { return al.elements.len() > 0 && expr_is_f64(al.elements[0], s); },
         _ => { return false; }
     }
     return false;
@@ -3443,6 +3451,12 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
         // expr_is_i64arr's ExprSlice case (the same latent stride gap #2908
         // fixed for f64[]).
         parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
+        // Direct index of an i64/u64 array LITERAL `[x as i64, …][i]`: the
+        // ExprArray construction emits arr_make_i64 (8-byte stride) when
+        // elements[0] is 64-bit-wide and not f64, so the read must match —
+        // mirror that same first-element probe (the i64 sibling of the f64
+        // ExprArray arm above; wasm-only, register backends unaffected).
+        parser.ExprArray(al) => { return al.elements.len() > 0 && !expr_is_f64(al.elements[0], s) && infer_expr_width(al.elements[0], s) == 64; },
         _ => { return false; }
     }
     return false;
