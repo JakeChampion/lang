@@ -1036,12 +1036,28 @@ impl Json for string {
 // special-cases `arr.to_json()` on a known array element type) so the erased
 // generic body never has to dispatch on `T`.
 pub function (xs: T[]) to_json[T: Json](): string {
-    var out: string = "[";
+    // Local growable u8[] accumulation (#4379), like json_encode's JArray arm:
+    // the old `out = out + xs[i].to_json()` recopied the whole encoded-so-far
+    // prefix on every element — O(array²). Every append targets the local `out`,
+    // so it grows in place (amortized O(1)); the per-element bytes are inlined.
+    // (On the self-hosted compiler this body is dead — `arr.to_json()` call sites
+    // are intercepted by lower_array_to_json, whose codegen carries the matching
+    // rewrite — but the native monomorphiser compiles it, so it must stay O(n)
+    // and lower cleanly.) Byte-for-byte identical output.
+    var out: u8[] = [];
+    out = out.append(91 as u8);   // '['
     var i: i32 = 0;
     while (i < xs.len()) {
-        if (i > 0) { out = out + ","; }
-        out = out + xs[i].to_json();
+        if (i > 0) { out = out.append(44 as u8); }   // ','
+        var e: string = xs[i].to_json();
+        var el: i32 = e.len();
+        var k: i32 = 0;
+        while (k < el) {
+            out = out.append(e[k] as u8);
+            k = k + 1;
+        }
         i = i + 1;
     }
-    return out + "]";
+    out = out.append(93 as u8);   // ']'
+    return string_from_bytes(out);
 }
