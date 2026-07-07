@@ -10897,6 +10897,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // frees only the box; #4357). emit_tuple_deep_reinit_store frees only the
     // ExprArray element positions (a bare-ident pointer element aliases a live local
     // → left leak-safe), so it is gated on the init being a tuple literal.
+    // A reclaimable rc-payload ENUM loop-local (`while { var b = Full([i, i+1]);
+    // match (b) { Full(xs) => xs[0], … } }`): the loop-rebind must DEEP-drop the
+    // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
+    // drops), else the payload leaks each iteration — the consuming-match reclaim is
+    // top-level-only, so it never covers a loop-local (#4357).
+    if (slot_is_reclaimable_rcenum(sb, slot)) {
+        return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
+    }
     match (v.init) {
         parser.ExprTuple(dtl) => {
             if (slot_is_reclaimable_rctuple(sb, slot)) {
@@ -12791,6 +12799,35 @@ function emit_tuple_deep_reinit_store(se: LowerState, slot: i32, dtl: parser.Exp
     return st.emit(ir.op_store_local(slot));
 }
 
+// emit_enum_deep_reinit_store stores `new` (on the stack) into a reclaimable
+// rc-payload enum slot and DEEP-drops the OLD box first via emit_enum_variant_drops
+// (runtime variant dispatch: for each variant carrying an rc payload, drop the
+// payload field(s), then the box; the slot is zeroed). emit_enum_variant_drops
+// null-guards (variant_is is false for a null box), so the first-iteration null old
+// is a no-op; and it consumes NO stack operand, so `new` is stashed in a scratch
+// and restored after. The arm-payload-non-escape gate (enum_body_binds_rc_payload,
+// applied at collection) keeps old's payload the box's sole owner, so dropping it
+// is balanced. #4357 — the enum sibling of the struct / tuple loop-rebind reclaim.
+function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: string): LowerState {
+    var scratch: string = "$edr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));                     // stash new
+    // NULL-guard the deep-drop: op_variant_is reads the box's tag, so it faults on a
+    // genuinely null box (the first-iteration zeroed slot). The existing callers
+    // (consumed_rcpayload_enum_frees / precise-drop) never pass null; here `old` is
+    // null on iteration 0, so guard explicitly. A fresh enum makes old != new
+    // implicit, so no separate cow guard is needed.
+    st = st.emit(ir.op_load_local(slot));                    // old
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));                 // old != 0
+    st = st.emit(ir.op_if(0));
+    st = emit_enum_variant_drops(st, slot, enum_name);       // deep-drop old payload + box (zeroes slot)
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));                     // new
+    return st.emit(ir.op_store_local(slot));
+}
+
 // emit_dec_sweep_except releases (decs) every OWNED array local currently in
 // scope except `keep` (the move-on-return slot, or -1 for none), leaving the
 // operand stack unchanged. Array params (slots < n_params) are BORROWED — the
@@ -14140,7 +14177,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -14630,6 +14667,61 @@ function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[
         parser.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, acc); },
         _ => { return acc; },
     }
+}
+
+// collect_fresh_rcenum_names gathers LOCAL names bound from a FRESH rc-payload
+// enum variant ctor (`var b = Full([i, i+1])`, fresh_rcpayload_enum_init) that is
+// SINGLE-OWNER + consumed by exactly one `match (b)` IN THE SAME BLOCK, dead after,
+// with no arm moving out an rc payload — the per-block, recursive analogue of
+// consumed_rcpayload_enum_frees (which scans only the TOP-LEVEL fn body and so
+// never covers a LOOP-LOCAL; the loop-local enum was reclaimed nowhere and leaked
+// per iteration, #4357). Credited "RCENUM:" for the DEEP loop-rebind reclaim
+// (emit_enum_deep_reinit_store → emit_enum_variant_drops on the prior box). The
+// escape gate here is name_escapes_outside_stmt with the MATCH statement skipped —
+// so the match scrutinee `b` (the consuming read) is NOT counted as an escape,
+// unlike the coarse body_unsafe_for which flags any bare-ident use.
+function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (fresh_rcpayload_enum_init(v.init, structs) != "" && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < stmts.len()) {
+                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi
+                        && !match_arms_use_name(stmts[match_idx], v.name)
+                        && !match_arm_binds_rc_payload(stmts[match_idx], structs)
+                        && !name_used_after(stmts, v.name, match_idx)
+                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        a = push_str_unique(a, v.name);
+                    }
+                }
+            },
+            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, a); a = collect_fresh_rcenum_names(iff.else_body, structs, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, a); },
+            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, a); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = collect_fresh_rcenum_names(m.arms[ai].body, structs, a); ai = ai + 1; }
+            },
+            parser.StmtDefer(d) => {
+                match (d.action) {
+                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, a); },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
 }
 
 // collect_fresh_string_names / collect_fresh_string_in_stmt gather the LOCAL
@@ -15542,6 +15634,23 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (rti < rctups.len()) {
         if (!body_unsafe_for(body, rctups[rti], borrowable)) { out = out.append("TUPRC:" + rctups[rti]); }
         rti = rti + 1;
+    }
+    // Fresh rc-payload ENUM locals (`var b = Full([i, i+1])` consumed by a match in
+    // the same block): credited "RCENUM:" so slot_is_reclaimable_rcenum drives the
+    // DEEP loop-rebind reclaim (emit_enum_deep_reinit_store → emit_enum_variant_drops
+    // on the prior box). Non-escape gate (body_unsafe_for) AND arm-payload-non-escape
+    // gate (enum_body_binds_rc_payload — a borrow-only `Full(xs) => xs[0]` is fine, a
+    // moved-out payload is rejected) before crediting. The consuming-match reclaim
+    // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
+    // loop-local; this closes that gap (#4357) with no overlap.
+    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, []);
+    var rei: i32 = 0;
+    while (rei < rcenums.len()) {
+        // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
+        // match + dead-after + non-escaping (name_escapes_outside_stmt skipping the
+        // match) + no moved arm payload, per block — so credit directly.
+        out = out.append("RCENUM:" + rcenums[rei]);
+        rei = rei + 1;
     }
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
@@ -17477,6 +17586,19 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUPRC:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_rcenum: a fresh, non-escaping rc-payload enum loop-local
+// (`var b = Full([i, i+1])`), credited "RCENUM:" by reclaimable_names_of. Its
+// loop-rebind takes the DEEP emit_enum_deep_reinit_store (emit_enum_variant_drops
+// on the prior box) instead of leaking. The slot's struct_type carries the enum
+// name (mark_struct_type for an enum-typed binding), used by the emission to
+// dispatch the runtime variant deep-drop. #4357.
+function slot_is_reclaimable_rcenum(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.struct_type_of_slot(i).len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "RCENUM:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
