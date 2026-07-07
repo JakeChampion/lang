@@ -83,6 +83,116 @@ func TestSelfHostHeapBumpBytesIRX86_64(t *testing.T) {
 	}
 }
 
+// heapBumpFixpointCases pin the FIXPOINT contract the native rc_heap_bump_*
+// suite asserts (internal/e2e/rc_heap_bump_*_test.go): a loop whose per-
+// iteration allocation is reclaimed reports the SAME bump-growth at N=50 and
+// N=5000 — the steady-state high-water is bounded, not scaling with the trip
+// count. Each case's `src(n)` returns `__heap_bump_bytes() - before` after an
+// N-iteration loop; the growth (an exit code) must match small-vs-large.
+//
+// #4365 gating: ONLY shapes empirically BOUNDED on the self-host IR path belong
+// here. Two Perceus behaviors the self-host DOES have — precise-drop of a
+// declared owned array local, and prior-box release on a loop reassign — bound
+// their loops (verified: growth flat across N=50..50000). The native suite's
+// discarded-bare-expr shapes (statement-temporary reclamation) and the
+// struct-with-array-field reclaim are NOT yet bounded on the self-host IR path
+// (growth scales with N) — those are feature gaps tracked under #4365, not
+// asserted here as passing.
+var heapBumpFixpointCases = []struct {
+	name string
+	src  func(n string) string
+}{
+	// Precise-drop of a declared owned array local, last-used as borrow reads:
+	// its fresh rc=1 box returns to the freelist each iteration (precise_drop_
+	// names), so the high-water above `before` is one box regardless of N. The
+	// `acc` guard proves the reads see the right values (a wrongly-freed box
+	// would corrupt them), so this is bounded AND value-correct.
+	{"precise-drop-array", func(n string) string {
+		return `function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) { var v: i32[] = [i, i + 1, i + 2]; acc = acc + v[0] + v[1] + v[2]; i = i + 1; }
+    if (acc == 987654) { return 200; }
+    return __heap_bump_bytes() - before;
+}`
+	}},
+	// Loop-reassigned array local: each rebind releases the prior iteration's
+	// box (emit_arr_store's prior-value release) before storing the fresh one,
+	// so the loop's high-water stays one box wide.
+	{"loop-reassign-array", func(n string) string {
+		return `function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) { var v: i32[] = [i, i + 1]; v = [i, i + 2, i + 3]; acc = acc + v[0] + v[1] + v[2]; i = i + 1; }
+    if (acc == 987654) { return 200; }
+    return __heap_bump_bytes() - before;
+}`
+	}},
+}
+
+// TestSelfHostHeapBumpFixpointX86_64 asserts the bounded-high-water fixpoint on
+// the self-host x86-64 IR path: each shape's growth at N=50 must equal its
+// growth at N=5000 (reclaimed loops don't grow with the trip count). Native is
+// the oracle for "the behavior is real + bounded" (small==large, non-zero); the
+// self-host must reproduce the fixpoint. Absolute growth differs between the two
+// (box layouts differ), so this checks the RELATION per backend, not equality
+// across them.
+func TestSelfHostHeapBumpFixpointX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	// shGrowth compiles `prog` through the self-host IR driver, runs it, and
+	// returns its exit code (the loop's bump-growth).
+	shGrowth := func(t *testing.T, tag, prog string) int {
+		t.Helper()
+		asm := runCapture(t, gcc, runner, driverBin, []byte(prog+"\n"))
+		if len(asm) == 0 {
+			t.Fatalf("%s: self-host compiler emitted 0 bytes", tag)
+		}
+		progBin := buildBin(t, gcc, dir, tag, string(asm))
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(progBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+		}
+		_ = cmd.Run()
+		return cmd.ProcessState.ExitCode()
+	}
+
+	const small, large = "50", "5000"
+	for _, tc := range heapBumpFixpointCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Native oracle: the behavior must be real and bounded there.
+			_, nS := compileAndRunX86_64(t, tc.src(small)+"\n")
+			_, nL := compileAndRunX86_64(t, tc.src(large)+"\n")
+			if nS != nL {
+				t.Fatalf("%s: native not bounded (N=50 -> %d, N=5000 -> %d) — probe is not a reclaim fixpoint", tc.name, nS, nL)
+			}
+			if nS == 0 {
+				t.Fatalf("%s: native growth is 0 — probe does not allocate", tc.name)
+			}
+			// Self-host IR path must reproduce the fixpoint.
+			shS := shGrowth(t, tc.name+"-50", tc.src(small))
+			shL := shGrowth(t, tc.name+"-5000", tc.src(large))
+			if shS != shL {
+				t.Errorf("%s: self-host high-water not bounded (N=50 -> %d, N=5000 -> %d)", tc.name, shS, shL)
+			}
+			if shS == 0 {
+				t.Errorf("%s: self-host growth is 0 — nothing allocated / measured", tc.name)
+			}
+		})
+	}
+}
+
 // TestSelfHostHeapBumpBytesIRWasm runs the same cases through the wasm IR
 // backend (the `$heap − heap_base` lowering).
 func TestSelfHostHeapBumpBytesIRWasm(t *testing.T) {
