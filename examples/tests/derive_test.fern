@@ -153,6 +153,24 @@ function test_json_enum_unit(): test.TestOutcome {
     return test.assert_eq(Empty.to_json(), "\"Empty\"");
 }
 
+// Array `to_json` — the element-poly `(xs: T[]) to_json()` serialiser. On the
+// self-hosted compiler this call site is intercepted (lower_array_to_json) into
+// an inline loop whose per-element `arr[i].to_json()` dispatches on the static
+// element type; the loop was rewritten to a u8[] buffer (#4379). Exercises the
+// comma separators + the per-element derived struct to_json in one byte-exact
+// check, plus a scalar array to cover the primitive-impl element path.
+function test_json_array_struct(): test.TestOutcome {
+    var pts: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+    return test.assert_eq(pts.to_json(), "[{\"x\":1,\"y\":2},{\"x\":3,\"y\":4}]");
+}
+
+function test_json_array_scalar(): test.TestOutcome {
+    var ns: i32[] = [10, 20, 30];
+    if (ns.to_json() != "[10,20,30]") { return test.fail("i32 array: " + ns.to_json()); }
+    var empty: i32[] = [];
+    return test.assert_eq(empty.to_json(), "[]");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("derive");
     r = r.it("eq reflexive",        test_eq_reflexive());
@@ -175,5 +193,7 @@ function main(): i32 {
     r = r.it("json struct",              test_json_struct());
     r = r.it("json enum payload",        test_json_enum_payload());
     r = r.it("json enum unit",           test_json_enum_unit());
+    r = r.it("json array struct",        test_json_array_struct());
+    r = r.it("json array scalar",        test_json_array_scalar());
     return r.finish();
 }

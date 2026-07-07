@@ -1,5 +1,54 @@
 # Self-host gap: enum-variant construction with a function-typed payload
 
+> **RESOLVED on the IR path (2026-07-07, #4364), with one documented
+> wasm exception.** The analysis below was written against the legacy
+> **SSA / AST emitter** path (`asm_run.fern`). The production path is now
+> the **IR path** (`irlower.fern` → `asm_ir` / `wasm_ir`, `use_ir`
+> default-true), and it lowers fn-payload variant construction +
+> `match`-bind + indirect-call correctly — the intervening closure-conv
+> work (#4354 + the CLOSURE-CONV slices) made a function value in payload
+> position lower as an ordinary pointer-sized payload, composing with
+> variant construction.
+>
+> **x86-64 IR: every shape works** — named-fn, capturing-closure,
+> recursive `Step`, generic `Box[T]`, and the exact `Future[T] =
+> Ready(T) | Pending(i32, (i32) => Future[T])` shape all route `module:
+> IR` and match the interp oracle. The x86 IR path (`asm_ir_run`, the AST
+> emitter's `use_ir` dispatch) does **not** monomorphize the generic enum
+> — it lowers `Fut[T]` directly, deriving each `match`'s enum from its arm
+> variant names, so the generic and recursive shapes ride the same path
+> the non-generic ones do.
+>
+> **wasm IR: four of the five shapes work** — named-fn,
+> capturing-closure, recursive `Step`, and generic `Box[T]`. The
+> fully-**generic + recursive** `Future[T]` shape (a generic enum whose
+> payload fn RETURNS the generic enum itself, `Pending(i32, (i32) =>
+> Future[T])`) is a **remaining wasm-only gap** (tracked as #4722).
+> Root cause: the wasm IR driver monomorphizes the generic
+> enum (`Fut[T]` → `Fut__i32`, needed for element-method dispatch, #3893),
+> which renames the variant structs (`Rdy`→`Rdy__i32`). The nested
+> `match (cont(tok))` on the closure-call scrutinee then needs
+> monomorphization to rewrite its arm patterns to the mangled names — but
+> `me_scrutinee_type` can't recover `cont(tok)`'s type, because the fn
+> payload's return type (`Fut[T]`) is **discarded at parse**: an enum
+> variant desugars to a `StructDecl` whose fn-payload field carries only
+> the coarse `type_name: "fn"` (parser.fern ~4173/4179), and
+> `StructFieldDecl` has no `fn_ret` slot. With the arms un-rewritten while
+> the structs are mangled, `lower_func` bails and the wasm driver emits a
+> truncated `main`. Closing it needs fn-payload-return-type preservation
+> at the variant-desugar layer (add `fn_ret` to `StructFieldDecl`, or
+> re-encode the `"fn"` tag) — an invasive, fixpoint-sensitive parse-layer
+> change, its own PR.
+>
+> Pinned by `internal/e2eselfhost/self_host_fn_payload_variant_ir_test.go`:
+> the x86-64 leg exercises all five shapes; the wasm leg exercises the
+> four that lower and skips the `Future[T]` case with a pointer to this
+> gap. The `c.args.len() == 1` single-payload guard in the legacy AST
+> emitter (`asm.fern`) is unchanged, but that path is retirement-bound
+> (docs/SELFHOST-SSA-ALWAYS.md) and no longer on the fn-payload route.
+> The rest of this document is retained as the historical root-cause
+> record.
+
 Root-cause findings for a self-hosted-compiler gap that blocks the
 async runtime (`std/task`) on the self-host path. Minimal repros
 included. Surfaced while porting the `concurrent`/`spawn` desugar
