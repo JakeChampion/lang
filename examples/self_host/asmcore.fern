@@ -2302,26 +2302,37 @@ pub function (s: EmitState) mark_read_int(): EmitState {
 }
 
 pub function escape_for_ascii(s: string): string {
-    var out: string = "";
+    // Local growable u8[] accumulation (#4379): the old `out = out + …` appended
+    // each escape onto an immutable string, recopying the whole escaped prefix
+    // per input byte -- O(literal²). This runs for EVERY string / shape literal
+    // on every compile (including the self-host build, whose sources carry long
+    // literal helper bodies), so the quadratic was pure compile-time overhead.
+    // Every append targets the local `out`, growing it in place (amortized O(1)).
+    // Byte-for-byte identical escaping. (`92`='\', `34`='"', `110`='n',
+    // `116`='t', `114`='r'; octal digits are `48 + oN`.)
+    var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var b: i32 = s[i];
-        if (b == 34) { out = out + "\\\""; }
-        else if (b == 92) { out = out + "\\\\"; }
-        else if (b == 10) { out = out + "\\n"; }
-        else if (b == 9) { out = out + "\\t"; }
-        else if (b == 13) { out = out + "\\r"; }
+        if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }        // \"
+        else if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }   // \\
+        else if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }  // \n
+        else if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }   // \t
+        else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }  // \r
         else if (b < 32 || b == 127) {
             // 3-digit octal: \<o2><o1><o0>.
             var o0: i32 = b % 8;
             var o1: i32 = (b / 8) % 8;
             var o2: i32 = (b / 64) % 8;
-            out = out + "\\" + util.i32_to_string(o2) + util.i32_to_string(o1) + util.i32_to_string(o0);
+            out = out.append(92 as u8);              // '\'
+            out = out.append((48 + o2) as u8);
+            out = out.append((48 + o1) as u8);
+            out = out.append((48 + o0) as u8);
         }
-        else { out = out + s[i:i + 1]; }
+        else { out = out.append(s[i] as u8); }
         i = i + 1;
     }
-    return out;
+    return string_from_bytes(out);
 }
 
 pub function is_value_fn_name(s: EmitState, name: string): boolean {
