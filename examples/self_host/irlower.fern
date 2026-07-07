@@ -22177,6 +22177,17 @@ function rc_fe_ptr_type(t: string, structs: parser.StructDecl[]): boolean {
     return false;
 }
 
+// rc_fe_is_builtin_enum: `t` is a builtin rc enum (Option / Result), bare or
+// generic-instantiated (`Option[..]` / `Result[..]`) — native's EnumType arm
+// marks these freeEligible, but they carry no StructDecl so rc_fe_is_enum_name
+// misses them.
+function rc_fe_is_builtin_enum(t: string): boolean {
+    if (t == "Option" || t == "Result") { return true; }
+    if (t.len() >= 7 && t[0:7] == "Option[") { return true; }
+    if (t.len() >= 7 && t[0:7] == "Result[") { return true; }
+    return false;
+}
+
 // rc_fe_is_enum_name: `t` names an enum (some variant decl carries it as its
 // enum_owner — the self-host has no standalone enum decl entry).
 function rc_fe_is_enum_name(structs: parser.StructDecl[], t: string): boolean {
@@ -22617,6 +22628,15 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
         },
         parser.ExprCall(c) => {
             match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    // a variant constructor builds a FRESH owned rc=1 box (its
+                    // pointer payloads are inc'd like a StructLit), so the
+                    // result is reclaimable regardless of a payload arg's taint
+                    // — native's variant-ctor rhsTainted -> false. Without this
+                    // an enum built from a borrowed-param payload (`A(n)`)
+                    // wrongly taints the enum local.
+                    if (variant_enum_owner(structs, cid.name).len() > 0) { return false; }
+                },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
                     return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs);
@@ -22698,6 +22718,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[])
             else if (t.len() >= 3 && t[0:3] == "Map") { ok = true; }
             else if (rc_struct_decl_index(structs, t) >= 0) { ok = true; }             // user struct
             else if (rc_fe_is_enum_name(structs, t)) { ok = true; }
+            else if (rc_fe_is_builtin_enum(t)) { ok = true; }                           // builtin Option/Result enums
             else if (t == "string" && !is_param) { ok = true; }                        // locals on every ptrW
             else if (t == "fn") { ok = true; }                                          // owned closure frees its env (native FuncType arm)
             if (ok) { out = out.append(nm); }

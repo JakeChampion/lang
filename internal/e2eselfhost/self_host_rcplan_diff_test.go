@@ -520,6 +520,80 @@ function main(): i32 { return f(1); }`,
 				"f": {"preciseDrops": {native: "", selfhost: "2=a"}},
 			},
 		},
+		{
+			// FREE-ELIGIBLE for a builtin-enum local (found by the widened
+			// bug-hunt): `var r: Result[i32[], i32] = Ok([5,6])` matched below.
+			// The self-host used to emit nothing — its eligibility type-switch
+			// had no arm for the builtin Option/Result enums, so the annotated
+			// local fell through unrecognised. Now rc_fe_is_builtin_enum makes
+			// it eligible, matching native's `r`.
+			name: "fe-builtin-enum-result",
+			src: `function f(): i32 {
+	var r: Result[i32[], i32] = Ok([5, 6]);
+	var v = 0;
+	match (r) { Ok(xs) => { v = xs[0] + xs[1]; }, Err(e) => { v = e; } }
+	return v;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "r"}},
+		},
+		{
+			// FREE-ELIGIBLE for a variant-constructed enum local bound from a
+			// BORROWED param arg (found by the widened bug-hunt): `var x = A(n)`
+			// where n is a borrowed i32 param. The self-host's rc_fe_rhs_tainted
+			// used to fall through the variant-ctor call to its args and, seeing
+			// the taint-seeded `n`, taint x — dropping it from freeEligible. It
+			// now returns false for a variant constructor (a fresh owned rc=1
+			// box, like native's rhsTainted), so x is eligible on both sides.
+			// KNOWN preciseDrops divergence, reversed from the usual class:
+			// native precise-drops the matched enum at the match statement
+			// (2=x); the self-host leaves x to its exit sweep. Both sound.
+			name: "fe-variant-ctor-borrowed-arg",
+			src: `enum E { A(i32), B(i32) }
+function f(n: i32): i32 {
+	var x = A(n);
+	var r = 0;
+	match (x) { A(v) when v > 0 => { r = v; }, A(v) => { r = 0; }, B(v) => { r = v; } }
+	return r;
+}
+function main(): i32 { return f(5); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "x"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "2=x", selfhost: ""}},
+			},
+		},
+		{
+			// MAP LOCAL divergence (widened bug-hunt PIN — the #2704 conservative
+			// area): `var m: Map[..] = Map{..}` desugars at PARSE time to a
+			// map_new().insert()... chain. Native's freeEligible is conservative
+			// about the resulting map local and leaves it to the exit sweep
+			// (empty); the self-host recognises `Map` as an eligible type and
+			// precise-drops it at last use (1=m). Both sound — the self-host is
+			// simply more aggressive — so this is pinned, not "fixed" (matching
+			// native here would REMOVE a valid self-host optimisation).
+			name: "fe-map-strkey-local",
+			src: `function f(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("a", 0) + m.get_or("b", 0); }
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"freeEligible": {native: "", selfhost: "m"}, "preciseDrops": {native: "", selfhost: "1=m"}},
+			},
+		},
+		{
+			// FOR-IN over an array (widened bug-hunt PIN — the synthesized-temp
+			// class): native lowers `for x in xs` through a parse-time
+			// synthesized iterator temp `__foreach_iter_1` that is itself
+			// freeEligible, so its table reads `__foreach_iter_1,xs`. The
+			// self-host synthesizes the foreach iterator at LOWER time, so the
+			// temp never appears in its AST-level table (`xs` only) — the same
+			// mechanism as the `__destruct_<line>_<col>` pins above. It also
+			// precise-drops xs at last use (2=xs) where native sweeps.
+			name: "fe-for-in-array",
+			src: `function f(): i32 { var xs = [1, 2, 3]; var s = 0; for x in xs { s = s + x; } return s; }
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"freeEligible": {native: "__foreach_iter_1,xs", selfhost: "xs"}, "preciseDrops": {native: "", selfhost: "2=xs"}},
+			},
+		},
 	}
 
 	for _, tc := range cases {
