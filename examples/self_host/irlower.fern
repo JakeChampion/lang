@@ -10891,6 +10891,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // would emit. Loop-body re-binds free the prior iteration's box; the
     // final value is freed by the exit string sweep.
     if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot); }
+    // A reclaimable rc-TUPLE loop-local (`while { var t = (i, [i, i+1]); }`): the
+    // loop-rebind must DEEP-drop the prior tuple's fresh array element(s) before the
+    // box, else the array leaks each iteration (the shallow emit_arr_store dec below
+    // frees only the box; #4357). emit_tuple_deep_reinit_store frees only the
+    // ExprArray element positions (a bare-ident pointer element aliases a live local
+    // → left leak-safe), so it is gated on the init being a tuple literal.
+    match (v.init) {
+        parser.ExprTuple(dtl) => {
+            if (slot_is_reclaimable_rctuple(sb, slot)) {
+                return emit_tuple_deep_reinit_store(sb, slot, dtl);
+            }
+        },
+        _ => {}
+    }
     // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
     // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
     // + "x" }; }`): the loop-rebind must DEEP-drop the prior box's STRING too, else
@@ -12736,6 +12750,47 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
     return st.emit(ir.op_store_local(slot));
 }
 
+// emit_tuple_deep_reinit_store stores `new` (on the stack) into a reclaimable
+// rc-tuple slot and DEEP-drops the OLD tuple box: for each element that the init
+// literal `dtl` builds from a FRESH array LITERAL, arr_dec that element buffer
+// (op_tuple_get k → __fern_rc_dec/__fern_arr_dec), then __fern_rc_dec the tuple box.
+// Only ExprArray element positions are freed — a scalar / bare-ident element is
+// left untouched (a pointer ident aliases a live local, so freeing it would double-
+// release; a scalar carries no pointer). old's array elements were built by the
+// SAME statement, so they are the same fresh sole-owned shape → freeing them is
+// balanced. Null-guarded (`old != 0`) so the first-iteration null old is a no-op;
+// a fresh tuple literal makes old != new implicit, so no separate cow guard is
+// needed. The scratch stashes `new` (read for the guard compare and final store).
+function emit_tuple_deep_reinit_store(se: LowerState, slot: i32, dtl: parser.ExprTuple): LowerState {
+    var scratch: string = "$tdr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var k: i32 = 0;
+    while (k < dtl.elements.len()) {
+        match (dtl.elements[k]) {
+            parser.ExprArray(_) => {
+                st = st.emit(ir.op_load_local(slot));                     // old box
+                st = st.emit(ir.op_tuple_get(k));                        // element k (array ptr)
+                st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));     // arr_dec frees the array box
+                st = st.emit(ir.op_drop());
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    st = st.emit(ir.op_load_local(slot));            // old box
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // free the tuple box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
 // emit_dec_sweep_except releases (decs) every OWNED array local currently in
 // scope except `keep` (the move-on-return slot, or -1 for none), leaving the
 // operand stack unchanged. Array params (slots < n_params) are BORROWED — the
@@ -14085,7 +14140,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -14442,6 +14497,39 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
     return false;
 }
 
+// tuple_lit_rc_reclaimable reports whether `e` is a tuple literal whose every
+// element is either a flat scalar (Number / Bool / Ident) OR a FRESH array LITERAL
+// (`[..]`), with AT LEAST ONE fresh array literal. Such a `(i, [i, i+1])` builds a
+// fresh sole-owner tuple box whose array element is itself sole-owned (rc=1, a
+// fresh literal aliased nowhere), so a DEEP loop-rebind reclaim — arr_dec each
+// array element, then the box — is exactly balanced (#4357 tuple sibling of the
+// fresh-string struct reclaim). A bare array IDENT element (`(i, xs)`) is EXCLUDED
+// (it aliases a live local, so freeing it would double-release) — that tuple stays
+// on the SHALLOW scalar-tuple path (leak-safe). String / struct pointer elements
+// are excluded too (a first cut to array elements); such a tuple stays shallow.
+function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprTuple(tl) => {
+            if (tl.elements.len() == 0) { return false; }
+            var any_arr: boolean = false;
+            var i: i32 = 0;
+            while (i < tl.elements.len()) {
+                match (tl.elements[i]) {
+                    parser.ExprNumber(_) => {},
+                    parser.ExprBool(_) => {},
+                    parser.ExprIdent(_) => {},
+                    parser.ExprArray(_) => { any_arr = true; },
+                    _ => { return false; }
+                }
+                i = i + 1;
+            }
+            return any_arr;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // tuple_type_is_all_scalar reports whether `t` is a tuple TYPE annotation
 // `(t0, t1, …)` (≥1 element) whose every element is a primitive scalar (i32 / i64
 // / f64 / u32 / u64 / boolean). Such a tuple holds only by-value scalars — no
@@ -14503,6 +14591,43 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
             return a;
         },
         parser.StmtDefer(d) => { return collect_fresh_tuple_in_stmt(d.action, acc); },
+        _ => { return acc; },
+    }
+}
+
+// collect_fresh_rc_tuple_names gathers LOCAL names bound from a fresh tuple literal
+// carrying a fresh ARRAY-literal element (`var t = (i, [i, i+1])`,
+// tuple_lit_rc_reclaimable) — the rc sibling of collect_fresh_scalar_tuple_names.
+// Credited under a "TUPRC:" prefix (slot_is_reclaimable_rctuple) so the DEEP
+// loop-rebind reclaim (emit_tuple_deep_reinit_store: arr_dec each fresh array
+// element, then the box) fires, instead of the scalar-tuple shallow box dec that
+// leaks the array element. The escape gate (body_unsafe_for) is applied by
+// reclaimable_names_of before crediting, so an escaping tuple is never freed.
+function collect_fresh_rc_tuple_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_fresh_rc_tuple_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (tuple_lit_rc_reclaimable(v.init)) { return push_str_unique(acc, v.name); }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_fresh_rc_tuple_names(iff.then_body, acc);
+            return collect_fresh_rc_tuple_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_fresh_rc_tuple_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_fresh_rc_tuple_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_fresh_rc_tuple_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, acc); },
         _ => { return acc; },
     }
 }
@@ -15406,6 +15531,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (ti < tups.len()) {
         if (!body_unsafe_for(body, tups[ti], borrowable)) { out = out.append("TUP:" + tups[ti]); }
         ti = ti + 1;
+    }
+    // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
+    // fresh ARRAY-literal element — credited "TUPRC:" so slot_is_reclaimable_rctuple
+    // drives the DEEP loop-rebind reclaim (emit_tuple_deep_reinit_store: arr_dec each
+    // fresh array element, then the box), instead of the scalar-tuple shallow box dec
+    // that leaks the array (#4357). Same body_unsafe_for non-escape gate.
+    var rctups: string[] = collect_fresh_rc_tuple_names(body, []);
+    var rti: i32 = 0;
+    while (rti < rctups.len()) {
+        if (!body_unsafe_for(body, rctups[rti], borrowable)) { out = out.append("TUPRC:" + rctups[rti]); }
+        rti = rti + 1;
     }
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
@@ -17329,6 +17465,18 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_rctuple: a fresh, non-escaping tuple local carrying a fresh
+// ARRAY-literal element (`var t = (i, [i, i+1])`), credited "TUPRC:" by
+// reclaimable_names_of. Its loop-rebind takes the DEEP emit_tuple_deep_reinit_store
+// (arr_dec each fresh array element + box) instead of the scalar-tuple shallow box
+// dec. #4357.
+function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].tuple_elems.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "TUPRC:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
