@@ -10891,6 +10891,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // would emit. Loop-body re-binds free the prior iteration's box; the
     // final value is freed by the exit string sweep.
     if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot); }
+    // A reclaimable struct LOOP-LOCAL with rc-array fields (`while { var t = f(i)
+    // / P { .., xs: [..] }; … }`): the loop-rebind must DEEP-drop the prior
+    // iteration's box — free its rc-array field buffers before freeing the box —
+    // else those buffers leak every iteration (the shallow emit_arr_store dec
+    // below frees only the box; #4357). Route through the same per-type
+    // __field_reclaim_<T> the StmtAssign consume-rebind uses (emit_field_reclaim_
+    // store, snap=-1): the helper null-guards the first-iteration null `old` and
+    // cow-guards a self-store, so it is safe both here and on the initial bind
+    // (which is a plain store of `new` — no prior box to free). A once-bound
+    // (non-loop) local is unaffected: old is null, so only the store happens, and
+    // the exit sweep still frees the final value.
+    if (slot_is_reclaimable_struct(sb, slot) && struct_has_reclaim_array_field(sb.structs, struct_ty)) {
+        return emit_field_reclaim_store(sb, slot, struct_ty, 0 - 1);
+    }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
 }
