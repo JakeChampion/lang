@@ -150,7 +150,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 22", "# fail 0", "1..22"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 26", "# fail 0", "1..26"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -244,7 +244,7 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/url", "# pass 16", "# fail 0", "1..16"} {
+	for _, w := range []string{"# Suite: std/url", "# pass 17", "# fail 0", "1..17"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -262,7 +262,7 @@ func TestRunnerCsvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/csv", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/csv", "# pass 14", "# fail 0", "1..14"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -494,6 +494,24 @@ func TestRunnerTimeHttpDateExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/time_timezone_test.fern` covers std/time's zone lookup
+// (timezone_iana standard-time offsets, incl. the half-hour Kolkata
+// offset and the unknown-zone None) and the DST-awareness predicate
+// timezone_observes_dst (#4388 item 5). Passing → exit 0.
+func TestRunnerTimeTimezoneExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/time_timezone_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time timezone", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/json_roundtrip_test.fern")
@@ -501,7 +519,7 @@ func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 18", "# fail 0", "1..18"} {
+	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 20", "# fail 0", "1..20"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -521,6 +539,26 @@ func TestRunnerJsonPointerExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/json pointer", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/utf8_test.fern` covers std/utf8 — UTF-8 codepoint
+// decode (1..4-byte, plus the stray-continuation / truncated / overlong
+// / surrogate rejections), encode (widths + U+FFFD substitution),
+// codepoint_count / codepoints, is_valid_utf8, the encode_all round
+// trip, and the codepoint-indexing layer (codepoint_at / char_at /
+// substring). Passing → exit 0.
+func TestRunnerUtf8ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/utf8_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/utf8", "# pass 20", "# fail 0", "1..20"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -642,6 +680,25 @@ func TestRunnerArrayHofExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/array higher-order", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_batch_test.fern` covers std/array's batch verbs
+// slice / chunks / windows (#4416) — half-open clamped range, even /
+// uneven / empty chunking, and overlapping / too-wide / full-width
+// windows, including the i32[][] nested-array return shape. Passing →
+// exit 0.
+func TestRunnerArrayBatchExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_batch_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array batch", "# pass 10", "# fail 0", "1..10"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1168,10 +1225,12 @@ func TestRunnerHelpersExample(t *testing.T) {
 // float arithmetic, comparison, casts, and the f32_bits /
 // f32_from_bits reinterpret pair.
 //
-// Eleven cases cover: tolerance-equal vs exact-equal,
+// Twelve cases cover: tolerance-equal vs exact-equal,
 // f32 precision-loss tolerance (the 0.1+0.1+0.1 != 0.3
 // textbook example), NaN detection + the NaN-unequal-to-
-// itself property, ±0.0, ±Inf, and f32_bits round-trips.
+// itself property, ±0.0, ±Inf, f32_bits round-trips, and
+// the to_string digit-formatting paths incl. the >= 2^63
+// __float_int_part branch (#4379).
 func TestRunnerFloatExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/float_test.fern")
@@ -1185,7 +1244,8 @@ func TestRunnerFloatExample(t *testing.T) {
 		"ok 6 - NaN detection",
 		"ok 8 - f32_bits gives expected pattern",
 		"ok 11 - Inf vs Inf",
-		"# pass 11",
+		"ok 12 - to_string digit paths",
+		"# pass 12",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

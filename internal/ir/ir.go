@@ -8589,14 +8589,23 @@ func (b *builder) expr(e ast.Expr) error {
 		// covered by the surrounding lowering). This mirrors how a normal
 		// block whose final action produces the result interacts with the
 		// exit sweep. The checker (E061) guarantees a non-nil Tail in
-		// value position; guard defensively all the same.
-		if n.Tail == nil {
-			return fmt.Errorf("ir: block-expression has no trailing value (compiler bug — checker E061 should have rejected this)")
-		}
+		// value position. A nil Tail is legal ONLY when the block
+		// diverges: its statements always exit early (`return` /
+		// `break` / `continue`), so it has no trailing value and the
+		// checker typed it `never` (#4522). Lower the statements only —
+		// the diverging terminal (OpReturn / OpBr) makes any enclosing
+		// consumer (the store into `var x = { …; return … }`, the merge
+		// after an if/match arm) unreachable, and the ssa lift skips it,
+		// so there is no value to push. A non-diverging nil Tail is a
+		// compiler bug (checker E061 should have rejected it), but the
+		// same statement-only lowering is the safe thing to emit.
 		for _, st := range n.Stmts {
 			if err := b.stmt(st); err != nil {
 				return err
 			}
+		}
+		if n.Tail == nil {
+			return nil
 		}
 		return b.expr(n.Tail)
 	default:

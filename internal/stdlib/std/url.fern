@@ -361,14 +361,37 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
 // input keeps the output deterministic — the round-trip inverse of
 // query_parse for single-valued keys. An empty list yields "".
 pub function query_encode(pairs: (string, string)[]): string {
-    var out: string = "";
-    var i: i32 = 0;
     var n: i32 = pairs.len();
+    if (n == 0) { return ""; }
+    // Two-pass exact-size buffer (#4379): the naive `out = out + …` recopied
+    // the whole growing query string on every pair — O(total²). `form_encode`
+    // is a pure O(len) transform, so a sizing pass that calls it once per part
+    // (and a fill pass that re-encodes) stays O(total) overall while emitting
+    // into a single preallocated buffer. Byte-for-byte identical output.
+    var total: i32 = 0;
+    var i: i32 = 0;
     while (i < n) {
-        if (i > 0) { out = out + "&"; }
+        if (i > 0) { total = total + 1; }            // "&"
         var (k, v) = pairs[i];
-        out = out + form_encode(k) + "=" + form_encode(v);
+        total = total + form_encode(k).len() + 1 + form_encode(v).len();   // key "=" value
         i = i + 1;
     }
-    return out;
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    i = 0;
+    while (i < n) {
+        if (i > 0) { buf = buf.with(pos, 38 as u8); pos = pos + 1; }   // '&'
+        var (k2, v2) = pairs[i];
+        var ek: string = form_encode(k2);
+        var ekl: i32 = ek.len();
+        var a: i32 = 0;
+        while (a < ekl) { buf = buf.with(pos, ek[a] as u8); pos = pos + 1; a = a + 1; }
+        buf = buf.with(pos, 61 as u8); pos = pos + 1;                  // '='
+        var ev: string = form_encode(v2);
+        var evl: i32 = ev.len();
+        var b: i32 = 0;
+        while (b < evl) { buf = buf.with(pos, ev[b] as u8); pos = pos + 1; b = b + 1; }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
 }

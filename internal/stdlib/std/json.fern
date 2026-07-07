@@ -88,11 +88,12 @@ function __json_escape(s: string): string {
 }
 
 pub function json_encode(v: JsonValue): string {
-    // Single shared `out` and `i` across match arms — the
+    // Single shared `buf` and `i` across match arms — the
     // wasm emitter names locals by lang identifier, so
-    // re-declaring `var out` in nested scopes collides
-    // (same footgun parse_float hit).
-    var out: string = "";
+    // re-declaring a `var` in nested scopes collides
+    // (same footgun parse_float hit). Only one composite arm
+    // runs per call, so the shared `buf` needs no reset.
+    var buf: u8[] = [];
     var i: i32 = 0;
     match (v) {
         JNull => { return "null"; },
@@ -105,14 +106,28 @@ pub function json_encode(v: JsonValue): string {
             return "\"" + __json_escape(s) + "\"";
         },
         JArray(arr) => {
-            out = "[";
+            // Accumulate this level into a LOCAL u8[] (#4379) rather than
+            // `out = out + json_encode(arr[i])`, which recopied the whole
+            // encoded-so-far prefix on every element — O(level²) at each nesting
+            // level. Every append targets the local `buf`, so it grows in place
+            // (amortized O(1)); the child bytes are inlined (not routed through a
+            // helper, whose borrowed-param append would copy per call). Byte-for-
+            // byte identical output.
+            buf = buf.append(91 as u8);   // '['
             var n: i32 = arr.len();
             while (i < n) {
-                if (i > 0) { out = out + ","; }
-                out = out + json_encode(arr[i]);
+                if (i > 0) { buf = buf.append(44 as u8); }   // ','
+                var enc: string = json_encode(arr[i]);
+                var el: i32 = enc.len();
+                var k: i32 = 0;
+                while (k < el) {
+                    buf = buf.append(enc[k] as u8);
+                    k = k + 1;
+                }
                 i = i + 1;
             }
-            return out + "]";
+            buf = buf.append(93 as u8);   // ']'
+            return string_from_bytes(buf);
         },
         JObject(m) => {
             // Keys are emitted straight off the map's iteration
@@ -123,17 +138,35 @@ pub function json_encode(v: JsonValue): string {
             // instead (see core/map's "Iteration order" contract,
             // #4388); JSON object member order is not semantically
             // significant, so this only affects byte-exactness.
-            out = "{";
+            // Same local-u8[] accumulation as JArray (#4379): the old
+            // `out = out + …` recopied the growing object text on every member.
+            buf = buf.append(123 as u8);   // '{'
             var first: boolean = true;
             var iter: MapIter[string, JsonValue] = m.iter();
             while (iter.has_next()) {
-                if (!first) { out = out + ","; }
+                if (!first) { buf = buf.append(44 as u8); }   // ','
                 first = false;
-                out = out + "\"" + __json_escape(iter.key()) + "\":";
-                out = out + json_encode(iter.value());
+                buf = buf.append(34 as u8);   // '"'
+                var ek: string = __json_escape(iter.key());
+                var ekl: i32 = ek.len();
+                var kk: i32 = 0;
+                while (kk < ekl) {
+                    buf = buf.append(ek[kk] as u8);
+                    kk = kk + 1;
+                }
+                buf = buf.append(34 as u8);   // '"'
+                buf = buf.append(58 as u8);   // ':'
+                var ev: string = json_encode(iter.value());
+                var evl: i32 = ev.len();
+                var vk: i32 = 0;
+                while (vk < evl) {
+                    buf = buf.append(ev[vk] as u8);
+                    vk = vk + 1;
+                }
                 iter.advance();
             }
-            return out + "}";
+            buf = buf.append(125 as u8);   // '}'
+            return string_from_bytes(buf);
         }
     }
 }
@@ -244,33 +277,32 @@ function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
 // it to `out`. Supports the full Unicode range up to
 // U+10FFFF; the caller is expected to have resolved any
 // surrogate pairs into a single code point already.
-function __json_emit_codepoint(out: string, cp: i32): string {
+// The UTF-8 byte sequence (1–4 bytes) for a Unicode scalar value. Pure — the
+// caller appends the returned bytes to its output buffer, so no growing string
+// is threaded through (see __json_p_string's O(n) u8[] accumulation, #4379).
+function __json_cp_bytes(cp: i32): u8[] {
     if (cp < 128) {
-        var ub1: u8[] = [cp as u8];
-        return out + string_from_bytes(ub1);
+        return [cp as u8];
     }
     if (cp < 2048) {
-        var ub2: u8[] = [
+        return [
             ((cp >> 6) | 192) as u8,
             ((cp & 63) | 128) as u8
         ];
-        return out + string_from_bytes(ub2);
     }
     if (cp < 65536) {
-        var ub3: u8[] = [
+        return [
             ((cp >> 12) | 224) as u8,
             (((cp >> 6) & 63) | 128) as u8,
             ((cp & 63) | 128) as u8
         ];
-        return out + string_from_bytes(ub3);
     }
-    var ub4: u8[] = [
+    return [
         ((cp >> 18) | 240) as u8,
         (((cp >> 12) & 63) | 128) as u8,
         (((cp >> 6) & 63) | 128) as u8,
         ((cp & 63) | 128) as u8
     ];
-    return out + string_from_bytes(ub4);
 }
 
 // __json_p_uhex parses 4 hex digits at p.pos (without
@@ -304,13 +336,22 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
     var p: __JsonParser = p0;
     if (__json_p_byte(p) != 34) { return ("", __JsonParser { ...p, error: 1 }); }
     p = __JsonParser { ...p, pos: p.pos + 1 };
-    var out: string = "";
+    // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
+    // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
+    // immutable string -- O(value²), recopying the whole decoded prefix per
+    // character on the hot request-body parse path. Every append targets the
+    // local `out`, so it grows in place (amortized O(1)); codepoint escapes emit
+    // their 1-4 UTF-8 bytes (from the pure __json_cp_bytes) through the hoisted
+    // `cb` / `ci` cursor. Byte-for-byte identical decoding.
+    var out: u8[] = [];
     var n: i32 = p.s.len();
     var b: i32 = 0;
+    var cb: u8[] = [];
+    var ci: i32 = 0;
     while (true) {
         b = __json_p_byte(p);
         if (b == 0) { return ("", __JsonParser { ...p, error: 1 }); }
-        if (b == 34) { return (out, __JsonParser { ...p, pos: p.pos + 1 }); }
+        if (b == 34) { return (string_from_bytes(out), __JsonParser { ...p, pos: p.pos + 1 }); }
         if (b == 92) {                                  // '\\'
             p = __JsonParser { ...p, pos: p.pos + 1 };
             var esc: i32 = __json_p_byte(p);
@@ -325,31 +366,42 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
                 // form a single astral code point. Lone or
                 // mismatched surrogates fall back to U+FFFD
                 // (REPLACEMENT CHARACTER) — matches Go's
-                // encoding/json + most strict UTF-8 emitters.
+                // encoding/json + most strict UTF-8 emitters. The branch
+                // funnels to a primary codepoint `cp1` plus, for the
+                // mismatched-low-surrogate case, a second `cp2` (-1 = none).
+                var cp1: i32 = 65533;
+                var cp2: i32 = -1;
                 if (u >= 55296 && u <= 56319) {
                     if (p.pos + 6 > n
                         || p.s[p.pos] != 92
                         || p.s[p.pos+1] != 117) {
-                        out = __json_emit_codepoint(out, 65533);
+                        cp1 = 65533;
                     } else {
                         p = __JsonParser { ...p, pos: p.pos + 2 };
                         var (low, pl) = __json_p_uhex(p);
                         p = pl;
                         if (p.error != 0) { return ("", p); }
                         if (low < 56320 || low > 57343) {
-                            out = __json_emit_codepoint(out, 65533);
-                            out = __json_emit_codepoint(out, low);
+                            cp1 = 65533;
+                            cp2 = low;
                         } else {
-                            var cp: i32 = 65536
+                            cp1 = 65536
                                 + ((u - 55296) << 10)
                                 + (low - 56320);
-                            out = __json_emit_codepoint(out, cp);
                         }
                     }
                 } else if (u >= 56320 && u <= 57343) {
-                    out = __json_emit_codepoint(out, 65533);
+                    cp1 = 65533;
                 } else {
-                    out = __json_emit_codepoint(out, u);
+                    cp1 = u;
+                }
+                cb = __json_cp_bytes(cp1);
+                ci = 0;
+                while (ci < cb.len()) { out = out.append(cb[ci] as u8); ci = ci + 1; }
+                if (cp2 >= 0) {
+                    cb = __json_cp_bytes(cp2);
+                    ci = 0;
+                    while (ci < cb.len()) { out = out.append(cb[ci] as u8); ci = ci + 1; }
                 }
             } else {
                 var ch: i32 = -1;
@@ -360,12 +412,11 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
                 else if (esc == 98)  { ch = 8; }
                 else if (esc == 102) { ch = 12; }
                 else { return ("", __JsonParser { ...p, error: 1 }); }
-                var sb: u8[] = [ch as u8];
-                out = out + string_from_bytes(sb);
+                out = out.append(ch as u8);
                 p = __JsonParser { ...p, pos: p.pos + 1 };
             }
         } else {
-            out = out + p.s[p.pos:p.pos+1];
+            out = out.append(p.s[p.pos] as u8);
             p = __JsonParser { ...p, pos: p.pos + 1 };
         }
     }
@@ -985,12 +1036,28 @@ impl Json for string {
 // special-cases `arr.to_json()` on a known array element type) so the erased
 // generic body never has to dispatch on `T`.
 pub function (xs: T[]) to_json[T: Json](): string {
-    var out: string = "[";
+    // Local growable u8[] accumulation (#4379), like json_encode's JArray arm:
+    // the old `out = out + xs[i].to_json()` recopied the whole encoded-so-far
+    // prefix on every element — O(array²). Every append targets the local `out`,
+    // so it grows in place (amortized O(1)); the per-element bytes are inlined.
+    // (On the self-hosted compiler this body is dead — `arr.to_json()` call sites
+    // are intercepted by lower_array_to_json, whose codegen carries the matching
+    // rewrite — but the native monomorphiser compiles it, so it must stay O(n)
+    // and lower cleanly.) Byte-for-byte identical output.
+    var out: u8[] = [];
+    out = out.append(91 as u8);   // '['
     var i: i32 = 0;
     while (i < xs.len()) {
-        if (i > 0) { out = out + ","; }
-        out = out + xs[i].to_json();
+        if (i > 0) { out = out.append(44 as u8); }   // ','
+        var e: string = xs[i].to_json();
+        var el: i32 = e.len();
+        var k: i32 = 0;
+        while (k < el) {
+            out = out.append(e[k] as u8);
+            k = k + 1;
+        }
         i = i + 1;
     }
-    return out + "]";
+    out = out.append(93 as u8);   // ']'
+    return string_from_bytes(out);
 }

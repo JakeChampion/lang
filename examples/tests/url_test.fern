@@ -100,6 +100,20 @@ function test_query_encode(): test.TestOutcome {
     return test.assert_eq(url.query_encode(pairs), "q=a+b&n=1");
 }
 
+// query_encode edges — locks in the byte-identical output of the
+// two-pass preallocated-buffer rewrite (#4379): several pairs so the
+// `&` separators exercise the growing path, a reserved byte that
+// %-escapes (`&` → %26), multi-byte UTF-8 (é → %C3%A9), and empty
+// keys/values.
+function test_query_encode_edges(): test.TestOutcome {
+    var many: (string, string)[] = [("k1", "v1"), ("k2", "v&2"), ("k3", "café")];
+    var empties: (string, string)[] = [("", ""), ("x", "")];
+    return test.assert_true(
+        url.query_encode(many) == "k1=v1&k2=v%262&k3=caf%C3%A9"
+        && url.query_encode(empties) == "=&x="
+        && url.query_encode([("only", "one value")]) == "only=one+value");
+}
+
 // query_parse now form-decodes, so a '+' value is a space.
 function test_query_parse_plus(): test.TestOutcome {
     var m: Map[string, string[]] = url.query_parse("q=a+b");
@@ -126,6 +140,7 @@ function main(): i32 {
     r = r.it("form_encode space",       test_form_encode_space());
     r = r.it("form round-trip",         test_form_roundtrip());
     r = r.it("query_encode",            test_query_encode());
+    r = r.it("query_encode edges",      test_query_encode_edges());
     r = r.it("query_parse plus",        test_query_parse_plus());
     return r.finish();
 }

@@ -1,0 +1,22 @@
+// std/regex regex_replace_all — exercises the two-pass exact-size-buffer
+// rewrite (#4379) on the paths the old `out = out + …` chain made quadratic
+// and that are easiest to get wrong when re-piecing the output: a
+// multi-character replacement that grows the result, the empty pattern
+// (a zero-width match between every byte), a nullable `x*` star (zero-width
+// carry of the skipped byte), full deletion (empty repl), a `^` anchor,
+// no-match passthrough, a match-dense single-char replace, and a trailing
+// tail after the last match. Each check sets a bit; all eight hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_replace_all("a", "aaa", "bb") == "bbbbbb") { r = r + 1; }              // multi-char repl grows output
+    if (regex.regex_replace_all("", "abc", "-") == "-a-b-c-") { r = r + 2; }               // empty pattern → between every byte
+    if (regex.regex_replace_all("x*", "axbxc", "<>") == "<>a<><>b<><>c<>") { r = r + 4; }  // nullable star, zero-width carry
+    if (regex.regex_replace_all(".", "hi", "") == "") { r = r + 8; }                       // delete everything (empty repl)
+    if (regex.regex_replace_all("^", "abc", ">") == ">abc") { r = r + 16; }                // anchored, single zero-width at start
+    if (regex.regex_replace_all("z", "abc", "Q") == "abc") { r = r + 32; }                 // no match → unchanged
+    if (regex.regex_replace_all("o", "foo bar boo", "0") == "f00 bar b00") { r = r + 64; } // dense single-char
+    if (regex.regex_replace_all("X", "aXbXc", "-") == "a-b-c") { r = r + 128; }            // trailing tail after last match
+    return r;
+}

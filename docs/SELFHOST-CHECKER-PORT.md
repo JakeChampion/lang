@@ -632,9 +632,12 @@ same code(s) the Go checker does — restricted to
   `boolean`, not the self-host-only `bool` alias, so the Go side doesn't
   add a stray E008.)
 - **Slice 55 (done): E021 — method receiver references an unknown type.**
-  The first slice of the broad E021 family (the rest — `impl … for …`
-  conformance / coherence / object-safety — needs trait/impl declarations
-  the self-host grammar doesn't have). A new `receiver_type_ok` validates
+  The first slice of the broad E021 family. The self-host grammar now
+  parses `trait` / `impl … for …` / `dyn`, and the impl-conformance slices
+  have since landed (#4347: E021 for an impl method with the wrong
+  signature, and for an impl that omits a required trait method); the
+  remaining pieces are coherence / object-safety. A new `receiver_type_ok`
+  validates
   each method's receiver in `collect_decl_diags`: a primitive, a declared
   struct / enum / union alias is fine; a generic / `Map` / array (`X[…]`)
   or `dyn Trait` receiver is skipped conservatively; anything else is

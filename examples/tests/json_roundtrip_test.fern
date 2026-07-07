@@ -160,6 +160,49 @@ function test_encode_string_escape_all(): test.TestOutcome {
     }
 }
 
+// The string-value PARSER decode path (#4379): a `\uXXXX` BMP escape, an astral
+// surrogate PAIR (😀 → U+1F600, the 4-byte UTF-8 emit), a lone/
+// mismatched surrogate falling back to U+FFFD, and a long literal run that grows
+// the decode buffer across reallocations — all decoded into the u8[] accumulator
+// and re-encoded byte-for-byte. Guards the surrogate-combine + codepoint-emit
+// branches a buffer miscount would corrupt.
+function __reencode(input: string): string {
+    match (json.json_parse(input)) {
+        Some(v) => { return json.json_encode(v); },
+        None => { return "PARSE_FAIL"; }
+    }
+}
+
+function test_parse_string_decode_paths(): test.TestOutcome {
+    // BMP escape é (U+00E9) + astral 😀 (U+1F600, surrogate pair) re-encode as
+    // their raw UTF-8 (json_encode only escapes the mandatory set, not printable
+    // multibyte), so a decode→encode round-trip yields the literal characters.
+    if (__reencode("\"x\\u00e9y\\ud83d\\ude00z\"") != "\"xéy😀z\"") {
+        return test.fail("astral/bmp decode: " + __reencode("\"x\\u00e9y\\ud83d\\ude00z\""));
+    }
+    // A lone high surrogate with no following low → U+FFFD (replacement char,
+    // UTF-8 EF BF BD).
+    var fffd: string = string_from_bytes([239 as u8, 191 as u8, 189 as u8]);
+    var lone: string = __reencode("\"a\\ud83db\"");
+    if (lone != "\"a" + fffd + "b\"") { return test.fail("lone surrogate decode: " + lone); }
+    // A long literal run (buffer grows across reallocations) decodes intact.
+    var long_in: string = "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
+    return test.assert_eq(__reencode(long_in), long_in);
+}
+
+// A nested array-of-objects with mixed scalars re-encodes byte-for-byte through
+// the recursive JArray + JObject arms — the ones whose per-level accumulation
+// moved from `out = out + …` to the growable-u8[] buffer (#4379). Exercises the
+// comma separators, quoted+escaped keys, and the nested-object recursion in one
+// shot; a buffer miscount here would reorder or truncate the output.
+function test_encode_nested_round_trip(): test.TestOutcome {
+    var j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
+    match (json.json_parse(j)) {
+        Some(v) => { return test.assert_eq(json.json_encode(v), j); },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
 function test_parse_invalid(): test.TestOutcome {
     // Trailing garbage → None.
     match (json.json_parse("{\"a\":1} trailing")) {
@@ -274,6 +317,8 @@ function main(): i32 {
     r = r.it("encode scalars",    test_encode_scalars());
     r = r.it("encode string escape", test_encode_string_escape());
     r = r.it("encode string escape all", test_encode_string_escape_all());
+    r = r.it("parse string decode paths", test_parse_string_decode_paths());
+    r = r.it("encode nested round trip", test_encode_nested_round_trip());
     r = r.it("parse invalid",     test_parse_invalid());
     r = r.it("depth ok",          test_depth_ok());
     r = r.it("depth limit",       test_depth_limit());

@@ -69,7 +69,44 @@ Per-builtin work unit (×8 builtins × 3 backends):
    additionally needs the `wasi:io/poll` / `wasi:sockets` component
    wiring its composer already does on the Go side.
 
-### Blocker 2 — generic enum with a function-typed payload on the IR path
+### Blocker 2 — generic enum with a function-typed payload on the IR path — RESOLVED on x86-64; one wasm shape remains (#4364)
+
+> **RESOLVED on x86-64 IR; one wasm shape remains (2026-07-07).** A user
+> enum with a function-typed payload now constructs, `match`-binds, and
+> indirect-calls on the IR path — the closure-conv work (#4354 + the
+> CLOSURE-CONV slices) lowers a function value in payload position as an
+> ordinary pointer-sized payload, and the user-enum `match` lowering
+> dispatches the bound payload through the existing closure-call
+> machinery.
+>
+> **x86-64 IR:** verified for the exact `Future[T] = Ready(T) |
+> Pending(i32, (i32) => Future[T])` shape (generic + recursive +
+> payload-fn-returns-the-enum) plus named-fn / capturing-closure /
+> recursive-`Step` / generic-`Box[T]` variants — all route `module: IR`
+> and match the interp oracle. The x86 IR path does not monomorphize the
+> generic enum, so the generic/recursive shapes ride the same lowering as
+> the non-generic ones.
+>
+> **wasm IR:** the four non-fully-generic-recursive shapes lower; the
+> exact `Future[T]` shape (generic + recursive + payload-fn-returns-the-
+> generic-enum) is a **remaining wasm-only gap**. The wasm driver
+> monomorphizes the generic enum (`Fut[T]` → `Fut__i32`, #3893), renaming
+> the variant structs, but the nested `match (cont(tok))` on the
+> closure-call scrutinee can't have its arm patterns rewritten to the
+> mangled names because the fn payload's return type is discarded at parse
+> (`StructFieldDecl` has no `fn_ret` slot; the variant field is the coarse
+> `type_name: "fn"`). `lower_func` then bails and the wasm module's `main`
+> is truncated. Closing it needs fn-payload-return-type preservation at
+> the variant-desugar layer — an invasive parse-layer change, tracked as
+> #4722. See `docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md` for the
+> full root cause.
+>
+> Pinned by `internal/e2eselfhost/self_host_fn_payload_variant_ir_test.go`
+> (x86-64 all five shapes; wasm the four that lower, `Future[T]` skipped
+> with a pointer to the gap). Only the async *runtime* builtins (Blocker 1
+> / the #4315–#4320 poll / timer / socket set) plus this wasm shape remain
+> for the end-to-end `std/async`-on-IR payoff. The historical analysis
+> below is retained.
 
 `Future[T] = Ready(T) | Pending(i32, (i32) => Future[T])` is a generic,
 recursive, **user** enum whose `Pending` payload is a function type. On

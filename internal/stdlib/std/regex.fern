@@ -445,24 +445,52 @@ pub function regex_find_all(pattern: string, text: string): RMatch[] {
 // string. `repl` is inserted verbatim (no `$1`/`\1` group substitution).
 pub function regex_replace_all(pattern: string, text: string, repl: string): string {
     var prog: RProg = __rx_compile(pattern);
-    var out: string = "";
+    // Collect the output pieces in one scan (amortized-O(1) appends, like
+    // regex_find_all), summing their lengths, then fill one exact-size buffer
+    // (#4379). The old `out = out + text[…] + repl` per match recopied the
+    // whole growing result on every step -- O(output²) on a match-dense text.
+    var parts: string[] = [];
+    var total: i32 = 0;
     var last: i32 = 0;          // end of the text already emitted
     var pos: i32 = 0;
-    while (pos <= text.len()) {
+    var done: boolean = false;
+    while (!done && pos <= text.len()) {
         var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
-        if (!m.found) { return out + text[last : text.len()]; }
-        out = out + text[last : m.start] + repl;
-        last = m.end;
-        var nxt: i32 = __rx_advance(m);
-        // a zero-width match leaves `last` at m.start; carry the skipped byte
-        // into the output by emitting it before advancing.
-        if (m.end <= m.start && nxt <= text.len() && nxt > last) {
-            out = out + text[last : nxt];
-            last = nxt;
+        if (!m.found) {
+            done = true;
+        } else {
+            var seg: string = text[last : m.start];
+            parts = parts.append(seg);  total = total + seg.len();
+            parts = parts.append(repl); total = total + repl.len();
+            last = m.end;
+            var nxt: i32 = __rx_advance(m);
+            // a zero-width match leaves `last` at m.start; carry the skipped
+            // byte into the output by emitting it before advancing.
+            if (m.end <= m.start && nxt <= text.len() && nxt > last) {
+                var z: string = text[last : nxt];
+                parts = parts.append(z);  total = total + z.len();
+                last = nxt;
+            }
+            pos = nxt;
         }
-        pos = nxt;
     }
-    return out + text[last : text.len()];
+    var tail: string = text[last : text.len()];
+    parts = parts.append(tail); total = total + tail.len();
+    var buf: u8[] = __alloc_u8(total);
+    var bpos: i32 = 0;
+    var pi: i32 = 0;
+    while (pi < parts.len()) {
+        var s: string = parts[pi];
+        var sl: i32 = s.len();
+        var k: i32 = 0;
+        while (k < sl) {
+            buf = buf.with(bpos, s[k] as u8);
+            bpos = bpos + 1;
+            k = k + 1;
+        }
+        pi = pi + 1;
+    }
+    return string_from_bytes(buf);
 }
 
 // `regex_split(text, pattern)` — split `text` on non-overlapping matches of

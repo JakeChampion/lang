@@ -299,12 +299,15 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// IR routing can't silently regress (it was previously only covered by the
 		// synthetic single-function closure/typaram IR tests).
 		{"array_hof", langSrcAbs(t, "examples/tests/array_hof_test.fern"), ""},
+		{"array_batch", langSrcAbs(t, "examples/tests/array_batch_test.fern"), ""},
 		{"iter_combinators", langSrcAbs(t, "examples/tests/iter_combinators_test.fern"), ""},
 		{"num_reducers", langSrcAbs(t, "examples/tests/num_reducers_test.fern"), ""},
 		{"time_iso_span", langSrcAbs(t, "examples/tests/time_iso_span_test.fern"), ""},
 		{"time_calendar", langSrcAbs(t, "examples/tests/time_calendar_test.fern"), ""},
 		{"time_http_date", langSrcAbs(t, "examples/tests/time_http_date_test.fern"), ""},
+		{"time_timezone", langSrcAbs(t, "examples/tests/time_timezone_test.fern"), ""},
 		{"string_replace_split", langSrcAbs(t, "examples/tests/string_replace_split_test.fern"), ""},
+		{"utf8", langSrcAbs(t, "examples/tests/utf8_test.fern"), ""},
 		{"string_escape_count", langSrcAbs(t, "examples/tests/string_escape_count_test.fern"), ""},
 		{"string_slice_extract", langSrcAbs(t, "examples/tests/string_slice_extract_test.fern"), ""},
 		{"string_classify_transform", langSrcAbs(t, "examples/tests/string_classify_transform_test.fern"), ""},

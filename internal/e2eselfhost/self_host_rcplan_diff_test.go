@@ -389,6 +389,247 @@ function ifr(f: i32): i32 {
 function main(): i32 { return ifr(1); }`,
 			anchor: map[string]map[string]string{"ifr": {"reuseSources": "7:14<-a", "reuseConsumed": "a"}},
 		},
+		{
+			// CROSS-BLOCK reuse: donor `a` declared in the while body, recipient
+			// `b` nested in an if inside that body — paired by lower_block's
+			// xblock_pairings_for (donor one block above the recipient). Native
+			// computeReuseSources' cross-block pass emits the same; the dump's
+			// reuse_xblock_pairs pass mirrors it. reuseSources keys on b's lit.
+			name: "cross-block-reuse",
+			src: `struct P { x: i32, y: i32 }
+function cb(): i32 {
+	var sum: i32 = 0;
+	var i: i32 = 0;
+	while (i < 4) {
+		var a: P = P { x: i, y: i + 1 };
+		var s: i32 = a.x + a.y;
+		if (i > 0) {
+			var b: P = P { x: i, y: 3 };
+			sum = sum + b.x + b.y;
+		}
+		sum = sum + s;
+		i = i + 1;
+	}
+	return sum;
+}
+function main(): i32 { return cb(); }`,
+			anchor: map[string]map[string]string{"cb": {"reuseSources": "9:15<-a", "reuseConsumed": "a"}},
+		},
+		{
+			// OWN-PARAM donor function (#4356 slice 10): `bump(own d)` where a
+			// construction reuses d's box (own_param_reuse_sites). Both sides
+			// agree on freeEligible (c,d); NEITHER emits reuseSources — the
+			// self-host's own-param reuse rides own_param_reuse_sites (not the
+			// reuseSources dump path), native doesn't pair PARAMS as donors —
+			// a documented agreement. The recipient c is precise-dropped at its
+			// last use by the self-host (the known placement class native
+			// leaves to the exit sweep).
+			name: "ownparam-scalar-donor",
+			src: `struct P { x: i32, y: i32 }
+function bump(own d: P): i32 {
+	var u: i32 = d.x + d.y;
+	var c = P { x: 10, y: 20 };
+	return c.x + c.y + u;
+}
+function main(): i32 { return bump(P { x: 3, y: 4 }); }`,
+			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
+			diverge: map[string]map[string]divergence{
+				"bump": {"preciseDrops": {native: "", selfhost: "2=c"}},
+			},
+		},
+		{
+			// OWN-PARAM donor with an ARRAY field (#4356 slice 11): same table
+			// shape as the scalar own-param donor — the array-field reuse is a
+			// codegen concern, not an rcPlan-table one.
+			name: "ownparam-array-donor",
+			src: `struct H { id: i32, items: i32[] }
+function bump(own d: H): i32 {
+	var u: i32 = d.id + d.items[0];
+	var c = H { id: 5, items: [7, 8, 9] };
+	return c.id + c.items[0] + u;
+}
+function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`,
+			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
+			diverge: map[string]map[string]divergence{
+				"bump": {"preciseDrops": {native: "", selfhost: "2=c"}},
+			},
+		},
+		{
+			// OWN-PARAM self-overwrite base (#4356 slice 12): `var c = P{...own_d, x}`
+			// reuses d's box IN PLACE, so there is no separate recipient to
+			// precise-drop — the tables agree exactly (freeEligible c,d only).
+			name: "ownparam-selfoverwrite",
+			src: `struct P { x: i32, y: i32 }
+function bump(own d: P): i32 {
+	var c = P { ...d, x: 10 };
+	return c.x + c.y;
+}
+function main(): i32 { return bump(P { x: 3, y: 4 }); }`,
+			anchor: map[string]map[string]string{"bump": {"freeEligible": "c,d"}},
+		},
+		{
+			// FREE-ELIGIBLE for UNANNOTATED locals (found by the differential
+			// bug-hunt): a bare-lambda-bound closure. Native marks `add`
+			// freeEligible (owned closure frees its env); the self-host used to
+			// emit nothing — its free_eligible_of both mis-inferred the type
+			// (no lambda arm) AND tainted the closure (no ExprLambda owned-rhs
+			// arm). Both fixed to match native.
+			name: "fe-unannotated-closure",
+			src: `function f(): i32 {
+	var add = (a: i32) => a + 1;
+	return add(5);
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "add"}},
+		},
+		{
+			// Unannotated string literal + concat: both `a` ("hi") and `b`
+			// (a + "!") are owned heap strings, freeEligible on both sides.
+			name: "fe-unannotated-string-concat",
+			src: `function f(): i32 {
+	var a = "hi";
+	var b = a + "!";
+	return b.len();
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "a,b"}},
+		},
+		{
+			// Chained .with: `b` is bound from an array-preserving method call,
+			// so its type is inferred (i32[]) and it reaches the eligibility
+			// gate — freeEligible a,b. arraySetInc records both calls (the inner
+			// with on a live receiver incs; the outer with on the fresh temp
+			// does not).
+			name: "fe-unannotated-with-chain",
+			src: `function f(): i32 { var a: i32[] = [1, 2, 3]; var b = a.with(0, 9).with(1, 8); return b[0] + b[1] + a[0]; }
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "a,b", "arraySetInc": "1:61=true,1:72=false"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "2=a"}},
+			},
+		},
+		{
+			// Nested-if .with: `b` bound from a method call inside an if-arm —
+			// the collect-types fallback resolves it from the receiver `a` even
+			// across the block boundary.
+			name: "fe-unannotated-with-nested-if",
+			src: `function f(c: i32): i32 { var a: i32[] = [1, 2]; if (c > 0) { var b = a.with(0, 9); return b[0] + a[0]; } return a[1]; }
+function main(): i32 { return f(1); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "a,b", "arraySetInc": "1:77=true"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "2=a"}},
+			},
+		},
+		{
+			// FREE-ELIGIBLE for a builtin-enum local (found by the widened
+			// bug-hunt): `var r: Result[i32[], i32] = Ok([5,6])` matched below.
+			// The self-host used to emit nothing — its eligibility type-switch
+			// had no arm for the builtin Option/Result enums, so the annotated
+			// local fell through unrecognised. Now rc_fe_is_builtin_enum makes
+			// it eligible, matching native's `r`.
+			name: "fe-builtin-enum-result",
+			src: `function f(): i32 {
+	var r: Result[i32[], i32] = Ok([5, 6]);
+	var v = 0;
+	match (r) { Ok(xs) => { v = xs[0] + xs[1]; }, Err(e) => { v = e; } }
+	return v;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "r"}},
+		},
+		{
+			// FREE-ELIGIBLE for a variant-constructed enum local bound from a
+			// BORROWED param arg (found by the widened bug-hunt): `var x = A(n)`
+			// where n is a borrowed i32 param. The self-host's rc_fe_rhs_tainted
+			// used to fall through the variant-ctor call to its args and, seeing
+			// the taint-seeded `n`, taint x — dropping it from freeEligible. It
+			// now returns false for a variant constructor (a fresh owned rc=1
+			// box, like native's rhsTainted), so x is eligible on both sides.
+			// KNOWN preciseDrops divergence, reversed from the usual class:
+			// native precise-drops the matched enum at the match statement
+			// (2=x); the self-host leaves x to its exit sweep. Both sound.
+			name: "fe-variant-ctor-borrowed-arg",
+			src: `enum E { A(i32), B(i32) }
+function f(n: i32): i32 {
+	var x = A(n);
+	var r = 0;
+	match (x) { A(v) when v > 0 => { r = v; }, A(v) => { r = 0; }, B(v) => { r = v; } }
+	return r;
+}
+function main(): i32 { return f(5); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "x"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "2=x", selfhost: ""}},
+			},
+		},
+		{
+			// MAP LOCAL divergence (widened bug-hunt PIN — the #2704 conservative
+			// area): `var m: Map[..] = Map{..}` desugars at PARSE time to a
+			// map_new().insert()... chain. Native's freeEligible is conservative
+			// about the resulting map local and leaves it to the exit sweep
+			// (empty); the self-host recognises `Map` as an eligible type and
+			// precise-drops it at last use (1=m). Both sound — the self-host is
+			// simply more aggressive — so this is pinned, not "fixed" (matching
+			// native here would REMOVE a valid self-host optimisation).
+			name: "fe-map-strkey-local",
+			src: `function f(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("a", 0) + m.get_or("b", 0); }
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"freeEligible": {native: "", selfhost: "m"}, "preciseDrops": {native: "", selfhost: "1=m"}},
+			},
+		},
+		{
+			// FOR-IN over an array (widened bug-hunt PIN — the synthesized-temp
+			// class): native lowers `for x in xs` through a parse-time
+			// synthesized iterator temp `__foreach_iter_1` that is itself
+			// freeEligible, so its table reads `__foreach_iter_1,xs`. The
+			// self-host synthesizes the foreach iterator at LOWER time, so the
+			// temp never appears in its AST-level table (`xs` only) — the same
+			// mechanism as the `__destruct_<line>_<col>` pins above. It also
+			// precise-drops xs at last use (2=xs) where native sweeps.
+			name: "fe-for-in-array",
+			src: `function f(): i32 { var xs = [1, 2, 3]; var s = 0; for x in xs { s = s + x; } return s; }
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"freeEligible": {native: "__foreach_iter_1,xs", selfhost: "xs"}, "preciseDrops": {native: "", selfhost: "2=xs"}},
+			},
+		},
+		{
+			// CALL-RETURN type inference (found by the round-3 bug-hunt): an
+			// UNANNOTATED local `var b = mk()` bound from a non-generic function
+			// call. Native reads the checker's resolved call type (i32[]) and
+			// marks b freeEligible; the self-host used to leave b untyped — its
+			// rc_fe_collect_types ExprCall arm only recognised variant ctors, so
+			// b never reached the eligibility gate. rc_fe_call_ret_type now looks
+			// up mk's declared return type, matching native's `b`. (Self-host
+			// precise-drops the fresh call-returned array at last use — the known
+			// placement class native leaves to its exit sweep.)
+			name: "fe-call-return-array",
+			src: `function mk(): i32[] { return [1, 2, 3]; }
+function f(): i32 { var b = mk(); return b[0] + b[1]; }
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "b"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "1=b"}},
+			},
+		},
+		{
+			// GENERIC call-return boundary (round-3 bug-hunt PIN — the flip side
+			// of the fix above): `var b = id(a)` where `id[T](x: T): T` is
+			// generic. Native instantiates T=i32[] via the checker and marks b
+			// freeEligible (`a,b`); the syntactic self-host mirror deliberately
+			// SKIPS generic functions in rc_fe_call_ret_type (it can't
+			// instantiate the type parameter), so b stays untyped (`a` only).
+			// Pinned to document the boundary — closing it needs monomorphised
+			// return-type resolution, a separate slice.
+			name: "fe-generic-call-return",
+			src: `function id[T](x: T): T { return x; }
+function f(): i32 { var a = [1, 2, 3]; var b = id(a); return b[0]; }
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"freeEligible": {native: "a,b", selfhost: "a"}},
+			},
+		},
 	}
 
 	for _, tc := range cases {

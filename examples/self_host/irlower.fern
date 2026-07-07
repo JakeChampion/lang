@@ -3191,27 +3191,62 @@ pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: p
 // A non-ident receiver is snapshotted into a hidden local first (evaluated
 // once; ident receivers are loaded per use, which is free). The generic body
 // `__fn_T__to_json` is still emitted but dead — call sites all route here. #2766.
-// to_json_loop_stmt builds the synthetic `while ($i < aref.len()) { if ($i>0)
-// {out=out+","} out = out + aref[$i].to_json(); $i=$i+1 }` driving the array
-// serialiser. Split out of lower_array_to_json so neither function is oversized
-// — large functions miscompile on the native backend (cf. #2720).
-function to_json_loop_stmt(on: string, inm: string, aref: parser.Expr): parser.Stmt {
+// `$out = $out.append(BYTE as u8)` as a synthetic assign — the u8[]-buffer
+// append driving the O(n) array serialiser (#4379). `byte` is any Expr; it is
+// cast with the `as_u8` unary (how the parser desugars `x as u8`).
+function to_json_append_stmt(on: string, byte: parser.Expr): parser.Stmt {
     var oref: parser.Expr = parser.ExprIdent { name: on, line: 0, col: 0 };
+    var casted: parser.Expr = parser.ExprUnary { op: "as_u8", operand: byte, line: 0, col: 0 };
+    var app: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: oref, field: "append", line: 0, col: 0 }, args: [casted], line: 0, col: 0, type_argc: 0 };
+    return parser.StmtAssign { target: on, value: app, line: 0, col: 0, target_line: 0, target_col: 0 };
+}
+
+// The inner byte-copy loop `while ($k < $s.len()) { $out = $out.append($s[$k] as
+// u8); $k = $k+1 }` — appends every byte of a per-element to_json() result to the
+// output buffer. Split out to keep the loop builders small (large functions
+// miscompile on the native backend, #2720).
+function to_json_bytecopy_stmt(on: string, sn: string, kn: string): parser.Stmt {
+    var sref: parser.Expr = parser.ExprIdent { name: sn, line: 0, col: 0 };
+    var kref: parser.Expr = parser.ExprIdent { name: kn, line: 0, col: 0 };
+    var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0 };
+    var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref };
+    var app: parser.Stmt = to_json_append_stmt(on, elem);
+    var inc: parser.Stmt = parser.StmtAssign { target: kn, value: parser.ExprBinary { op: "+", left: kref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    return parser.StmtWhile { cond: cond, body: [app, inc], label: "" };
+}
+
+// to_json_loop_stmt builds the synthetic outer loop driving the array serialiser
+// (#4379 — the u8[]-buffer form, so appends grow in place instead of the old
+// O(n²) `out = out + …` concat):
+//   while ($i < aref.len()) {
+//       if ($i > 0) { $out = $out.append(44 as u8); }   // ','
+//       var $s = aref[$i].to_json();
+//       var $k = 0;
+//       while ($k < $s.len()) { $out = $out.append($s[$k] as u8); $k = $k+1; }
+//       $i = $i + 1;
+//   }
+// Split out of lower_array_to_json so neither function is oversized (#2720).
+function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref: parser.Expr): parser.Stmt {
     var iref: parser.Expr = parser.ExprIdent { name: inm, line: 0, col: 0 };
     var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
+    var comma: parser.Expr = parser.ExprNumber { text: "44", suffix: "", is_float: false, line: 0, col: 0 };
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0 };
     var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0 };
-    var addcomma: parser.Stmt = parser.StmtAssign { target: on, value: parser.ExprBinary { op: "+", left: oref, right: parser.ExprString { value: ",", line: 0, col: 0 }, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var noelse: parser.Stmt[] = [];
-    var comma_then: parser.Stmt[] = [addcomma];
-    var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: comma_then, else_body: noelse };
+    var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse };
+    // var $s = aref[$i].to_json();
     var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref };
     var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
-    var appendj: parser.Stmt = parser.StmtAssign { target: on, value: parser.ExprBinary { op: "+", left: oref, right: elemj, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var dvs: parser.Stmt = parser.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0 };
+    // var $k = 0;
+    var dk: parser.Stmt = parser.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0 };
+    var copyl: parser.Stmt = to_json_bytecopy_stmt(on, sn, kn);
     var inc: parser.Stmt = parser.StmtAssign { target: inm, value: parser.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
-    var body: parser.Stmt[] = [ifc, appendj, inc];
+    var body: parser.Stmt[] = [ifc, dvs, dk, copyl, inc];
     return parser.StmtWhile { cond: cond, body: body, label: "" };
 }
 
@@ -3219,6 +3254,8 @@ pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
     var n: i32 = s.locals.len();
     var on: string = "$tjout" + util.i32_to_string(n);
     var inm: string = "$tji" + util.i32_to_string(n);
+    var sn: string = "$tjs" + util.i32_to_string(n);
+    var kn: string = "$tjk" + util.i32_to_string(n);
     var s2: LowerState = s;
     var aref: parser.Expr = arr;
     // Snapshot a non-ident receiver so `.len()` and each `arr[i]` reference the
@@ -3235,19 +3272,25 @@ pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
         if (!s2.ok) { return s2; }
         aref = parser.ExprIdent { name: an, line: 0, col: 0 };
     }
-    // var $tjout = "[";
-    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "", init: parser.ExprString { value: "[", line: 0, col: 0 }, line: 0, col: 0 };
+    // var $tjout: u8[] = [];  — the growable output buffer (#4379)
+    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "u8[]", init: parser.ExprArray { elements: [] }, line: 0, col: 0 };
     s2 = lower_stmt(dout, s2);
+    if (!s2.ok) { return s2; }
+    // $tjout = $tjout.append(91 as u8);  — '['
+    s2 = lower_stmt(to_json_append_stmt(on, parser.ExprNumber { text: "91", suffix: "", is_float: false, line: 0, col: 0 }), s2);
     if (!s2.ok) { return s2; }
     // var $tji = 0;
     var di: parser.Stmt = parser.StmtVar { name: inm, type_name: "", init: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0 };
     s2 = lower_stmt(di, s2);
     if (!s2.ok) { return s2; }
-    // the serialising loop (built in a helper to keep this function small)
-    s2 = lower_stmt(to_json_loop_stmt(on, inm, aref), s2);
+    // the serialising loop (built in helpers to keep this function small)
+    s2 = lower_stmt(to_json_loop_stmt(on, inm, sn, kn, aref), s2);
     if (!s2.ok) { return s2; }
-    // result expression: $tjout + "]"
-    var result: parser.Expr = parser.ExprBinary { op: "+", left: parser.ExprIdent { name: on, line: 0, col: 0 }, right: parser.ExprString { value: "]", line: 0, col: 0 }, line: 0, col: 0 };
+    // $tjout = $tjout.append(93 as u8);  — ']'
+    s2 = lower_stmt(to_json_append_stmt(on, parser.ExprNumber { text: "93", suffix: "", is_float: false, line: 0, col: 0 }), s2);
+    if (!s2.ok) { return s2; }
+    // result expression: string_from_bytes($tjout)
+    var result: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "string_from_bytes", line: 0, col: 0 }, args: [parser.ExprIdent { name: on, line: 0, col: 0 }], line: 0, col: 0, type_argc: 0 };
     return lower_expr(result, s2);
 }
 
@@ -3378,6 +3421,14 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
         // the 4-byte i32 path, so on wasm `a[lo:hi][i]` loaded at a 4-byte
         // stride instead of f64's 8-byte stride (#2908).
         parser.ExprSlice(sl) => { return expr_is_f64arr(sl.array, s); },
+        // Direct index of an f64 array LITERAL `[1.0, 2.0][i]`: the ExprArray
+        // construction builds it at an 8-byte f64 stride (ewidth=64 when
+        // elements[0] is f64), so the read must match — mirror that same
+        // first-element probe. Without this the read defaulted to the 4-byte
+        // i32 path and mis-strode the f64 literal on wasm (the ExprArray sibling
+        // of the #2908 ExprSlice gap; register backends use 8-byte slots so only
+        // wasm was affected).
+        parser.ExprArray(al) => { return al.elements.len() > 0 && expr_is_f64(al.elements[0], s); },
         _ => { return false; }
     }
     return false;
@@ -3443,6 +3494,12 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
         // expr_is_i64arr's ExprSlice case (the same latent stride gap #2908
         // fixed for f64[]).
         parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
+        // Direct index of an i64/u64 array LITERAL `[x as i64, …][i]`: the
+        // ExprArray construction emits arr_make_i64 (8-byte stride) when
+        // elements[0] is 64-bit-wide and not f64, so the read must match —
+        // mirror that same first-element probe (the i64 sibling of the f64
+        // ExprArray arm above; wasm-only, register backends unaffected).
+        parser.ExprArray(al) => { return al.elements.len() > 0 && !expr_is_f64(al.elements[0], s) && infer_expr_width(al.elements[0], s) == 64; },
         _ => { return false; }
     }
     return false;
@@ -17104,11 +17161,12 @@ function structs_reuse_compatible(structs: parser.StructDecl[], dt: string, rt: 
 
 // inarm_reuse_payload_type_ok: a payload field type the in-arm match-reuse lowering
 // can read into a temp and write back at the right width. Admits the i32-shaped
-// scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64
-// and f64 (struct_get_i64 / struct_get width-64 on read; lower_i64+struct_set_i64 /
-// lower_expr+struct_set width-64 on write, mirroring emit_enum_donor_reuse). u64 is
-// NOT admitted: struct_field_is_i64 / struct_field_width both classify a u64 field
-// as i32-shaped, so the i64 8-byte path is never selected and the value truncates.
+// scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64,
+// u64, and f64 (struct_get_i64 / struct_get width-64 on read; lower_i64+struct_set_i64
+// / lower_expr+struct_set width-64 on write, mirroring emit_enum_donor_reuse). u64
+// rides the i64 8-byte path: struct_field_width classifies a u64 field as 64-bit and
+// struct_field_is_i64 reports it i64, so the value round-trips at full width (no
+// truncation).
 function inarm_reuse_payload_type_ok(t: string): boolean {
     return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "u64" || t == "f64";
 }
@@ -19390,8 +19448,8 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 // out. Every arm binds y to a box it owns, so y is freed exactly once at y's
 // reclamation (no post-match free exists for an in-arm scrutinee). Restricted to
 // the inarm_reuse_match_ok shape
-// (scalar enum, i32/u32/boolean/i64/f64 payloads, same-size scalar-variant results,
-// no guards/wildcards; u64 excluded — see inarm_reuse_payload_type_ok).
+// (scalar enum, i32/u32/boolean/i64/u64/f64 payloads, same-size scalar-variant
+// results, no guards/wildcards — see inarm_reuse_payload_type_ok).
 function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
     var xslot: i32 = s.slot_of(donor_name);
     if (xslot < 0) { return s.fail(); }
@@ -22177,6 +22235,32 @@ function rc_fe_ptr_type(t: string, structs: parser.StructDecl[]): boolean {
     return false;
 }
 
+// rc_fe_is_builtin_enum: `t` is a builtin rc enum (Option / Result), bare or
+// generic-instantiated (`Option[..]` / `Result[..]`) — native's EnumType arm
+// marks these freeEligible, but they carry no StructDecl so rc_fe_is_enum_name
+// misses them.
+function rc_fe_is_builtin_enum(t: string): boolean {
+    if (t == "Option" || t == "Result") { return true; }
+    if (t.len() >= 7 && t[0:7] == "Option[") { return true; }
+    if (t.len() >= 7 && t[0:7] == "Result[") { return true; }
+    return false;
+}
+
+// rc_fe_call_ret_type: the declared return type of a NON-GENERIC top-level
+// function `name`, or "" (unknown / generic / not found). Lets an unannotated
+// `var x = f(...)` local pick up f's heap return type so it reaches the
+// eligibility gate, mirroring native computeFreeEligible reading the checker's
+// resolved call type. Generic functions (`id[T](x: T): T`) are skipped — the
+// syntactic mirror can't instantiate the type parameter, so those stay "".
+function rc_fe_call_ret_type(funcs: parser.FuncDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].type_params.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
 // rc_fe_is_enum_name: `t` names an enum (some variant decl carries it as its
 // enum_owner — the self-host has no standalone enum decl entry).
 function rc_fe_is_enum_name(structs: parser.StructDecl[], t: string): boolean {
@@ -22218,6 +22302,30 @@ function rc_fe_expr_type(e: parser.Expr, types_n: string[], types_t: string[], s
                     if (structs[si].fields[fi].name == fa.field) { return structs[si].fields[fi].type_name; }
                     fi = fi + 1;
                 }
+            }
+            return "";
+        },
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprLambda(_) => { return "fn"; },
+        parser.ExprBinary(b) => {
+            // string concat (`a + b` where an operand is a string) yields a fresh
+            // owned string, mirroring native rhsTainted's IsStringConcat.
+            if (b.op == "+" && (rc_fe_expr_type(b.left, types_n, types_t, structs) == "string" || rc_fe_expr_type(b.right, types_n, types_t, structs) == "string")) { return "string"; }
+            return "";
+        },
+        parser.ExprCall(c) => {
+            // an array-preserving method (`arr.with(i, v)`, chained) returns the
+            // receiver's array type — native knows this from the checker; the
+            // dump infers it so a `.with`-bound local reaches the eligibility
+            // type-switch (else it stays "" and is wrongly dropped).
+            match (c.callee) {
+                parser.ExprFieldAccess(mfa) => {
+                    if (mfa.field == "with") {
+                        var rt: string = rc_fe_expr_type(mfa.obj, types_n, types_t, structs);
+                        if (is_array_type_name(rt)) { return rt; }
+                    }
+                },
+                _ => {}
             }
             return "";
         },
@@ -22272,7 +22380,7 @@ struct FeState { tainted: string[], an: string[], av: parser.Expr[], types_n: st
 // rc_fe_collect_types: record every declared local's (name, type) pair,
 // recursively. A destructure `var (a, b) = t` types each binding by splitting
 // t's tuple annotation positionally (best-effort: bare-ident RHS only).
-function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[]): FeState {
+function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): FeState {
     var st: FeState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -22308,6 +22416,13 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                                     parser.ExprIdent(cid) => {
                                         var en: string = variant_enum_owner(structs, cid.name);
                                         if (en.len() > 0) { t = en; }
+                                        else {
+                                            // not a variant ctor: a plain call to a
+                                            // non-generic function — the local takes
+                                            // that function's declared return type
+                                            // (native reads the checker's call type).
+                                            t = rc_fe_call_ret_type(funcs, cid.name);
+                                        }
                                     },
                                     parser.ExprLambda(_) => {
                                         // type from the first arm's CONSTRUCTED
@@ -22340,16 +22455,22 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                             },
                             _ => {}
                         }
+                        // Fallback for the init forms the explicit cases above
+                        // don't name (string literal / concat, bare lambda,
+                        // array-preserving method call) — rc_fe_expr_type reads
+                        // the locals collected so far, so a chained `.with` off an
+                        // earlier array local resolves.
+                        if (t.len() == 0) { t = rc_fe_expr_type(v.init, st.types_n, st.types_t, structs); }
                     }
                     st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t) };
                 }
             },
-            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs); st = rc_fe_collect_types(f.else_body, st, structs); },
-            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs); },
-            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs); },
+            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs, funcs); st = rc_fe_collect_types(f.else_body, st, structs, funcs); },
+            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs, funcs); },
+            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs, funcs); },
             parser.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { st = rc_fe_collect_types(m.arms[ai].body, st, structs); ai = ai + 1; }
+                while (ai < m.arms.len()) { st = rc_fe_collect_types(m.arms[ai].body, st, structs, funcs); ai = ai + 1; }
             },
             _ => {}
         }
@@ -22566,6 +22687,7 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
         parser.ExprArray(_) => { return false; },
         parser.ExprStructLit(_) => { return false; },
         parser.ExprTuple(_) => { return false; },
+        parser.ExprLambda(_) => { return false; },   // a fresh closure is owned (native MakeClosure arm)
         parser.ExprIdent(id) => { return util.index_of_str(tainted, id.name) >= 0; },
         parser.ExprNumber(_) => { return false; },
         parser.ExprBool(_) => { return false; },
@@ -22586,6 +22708,15 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
         },
         parser.ExprCall(c) => {
             match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    // a variant constructor builds a FRESH owned rc=1 box (its
+                    // pointer payloads are inc'd like a StructLit), so the
+                    // result is reclaimable regardless of a payload arg's taint
+                    // — native's variant-ctor rhsTainted -> false. Without this
+                    // an enum built from a borrowed-param payload (`A(n)`)
+                    // wrongly taints the enum local.
+                    if (variant_enum_owner(structs, cid.name).len() > 0) { return false; }
+                },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
                     return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs);
@@ -22606,7 +22737,7 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
 
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
-pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
     var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
@@ -22622,7 +22753,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[])
         }
         pi = pi + 1;
     }
-    st = rc_fe_collect_types(fn.body, st, structs);
+    st = rc_fe_collect_types(fn.body, st, structs, funcs);
     st = rc_fe_walk_stmts(fn.body, st, structs);
     // fixpoint: forward taint via rhs, backward via bare-ident aliasing.
     var changed: boolean = true;
@@ -22667,7 +22798,9 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[])
             else if (t.len() >= 3 && t[0:3] == "Map") { ok = true; }
             else if (rc_struct_decl_index(structs, t) >= 0) { ok = true; }             // user struct
             else if (rc_fe_is_enum_name(structs, t)) { ok = true; }
+            else if (rc_fe_is_builtin_enum(t)) { ok = true; }                           // builtin Option/Result enums
             else if (t == "string" && !is_param) { ok = true; }                        // locals on every ptrW
+            else if (t == "fn") { ok = true; }                                          // owned closure frees its env (native FuncType arm)
             if (ok) { out = out.append(nm); }
         }
         ti = ti + 1;
@@ -22900,7 +23033,10 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
         st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name) };
         pi = pi + 1;
     }
-    st = rc_fe_collect_types(fn.body, st, structs);
+    // movedLocals does not need call-return typing (it moves already-typed
+    // locals), so an empty function table is passed — this keeps rc_ml_compute
+    // free of the module funcs thread without changing its behaviour.
+    st = rc_fe_collect_types(fn.body, st, structs, []);
     var saw_return: boolean = false;
     var k: i32 = 0;
     while (k < fn.body.len()) {
@@ -23109,12 +23245,142 @@ pub function array_set_incs_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // per nested block at lowering time; nested pairings are a documented
 // omission until the dump threads block context).
 
-// reuse_sources_of: "line:col<-donor" per top-level cross-struct /
-// cross-tuple pairing; empty when the reuse layer is disabled (native's
-// RcReuseEnabled gate).
+// reuse_sources_of: "line:col<-donor" per cross-struct / cross-tuple pairing;
+// empty when the reuse layer is disabled (native's RcReuseEnabled gate).
+// Native computeReuseSources runs TWO passes over every block — a same-block
+// pass then a cross-block pass — so the dump does the same: same-block first
+// (reuse_sources_block), then cross-block (reuse_xblock_pairs), deduped by
+// recipient position (native skips a recipient the same-block pass claimed).
 pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
     if (reuse_layer_disabled()) { return []; }
-    return reuse_sources_block(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs), []);
+    var fresh_ret: string[] = return_fresh_struct_ret_fns_of(funcs, structs);
+    var same: string[] = reuse_sources_block(fn.body, structs, fresh_ret, []);
+    var xb: string[] = reuse_xblock_pairs(fn.body, structs, fresh_ret, []);
+    var out: string[] = same;
+    var i: i32 = 0;
+    while (i < xb.len()) {
+        // xb entry is "pos<-donor"; skip if the same-block pass already claimed
+        // this recipient position (native's already-paired node check).
+        if (!reuse_pos_claimed(out, xb[i])) { out = out.append(xb[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// reuse_arrow_pos: the recipient-position prefix of a "pos<-donor" entry.
+function reuse_arrow_pos(entry: string): string {
+    var i: i32 = 0;
+    while (i + 1 < entry.len()) {
+        if (entry[i] == 60 && entry[i + 1] == 45) { return entry[0 : i]; }   // "<-"
+        i = i + 1;
+    }
+    return entry;
+}
+
+// reuse_arrow_donor: the donor-name suffix of a "pos<-donor" entry.
+function reuse_arrow_donor(entry: string): string {
+    var i: i32 = 0;
+    while (i + 1 < entry.len()) {
+        if (entry[i] == 60 && entry[i + 1] == 45) { return entry[i + 2 : entry.len()]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// reuse_pos_claimed: some entry in `existing` names the same recipient position
+// as `entry` ("pos<-...").
+function reuse_pos_claimed(existing: string[], entry: string): boolean {
+    var pos: string = reuse_arrow_pos(entry);
+    var i: i32 = 0;
+    while (i < existing.len()) {
+        if (reuse_arrow_pos(existing[i]) == pos) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// xblock_recip_pos: the construction-lit "line:col" of recipient `recip`
+// inside if-statement `iff`'s then / else arm (the cross-block pairing places
+// the recipient one block below the donor). "" if not found.
+function xblock_recip_pos(iff: parser.StmtIf, recip: string): string {
+    var p: string = xblock_recip_pos_in(iff.then_body, recip);
+    if (p.len() > 0) { return p; }
+    return xblock_recip_pos_in(iff.else_body, recip);
+}
+function xblock_recip_pos_in(stmts: parser.Stmt[], recip: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == recip) {
+                    match (v.init) {
+                        parser.ExprStructLit(sl) => { return util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col); },
+                        parser.ExprTuple(tu) => { return util.i32_to_string(tu.line) + ":" + util.i32_to_string(tu.col); },
+                        _ => {}
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// reuse_xblock_pairs: the cross-block pairings of every block — for each
+// if-statement, xblock_pairings_for yields "recip|donor|dtype"; the recipient
+// lit lives in the if-arm one block below. Mirrors lower_block's per-block
+// xblock_pairings_for(stmts, structs, k, so.bases, same-block-donors, fresh_ret).
+function reuse_xblock_pairs(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
+    var acc: string[] = out;
+    var so: ReuseSites = self_overwrite_reuse_sites(stmts, structs, fresh_ret);
+    var xr: CrossReuseSites = cross_reuse_sites(stmts, structs, fresh_ret);
+    var xt: CrossTupleReuseSites = cross_tuple_reuse_sites(stmts);
+    var xbcons: string[] = xr.donors;
+    var t: i32 = 0;
+    while (t < xt.donors.len()) { xbcons = xbcons.append(xt.donors[t]); t = t + 1; }
+    var k: i32 = 0;
+    while (k < stmts.len()) {
+        match (stmts[k]) {
+            parser.StmtIf(iff) => {
+                var pairs: string[] = xblock_pairings_for(stmts, structs, k, so.bases, xbcons, fresh_ret);
+                var p: i32 = 0;
+                while (p < pairs.len()) {
+                    var e: string = pairs[p];
+                    // "recip|donor|dtype" — split on the first two '|' (124).
+                    var b1: i32 = 0;
+                    while (b1 < e.len() && e[b1] != 124) { b1 = b1 + 1; }
+                    var recip: string = e[0 : b1];
+                    var rest: string = e[b1 + 1 : e.len()];
+                    var b2: i32 = 0;
+                    while (b2 < rest.len() && rest[b2] != 124) { b2 = b2 + 1; }
+                    var donor: string = rest[0 : b2];
+                    var pos: string = xblock_recip_pos(iff, recip);
+                    if (pos.len() > 0) { acc = acc.append(pos + "<-" + donor); }
+                    p = p + 1;
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    // recurse into nested blocks (a cross-block pairing whose donor is in an
+    // inner loop / arm and recipient in an if nested there).
+    var r: i32 = 0;
+    while (r < stmts.len()) {
+        match (stmts[r]) {
+            parser.StmtIf(f) => { acc = reuse_xblock_pairs(f.then_body, structs, fresh_ret, acc); acc = reuse_xblock_pairs(f.else_body, structs, fresh_ret, acc); },
+            parser.StmtWhile(w) => { acc = reuse_xblock_pairs(w.body, structs, fresh_ret, acc); },
+            parser.StmtFor(fo) => { acc = reuse_xblock_pairs(fo.body, structs, fresh_ret, acc); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = reuse_xblock_pairs(m.arms[ai].body, structs, fresh_ret, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        r = r + 1;
+    }
+    return acc;
 }
 
 // rc_child_blocks: the nested statement lists of `st` (if arms, loop / for
@@ -23188,6 +23454,14 @@ pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 
 function reuse_consumed_block(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
     var acc: string[] = out;
+    // cross-block donors of THIS block first (dedup handled per-name below).
+    var xbp: string[] = reuse_xblock_pairs(stmts, structs, fresh_ret, []);
+    var xi: i32 = 0;
+    while (xi < xbp.len()) {
+        var dn: string = reuse_arrow_donor(xbp[xi]);
+        if (dn.len() > 0 && util.index_of_str(acc, dn) < 0) { acc = acc.append(dn); }
+        xi = xi + 1;
+    }
     var xr: CrossReuseSites = cross_reuse_sites(stmts, structs, fresh_ret);
     var i: i32 = 0;
     while (i < xr.idxs.len()) {
@@ -23339,7 +23613,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
     }
     // freeEligible (#4482 — between consumedParams and preciseDrops, matching
     // native dumpRcPlan's line order): name-sorted, comma-joined.
-    var fe: string[] = free_eligible_of(fn, structs);
+    var fe: string[] = free_eligible_of(fn, structs, funcs);
     if (fe.len() > 0) {
         var fes: string[] = [];
         var fi: i32 = 0;

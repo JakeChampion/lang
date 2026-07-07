@@ -33,6 +33,22 @@ function test_format_left_align(): test.TestOutcome {
     return test.assert_eq(format.format("{:<5}", ["42"]), "42   ");
 }
 
+// Center-align `{:^w}` splits the padding, and a custom fill char
+// (`{:*^w}`) replaces the default space — both exercise __repeat_char,
+// the padding builder rewritten to the two-pass exact-size buffer
+// (#4379) so wide fields no longer recopy the growing pad each step.
+function test_format_center_align(): test.TestOutcome {
+    return test.assert_eq(format.format("{:^8}", ["hi"]), "   hi   ");
+}
+
+function test_format_custom_fill_center(): test.TestOutcome {
+    return test.assert_eq(format.format("{:*^9}", ["ab"]), "***ab****");
+}
+
+function test_format_custom_fill_right(): test.TestOutcome {
+    return test.assert_eq(format.format("{:.>5}", ["x"]), "....x");
+}
+
 // Sign flag `+`: forces a leading `+` on a non-negative number; a
 // value that already carries `-`, or a non-numeric one, is untouched.
 function test_format_sign_plus(): test.TestOutcome {
@@ -111,6 +127,20 @@ function test_duration_full(): test.TestOutcome {
     return test.assert_eq(format.format_duration_ms(3661001), "1h 1m 1s 1ms");
 }
 
+// A longer, mixed template that exercises the growable-u8[] output buffer
+// across several reallocations in one call (#4379): a long literal run, many
+// placeholders, an escaped-brace pair, a non-placeholder `{"k":..}` JSON run
+// that renders verbatim, a missing-arg placeholder emitted as-is, and a
+// multi-byte UTF-8 literal — the branches that each append to the buffer
+// differently. Pins the byte-for-byte output of the rewrite.
+function test_format_mixed_long(): test.TestOutcome {
+    var got: string = format.format(
+        "user={} role={} {{n}}={} cfg={\"k\":1} tail={} name={} done",
+        ["alice", "admin", "7", "Þórin"]);
+    return test.assert_eq(got,
+        "user=alice role=admin {n}=7 cfg={\"k\":1} tail=Þórin name={} done");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/format");
     r = r.it("format positional", test_format_positional());
@@ -118,6 +148,9 @@ function main(): i32 {
     r = r.it("format escaped braces", test_format_escaped_braces());
     r = r.it("format right-align", test_format_right_align());
     r = r.it("format left-align", test_format_left_align());
+    r = r.it("format center-align", test_format_center_align());
+    r = r.it("format custom fill center", test_format_custom_fill_center());
+    r = r.it("format custom fill right", test_format_custom_fill_right());
     r = r.it("format sign +", test_format_sign_plus());
     r = r.it("format sign negative untouched", test_format_sign_negative_untouched());
     r = r.it("format sign non-numeric untouched", test_format_sign_nonnumeric_untouched());
@@ -135,5 +168,6 @@ function main(): i32 {
     r = r.it("duration seconds and ms", test_duration_seconds_and_ms());
     r = r.it("duration minutes", test_duration_minutes());
     r = r.it("duration full", test_duration_full());
+    r = r.it("format mixed long", test_format_mixed_long());
     return r.finish();
 }

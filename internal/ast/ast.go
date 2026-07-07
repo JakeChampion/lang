@@ -87,6 +87,18 @@ type BoolType struct{}
 type VoidType struct{}
 type StringType struct{}
 
+// NeverType is the bottom type: the type of an expression that never
+// yields a value because every control-flow path through it exits
+// early (`return` / `break` / `continue`). It arises only internally
+// — a value-position block-expression whose statements always diverge
+// has no trailing value, so instead of being `void` (which would be a
+// type error where a value is required) it is `never`, which is
+// assignable to / unifies with any type. It is never written in
+// source, so the parser and printer don't produce it; it flows out of
+// `checker.checkBlockExpr` into assignability and if/match arm-type
+// unification. See docs/BLOCK-EXPRESSIONS.md (#4522).
+type NeverType struct{}
+
 // FloatType represents an IEEE-754 binary float. Width is 32 or
 // 64; the non-polymorphic zero value is f32 (the parser spells
 // `f32` as `FloatType{Width:0, Spelling:"f32"}`, so Width=0 must
@@ -400,6 +412,7 @@ func (NumberType) isType()   {}
 func (SelfType) isType()     {}
 func (BoolType) isType()     {}
 func (VoidType) isType()     {}
+func (NeverType) isType()    {}
 func (StringType) isType()   {}
 func (FloatType) isType()    {}
 func (ArrayType) isType()    {}
@@ -424,6 +437,7 @@ func (n NumberType) String() string {
 }
 func (BoolType) String() string   { return "boolean" }
 func (VoidType) String() string   { return "void" }
+func (NeverType) String() string  { return "never" }
 func (StringType) String() string { return "string" }
 func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
@@ -1155,6 +1169,9 @@ func Equal(a, b Type) bool {
 	case VoidType:
 		_, ok := b.(VoidType)
 		return ok
+	case NeverType:
+		_, ok := b.(NeverType)
+		return ok
 	case StringType:
 		_, ok := b.(StringType)
 		return ok
@@ -1352,12 +1369,13 @@ type DowncastExpr struct {
 // expression (`Tail == nil`) and therefore no value (type `void`); using
 // such a block where a value is required is a checker error.
 //
-// Slice 1 scope: this node is produced ONLY for `if`/`match` *expression*
-// branches (the `{ … }` after `if (cond)` / `else` / a match arm `=>`).
-// General value-position blocks, compiled codegen, and the self-hosted
-// compiler are later slices — see docs/BLOCK-EXPRESSIONS.md. The compiled
-// backends reject this node cleanly (interp-only, like the `as?` downcast
-// slice 1).
+// Produced for `if`/`match` *expression* branches (the `{ … }` after
+// `if (cond)` / `else` / a match arm `=>`) and, since #4521, general
+// value-position `{ … }` blocks. Lowered on every native backend
+// (interp / wasm / arm64 / x86-64) via the IR. When the statements
+// always exit early (`return` / `break` / `continue`) the block has no
+// trailing value (`Tail == nil`) and its type is `never`, not `void`
+// (#4522). See docs/BLOCK-EXPRESSIONS.md.
 type BlockExpr struct {
 	P     Position
 	Stmts []Stmt
