@@ -46,6 +46,23 @@ function main(): i32 {
 }`
 }
 
+// A SCALAR-only fresh-returning-CALL struct loop-local (`var t = mk(i)`, P = {x,y}
+// no rc field) previously leaked its BOX every iteration — collect_fresh_ret_call_
+// names excluded it via the struct_has_reclaim_array_field gate, so it never
+// reached reclaimable_names. Dropping that gate admits it (reclaimed by the
+// shallow box dec, complete for a scalar struct). #4357 follow-up.
+func scalarLoopLocalCallSrc(n string) string {
+	return `struct P { x: i32, y: i32 }
+function mk(v: i32): P { return P { x: v, y: v + 1 }; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) { var t: P = mk(i); acc = acc + t.x + t.y; i = i + 1; }
+    if (acc < 0) { return 5; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // The deep reclaim must free only the dead PRIOR box's field buffers, never the
 // live value's: acc reads t.x + all three xs elements each iteration, and a wrong
 // free would corrupt the sum or trip __rc_underflow. per iter: i + i + (i+1) +
@@ -97,6 +114,7 @@ func TestSelfHostRcFieldLoopLocalReclaimIRX86_64(t *testing.T) {
 	}{
 		{"literal-source", rcFieldLoopLocalLiteralSrc},
 		{"fresh-call-source", rcFieldLoopLocalCallSrc},
+		{"scalar-fresh-call-source", scalarLoopLocalCallSrc},
 	}
 	for _, sh := range shapes {
 		t.Run("fixpoint-bounded/"+sh.name, func(t *testing.T) {
