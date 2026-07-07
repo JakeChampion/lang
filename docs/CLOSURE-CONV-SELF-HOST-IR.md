@@ -1,9 +1,14 @@
 # Closure conversion for the self-host IR path — design + rollout
 
-Status: **design** (started 2026-06-16). Goal-1 increment: widen the self-host
+Status: **shipped** (design started 2026-06-16; the capturing-closure-arg
+lowering landed — see §6 phases 1–2). Goal-1 increment: widen the self-host
 IR subset to cover **capturing closures passed as function arguments** (the
 `map` / `filter` / `fold`-with-a-capturing-closure pattern), the last common
-first-class-function gap on the IR path.
+first-class-function gap on the IR path. Capturing lambdas hoist to a `$clo`
+env and box `[fnptr, caps…]` at the call site; gated x86-64 + wasm by
+`TestSelfHostCaptureLambda{X86,Wasm}IR` (slice 2c) and the closure-env
+capture-borrow fix (#4354). Phase 3 (fn-values in method / struct-field /
+tuple-element positions) is the remaining extension.
 
 ## 1. The gap
 
