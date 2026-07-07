@@ -83,6 +83,24 @@ func stmtTempStrConcatBumpSrc(n string) string {
 }`
 }
 
+// A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`) leaks BOTH
+// its box AND its field buffers if merely dropped. The reclaim deep-drops it the
+// way the exit sweep drops a struct LOCAL: __struct_drop_<T> releases the rc-array
+// field buffers, then __fern_rc_dec frees the box. Because __struct_drop_<T>'s
+// inner arr_dec clobbers its box return register, the box is stashed in a scratch
+// local and re-loaded for the free (the exit sweep's slot-reload pattern) — a
+// naive box→drop→box chain double-freed the field buffer instead (the __rc_underflow
+// detector below has teeth for exactly that regression).
+func stmtTempRcFieldStructBumpSrc(n string) string {
+	return `struct H { id: i32, xs: i32[] }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { H { id: i, xs: [i, i + 1, i + 2] }; i = i + 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // A discarded call to a STRICT fresh-struct-returning function hands back a rc=1
 // box that leaks if merely dropped; the ExprCall reclaim releases it (native
 // ownedCallResultType). `mk` returns a fresh no-base `P { … }`, so it is in
@@ -137,6 +155,24 @@ const stmtTempStrConcatDetectorSrc = `function main(): i32 {
         i = i + 1;
     }
     if (acc != 2000) { return 999; }
+    return __rc_underflow();
+}`
+
+// The discarded rc-field struct `H { id, xs: [..] };` reclaims its box AND xs
+// buffer while the live `h = H { id: i, xs: [..] }` (same operands, its own box)
+// stays intact: acc += h.id + h.xs[0] + h.xs[1] + h.xs[2] = i + i + (i+1) + (i+2)
+// = 4i+3 over 0..199 = 4*19900 + 600 = 80200. The double-free bug this guards
+// (the box-return-register clobber) trips __rc_underflow (> 0), not the sum.
+const stmtTempRcFieldStructDetectorSrc = `struct H { id: i32, xs: i32[] }
+function main(): i32 {
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        H { id: i, xs: [i, i + 1, i + 2] };
+        var h: H = H { id: i, xs: [i, i + 1, i + 2] };
+        acc = acc + h.id + h.xs[0] + h.xs[1] + h.xs[2];
+        i = i + 1;
+    }
+    if (acc != 80200) { return 999; }
     return __rc_underflow();
 }`
 
@@ -195,6 +231,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"scalar-array", stmtTempArrBumpSrc},
 		{"scalar-tuple", stmtTempTupleBumpSrc},
 		{"scalar-struct", stmtTempStructBumpSrc},
+		{"rc-field-struct", stmtTempRcFieldStructBumpSrc},
 		{"string-concat", stmtTempStrConcatBumpSrc},
 		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
 	}
@@ -218,6 +255,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"scalar-array", stmtTempReclaimDetectorSrc},
 		{"scalar-tuple", stmtTempTupleDetectorSrc},
 		{"scalar-struct", stmtTempStructDetectorSrc},
+		{"rc-field-struct", stmtTempRcFieldStructDetectorSrc},
 		{"string-concat", stmtTempStrConcatDetectorSrc},
 		{"fresh-call-struct", stmtTempFreshCallDetectorSrc},
 	}
