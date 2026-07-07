@@ -9423,7 +9423,44 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
                 },
                 parser.ExprStructLit(dse) => {
-                    if (!dse.has_base && struct_lit_all_scalar(s.structs, dse.type_name)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                    if (!dse.has_base && struct_lit_all_scalar(s.structs, dse.type_name)) {
+                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    } else if (!dse.has_base && struct_fields_reusable(s.structs, dse.type_name)) {
+                        // A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`)
+                        // is reclaimed the same way the exit sweep drops a struct LOCAL
+                        // (emit_struct_field_drops): when the type carries rc-array /
+                        // nested-struct fields, __struct_drop_<T> releases those field
+                        // buffers one level (auto-materialized by the asm_ir op scan on
+                        // seeing the call_direct), THEN __fern_rc_dec frees the box. The
+                        // construction alias-inc in this same lowering (the ExprStructLit
+                        // field arms) balances every NON-fresh field source — a borrowed
+                        // array/local was inc'd on construction so this dec just returns
+                        // it to its owner, a fresh sole-owned literal field decs to 0 and
+                        // frees — so the deep-drop is exactly paired, never a UAF. String
+                        // / enum / map / tuple / option fields keep struct_fields_reusable
+                        // false, so a struct carrying one still leaks whole (safe-leak
+                        // floor).
+                        //
+                        // __struct_drop_<T> returns the box in its return register but its
+                        // inner __fern_arr_dec calls CLOBBER that register, so the box
+                        // cannot be threaded box→drop→box on the operand stack (the exit
+                        // sweep sidesteps this by re-loading the box from its SLOT for both
+                        // the drop and the free, discarding the return). A discarded temp
+                        // has no slot, so stash the box in a fresh scratch local and re-load
+                        // it for each step — the scratch is never mark_arr'd, so the exit
+                        // dec-sweep (is_arr_slot-gated) skips it (no double-free).
+                        if (struct_has_reclaim_array_field(s.structs, dse.type_name)) {
+                            var sdtmp: string = "$sdrop" + util.i32_to_string(se.locals.len());
+                            se = se.add_local(sdtmp);
+                            var sdslot: i32 = se.slot_of(sdtmp);
+                            se = se.emit(ir.op_store_local(sdslot));                              // stash box
+                            se = se.emit(ir.op_load_local(sdslot));                               // box (arg0)
+                            se = se.emit(ir.op_call_direct("__struct_drop_" + dse.type_name, 1)); // deep-drop rc fields
+                            se = se.emit(ir.op_drop());                                           // discard clobbered return
+                            se = se.emit(ir.op_load_local(sdslot));                               // box again
+                        }
+                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));                      // free the box
+                    }
                 },
                 // A discarded fresh STRING CONCAT (`a + b;`) allocates a new owned
                 // buffer that leaks if merely dropped — release it with the rc-aware
