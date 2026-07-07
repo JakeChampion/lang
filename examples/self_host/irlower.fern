@@ -10934,6 +10934,30 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         },
         _ => {}
     }
+    // A reclaimable struct LOOP-LOCAL carrying a DIRECT enum field
+    // (`while { var t = Tagged { e: Poly([i, i+1]), n: i }; }`): the loop-rebind
+    // must DEEP-drop the prior box's enum-field VARIANT PAYLOAD, else it leaks every
+    // iteration — the array-only __field_reclaim path below skips enum fields
+    // entirely, and the exit sweep's k_enum arm is a shallow box-only dec (#4357,
+    // #4297 A2 follow-up). Route through emit_struct_enum_deep_reinit_store, which
+    // runs emit_enum_variant_drops on each enum field's box (runtime variant dispatch
+    // → drop the payload, free the enum box) then frees the struct box. Gated on
+    // struct_enum_deep_reinit_eligible (scalar + droppable-enum fields only) AND
+    // struct_lit_all_enum_fields_fresh (every enum field a FRESH variant ctor, so
+    // old's payload is provably sole-owned — an ALIASED enum field would over-release,
+    // so it falls through to the leak-safe array/shallow path). The exit sweep is NOT
+    // widened (it can't see the construction site); only this per-iteration reclaim
+    // is added, so the once-off final-box payload leak stays bounded.
+    match (v.init) {
+        parser.ExprStructLit(desl) => {
+            if (!desl.has_base && slot_is_reclaimable_struct(sb, slot)
+                && struct_enum_deep_reinit_eligible(sb.structs, struct_ty)
+                && struct_lit_all_enum_fields_fresh(sb.structs, desl)) {
+                return emit_struct_enum_deep_reinit_store(sb, slot, struct_ty);
+            }
+        },
+        _ => {}
+    }
     // A reclaimable struct LOOP-LOCAL with rc-array fields (`while { var t = f(i)
     // / P { .., xs: [..] }; … }`): the loop-rebind must DEEP-drop the prior
     // iteration's box — free its rc-array field buffers before freeing the box —
@@ -12546,6 +12570,72 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
     return false;
 }
 
+// struct_has_droppable_enum_field reports whether struct `sty` has ≥1 DIRECT enum
+// field (`e: MyEnum`) whose every variant is rc-droppable (enum_all_variants_rc_
+// droppable — the deep-drop of the variant payload is well-defined: each rc field
+// is a leak-safe array / string / deep-drop-ok leaf struct, no cycle-risk payload).
+// This is the eligibility signal for the enum-field DEEP loop-rebind reclaim
+// (emit_struct_enum_deep_reinit_store) — it deep-drops the enum field's variant
+// payload (not just the shallow enum-box dec the exit sweep's k_enum arm emits).
+pub function struct_has_droppable_enum_field(structs: parser.StructDecl[], sty: string): boolean {
+    if (sty.len() == 0) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(structs, sty, fi);
+        if (decl_is_enum(structs, ft) && enum_all_variants_rc_droppable(structs, ft)) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// struct_enum_deep_reinit_eligible reports whether struct `sty` is admissible for the
+// enum-field DEEP loop-rebind reclaim: it carries ≥1 droppable enum field AND EVERY
+// other field is a flat SCALAR (reuse_field_is_scalar). Keeping the first cut to
+// scalar + enum fields means the rebind emitter deep-drops only the enum payload(s)
+// and frees the box — no array / string / nested-struct field to also reclaim (a
+// struct mixing an enum field with an array field falls through to the array-only
+// __field_reclaim path, which leaks the enum payload but never over-releases). A
+// pure-scalar struct (no enum field) returns false via struct_has_droppable_enum_field.
+function struct_enum_deep_reinit_eligible(structs: parser.StructDecl[], sty: string): boolean {
+    if (!struct_has_droppable_enum_field(structs, sty)) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(structs, sty, fi);
+        var ok: boolean = reuse_field_is_scalar(ft) || (decl_is_enum(structs, ft) && enum_all_variants_rc_droppable(structs, ft));
+        if (!ok) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// struct_lit_all_enum_fields_fresh reports whether EVERY enum-typed field of the
+// struct literal `slit` is set from a FULLY-FRESH sole-owner variant constructor of
+// that exact enum — fresh_rcpayload_enum_init: a `V(args)` / bare `V` of the field's
+// declared enum whose array payloads ride the construction alias-inc AND whose
+// deep-drop-ok STRUCT payloads are fresh struct literals AND whose STRING payloads are
+// fresh literals/producers (variant_struct_payloads_fresh). Only then is the enum
+// field's box AND every rc payload one level down provably SOLE-OWNED by this struct
+// (rc=1, no construction alias-inc — see the ExprStructLit lowering's fresh-variant-
+// ctor hand-over), so deep-dropping it at the loop-rebind is balanced. A NON-fresh enum
+// field (a bare enum local/param, a field copy, an enum-returning call) — OR a fresh
+// ctor whose struct/string payload ALIASES a live local — is rejected here and falls
+// through to the leak-safe shallow path (freeing an aliased payload would double-free,
+// the exact hazard variant_struct_payloads_fresh guards). Non-enum field positions are
+// skipped.
+function struct_lit_all_enum_fields_fresh(structs: parser.StructDecl[], slit: parser.ExprStructLit): boolean {
+    var i: i32 = 0;
+    while (i < slit.field_names.len()) {
+        var ft: string = decl_field_type(structs, slit.type_name, slit.field_names[i]);
+        if (decl_is_enum(structs, ft)) {
+            if (fresh_rcpayload_enum_init(slit.field_values[i], structs) != ft) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // struct_has_string_field reports whether struct `sty` has a bare `string` field.
 // __struct_drop's k_str arm frees such a field (rc-aware __fern_str_free), but only
 // when the field's constructed value is provably FRESH (sole-owned) — an ALIASED
@@ -12752,6 +12842,62 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_load_local(slot));            // old
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));          // free old box (null-guarded)
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// emit_struct_enum_deep_reinit_store stores `new` (on the stack) into a reclaimable
+// struct slot whose only rc-tracked fields are DIRECT enum fields (struct_enum_deep_
+// reinit_eligible: scalar + droppable-enum fields only) and DEEP-drops the OLD box:
+// for each enum field it extracts the field's enum box into a scratch local and runs
+// emit_enum_variant_drops on it (runtime variant dispatch → drop the variant's rc
+// payload, then free the enum box), THEN __fern_rc_dec frees the struct box itself.
+// Unlike the array-only __field_reclaim path (emit_field_reclaim_store), this reclaims
+// the enum field's VARIANT PAYLOAD — the leak the shallow k_enum exit-drop leaves.
+//
+// SOUNDNESS: fires ONLY when the init is a fresh no-base struct literal whose enum
+// fields are all FRESH variant ctors (struct_lit_all_enum_fields_fresh), so each
+// enum box + its payload is the struct box's sole owner (rc=1, no construction alias-
+// inc). A non-fresh (aliased) enum field is rejected at the gate and rides the leak-
+// safe shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
+// the fresh literal makes old != new implicit, so no separate cow guard is needed.
+// The enum field box is itself null-guarded (op_variant_is reads the tag, so it would
+// fault on a null box) — a fresh literal always sets it, but the guard is defensive.
+// The once-per-program EXIT sweep still shallow-drops the FINAL box's enum field
+// (payload leaks once, bounded — the fixpoint stays flat across N). #4357.
+function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: string): LowerState {
+    var scratch: string = "$sedr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = st.emit(ir.op_load_local(slot));            // old struct box
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var n: i32 = decl_field_count(st.structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(st.structs, sty, fi);
+        if (decl_is_enum(st.structs, ft) && enum_all_variants_rc_droppable(st.structs, ft)) {
+            var esc: string = "$edf" + util.i32_to_string(st.locals.len());
+            st = st.add_local(esc);
+            var etmp: i32 = st.slot_of(esc);
+            st = st.emit(ir.op_load_local(slot));                                       // old struct box
+            st = st.emit(ir.op_struct_get(fi, struct_field_width(st.structs, sty, fi))); // enum box
+            st = st.emit(ir.op_store_local(etmp));                                      // stash enum box
+            st = st.emit(ir.op_load_local(etmp));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_bin("ne", 0, false));                                    // enum box != 0
+            st = st.emit(ir.op_if(0));
+            st = emit_enum_variant_drops(st, etmp, ft);                                 // deep-drop payload + free enum box (zeroes etmp)
+            st = st.emit(ir.op_end());
+        }
+        fi = fi + 1;
+    }
+    st = st.emit(ir.op_load_local(slot));            // old struct box
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // free the struct box
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));             // new
