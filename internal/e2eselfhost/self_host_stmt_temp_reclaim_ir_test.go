@@ -83,6 +83,21 @@ func stmtTempStrConcatBumpSrc(n string) string {
 }`
 }
 
+// A discarded call to a STRICT fresh-struct-returning function hands back a rc=1
+// box that leaks if merely dropped; the ExprCall reclaim releases it (native
+// ownedCallResultType). `mk` returns a fresh no-base `P { … }`, so it is in
+// return_fresh_struct_ret_fns.
+func stmtTempFreshCallBumpSrc(n string) string {
+	return `struct P { x: i32, y: i32 }
+function mk(a: i32): P { return P { x: a, y: a + 1 }; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { mk(i); i = i + 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // Detectors: the discarded temp reclaims its OWN box while a live value built
 // from the same operands stays intact — a wrong "owned" verdict that freed a
 // shared box would corrupt the sum (999) or trip __rc_underflow (> 0). Sums:
@@ -125,6 +140,23 @@ const stmtTempStrConcatDetectorSrc = `function main(): i32 {
     return __rc_underflow();
 }`
 
+// The discarded call `mk(i);` reclaims its fresh box while the live `p = mk(i+1)`
+// (an independent fresh box) stays intact: p = P{i+1, i+2}, acc += (i+1)+(i+2) =
+// 2i+3 over 0..199 = 40400. A wrong reclaim of a shared box would corrupt it.
+const stmtTempFreshCallDetectorSrc = `struct P { x: i32, y: i32 }
+function mk(a: i32): P { return P { x: a, y: a + 1 }; }
+function main(): i32 {
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        mk(i);
+        var p: P = mk(i + 1);
+        acc = acc + p.x + p.y;
+        i = i + 1;
+    }
+    if (acc != 40400) { return 999; }
+    return __rc_underflow();
+}`
+
 // TestSelfHostStmtTempReclaimIRX86_64 builds the self-host x86-64 IR driver once
 // and drives the two programs through it.
 func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
@@ -164,6 +196,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"scalar-tuple", stmtTempTupleBumpSrc},
 		{"scalar-struct", stmtTempStructBumpSrc},
 		{"string-concat", stmtTempStrConcatBumpSrc},
+		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
 	}
 	for _, sh := range fixpointShapes {
 		t.Run("fixpoint-bounded/"+sh.name, func(t *testing.T) {
@@ -186,6 +219,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"scalar-tuple", stmtTempTupleDetectorSrc},
 		{"scalar-struct", stmtTempStructDetectorSrc},
 		{"string-concat", stmtTempStrConcatDetectorSrc},
+		{"fresh-call-struct", stmtTempFreshCallDetectorSrc},
 	}
 	for _, sh := range detectorShapes {
 		t.Run("no-over-release/"+sh.name, func(t *testing.T) {

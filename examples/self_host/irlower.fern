@@ -9433,6 +9433,24 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprBinary(dbe) => {
                     if (dbe.op == "+" && expr_is_str(es.value, s)) { se = se.emit(ir.op_call_direct("__fern_str_free", 1)); }
                 },
+                // A discarded call to a STRICT fresh-struct-returning free function
+                // (`mk(i);`, callee in return_fresh_struct_ret_fns) hands back a rc=1
+                // sole-owner box (every such return is a no-base literal — #4356
+                // slice 2 / is_fresh_ret_binding), which leaks if merely dropped.
+                // Release the box with the shallow rc-guarded __fern_rc_dec (the
+                // native ownedCallResultType reclaim). A scalar-only result is fully
+                // reclaimed; a result carrying rc fields leaks only those payloads
+                // on the safe-leak floor (a deep-drop follow-up). Method / builtin /
+                // variant-constructor callees are excluded — they are not in the
+                // strict-fresh registry, so an in-place aliased result is never freed.
+                parser.ExprCall(dce) => {
+                    match (dce.callee) {
+                        parser.ExprIdent(dcid) => {
+                            if (util.index_of_str(s.return_fresh_struct_ret_fns, dcid.name) >= 0) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                        },
+                        _ => {}
+                    }
+                },
                 _ => {}
             }
             return se.emit(ir.op_drop());
