@@ -277,33 +277,32 @@ function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
 // it to `out`. Supports the full Unicode range up to
 // U+10FFFF; the caller is expected to have resolved any
 // surrogate pairs into a single code point already.
-function __json_emit_codepoint(out: string, cp: i32): string {
+// The UTF-8 byte sequence (1–4 bytes) for a Unicode scalar value. Pure — the
+// caller appends the returned bytes to its output buffer, so no growing string
+// is threaded through (see __json_p_string's O(n) u8[] accumulation, #4379).
+function __json_cp_bytes(cp: i32): u8[] {
     if (cp < 128) {
-        var ub1: u8[] = [cp as u8];
-        return out + string_from_bytes(ub1);
+        return [cp as u8];
     }
     if (cp < 2048) {
-        var ub2: u8[] = [
+        return [
             ((cp >> 6) | 192) as u8,
             ((cp & 63) | 128) as u8
         ];
-        return out + string_from_bytes(ub2);
     }
     if (cp < 65536) {
-        var ub3: u8[] = [
+        return [
             ((cp >> 12) | 224) as u8,
             (((cp >> 6) & 63) | 128) as u8,
             ((cp & 63) | 128) as u8
         ];
-        return out + string_from_bytes(ub3);
     }
-    var ub4: u8[] = [
+    return [
         ((cp >> 18) | 240) as u8,
         (((cp >> 12) & 63) | 128) as u8,
         (((cp >> 6) & 63) | 128) as u8,
         ((cp & 63) | 128) as u8
     ];
-    return out + string_from_bytes(ub4);
 }
 
 // __json_p_uhex parses 4 hex digits at p.pos (without
@@ -337,13 +336,22 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
     var p: __JsonParser = p0;
     if (__json_p_byte(p) != 34) { return ("", __JsonParser { ...p, error: 1 }); }
     p = __JsonParser { ...p, pos: p.pos + 1 };
-    var out: string = "";
+    // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
+    // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
+    // immutable string -- O(value²), recopying the whole decoded prefix per
+    // character on the hot request-body parse path. Every append targets the
+    // local `out`, so it grows in place (amortized O(1)); codepoint escapes emit
+    // their 1-4 UTF-8 bytes (from the pure __json_cp_bytes) through the hoisted
+    // `cb` / `ci` cursor. Byte-for-byte identical decoding.
+    var out: u8[] = [];
     var n: i32 = p.s.len();
     var b: i32 = 0;
+    var cb: u8[] = [];
+    var ci: i32 = 0;
     while (true) {
         b = __json_p_byte(p);
         if (b == 0) { return ("", __JsonParser { ...p, error: 1 }); }
-        if (b == 34) { return (out, __JsonParser { ...p, pos: p.pos + 1 }); }
+        if (b == 34) { return (string_from_bytes(out), __JsonParser { ...p, pos: p.pos + 1 }); }
         if (b == 92) {                                  // '\\'
             p = __JsonParser { ...p, pos: p.pos + 1 };
             var esc: i32 = __json_p_byte(p);
@@ -358,31 +366,42 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
                 // form a single astral code point. Lone or
                 // mismatched surrogates fall back to U+FFFD
                 // (REPLACEMENT CHARACTER) — matches Go's
-                // encoding/json + most strict UTF-8 emitters.
+                // encoding/json + most strict UTF-8 emitters. The branch
+                // funnels to a primary codepoint `cp1` plus, for the
+                // mismatched-low-surrogate case, a second `cp2` (-1 = none).
+                var cp1: i32 = 65533;
+                var cp2: i32 = -1;
                 if (u >= 55296 && u <= 56319) {
                     if (p.pos + 6 > n
                         || p.s[p.pos] != 92
                         || p.s[p.pos+1] != 117) {
-                        out = __json_emit_codepoint(out, 65533);
+                        cp1 = 65533;
                     } else {
                         p = __JsonParser { ...p, pos: p.pos + 2 };
                         var (low, pl) = __json_p_uhex(p);
                         p = pl;
                         if (p.error != 0) { return ("", p); }
                         if (low < 56320 || low > 57343) {
-                            out = __json_emit_codepoint(out, 65533);
-                            out = __json_emit_codepoint(out, low);
+                            cp1 = 65533;
+                            cp2 = low;
                         } else {
-                            var cp: i32 = 65536
+                            cp1 = 65536
                                 + ((u - 55296) << 10)
                                 + (low - 56320);
-                            out = __json_emit_codepoint(out, cp);
                         }
                     }
                 } else if (u >= 56320 && u <= 57343) {
-                    out = __json_emit_codepoint(out, 65533);
+                    cp1 = 65533;
                 } else {
-                    out = __json_emit_codepoint(out, u);
+                    cp1 = u;
+                }
+                cb = __json_cp_bytes(cp1);
+                ci = 0;
+                while (ci < cb.len()) { out = out.append(cb[ci] as u8); ci = ci + 1; }
+                if (cp2 >= 0) {
+                    cb = __json_cp_bytes(cp2);
+                    ci = 0;
+                    while (ci < cb.len()) { out = out.append(cb[ci] as u8); ci = ci + 1; }
                 }
             } else {
                 var ch: i32 = -1;
@@ -393,12 +412,11 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
                 else if (esc == 98)  { ch = 8; }
                 else if (esc == 102) { ch = 12; }
                 else { return ("", __JsonParser { ...p, error: 1 }); }
-                var sb: u8[] = [ch as u8];
-                out = out + string_from_bytes(sb);
+                out = out.append(ch as u8);
                 p = __JsonParser { ...p, pos: p.pos + 1 };
             }
         } else {
-            out = out + p.s[p.pos:p.pos+1];
+            out = out.append(p.s[p.pos] as u8);
             p = __JsonParser { ...p, pos: p.pos + 1 };
         }
     }
