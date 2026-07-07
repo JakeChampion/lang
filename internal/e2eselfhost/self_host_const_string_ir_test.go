@@ -35,6 +35,11 @@ var constStringIRCases = []struct {
 	{"const-i32-ref", `const NAME: i32 = 8; function main(): i32 { return NAME; }`},
 	// Regression: `.len()` on a LOCAL string slot was always correct. 2.
 	{"local-str-len", `function main(): i32 { var s: string = "hi"; return s.len(); }`},
+	// A literal carrying escaped bytes exercises asmcore.escape_for_ascii's
+	// multi-byte-escape branches (\n and \") when the const is emitted as a
+	// `.ascii` directive (#4379 rewrote that escaper to a u8[] buffer). The
+	// decoded string is a\nb"c -> 5 bytes; oracle-checked against the interp.
+	{"const-str-escapes", `const NAME: string = "a\nb\"c"; function main(): i32 { return NAME.len(); }`},
 }
 
 // TestSelfHostConstStringIRX86_64 routes each case through the self-hosted x86-64
