@@ -22189,6 +22189,21 @@ function rc_fe_is_builtin_enum(t: string): boolean {
     return false;
 }
 
+// rc_fe_call_ret_type: the declared return type of a NON-GENERIC top-level
+// function `name`, or "" (unknown / generic / not found). Lets an unannotated
+// `var x = f(...)` local pick up f's heap return type so it reaches the
+// eligibility gate, mirroring native computeFreeEligible reading the checker's
+// resolved call type. Generic functions (`id[T](x: T): T`) are skipped — the
+// syntactic mirror can't instantiate the type parameter, so those stay "".
+function rc_fe_call_ret_type(funcs: parser.FuncDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].type_params.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
 // rc_fe_is_enum_name: `t` names an enum (some variant decl carries it as its
 // enum_owner — the self-host has no standalone enum decl entry).
 function rc_fe_is_enum_name(structs: parser.StructDecl[], t: string): boolean {
@@ -22308,7 +22323,7 @@ struct FeState { tainted: string[], an: string[], av: parser.Expr[], types_n: st
 // rc_fe_collect_types: record every declared local's (name, type) pair,
 // recursively. A destructure `var (a, b) = t` types each binding by splitting
 // t's tuple annotation positionally (best-effort: bare-ident RHS only).
-function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[]): FeState {
+function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): FeState {
     var st: FeState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -22344,6 +22359,13 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                                     parser.ExprIdent(cid) => {
                                         var en: string = variant_enum_owner(structs, cid.name);
                                         if (en.len() > 0) { t = en; }
+                                        else {
+                                            // not a variant ctor: a plain call to a
+                                            // non-generic function — the local takes
+                                            // that function's declared return type
+                                            // (native reads the checker's call type).
+                                            t = rc_fe_call_ret_type(funcs, cid.name);
+                                        }
                                     },
                                     parser.ExprLambda(_) => {
                                         // type from the first arm's CONSTRUCTED
@@ -22386,12 +22408,12 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                     st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t) };
                 }
             },
-            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs); st = rc_fe_collect_types(f.else_body, st, structs); },
-            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs); },
-            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs); },
+            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs, funcs); st = rc_fe_collect_types(f.else_body, st, structs, funcs); },
+            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs, funcs); },
+            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs, funcs); },
             parser.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { st = rc_fe_collect_types(m.arms[ai].body, st, structs); ai = ai + 1; }
+                while (ai < m.arms.len()) { st = rc_fe_collect_types(m.arms[ai].body, st, structs, funcs); ai = ai + 1; }
             },
             _ => {}
         }
@@ -22658,7 +22680,7 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
 
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
-pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
     var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
@@ -22674,7 +22696,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[])
         }
         pi = pi + 1;
     }
-    st = rc_fe_collect_types(fn.body, st, structs);
+    st = rc_fe_collect_types(fn.body, st, structs, funcs);
     st = rc_fe_walk_stmts(fn.body, st, structs);
     // fixpoint: forward taint via rhs, backward via bare-ident aliasing.
     var changed: boolean = true;
@@ -22954,7 +22976,10 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
         st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name) };
         pi = pi + 1;
     }
-    st = rc_fe_collect_types(fn.body, st, structs);
+    // movedLocals does not need call-return typing (it moves already-typed
+    // locals), so an empty function table is passed — this keeps rc_ml_compute
+    // free of the module funcs thread without changing its behaviour.
+    st = rc_fe_collect_types(fn.body, st, structs, []);
     var saw_return: boolean = false;
     var k: i32 = 0;
     while (k < fn.body.len()) {
@@ -23531,7 +23556,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
     }
     // freeEligible (#4482 — between consumedParams and preciseDrops, matching
     // native dumpRcPlan's line order): name-sorted, comma-joined.
-    var fe: string[] = free_eligible_of(fn, structs);
+    var fe: string[] = free_eligible_of(fn, structs, funcs);
     if (fe.len() > 0) {
         var fes: string[] = [];
         var fi: i32 = 0;

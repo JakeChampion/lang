@@ -594,6 +594,42 @@ function main(): i32 { return f(); }`,
 				"f": {"freeEligible": {native: "__foreach_iter_1,xs", selfhost: "xs"}, "preciseDrops": {native: "", selfhost: "2=xs"}},
 			},
 		},
+		{
+			// CALL-RETURN type inference (found by the round-3 bug-hunt): an
+			// UNANNOTATED local `var b = mk()` bound from a non-generic function
+			// call. Native reads the checker's resolved call type (i32[]) and
+			// marks b freeEligible; the self-host used to leave b untyped — its
+			// rc_fe_collect_types ExprCall arm only recognised variant ctors, so
+			// b never reached the eligibility gate. rc_fe_call_ret_type now looks
+			// up mk's declared return type, matching native's `b`. (Self-host
+			// precise-drops the fresh call-returned array at last use — the known
+			// placement class native leaves to its exit sweep.)
+			name: "fe-call-return-array",
+			src: `function mk(): i32[] { return [1, 2, 3]; }
+function f(): i32 { var b = mk(); return b[0] + b[1]; }
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "b"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "", selfhost: "1=b"}},
+			},
+		},
+		{
+			// GENERIC call-return boundary (round-3 bug-hunt PIN — the flip side
+			// of the fix above): `var b = id(a)` where `id[T](x: T): T` is
+			// generic. Native instantiates T=i32[] via the checker and marks b
+			// freeEligible (`a,b`); the syntactic self-host mirror deliberately
+			// SKIPS generic functions in rc_fe_call_ret_type (it can't
+			// instantiate the type parameter), so b stays untyped (`a` only).
+			// Pinned to document the boundary — closing it needs monomorphised
+			// return-type resolution, a separate slice.
+			name: "fe-generic-call-return",
+			src: `function id[T](x: T): T { return x; }
+function f(): i32 { var a = [1, 2, 3]; var b = id(a); return b[0]; }
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"freeEligible": {native: "a,b", selfhost: "a"}},
+			},
+		},
 	}
 
 	for _, tc := range cases {
