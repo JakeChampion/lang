@@ -498,7 +498,8 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
     while (i < fields.len()) {
         out = out.append(parser.StructFieldDecl {
             name: fields[i].name,
-            type_name: rewrite_type_name(fields[i].type_name, ctx)
+            type_name: rewrite_type_name(fields[i].type_name, ctx),
+            fn_ret: rewrite_type_name(fields[i].fn_ret, ctx)
         });
         i = i + 1;
     }
