@@ -69,42 +69,39 @@ Per-builtin work unit (×8 builtins × 3 backends):
    additionally needs the `wasi:io/poll` / `wasi:sockets` component
    wiring its composer already does on the Go side.
 
-### Blocker 2 — generic enum with a function-typed payload on the IR path — RESOLVED on x86-64; one wasm shape remains (#4364)
+### Blocker 2 — generic enum with a function-typed payload on the IR path — RESOLVED on x86-64 (#4364) and wasm (#4722)
 
-> **RESOLVED on x86-64 IR; one wasm shape remains (2026-07-07).** A user
-> enum with a function-typed payload now constructs, `match`-binds, and
-> indirect-calls on the IR path — the closure-conv work (#4354 + the
-> CLOSURE-CONV slices) lowers a function value in payload position as an
-> ordinary pointer-sized payload, and the user-enum `match` lowering
-> dispatches the bound payload through the existing closure-call
-> machinery.
+> **RESOLVED on both IR backends (2026-07-07).** A user enum with a
+> function-typed payload now constructs, `match`-binds, and indirect-calls
+> on the IR path — the closure-conv work (#4354 + the CLOSURE-CONV slices)
+> lowers a function value in payload position as an ordinary pointer-sized
+> payload, and the user-enum `match` lowering dispatches the bound payload
+> through the existing closure-call machinery.
 >
-> **x86-64 IR:** verified for the exact `Future[T] = Ready(T) |
-> Pending(i32, (i32) => Future[T])` shape (generic + recursive +
-> payload-fn-returns-the-enum) plus named-fn / capturing-closure /
-> recursive-`Step` / generic-`Box[T]` variants — all route `module: IR`
-> and match the interp oracle. The x86 IR path does not monomorphize the
-> generic enum, so the generic/recursive shapes ride the same lowering as
-> the non-generic ones.
+> Verified for the exact `Future[T] = Ready(T) | Pending(i32, (i32) =>
+> Future[T])` shape (generic + recursive + payload-fn-returns-the-enum)
+> plus named-fn / capturing-closure / recursive-`Step` / generic-`Box[T]`
+> variants — all route `module: IR` and match the interp oracle on **both**
+> x86-64 and wasm.
 >
-> **wasm IR:** the four non-fully-generic-recursive shapes lower; the
-> exact `Future[T]` shape (generic + recursive + payload-fn-returns-the-
-> generic-enum) is a **remaining wasm-only gap**. The wasm driver
-> monomorphizes the generic enum (`Fut[T]` → `Fut__i32`, #3893), renaming
-> the variant structs, but the nested `match (cont(tok))` on the
-> closure-call scrutinee can't have its arm patterns rewritten to the
-> mangled names because the fn payload's return type is discarded at parse
-> (`StructFieldDecl` has no `fn_ret` slot; the variant field is the coarse
-> `type_name: "fn"`). `lower_func` then bails and the wasm module's `main`
-> is truncated. Closing it needs fn-payload-return-type preservation at
-> the variant-desugar layer — an invasive parse-layer change, tracked as
-> #4722. See `docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md` for the
-> full root cause.
+> The x86 IR path does not monomorphize the generic enum, so the
+> generic/recursive shapes lowered there all along. The **wasm** leg
+> (#4722) needed one fix: the wasm driver monomorphizes the generic enum
+> (`Fut[T]` → `Fut__i32`, #3893), renaming the variant structs, so the
+> nested `match (cont(tok))` on the closure-call scrutinee needs its arm
+> patterns rewritten to the mangled names — which needs `me_scrutinee_type`
+> to recover `cont(tok)`'s type. That was blocked because the fn payload's
+> return type was dropped at parse (`is_struct_ret_name` kept only bare
+> struct returns; `StructFieldDecl` had no `fn_ret` slot). #4722 broadens
+> the parse capture to a nominal enum return, adds `StructFieldDecl.fn_ret`
+> (preserved through flatten + monomorphize), and binds the payload to an
+> encoded `fn => <ret>` spelling `me_scrutinee_type` recovers. `type_name`
+> stays `"fn"`, so codegen and the modload fixpoint are byte-identical.
+> See `docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md` for the full root cause.
 >
 > Pinned by `internal/e2eselfhost/self_host_fn_payload_variant_ir_test.go`
-> (x86-64 all five shapes; wasm the four that lower, `Future[T]` skipped
-> with a pointer to the gap). Only the async *runtime* builtins (Blocker 1
-> / the #4315–#4320 poll / timer / socket set) plus this wasm shape remain
+> (x86-64 and wasm, all five shapes each). Only the async *runtime*
+> builtins (Blocker 1 / the #4315–#4320 poll / timer / socket set) remain
 > for the end-to-end `std/async`-on-IR payoff. The historical analysis
 > below is retained.
 

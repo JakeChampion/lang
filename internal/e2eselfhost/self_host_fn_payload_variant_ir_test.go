@@ -19,15 +19,13 @@ import (
 // this pins the construction → store → match-bind → indirect-call round-trip
 // across the shapes the issue names.
 //
-// The x86-64 IR path lowers ALL five shapes (it does not monomorphize the
-// generic enum, so the generic/recursive shapes ride the non-generic lowering).
-// The wasm IR path lowers four of the five; the fully-generic-recursive
-// `Future[T]` shape (fnPayloadVariantWasmSkip below) is a documented wasm-only
-// gap — the wasm driver monomorphizes the enum, but the fn payload's return type is
-// discarded at the variant-desugar layer (StructFieldDecl has no fn_ret slot),
-// so the nested `match (cont(tok))` on the closure-call scrutinee can't rewrite
-// its mono'd arm patterns and lower_func bails. See the gap doc for the full
-// root cause and the follow-up tracking its parse-layer fix.
+// Both the x86-64 and wasm IR paths lower ALL five shapes, including the
+// fully-generic-recursive `Future[T]` (a generic enum whose payload fn RETURNS
+// the generic enum itself). On wasm that shape needs the fn payload's return
+// type preserved through the variant desugar (StructFieldDecl.fn_ret) so the
+// monomorphiser can rewrite the nested `match (cont(tok))`'s mono'd arm
+// patterns — added in #4722 (the x86 path never monomorphizes, so it lowered
+// the generic/recursive shapes all along).
 //
 // Each program computes 42 via the payload function; the interp oracle agrees.
 var fnPayloadVariantCases = []struct {
@@ -84,12 +82,6 @@ var fnPayloadVariantCases = []struct {
 		"}\n"},
 }
 
-// fnPayloadVariantWasmSkip names the cases that do NOT lower on the wasm IR path
-// (a documented wasm-only gap). See the wasm test + the gap doc for the reason.
-var fnPayloadVariantWasmSkip = map[string]bool{
-	"future-generic-recursive": true,
-}
-
 // TestSelfHostFnPayloadVariantIR pins the round-trip on the x86-64 IR path.
 func TestSelfHostFnPayloadVariantIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -131,9 +123,8 @@ func TestSelfHostFnPayloadVariantIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostFnPayloadVariantIRWasm is the wasm leg. Four of the five shapes
-// lower on wasm IR; the fully-generic-recursive Future[T] shape is a documented
-// wasm-only gap (wasmSkip), so it is skipped here with a pointer to the follow-up.
+// TestSelfHostFnPayloadVariantIRWasm is the wasm leg — all five shapes lower on
+// wasm IR (the fully-generic-recursive Future[T] shape closed by #4722).
 func TestSelfHostFnPayloadVariantIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fn-payload-variant wasm IR e2e")
@@ -153,16 +144,6 @@ func TestSelfHostFnPayloadVariantIRWasm(t *testing.T) {
 
 	for _, tc := range fnPayloadVariantCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if fnPayloadVariantWasmSkip[tc.name] {
-				// Documented wasm-only gap: the fully-generic-recursive Future[T]
-				// shape. The wasm driver monomorphizes the generic enum, but the fn
-				// payload's return type is discarded at the variant-desugar layer
-				// (StructFieldDecl has no fn_ret slot), so the nested match on the
-				// closure-call scrutinee can't rewrite its mono'd arm patterns and
-				// lower_func bails. x86-64 lowers it (no monomorphization). See
-				// docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md (#4722).
-				t.Skip("wasm IR gap: fn-payload return type discarded at variant desugar (#4722)")
-			}
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
 				cmd = exec.Command(driverBin, "-ir")
