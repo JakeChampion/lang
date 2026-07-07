@@ -88,11 +88,12 @@ function __json_escape(s: string): string {
 }
 
 pub function json_encode(v: JsonValue): string {
-    // Single shared `out` and `i` across match arms — the
+    // Single shared `buf` and `i` across match arms — the
     // wasm emitter names locals by lang identifier, so
-    // re-declaring `var out` in nested scopes collides
-    // (same footgun parse_float hit).
-    var out: string = "";
+    // re-declaring a `var` in nested scopes collides
+    // (same footgun parse_float hit). Only one composite arm
+    // runs per call, so the shared `buf` needs no reset.
+    var buf: u8[] = [];
     var i: i32 = 0;
     match (v) {
         JNull => { return "null"; },
@@ -105,14 +106,28 @@ pub function json_encode(v: JsonValue): string {
             return "\"" + __json_escape(s) + "\"";
         },
         JArray(arr) => {
-            out = "[";
+            // Accumulate this level into a LOCAL u8[] (#4379) rather than
+            // `out = out + json_encode(arr[i])`, which recopied the whole
+            // encoded-so-far prefix on every element — O(level²) at each nesting
+            // level. Every append targets the local `buf`, so it grows in place
+            // (amortized O(1)); the child bytes are inlined (not routed through a
+            // helper, whose borrowed-param append would copy per call). Byte-for-
+            // byte identical output.
+            buf = buf.append(91 as u8);   // '['
             var n: i32 = arr.len();
             while (i < n) {
-                if (i > 0) { out = out + ","; }
-                out = out + json_encode(arr[i]);
+                if (i > 0) { buf = buf.append(44 as u8); }   // ','
+                var enc: string = json_encode(arr[i]);
+                var el: i32 = enc.len();
+                var k: i32 = 0;
+                while (k < el) {
+                    buf = buf.append(enc[k] as u8);
+                    k = k + 1;
+                }
                 i = i + 1;
             }
-            return out + "]";
+            buf = buf.append(93 as u8);   // ']'
+            return string_from_bytes(buf);
         },
         JObject(m) => {
             // Keys are emitted straight off the map's iteration
@@ -123,17 +138,35 @@ pub function json_encode(v: JsonValue): string {
             // instead (see core/map's "Iteration order" contract,
             // #4388); JSON object member order is not semantically
             // significant, so this only affects byte-exactness.
-            out = "{";
+            // Same local-u8[] accumulation as JArray (#4379): the old
+            // `out = out + …` recopied the growing object text on every member.
+            buf = buf.append(123 as u8);   // '{'
             var first: boolean = true;
             var iter: MapIter[string, JsonValue] = m.iter();
             while (iter.has_next()) {
-                if (!first) { out = out + ","; }
+                if (!first) { buf = buf.append(44 as u8); }   // ','
                 first = false;
-                out = out + "\"" + __json_escape(iter.key()) + "\":";
-                out = out + json_encode(iter.value());
+                buf = buf.append(34 as u8);   // '"'
+                var ek: string = __json_escape(iter.key());
+                var ekl: i32 = ek.len();
+                var kk: i32 = 0;
+                while (kk < ekl) {
+                    buf = buf.append(ek[kk] as u8);
+                    kk = kk + 1;
+                }
+                buf = buf.append(34 as u8);   // '"'
+                buf = buf.append(58 as u8);   // ':'
+                var ev: string = json_encode(iter.value());
+                var evl: i32 = ev.len();
+                var vk: i32 = 0;
+                while (vk < evl) {
+                    buf = buf.append(ev[vk] as u8);
+                    vk = vk + 1;
+                }
                 iter.advance();
             }
-            return out + "}";
+            buf = buf.append(125 as u8);   // '}'
+            return string_from_bytes(buf);
         }
     }
 }
