@@ -181,6 +181,38 @@ func TestBlockExprInterp(t *testing.T) {
 			}`,
 			18,
 		},
+		{
+			// #4522: a NO-TAIL block whose statements always exit — every path
+			// `return`s, so the block is `never` (not a void-block E061). f(-1)
+			// takes the first return → 1.
+			"cf-no-tail-all-return-first",
+			`function f(n: i32): i32 { var x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
+			function main(): i32 { return f(-1); }`,
+			1,
+		},
+		{
+			// The fall-through return is taken. f(5) → 2.
+			"cf-no-tail-all-return-second",
+			`function f(n: i32): i32 { var x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
+			function main(): i32 { return f(5); }`,
+			2,
+		},
+		{
+			// #4522: an if-EXPRESSION whose two arms both diverge — the whole
+			// if is `never`, assignable to i32. f(5) → 2.
+			"cf-if-expr-both-arms-diverge",
+			`function f(n: i32): i32 { var x: i32 = if (n < 0) { return 1; } else { return 2; }; return x; }
+			function main(): i32 { return f(5); }`,
+			2,
+		},
+		{
+			// #4522: a match arm that always exits, unified with a value arm.
+			// f(0) hits the divergent arm → 100.
+			"cf-match-arm-diverges",
+			`function f(n: i32): i32 { var x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }
+			function main(): i32 { return f(0); }`,
+			100,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -248,6 +280,27 @@ function main(): i32 {
 }
 `
 	dynAllBackends(t, src, "a=6 b=99 s=6")
+}
+
+// #4522: a NO-TAIL value-position block whose statements ALWAYS exit
+// early has type `never` (bottom) — it never produces a value, so the
+// enclosing store is unreachable and no tail is lowered. Exercises the
+// general-block, if-expr-both-arms, and match-arm forms differentially
+// across every native backend. f: both returns; g: if-expr both arms
+// diverge; h: divergent match arm vs value arm.
+func TestBlockExprCompiledControlFlowNoTail(t *testing.T) {
+	src := `import "std/i32";
+function f(n: i32): i32 { var x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
+function g(n: i32): i32 { var x: i32 = if (n < 0) { return 10; } else { return 20; }; return x; }
+function h(n: i32): i32 { var x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }
+function main(): i32 {
+	print("f-1=" + f(-1).to_string() + " f5=" + f(5).to_string() +
+		" g-1=" + g(-1).to_string() + " g5=" + g(5).to_string() +
+		" h0=" + h(0).to_string() + " h3=" + h(3).to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "f-1=1 f5=2 g-1=10 g5=20 h0=100 h3=6")
 }
 
 // A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.

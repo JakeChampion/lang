@@ -4140,6 +4140,75 @@ func TestBlockExprChecker(t *testing.T) {
 	}
 }
 
+// A value-position block whose statements always exit early (`return` /
+// `break` / `continue`) has type `never` (bottom), NOT `void`: it is
+// assignable to / unifies with any type, so the no-tail forms below
+// type-check instead of hitting E061 / E003 / E031 (#4522).
+func TestBlockExprCheckerNeverDiverges(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			// General value-position block with no tail: both paths return.
+			"general-block-all-return",
+			`function f(n: i32): i32 {
+				var x: i32 = { if (n < 0) { return 1; } return 2; };
+				return x;
+			}
+			function main(): i32 { return f(5); }`,
+		},
+		{
+			// if-expr with both arms divergent → the whole if is `never`,
+			// assignable to i32.
+			"if-expr-both-arms-diverge",
+			`function f(n: i32): i32 {
+				var x: i32 = if (n < 0) { return 1; } else { return 2; };
+				return x;
+			}
+			function main(): i32 { return f(5); }`,
+		},
+		{
+			// match-expr: a divergent arm unifies with a value arm — the
+			// result type comes from the value arm.
+			"match-arm-diverges",
+			`function f(n: i32): i32 {
+				var x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } };
+				return x;
+			}
+			function main(): i32 { return f(5); }`,
+		},
+		{
+			// No annotation: `never` is inferred, no missing-annotation error.
+			"no-annotation",
+			`function f(n: i32): i32 {
+				var x = { if (n < 0) { return 1; } return 2; };
+				return x;
+			}
+			function main(): i32 { return f(5); }`,
+		},
+		{
+			// break/continue inside a value block in a loop: the block is
+			// `never`, assignable to the local's type.
+			"break-continue-in-loop",
+			`function main(): i32 {
+				var s: i32 = 0; var i: i32 = 0;
+				while (i < 5) {
+					i = i + 1;
+					var d: i32 = { if (i == 4) { break; } if (i == 2) { continue; } i };
+					s = s + d;
+				}
+				return s;
+			}`,
+		},
+	}
+	for _, c := range cases {
+		if err := checkSource(t, c.src); err != nil {
+			t.Errorf("%s: unexpected error: %v", c.name, err)
+		}
+	}
+}
+
 func TestBlockExprCheckerErrors(t *testing.T) {
 	cases := []struct {
 		name string

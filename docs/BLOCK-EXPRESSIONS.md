@@ -112,9 +112,9 @@ Backend support:
 | AST node | `ast.BlockExpr{P, Stmts, Tail}` (`internal/ast/ast.go`) |
 | Walkers | `internal/ast/walk.go` (`Walk` / `rewriteExprChildren`) |
 | Parser | `parser.parseBranchBody` + `branchStmtStart`, wired into `parseIfExpr` and the `match`-expr arm body (`internal/parser/parser.go`) |
-| Checker | `checker.checkBlockExpr` (child scope → statements → tail type); error **E061**; numeric settle / `postSettleType` recurse into `Tail` (`internal/checker/checker.go`) |
-| Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail (`internal/interp/interp.go`) |
-| Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result (`internal/ir/ir.go`) |
+| Checker | `checker.checkBlockExpr` (child scope → statements → tail type); no-tail → **E061** unless the statements diverge (`stmtsDiverge`) → `never`; `assignable` / `unifyIfArms` / match-arm unifiers fold `never`; numeric settle / `postSettleType` recurse into `Tail` (`internal/checker/checker.go`) |
+| Interp | `*ast.BlockExpr` arm in `evalExpr` — child env, exec statements, eval tail; a non-normal `r.flow` unwinds as a `controlFlowSignal` that `execStmt` catches (`internal/interp/interp.go`) |
+| Compiled lowering | `*ast.BlockExpr` arm in `(*builder).expr` — lower `Stmts` via `b.stmt`, then `Tail` via `b.expr` as the result; a nil (diverging) `Tail` lowers the statements only, leaving the enclosing store unreachable (`internal/ir/ir.go`) |
 | Self-host parse | `parse_branch_body` + `branch_stmt_start`, wired into `parse_if_chain` and the match-expr arm body (`examples/self_host/parser.fern`) |
 | Self-host lower | `lower_value_tail` — leading statements then the value-producing terminal (`examples/self_host/irlower.fern`) |
 | Other passes | `monomorph`, `closureconv`, `boxcapture`, `modload`, `shadowrename`, `treeshake`, `printer`, `format` each recurse into `Stmts` + `Tail` |
@@ -128,10 +128,58 @@ Backend support:
   as an `if`/`match` *expression* (e.g. `parse_map_lit`'s `map_new` /
   `map_new_i32` ctor selection in `parser.fern`).
 
+## Control-flow inside a value-position block (`#4522`)
+
+A `return` / `break` / `continue` inside a value-position block is
+supported on every native backend (interp / wasm / arm64 / x86-64):
+
+```
+var x: i32 = { if (early) { return 0; } var k = compute(); k };
+```
+
+The interpreter propagates a non-normal `r.flow` out of the
+`*ast.BlockExpr` arm as a `controlFlowSignal`, which `execStmt` catches
+and turns back into the ordinary `result{flow}` the enclosing loop /
+`callFunc` already understand; the block's tail is skipped on the
+early-exit path. On the compiled backends the diverging statement
+lowers to a branch to the function/loop exit, so the tail value is
+produced only on the fall-through path.
+
+### The `never` (bottom) type
+
+A **no-tail** block whose statements *always* exit early (every path
+`return`s / `break`s / `continue`s) never reaches a trailing value, so
+it is not `void` — it is **`never`** (`ast.NeverType`), the bottom
+type, which is assignable to / unifies with any type:
+
+```
+var x: i32 = { if (n < 0) { return 1; } return 2; };      // general block
+var y: i32 = if (n < 0) { return 1; } else { return 2; }; // both arms diverge
+var z: i32 = match (n) { 0 => { return 100; }, _ => n };  // divergent arm
+```
+
+`checker.checkBlockExpr` returns `NeverType` (instead of E061) when the
+block's statements diverge (`stmtsDiverge`); `assignable` treats
+`never` as assignable to everything, and `unifyIfArms` / the match-arm
+unifiers fold a `never` arm into the value-producing arm(s). Codegen
+lowers the statements only — the diverging terminal makes the enclosing
+store unreachable and the ssa lift skips it, so no tail value is
+emitted. A genuinely value-less block (last statement is a non-diverging
+`;`-terminated statement) still errors **E061**.
+
+Coverage: `TestBlockExprCheckerNeverDiverges` (checker),
+`TestBlockExprInterp` `cf-*` cases + `TestBlockExprCompiledControlFlow`
+/ `TestBlockExprCompiledControlFlowNoTail` (interp + all native
+backends, differential).
+
 ## Later slices
 
 - General value-position `{ … }` blocks (needs struct-literal
-  disambiguation).
-- Control-flow (`return` / `break` / `continue`) inside a value-position
-  block-expression — currently rejected by the interpreter, since it
-  doesn't thread control flow through expression evaluation.
+  disambiguation) — landed for the common cases (`#4521`).
+- **Self-host mirror of the control-flow / `never` forms.** The
+  self-host desugars value-position blocks (and if/match value-branches)
+  to IIFEs (`e_call(e_lambda([], rt, body), [])`); a `return` inside a
+  lambda returns from the *lambda*, not the enclosing function, so a
+  control-flow-containing block needs an *inline* statement-sequence
+  representation there rather than the IIFE. Tracked as native-
+  convergence debt (`#4451`).
