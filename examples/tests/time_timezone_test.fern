@@ -1,0 +1,65 @@
+import "std/test";
+import "std/time" as time;
+// examples/tests/time_timezone_test.fern — std/time zone lookup
+// (timezone_iana) and the DST-awareness predicate timezone_observes_dst
+// (#4388 item 5). timezone_iana returns each zone's STANDARD-time
+// offset (no DST tables); the predicate flags the zones where that
+// offset is wrong ~half the year so callers can detect it rather than
+// trust a silently-wrong local time.
+
+function offset_or(name: string, sentinel: i32): i32 {
+    match (time.timezone_iana(name)) {
+        Some(z) => { return z.offset_seconds; },
+        None => { return sentinel; }
+    }
+}
+
+function test_iana_utc(): test.TestOutcome {
+    return test.assert_true(offset_or("UTC", 0 - 1) == 0 && offset_or("GMT", 0 - 1) == 0);
+}
+
+function test_iana_offsets(): test.TestOutcome {
+    // Standard-time offsets, in seconds east of UTC.
+    if (offset_or("America/New_York", 1) != 0 - 5 * 3600) { return test.fail("New_York"); }
+    if (offset_or("Asia/Tokyo", 1) != 9 * 3600) { return test.fail("Tokyo"); }
+    if (offset_or("Asia/Kolkata", 1) != 5 * 3600 + 30 * 60) { return test.fail("Kolkata half-hour"); }
+    return test.assert_eq(offset_or("Europe/Paris", 1), 3600);
+}
+
+function test_iana_unknown(): test.TestOutcome {
+    // Unknown zone -> None (here surfaced as the sentinel).
+    return test.assert_eq(offset_or("Mars/Olympus_Mons", 0 - 999), 0 - 999);
+}
+
+function test_dst_true_for_dst_zones(): test.TestOutcome {
+    return test.assert_true(
+        time.timezone_observes_dst("Europe/London")
+        && time.timezone_observes_dst("America/New_York")
+        && time.timezone_observes_dst("Australia/Sydney")
+        && time.timezone_observes_dst("Pacific/Auckland"));
+}
+
+function test_dst_false_for_fixed_zones(): test.TestOutcome {
+    // UTC, most of Asia, Arizona, and post-2014 Russia are fixed-offset.
+    return test.assert_true(
+        !time.timezone_observes_dst("UTC")
+        && !time.timezone_observes_dst("Asia/Tokyo")
+        && !time.timezone_observes_dst("America/Phoenix")
+        && !time.timezone_observes_dst("Europe/Moscow"));
+}
+
+function test_dst_false_for_unknown(): test.TestOutcome {
+    // A name the lookup doesn't know is not claimed to observe DST.
+    return test.assert_true(!time.timezone_observes_dst("Mars/Olympus_Mons"));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/time timezone");
+    r = r.it("iana UTC/GMT",             test_iana_utc());
+    r = r.it("iana offsets",             test_iana_offsets());
+    r = r.it("iana unknown",             test_iana_unknown());
+    r = r.it("dst true for DST zones",   test_dst_true_for_dst_zones());
+    r = r.it("dst false for fixed zones", test_dst_false_for_fixed_zones());
+    r = r.it("dst false for unknown",    test_dst_false_for_unknown());
+    return r.finish();
+}
