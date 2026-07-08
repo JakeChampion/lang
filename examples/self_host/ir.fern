@@ -445,6 +445,12 @@ pub function op_tcp_send(): Op { return op0("tcp_send"); }
 pub function op_tcp_recv(): Op { return op0("tcp_recv"); }
 pub function op_tcp_close(): Op { return op0("tcp_close"); }
 pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
+// `tcp_listen` [port] -> i32 listener fd (or -errno): socket + bind to
+// 0.0.0.0:port + listen. `tcp_accept` [fd] -> i32 connection fd (or -errno):
+// accept(2) on a listener. The server half of the edge-handler use case
+// (#4371); the client ops above are the outbound-fetch half.
+pub function op_tcp_listen(): Op { return op0("tcp_listen"); }
+pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
 // `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it
@@ -1150,6 +1156,11 @@ function kind_id_4(name: string): i32 {
     if (name == "tcp_recv") { return 195; }
     if (name == "tcp_close") { return 196; }
     if (name == "tcp_pollable") { return 197; }
+    // Extension tags beyond kind_count() (like struct_copy=198 / store_i64=199):
+    // the server-half tcp ops (#4371). Not in the 1..kind_count() bijection
+    // sweep, but nameable so module_emits_op_cached / the backends see them.
+    if (name == "tcp_listen") { return 200; }
+    if (name == "tcp_accept") { return 201; }
     return 0;
 }
 
@@ -1378,6 +1389,8 @@ function kind_name_4(id: i32): string {
     if (id == 195) { return "tcp_recv"; }
     if (id == 196) { return "tcp_close"; }
     if (id == 197) { return "tcp_pollable"; }
+    if (id == 200) { return "tcp_listen"; }
+    if (id == 201) { return "tcp_accept"; }
     return "invalid";
 }
 
