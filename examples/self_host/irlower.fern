@@ -5862,6 +5862,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "stdin" && c.args.len() == 0) {
                         return s.emit(ir.op_const_i32(0));
                     }
+                    // Built-in `stdout()` / `stderr()` — return a Writer, which
+                    // like a Reader is just its fd: stdout=1, stderr=2. `w.write(s)`
+                    // / `w.close()` take that fd directly (#4372). Value ops.
+                    if (cid.name == "stdout" && c.args.len() == 0) {
+                        return s.emit(ir.op_const_i32(1));
+                    }
+                    if (cid.name == "stderr" && c.args.len() == 0) {
+                        return s.emit(ir.op_const_i32(2));
+                    }
                     // Built-in `read_line()` — read one line from stdin, return a
                     // fresh string box. A value op; the binding str-tracks the
                     // result (expr_is_str's read_line case). No wasm stdin support,
@@ -6255,7 +6264,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // struct still routes to struct-method dispatch below (the AST
                     // backend intercepts unconditionally; this is strictly safer). No
                     // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
-                    if ((fa.field == "read_chunk" || fa.field == "close")
+                    if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write")
                         && !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
                         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
                         if (fa.field == "read_chunk" && c.args.len() == 1) {
@@ -6269,6 +6278,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             var rcl: LowerState = lower_expr(fa.obj, s);
                             if (!rcl.ok) { return rcl; }
                             return rcl.emit(ir.op_reader_close());
+                        }
+                        // Writer.write(s) (#4372): a Writer is a bare fd; lower the
+                        // receiver (fd) then the string arg (box), then write(2) the
+                        // box's bytes to the fd -> i32 bytes / -errno. Same shape as
+                        // tcp_send, just a plain fd. Gated to a non-struct/enum/str/
+                        // array receiver so a user `.write(x)` on a real type still
+                        // routes to struct-method dispatch below.
+                        if (fa.field == "write" && c.args.len() == 1) {
+                            var wws: LowerState = lower_expr(fa.obj, s);
+                            if (!wws.ok) { return wws; }
+                            wws = lower_expr(c.args[0], wws);
+                            if (!wws.ok) { return wws; }
+                            return wws.emit(ir.op_writer_write());
                         }
                     }
                     // A function-VALUE tuple element call `t.N(args)` — `t.N` is a

@@ -617,6 +617,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
             // [listener fd] -> __fern_tcp_accept(x0=fd) -> connection fd / -errno.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_accept\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 202) {  // writer_write (#4372)
+            // [fd, str box] -> write(2) the box's bytes to the fd -> i32 bytes /
+            // -errno. Inline (no helper): len=box[8], data=box[0]; write=64.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x1, #8]\n    ldr x1, [x1]\n    mov x8, #64\n    svc #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,

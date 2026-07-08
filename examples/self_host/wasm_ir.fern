@@ -806,6 +806,7 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         && !module_emits_op_cached(cache, "tcp_pollable")
         && !module_emits_op_cached(cache, "tcp_listen")
         && !module_emits_op_cached(cache, "tcp_accept")
+        && !module_emits_op_cached(cache, "writer_write")
         && !module_emits_op_cached(cache, "subprocess");
 }
 

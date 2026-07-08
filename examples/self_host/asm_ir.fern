@@ -4159,6 +4159,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [listener fd]; __fern_tcp_accept(%rdi=fd) -> connection fd / -errno.
             s = s.write("    popq %rdi\n    call __fern_tcp_accept\n    pushq %rax\n");
             s = s.need("tcp_accept");
+        } else if (o.kind_tag == 202) {  // writer_write (#4372)
+            // [fd, str box]; write(2) the box's bytes to the fd -> i32 bytes /
+            // -errno. Inline (no runtime helper): read data=box[0], len=box[8].
+            s = s.write("    popq %rsi\n    popq %rdi\n    movq 8(%rsi), %rdx\n    movq (%rsi), %rsi\n    movq $1, %rax\n    syscall\n    pushq %rax\n");
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
             // The arena is mmap'd lazily; its base is recoverable from the
