@@ -30,11 +30,37 @@ package elf
 const (
 	ehSize    = 64       // ELF-64 header size (e_ehsize)
 	phSize    = 56       // ELF-64 program-header entry size (e_phentsize)
-	baseVAddr = 0x400000 // load address; multiple of pageAlign
-	pageAlign = 0x10000  // arm64 max page size (16 KiB) for p_align
-	emAArch64 = 183      // EM_AARCH64 (e_machine)
-	emX86_64  = 62       // EM_X86_64 (e_machine)
+	baseVAddr = 0x400000 // load address; multiple of pageAlign (both arches)
+	pageAlign = 0x10000  // arm64 max page size (64 KiB) for p_align
+	// x86-64 pages are always 4 KiB, so its segments align to 0x1000 instead
+	// of the arm64 max-page 0x10000. This matters for the W^X / PIE layouts,
+	// where the data segment starts at pageUp(textEnd): at 64 KiB a tiny CLI
+	// pads ~64 KiB of zeros between .text and .rodata (a hello-world is 16×
+	// too big); at 4 KiB the padding — and the binary — shrink accordingly,
+	// while W^X (code and data never share a page) still holds on x86-64's
+	// 4 KiB pages. arm64 keeps 64 KiB so the image loads on 4/16/64 KiB-page
+	// kernels alike. (#4380 / #4382)
+	pageAlignX86 = 0x1000
+	emAArch64    = 183 // EM_AARCH64 (e_machine)
+	emX86_64     = 62  // EM_X86_64 (e_machine)
 )
+
+// pageAlignFor is the segment/p_align page size for the target machine: 4 KiB
+// on x86-64 (its only page size), the arm64 64 KiB max-page elsewhere.
+func pageAlignFor(machine uint16) uint64 {
+	if machine == emX86_64 {
+		return pageAlignX86
+	}
+	return pageAlign
+}
+
+// pageUpFor rounds v up to the target machine's page boundary. The W^X data
+// segment begins here so it never shares a page — and thus never shares page
+// protections — with the R+X code segment.
+func pageUpFor(v uint64, machine uint16) uint64 {
+	a := pageAlignFor(machine)
+	return (v + a - 1) &^ (a - 1)
+}
 
 // TextVAddr is the virtual address at which .text begins in the
 // single-segment image (just past the ELF header + one program
@@ -49,13 +75,6 @@ const TextVAddr = baseVAddr + ehSize + phSize
 // as the textVAddr so PC-relative fixups line up with the layout
 // StaticExecutableDataWX produces.
 const TextVAddrWX = baseVAddr + ehSize + 2*phSize
-
-// pageUp rounds v up to the next pageAlign (16 KiB) boundary. The
-// W^X data segment begins here so it never shares a page — and thus
-// never shares page protections — with the R+X code segment.
-func pageUp(v uint64) uint64 {
-	return (v + pageAlign - 1) &^ (pageAlign - 1)
-}
 
 // PIE (position-independent / ET_DYN) constants. A Fern PIE is a static,
 // no-PLT/GOT image whose only load-base-dependent values are the
@@ -189,7 +208,7 @@ func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
 func imageWX(text, data []byte, machine uint16) []byte {
 	const headers = ehSize + 2*phSize        // 64 + 112 = 176
 	textEnd := uint64(headers + len(text))   // end of the R+X segment
-	dataOff := pageUp(textEnd)               // file offset == vaddr offset of data
+	dataOff := pageUpFor(textEnd, machine)   // file offset == vaddr offset of data
 	codeVAddr := uint64(baseVAddr)           // headers + .text
 	dataVAddr := uint64(baseVAddr) + dataOff // .rodata + writable globals
 	entry := uint64(TextVAddrWX)             // first instruction of .text
@@ -226,24 +245,24 @@ func imageWX(text, data []byte, machine uint16) []byte {
 	buf = le16(buf, 0)                        // e_shstrndx
 
 	// ---- Program header 0 (56 bytes): R+X code (headers + .text) ----
-	buf = le32(buf, 1)         // p_type  = PT_LOAD
-	buf = le32(buf, 5)         // p_flags = PF_R | PF_X
-	buf = le64(buf, 0)         // p_offset
-	buf = le64(buf, codeVAddr) // p_vaddr
-	buf = le64(buf, codeVAddr) // p_paddr
-	buf = le64(buf, codeSz)    // p_filesz
-	buf = le64(buf, codeSz)    // p_memsz
-	buf = le64(buf, pageAlign) // p_align
+	buf = le32(buf, 1)                     // p_type  = PT_LOAD
+	buf = le32(buf, 5)                     // p_flags = PF_R | PF_X
+	buf = le64(buf, 0)                     // p_offset
+	buf = le64(buf, codeVAddr)             // p_vaddr
+	buf = le64(buf, codeVAddr)             // p_paddr
+	buf = le64(buf, codeSz)                // p_filesz
+	buf = le64(buf, codeSz)                // p_memsz
+	buf = le64(buf, pageAlignFor(machine)) // p_align
 
 	// ---- Program header 1 (56 bytes): R+W data (.rodata + globals) ----
-	buf = le32(buf, 1)          // p_type  = PT_LOAD
-	buf = le32(buf, 6)          // p_flags = PF_R | PF_W
-	buf = le64(buf, dataOff)    // p_offset
-	buf = le64(buf, dataVAddr)  // p_vaddr
-	buf = le64(buf, dataVAddr)  // p_paddr
-	buf = le64(buf, dataFileSz) // p_filesz (initialised prefix only; .bss is NOBITS)
-	buf = le64(buf, dataSz)     // p_memsz  (full segment incl. zero-filled .bss)
-	buf = le64(buf, pageAlign)  // p_align
+	buf = le32(buf, 1)                     // p_type  = PT_LOAD
+	buf = le32(buf, 6)                     // p_flags = PF_R | PF_W
+	buf = le64(buf, dataOff)               // p_offset
+	buf = le64(buf, dataVAddr)             // p_vaddr
+	buf = le64(buf, dataVAddr)             // p_paddr
+	buf = le64(buf, dataFileSz)            // p_filesz (initialised prefix only; .bss is NOBITS)
+	buf = le64(buf, dataSz)                // p_memsz  (full segment incl. zero-filled .bss)
+	buf = le64(buf, pageAlignFor(machine)) // p_align
 
 	// ---- body: .text, then page padding, then the data blob's initialised
 	// prefix (the trailing .bss zeros are supplied by the loader via memsz). ----
@@ -287,7 +306,7 @@ func StaticPieExecutableX86(text, data []byte, relocs []Reloc) []byte {
 func staticPie(text, data []byte, relocs []Reloc, machine uint16) []byte {
 	const headers = ehSize + phNumPIE*phSize // 64 + 168 = 232
 	textEnd := uint64(headers + len(text))   // end of the R+X segment
-	dataOff := pageUp(textEnd)               // page boundary: start of R+W data
+	dataOff := pageUpFor(textEnd, machine)   // page boundary: start of R+W data
 
 	// Within the R+W segment: data blob, then (8-aligned) .rela.dyn, then
 	// .dynamic. All offsets/vaddrs are relative to a load base of 0.
@@ -327,24 +346,24 @@ func staticPie(text, data []byte, relocs []Reloc, machine uint16) []byte {
 	buf = le16(buf, 0)            // e_shstrndx
 
 	// ---- PH 0: R+X code (headers + .text) ----
-	buf = le32(buf, 1)         // PT_LOAD
-	buf = le32(buf, 5)         // PF_R | PF_X
-	buf = le64(buf, 0)         // p_offset
-	buf = le64(buf, 0)         // p_vaddr
-	buf = le64(buf, 0)         // p_paddr
-	buf = le64(buf, textEnd)   // p_filesz
-	buf = le64(buf, textEnd)   // p_memsz
-	buf = le64(buf, pageAlign) // p_align
+	buf = le32(buf, 1)                     // PT_LOAD
+	buf = le32(buf, 5)                     // PF_R | PF_X
+	buf = le64(buf, 0)                     // p_offset
+	buf = le64(buf, 0)                     // p_vaddr
+	buf = le64(buf, 0)                     // p_paddr
+	buf = le64(buf, textEnd)               // p_filesz
+	buf = le64(buf, textEnd)               // p_memsz
+	buf = le64(buf, pageAlignFor(machine)) // p_align
 
 	// ---- PH 1: R+W data (.rodata + globals + .rela.dyn + .dynamic) ----
-	buf = le32(buf, 1)         // PT_LOAD
-	buf = le32(buf, 6)         // PF_R | PF_W
-	buf = le64(buf, dataOff)   // p_offset
-	buf = le64(buf, dataOff)   // p_vaddr
-	buf = le64(buf, dataOff)   // p_paddr
-	buf = le64(buf, dataSegSz) // p_filesz
-	buf = le64(buf, dataSegSz) // p_memsz
-	buf = le64(buf, pageAlign) // p_align
+	buf = le32(buf, 1)                     // PT_LOAD
+	buf = le32(buf, 6)                     // PF_R | PF_W
+	buf = le64(buf, dataOff)               // p_offset
+	buf = le64(buf, dataOff)               // p_vaddr
+	buf = le64(buf, dataOff)               // p_paddr
+	buf = le64(buf, dataSegSz)             // p_filesz
+	buf = le64(buf, dataSegSz)             // p_memsz
+	buf = le64(buf, pageAlignFor(machine)) // p_align
 
 	// ---- PH 2: PT_DYNAMIC (view into the R+W segment) ----
 	buf = le32(buf, ptDynamic) // PT_DYNAMIC
@@ -407,7 +426,7 @@ func align4(v uint64) uint64 { return (v + 3) &^ 3 }
 func sharedLib(text, data []byte, relocs []Reloc, exports []Export, soname string, machine uint16) []byte {
 	const headers = ehSize + phNumPIE*phSize // 232: ELF header + 3 program headers
 	textEnd := uint64(headers + len(text))
-	dataOff := pageUp(textEnd) // R+W segment starts on a page boundary
+	dataOff := pageUpFor(textEnd, machine) // R+W segment starts on a page boundary
 
 	// Build .dynstr: index 0 is the empty string; then the soname (if any)
 	// and each export name, NUL-terminated. Record their offsets.
@@ -495,7 +514,7 @@ func sharedLib(text, data []byte, relocs []Reloc, exports []Export, soname strin
 	buf = le64(buf, 0)
 	buf = le64(buf, textEnd)
 	buf = le64(buf, textEnd)
-	buf = le64(buf, pageAlign)
+	buf = le64(buf, pageAlignFor(machine))
 
 	// ---- PH 1: R+W data (.rela.dyn / .dynsym / .dynstr / .hash / .dynamic) ----
 	buf = le32(buf, 1)
@@ -505,7 +524,7 @@ func sharedLib(text, data []byte, relocs []Reloc, exports []Export, soname strin
 	buf = le64(buf, dataOff)
 	buf = le64(buf, dataSegSz)
 	buf = le64(buf, dataSegSz)
-	buf = le64(buf, pageAlign)
+	buf = le64(buf, pageAlignFor(machine))
 
 	// ---- PH 2: PT_DYNAMIC ----
 	buf = le32(buf, ptDynamic)
@@ -622,14 +641,14 @@ func image(body []byte, flags uint32, machine uint16) []byte {
 	buf = le16(buf, 0)                        // e_shstrndx
 
 	// ---- Program header (56 bytes): one PT_LOAD covering the file ----
-	buf = le32(buf, 1)         // p_type  = PT_LOAD
-	buf = le32(buf, flags)     // p_flags
-	buf = le64(buf, 0)         // p_offset
-	buf = le64(buf, baseVAddr) // p_vaddr
-	buf = le64(buf, baseVAddr) // p_paddr
-	buf = le64(buf, total)     // p_filesz
-	buf = le64(buf, total)     // p_memsz
-	buf = le64(buf, pageAlign) // p_align
+	buf = le32(buf, 1)                     // p_type  = PT_LOAD
+	buf = le32(buf, flags)                 // p_flags
+	buf = le64(buf, 0)                     // p_offset
+	buf = le64(buf, baseVAddr)             // p_vaddr
+	buf = le64(buf, baseVAddr)             // p_paddr
+	buf = le64(buf, total)                 // p_filesz
+	buf = le64(buf, total)                 // p_memsz
+	buf = le64(buf, pageAlignFor(machine)) // p_align
 
 	return append(buf, body...)
 }

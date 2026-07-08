@@ -201,14 +201,14 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	// Resolve rip-relative data references. In the single-segment image
 	// StaticExecutableDataX86 pads .text to 8 bytes and appends .rodata,
 	// so .rodata begins at align8(len(text)) within the segment. In the
-	// W^X / PIE images .rodata moves to the first 16 KiB page boundary past
+	// W^X / PIE images .rodata moves to the first 4 KiB page boundary past
 	// .text (a separate R+W segment), so its segment-relative base is
 	// pageUp(textVAddr+len(text)) - textVAddr. Either way rodataBase is the
 	// data blob's offset from textVAddr, so the textVAddr base still cancels
 	// in (symVAddr - ripEnd).
 	rodataBase := align8(len(a.text))
 	if wx || pie {
-		const page = 0x10000 // must match elf.pageAlign
+		const page = 0x1000 // must match elf.pageAlignFor(emX86_64) (x86-64 = 4 KiB pages)
 		rodataBase = int((textVAddr+uint64(len(a.text))+page-1)&^(page-1) - textVAddr)
 	}
 	rodataVAddr := textVAddr + uint64(rodataBase)

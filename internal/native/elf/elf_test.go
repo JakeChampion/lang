@@ -13,6 +13,54 @@ import (
 	"github.com/jakechampion/lang/internal/native/elf"
 )
 
+// TestWXPageAlignPerArch pins the per-architecture page alignment of the W^X
+// two-segment image (#4380/#4382): x86-64 aligns its data segment to 4 KiB
+// (its only page size), arm64 to 64 KiB (the max-page floor that loads on
+// 4/16/64 KiB-page kernels). This is where a tiny CLI's size comes from — the
+// pad between .text and the page-aligned data segment — so it also asserts the
+// x86 image of a trivial program is far smaller than the old 64 KiB floor while
+// arm64 stays at it.
+func TestWXPageAlignPerArch(t *testing.T) {
+	text := []byte{0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3} // tiny .text
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8}             // one 8-byte slot
+
+	binX := elf.StaticExecutableDataX86WX(text, data)
+	binA := elf.StaticExecutableDataWX(text, data)
+
+	dataAlign := func(bin []byte, arch string) uint64 {
+		f, err := goelf.NewFile(bytes.NewReader(bin))
+		if err != nil {
+			t.Fatalf("%s: not a parseable ELF: %v", arch, err)
+		}
+		var last uint64
+		for _, p := range f.Progs {
+			if p.Type == goelf.PT_LOAD {
+				last = p.Align
+				// The R+W data segment must be congruent to its file offset
+				// mod its alignment — what mmap requires.
+				if p.Flags&goelf.PF_W != 0 && p.Off%p.Align != p.Vaddr%p.Align {
+					t.Errorf("%s: data seg off %#x not congruent to vaddr %#x mod %#x", arch, p.Off, p.Vaddr, p.Align)
+				}
+			}
+		}
+		return last
+	}
+
+	if a := dataAlign(binX, "x86-64"); a != 0x1000 {
+		t.Errorf("x86-64 W^X p_align = %#x, want 0x1000 (4 KiB)", a)
+	}
+	if a := dataAlign(binA, "arm64"); a != 0x10000 {
+		t.Errorf("arm64 W^X p_align = %#x, want 0x10000 (64 KiB)", a)
+	}
+	// The x86 image no longer pays the 64 KiB floor; arm64 still does.
+	if len(binX) >= 0x10000 {
+		t.Errorf("x86-64 tiny W^X image = %d bytes, want < 64 KiB (page-align floor should be gone)", len(binX))
+	}
+	if len(binA) < 0x10000 {
+		t.Errorf("arm64 tiny W^X image = %d bytes, want >= 64 KiB (still on the 64 KiB floor)", len(binA))
+	}
+}
+
 // TestStaticExecutableHeader checks the fixed-layout fields of the
 // produced ELF-64 header + program header without needing any tools:
 // magic, class/data, machine = EM_AARCH64, one PT_LOAD, and an entry
@@ -279,6 +327,12 @@ func TestStaticPieExecutableLayout(t *testing.T) {
 	// (EM_X86_64) and relocation type (R_X86_64_RELATIVE = 8); exercised
 	// end-to-end by e2e's TestX86_64NativePIESelfReloc, and at the byte
 	// level here.
+	// x86-64 pages are 4 KiB, so its data segment (and thus .rela.dyn) sits at
+	// a 4 KiB — not 64 KiB — boundary past .text (#4380/#4382): recompute the
+	// offset with the x86 page size rather than reusing the arm64 relaOff.
+	const pageX = 0x1000
+	dataOffX := (uint64(headers+len(text)) + pageX - 1) &^ (pageX - 1)
+	relaOffX := dataOffX + uint64(len(data)) // already 8-aligned here
 	binX := elf.StaticPieExecutableX86(text, data, relocs)
 	if e_machine := u16(binX, 18); e_machine != 62 { // EM_X86_64
 		t.Errorf("x86 e_machine = %d, want 62", e_machine)
@@ -286,7 +340,7 @@ func TestStaticPieExecutableLayout(t *testing.T) {
 	if e_type := u16(binX, 16); e_type != 3 { // ET_DYN
 		t.Errorf("x86 e_type = %d, want 3 (ET_DYN)", e_type)
 	}
-	if got := u64(binX, int(relaOff)+8); got != 8 { // r_info type
+	if got := u64(binX, int(relaOffX)+8); got != 8 { // r_info type
 		t.Errorf("x86 rela r_info = %d, want 8 (R_X86_64_RELATIVE)", got)
 	}
 }
