@@ -132,6 +132,25 @@ function main(): i32 {
 }`
 }
 
+// A discarded fresh string[] literal (`[p + "a", p + "b"];`) leaks BOTH its
+// buffer AND every element box if merely dropped (unbounded in a hot loop). The
+// reclaim deep-frees it with __fern_str_arr_free — the element-walking release
+// the exit sweep gives a reclaimable string[] LOCAL (#4355): each element is a
+// proven-fresh concat, so the buffer sole-owns it at rc=1, the rc==1-gated walk
+// frees every element box, then returns the buffer to its freelist. Elements are
+// DISTINCT concats (`p+"a"`, `p+"b"`) — not the same expression twice, which the
+// native emitter shares into one box (an aliased element the deep free would
+// leak, not a fresh sole-owned one).
+func stmtTempFreshStrArrBumpSrc(n string) string {
+	return `function main(): i32 {
+    var p: string = "x";
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { [p + "a", p + "b"]; i = i + 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // Detectors: the discarded temp reclaims its OWN box while a live value built
 // from the same operands stays intact — a wrong "owned" verdict that freed a
 // shared box would corrupt the sum (999) or trip __rc_underflow (> 0). Sums:
@@ -228,6 +247,44 @@ function main(): i32 {
     return __rc_underflow();
 }`
 
+// The discarded fresh string[] `[p+"a", p+"b"];` deep-frees its buffer AND element
+// boxes while the live `xs = [p+"c", p+"d"]` (independent fresh boxes) stays
+// intact: xs[0]="xc", xs[1]="xd", each len 2, so acc += 4 over 0..199 = 800. A
+// wrong reclaim that decdouble-freed a live element box would trip __rc_underflow
+// (> 0); an over-eager release of the live xs would corrupt the sum (999).
+const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
+    var p: string = "x";
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        [p + "a", p + "b"];
+        var xs: string[] = [p + "c", p + "d"];
+        acc = acc + xs[0].len() + xs[1].len();
+        i = i + 1;
+    }
+    if (acc != 800) { return 999; }
+    return __rc_underflow();
+}`
+
+// A discarded string[] literal whose elements are BORROWED (`[s, s];` — a bare
+// owned local, not a fresh producer) must NOT be admitted to the deep free: the
+// element boxes alias `s`, which the exit sweep also frees, so a deep free here
+// would double-free. discardable_fresh_strarr_lit excludes borrowed elements
+// (expr_is_fresh_str is false for a bare ident), so this keeps leaking on the
+// plain drop — sound. The detector proves the exclusion holds: `s.len()`==5 over
+// 200 = 1000, and __rc_underflow stays 0 (no over-release). A regression that
+// admitted borrowed elements would trip __rc_underflow (> 0).
+const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {
+    var s: string = "hello";
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        [s, s];
+        acc = acc + s.len();
+        i = i + 1;
+    }
+    if (acc != 1000) { return 999; }
+    return __rc_underflow();
+}`
+
 // TestSelfHostStmtTempReclaimIRX86_64 builds the self-host x86-64 IR driver once
 // and drives the two programs through it.
 func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
@@ -270,6 +327,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"string-concat", stmtTempStrConcatBumpSrc},
 		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
 		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldBumpSrc},
+		{"fresh-strarr", stmtTempFreshStrArrBumpSrc},
 	}
 	for _, sh := range fixpointShapes {
 		t.Run("fixpoint-bounded/"+sh.name, func(t *testing.T) {
@@ -295,6 +353,8 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"string-concat", stmtTempStrConcatDetectorSrc},
 		{"fresh-call-struct", stmtTempFreshCallDetectorSrc},
 		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldDetectorSrc},
+		{"fresh-strarr", stmtTempFreshStrArrDetectorSrc},
+		{"borrowed-strarr", stmtTempBorrowedStrArrDetectorSrc},
 	}
 	for _, sh := range detectorShapes {
 		t.Run("no-over-release/"+sh.name, func(t *testing.T) {
