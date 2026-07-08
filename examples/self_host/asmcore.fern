@@ -1782,6 +1782,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // write-half sibling of stdin() (#4372); a Writer is just its
                     // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
                     if (id.name == "stdout" || id.name == "stderr") { return ty_i32(); }
+                    // open_reader/open_writer/open_appender(path) -> a Reader/Writer
+                    // (a bare fd i32) or -errno (#4372 file half). The caller uses
+                    // r.read_chunk / w.write / .close off the fd, then checks < 0.
+                    if (id.name == "open_reader" || id.name == "open_writer"
+                        || id.name == "open_appender") { return ty_i32(); }
                     if (id.name == "read_line") { return ty_string(); }
                     if (id.name == "read_all_stdin") { return ty_string(); }
                     if (id.name == "i32_to_string") { return ty_string(); }
