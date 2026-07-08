@@ -5695,6 +5695,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!tp.ok) { return tp; }
                         return tp.emit(ir.op_tcp_pollable());
                     }
+                    // tcp_listen(port) / tcp_accept(fd): the server-half 1-arg
+                    // primitives (#4371). tcp_listen opens a bound+listening
+                    // socket on 0.0.0.0:port; tcp_accept blocks for a connection
+                    // on a listener. Both -> i32 fd (or -errno).
+                    if (cid.name == "tcp_listen" && c.args.len() == 1) {
+                        var tls: LowerState = lower_expr(c.args[0], s);
+                        if (!tls.ok) { return tls; }
+                        return tls.emit(ir.op_tcp_listen());
+                    }
+                    if (cid.name == "tcp_accept" && c.args.len() == 1) {
+                        var tac: LowerState = lower_expr(c.args[0], s);
+                        if (!tac.ok) { return tac; }
+                        return tac.emit(ir.op_tcp_accept());
+                    }
                     // __heap_bump_bytes(): the bump allocator's high-water mark
                     // (cursor − base) as an i32. Allocation-free introspection;
                     // the IR backends compute it inline from their heap cursor.

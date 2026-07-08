@@ -609,6 +609,70 @@ function emit_ir_tcp_send(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_tcp_listen appends __fern_tcp_listen(%rdi = port) -> the listener fd
+// (or -errno) in %rax. The server-half sibling of __fern_tcp_connect (#4371):
+// socket(AF_INET=2, SOCK_STREAM=1, 0) [#41], build a 16-byte sockaddr_in
+// {family=2, port=htons(port), addr=INADDR_ANY=0, zero}, bind(fd, sa, 16) [#49],
+// listen(fd, 128) [#50]. On any failing syscall %rax already holds -errno and we
+// fall through to the return. ABI-agnostic (no string box).
+function emit_ir_tcp_listen(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_tcp_listen:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");                 // listener fd
+    s = s.write("    pushq %r12\n");                 // port
+    s = s.write("    subq $16, %rsp\n");             // sockaddr_in (keeps %rsp 16-aligned)
+    s = s.write("    movl %edi, %r12d\n");           // port
+    s = s.write("    movq $2, %rdi\n");              // AF_INET
+    s = s.write("    movq $1, %rsi\n");              // SOCK_STREAM
+    s = s.write("    xorq %rdx, %rdx\n");
+    s = s.write("    movq $41, %rax\n");             // socket
+    s = s.write("    syscall\n");
+    s = s.write("    testl %eax, %eax\n");
+    s = s.write("    js .Lir_tlst_done\n");          // socket failed -> -errno
+    s = s.write("    movl %eax, %ebx\n");            // listener fd
+    s = s.write("    movw $2, (%rsp)\n");            // sin_family = AF_INET
+    s = s.write("    movl %r12d, %eax\n");
+    s = s.write("    xchgb %al, %ah\n");             // htons(port)
+    s = s.write("    movw %ax, 2(%rsp)\n");          // sin_port
+    s = s.write("    movl $0, 4(%rsp)\n");           // sin_addr = INADDR_ANY
+    s = s.write("    movq $0, 8(%rsp)\n");           // sin_zero
+    s = s.write("    movl %ebx, %edi\n");            // bind(fd, sa, 16)
+    s = s.write("    movq %rsp, %rsi\n");
+    s = s.write("    movq $16, %rdx\n");
+    s = s.write("    movq $49, %rax\n");             // bind
+    s = s.write("    syscall\n");
+    s = s.write("    testl %eax, %eax\n");
+    s = s.write("    js .Lir_tlst_done\n");          // bind failed -> -errno
+    s = s.write("    movl %ebx, %edi\n");            // listen(fd, 128)
+    s = s.write("    movq $128, %rsi\n");
+    s = s.write("    movq $50, %rax\n");             // listen
+    s = s.write("    syscall\n");
+    s = s.write("    testl %eax, %eax\n");
+    s = s.write("    js .Lir_tlst_done\n");          // listen failed -> -errno
+    s = s.write("    movl %ebx, %eax\n");            // return listener fd
+    s = s.write(".Lir_tlst_done:\n");
+    s = s.write("    addq $16, %rsp\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_tcp_accept appends __fern_tcp_accept(%rdi = listener fd) -> the accepted
+// connection fd (or -errno) in %rax. accept(2) [#43] with NULL/NULL addr/addrlen;
+// the listener fd is already in %rdi. Leaf (no frame, no alloc).
+function emit_ir_tcp_accept(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_tcp_accept:\n");
+    s = s.write("    xorq %rsi, %rsi\n");            // addr = NULL
+    s = s.write("    xorq %rdx, %rdx\n");            // addrlen = NULL
+    s = s.write("    movq $43, %rax\n");             // accept
+    s = s.write("    syscall\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_sleep_ms appends the __fern_sleep_ms(%rdi = ms) helper, transcribed
 // verbatim from asm.fern's emit_runtime: split ms into a timespec
 // {sec=ms/1000, nsec=(ms%1000)*1e6} on the stack and nanosleep (syscall 35);
@@ -3578,7 +3642,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
-        "__fern_tcp_recv", "__fern_tcp_send",
+        "__fern_tcp_recv", "__fern_tcp_send", "__fern_tcp_listen", "__fern_tcp_accept",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
@@ -4087,6 +4151,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // readiness token IS the fd).
             s = s.write("    popq %rdi\n    call __fern_tcp_pollable\n    pushq %rax\n");
             s = s.need("tcp_pollable");
+        } else if (o.kind_tag == 200) {  // tcp_listen (#4371)
+            // [port]; __fern_tcp_listen(%rdi=port) -> listener fd / -errno in %rax.
+            s = s.write("    popq %rdi\n    call __fern_tcp_listen\n    pushq %rax\n");
+            s = s.need("tcp_listen");
+        } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
+            // [listener fd]; __fern_tcp_accept(%rdi=fd) -> connection fd / -errno.
+            s = s.write("    popq %rdi\n    call __fern_tcp_accept\n    pushq %rax\n");
+            s = s.need("tcp_accept");
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
             // The arena is mmap'd lazily; its base is recoverable from the
@@ -5707,6 +5779,8 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("tcp_close")) { s = emit_ir_tcp_close(s); }
     if (s.has_need("tcp_recv")) { s = emit_ir_tcp_recv(s); }
     if (s.has_need("tcp_send")) { s = emit_ir_tcp_send(s); }
+    if (s.has_need("tcp_listen")) { s = emit_ir_tcp_listen(s); }
+    if (s.has_need("tcp_accept")) { s = emit_ir_tcp_accept(s); }
     if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     }
     return strbuf_take();

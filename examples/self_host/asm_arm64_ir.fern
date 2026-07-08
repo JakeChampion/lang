@@ -610,6 +610,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind_tag == 197) {  // tcp_pollable
             // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_pollable\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 200) {  // tcp_listen (#4371)
+            // [port] -> __fern_tcp_listen(x0=port) -> listener fd / -errno. The
+            // __fern_tcp_* bodies are emitted unconditionally by emit_runtime.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_listen\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
+            // [listener fd] -> __fern_tcp_accept(x0=fd) -> connection fd / -errno.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_accept\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,

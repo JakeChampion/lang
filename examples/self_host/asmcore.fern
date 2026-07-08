@@ -1750,6 +1750,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // byte count / pollable token / -errno).
                     if (id.name == "tcp_recv") { return ty_string(); }
                     if (id.name == "tcp_connect") { return ty_i32(); }
+                    // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
+                    // connection fd / -errno. The server half of the edge-handler
+                    // use case (#4371); both are plain i32 like the client ops.
+                    if (id.name == "tcp_listen") { return ty_i32(); }
+                    if (id.name == "tcp_accept") { return ty_i32(); }
                     if (id.name == "tcp_send") { return ty_i32(); }
                     if (id.name == "tcp_close") { return ty_i32(); }
                     if (id.name == "tcp_pollable") { return ty_i32(); }
