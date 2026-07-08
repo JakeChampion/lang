@@ -709,6 +709,7 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                 },
                 parser.ExprFieldAccess(fa) => {
                     if (fa.field == "read_chunk") { return ty_string(); }
+                    if (fa.field == "write") { return ty_i32(); }
                     if (fa.field == "get") {
                         var rt: Ty = infer_expr_type(fa.obj, s);
                         if (is_map(rt)) { return map_val(rt); }
@@ -1777,6 +1778,10 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "env") { return ty_option(ty_string()); }
                     if (id.name == "len") { return ty_i32(); }
                     if (id.name == "read_int") { return ty_i32(); }
+                    // stdout()/stderr() -> Writer (a bare fd i32; fds 1/2). The
+                    // write-half sibling of stdin() (#4372); a Writer is just its
+                    // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
+                    if (id.name == "stdout" || id.name == "stderr") { return ty_i32(); }
                     if (id.name == "read_line") { return ty_string(); }
                     if (id.name == "read_all_stdin") { return ty_string(); }
                     if (id.name == "i32_to_string") { return ty_string(); }
@@ -1844,6 +1849,10 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 parser.ExprFieldAccess(fa) => {
                     var rt: Ty = infer_expr_type(fa.obj, s);
                     if (fa.field == "read_chunk") { return ty_option(ty_string()); }
+                    // Writer.write(s) -> i32 bytes written / -errno (#4372). Like
+                    // read_chunk above, the real non-struct-receiver gate is applied
+                    // at lower time (irlower's resource-method dispatch).
+                    if (fa.field == "write") { return ty_i32(); }
                     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
                     if (is_map(rt) && fa.field == "get") {
                         return ty_option(map_val(rt));

@@ -451,6 +451,11 @@ pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
 // (#4371); the client ops above are the outbound-fetch half.
 pub function op_tcp_listen(): Op { return op0("tcp_listen"); }
 pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
+// `writer_write` [fd, str box] -> i32 bytes written (or -errno): write(2) of the
+// box's bytes to the fd. The write-half streaming primitive (#4372); a Writer is
+// a bare fd (like a Reader — see op_read_chunk). `stdout()`/`stderr()` lower to
+// the i32 constants 1/2 directly (no op); `Writer.close()` reuses op_reader_close.
+pub function op_writer_write(): Op { return op0("writer_write"); }
 // `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it
@@ -1161,6 +1166,7 @@ function kind_id_4(name: string): i32 {
     // sweep, but nameable so module_emits_op_cached / the backends see them.
     if (name == "tcp_listen") { return 200; }
     if (name == "tcp_accept") { return 201; }
+    if (name == "writer_write") { return 202; }
     return 0;
 }
 
@@ -1391,6 +1397,7 @@ function kind_name_4(id: i32): string {
     if (id == 197) { return "tcp_pollable"; }
     if (id == 200) { return "tcp_listen"; }
     if (id == 201) { return "tcp_accept"; }
+    if (id == 202) { return "writer_write"; }
     return "invalid";
 }
 
