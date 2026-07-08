@@ -9050,6 +9050,31 @@ function discardable_scalar_arr_lit(arr: parser.ExprArray, s: LowerState): boole
     return true;
 }
 
+// discardable_fresh_strarr_lit reports whether a discarded `["a"+x, "b"+y, …];`
+// is a FRESH string[] literal whose every element is a fresh, sole-owned heap
+// string (a concat / fresh-producer call — expr_is_fresh_str). A discarded bare
+// scalar-element array releases only its buffer (discardable_scalar_arr_lit); a
+// pointer-element array needs a DEEP free that also releases every element box,
+// or it leaks the element buffers every loop iteration (unbounded). Because each
+// element is proven fresh the buffer sole-owns it at rc=1, so the element-walking
+// __fern_str_arr_free (rc==1-gated per-element __fern_str_free, then the buffer —
+// the exact release the exit sweep gives a reclaimable string[] LOCAL, #4355) is
+// a COMPLETE, no-leak, no-double-free reclaim. A BORROWED element (bare ident /
+// field / index read) is excluded — it aliases an owner the exit sweep also
+// frees, so a deep free here would double-free; such a literal keeps leaking on
+// the plain drop (safe-leak floor). Pure `.rodata` string literals are excluded
+// too (expr_is_fresh_str is false for them): their element boxes are immortal, so
+// only the buffer would need reclaim — a later cut.
+function discardable_fresh_strarr_lit(arr: parser.ExprArray, s: LowerState): boolean {
+    if (arr.elements.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < arr.elements.len()) {
+        if (!expr_is_fresh_str(arr.elements[i], s)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // expr_scalar_leaf reports whether `e` produces a flat SCALAR value (i32 / i64 /
 // f64 / boolean) rather than a heap pointer — not a string, string-array, array,
 // or struct. Gates a discarded array / tuple literal's in-place box release: a
@@ -9429,7 +9454,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (!se.ok) { return se; }
             match (es.value) {
                 parser.ExprArray(dae) => {
-                    if (discardable_scalar_arr_lit(dae, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                    if (discardable_scalar_arr_lit(dae, s)) {
+                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    } else if (discardable_fresh_strarr_lit(dae, s)) {
+                        // A discarded fresh string[] literal deep-frees its element
+                        // boxes and buffer via __fern_str_arr_free — the same release
+                        // the exit sweep gives a reclaimable string[] LOCAL (#4355).
+                        // Every element is proven fresh (expr_is_fresh_str), so the box
+                        // sole-owns each element at rc=1: the rc==1-gated element walk
+                        // frees exactly the fresh boxes, then returns the buffer to its
+                        // freelist — a COMPLETE, no-double-free reclaim.
+                        se = se.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                    }
                 },
                 // A discarded fresh scalar TUPLE / STRUCT literal box is likewise a
                 // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
