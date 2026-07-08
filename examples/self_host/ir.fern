@@ -456,6 +456,14 @@ pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
 // a bare fd (like a Reader — see op_read_chunk). `stdout()`/`stderr()` lower to
 // the i32 constants 1/2 directly (no op); `Writer.close()` reuses op_reader_close.
 pub function op_writer_write(): Op { return op0("writer_write"); }
+// `open_file` [path box] -> i32 fd (or -errno): NUL-terminate the path and
+// openat(AT_FDCWD, path, flags, 0644). `flags` is baked into the immediate so
+// one op covers open_reader (O_RDONLY=0), open_writer (O_WRONLY|O_CREAT|O_TRUNC
+// =577) and open_appender (O_WRONLY|O_CREAT|O_APPEND=1089) — the file half of
+// the streaming Reader/Writer surface (#4372).
+pub function op_open_file(flags: i32): Op {
+    return Op { kind_tag: kind_id("open_file"), i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 // `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it
@@ -1167,6 +1175,7 @@ function kind_id_4(name: string): i32 {
     if (name == "tcp_listen") { return 200; }
     if (name == "tcp_accept") { return 201; }
     if (name == "writer_write") { return 202; }
+    if (name == "open_file") { return 203; }
     return 0;
 }
 
@@ -1398,6 +1407,7 @@ function kind_name_4(id: i32): string {
     if (id == 200) { return "tcp_listen"; }
     if (id == 201) { return "tcp_accept"; }
     if (id == 202) { return "writer_write"; }
+    if (id == 203) { return "open_file"; }
     return "invalid";
 }
 

@@ -621,6 +621,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // [fd, str box] -> write(2) the box's bytes to the fd -> i32 bytes /
             // -errno. Inline (no helper): len=box[8], data=box[0]; write=64.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x1, #8]\n    ldr x1, [x1]\n    mov x8, #64\n    svc #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 203) {  // open_file (#4372)
+            // [path box] -> __fern_open_fd(x0=path, x1=flags(imm), x2=0644) -> fd /
+            // -errno. Body emitted by asm_arm64.emit_runtime, gated on open_file.
+            s = s.need("heap").need("open_file");
+            s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #420\n    bl __fern_open_fd\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,
