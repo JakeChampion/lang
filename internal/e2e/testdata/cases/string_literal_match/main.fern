@@ -1,0 +1,17 @@
+// String-literal patterns in `match`, with a mandatory wildcard default
+// (#4407). Exact string arms lower to an OpStrEq if-else-if chain — this
+// pins that the feature runs identically on interp / x86_64 / arm64 / wasm.
+function classify(s: string): i32 {
+    match (s) {
+        "yes" => { return 1; },
+        "no" => { return 2; },
+        "maybe" => { return 3; },
+        _ => { return 9; }
+    }
+}
+
+function main(): i32 {
+    // Exact match distinguishes "no" from "nope" (the latter hits `_`).
+    // 1*100 + 2*10 + 9 = 129.
+    return classify("yes") * 100 + classify("no") * 10 + classify("nope");
+}

@@ -1993,6 +1993,63 @@ func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 	}
 }
 
+// String-literal match arms are accepted (they lower to an OpStrEq
+// if-else-if chain); the mandatory `_` covers the open string domain (#4407).
+func TestStringLiteralMatchAccepted(t *testing.T) {
+	src := `function classify(s: string): i32 {
+			match (s) {
+				"yes" => { return 1; },
+				"no" => { return 2; },
+				_ => { return 0; }
+			}
+		}
+		function main(): i32 { return classify("yes"); }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("string-literal match should type-check: %v", err)
+	}
+}
+
+// A string match, like any non-enum match, needs an unguarded `_` arm —
+// the string domain is open, so it can never be exhausted by literals (E030).
+func TestStringLiteralMatchNonExhaustiveRejected(t *testing.T) {
+	src := `function main(): i32 {
+			var s: string = "x";
+			match (s) {
+				"a" => { return 1; },
+				"b" => { return 2; }
+			}
+			return 0;
+		}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected E030: string match without `_` is not exhaustive")
+	}
+	if !strings.Contains(err.Error(), "is not exhaustive") {
+		t.Errorf("want non-exhaustive (E030); got %v", err)
+	}
+}
+
+// A literal arm whose type doesn't match the scrutinee is rejected (E035):
+// an i32 literal on a string match is a type error, not a fallthrough.
+func TestStringLiteralMatchTypeMismatchRejected(t *testing.T) {
+	src := `function main(): i32 {
+			var s: string = "x";
+			match (s) {
+				"a" => { return 1; },
+				0 => { return 2; },
+				_ => { return 0; }
+			}
+			return 0;
+		}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected E035: i32 literal arm on a string match")
+	}
+	if !strings.Contains(err.Error(), "does not match scrutinee type string") {
+		t.Errorf("want literal-type-mismatch (E035); got %v", err)
+	}
+}
+
 // Match arm bindings count must match the variant's payload
 // arity, mirroring how variant construction validates argument
 // counts at the constructor site.

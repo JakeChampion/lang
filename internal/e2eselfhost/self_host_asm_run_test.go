@@ -535,6 +535,23 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// String-literal match arms (#4407): lower to an str_eq
+			// if-else-if chain on the self-host path (build_literal_match).
+			"match-string-literal-hit",
+			"function main(): i32 { var s: string = \"no\"; match (s) { \"yes\" => { return 1; }, \"no\" => { return 2; }, _ => { return 9; } } return 0; }",
+			2,
+			"",
+			"",
+		},
+		{
+			// Exact match: \"nope\" is not \"no\", so it falls to `_`.
+			"match-string-literal-wildcard",
+			"function main(): i32 { var s: string = \"nope\"; match (s) { \"yes\" => { return 1; }, \"no\" => { return 2; }, _ => { return 9; } } return 0; }",
+			9,
+			"",
+			"",
+		},
+		{
 			"match-two-variants-first-arm",
 			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 3 }; match (c) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
 			3,
