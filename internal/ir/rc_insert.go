@@ -1493,7 +1493,16 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 // to __fern_arr_dec for the rc-dec / freelist return. Element structs
 // are pointer-shaped, so the stride is ptrW and the length lives at
 // [ptr-4]. Slots: 0=ptr (param), 1=i, 2=len (scratch).
-func genArrStructDropFn(elemName string, ptrW int) *Func {
+// genArrElemDropFn is the shared skeleton for the "array of pointer-shaped
+// elements, each reclaimed through a single 1-arg per-element drop callee"
+// family (#4401 part 4). It builds `fnName(ptr)` which, on the array's last
+// reference (rc==1), walks each element (a ptrW-stride pointer), drops it via
+// `elemCallee(elem)`, then frees the buffer via __fern_arr_dec. The struct /
+// enum / tuple array-drop generators are thin wrappers over this, differing
+// only in (fnName, elemCallee, paramName) — byte-identical ops otherwise, so
+// the goal-2 port mirrors one generator instead of three. Slots: 0=ptr, 1=i,
+// 2=len.
+func genArrElemDropFn(fnName, elemCallee, paramName string, ptrW int) *Func {
 	stride := int32(ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -1515,14 +1524,14 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 		{Kind: OpLoadLocal, I32: 2},
 		{Kind: OpGeS},
 		{Kind: OpBrIf, I32: 1},
-		// __drop_struct_<Elem>(mem[ptr + i*stride]); drop result.
+		// elemCallee(mem[ptr + i*stride]); drop result.
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpLoadLocal, I32: 1},
 		{Kind: OpConstI32, I32: stride},
 		{Kind: OpMul},
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
-		{Kind: OpCallDirect, Str: "__drop_struct_" + elemName, I32: 1},
+		{Kind: OpCallDirect, Str: elemCallee, I32: 1},
 		{Kind: OpDrop},
 		// i = i + 1; continue.
 		{Kind: OpLoadLocal, I32: 1},
@@ -1542,12 +1551,16 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 		{Kind: OpReturn},
 	}
 	return &Func{
-		Name:         "__drop_arr_struct_" + elemName,
-		Params:       []ast.Param{{Name: "__as", Type: ast.NumberType{}}},
+		Name:         fnName,
+		Params:       []ast.Param{{Name: paramName, Type: ast.NumberType{}}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
 	}
+}
+
+func genArrStructDropFn(elemName string, ptrW int) *Func {
+	return genArrElemDropFn("__drop_arr_struct_"+elemName, "__drop_struct_"+elemName, "__as", ptrW)
 }
 
 // genArrEnumDropFn is genArrStructDropFn's enum sibling: __drop_arr_enum_<Name>(ptr)
@@ -1557,55 +1570,7 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 // buffer. The worklist regenerates __drop_enum_<Name> from this body.
 // Slots: 0=ptr, 1=i, 2=len.
 func genArrEnumDropFn(elemName string, ptrW int) *Func {
-	stride := int32(ptrW)
-	ops := []Op{
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
-		{Kind: OpIf, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpConstI32, I32: 4},
-		{Kind: OpSub},
-		{Kind: OpLoad},
-		{Kind: OpStoreLocal, I32: 2},
-		{Kind: OpConstI32, I32: 0},
-		{Kind: OpStoreLocal, I32: 1},
-		{Kind: OpBlock, I32: BlockTypeVoid},
-		{Kind: OpLoop, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpLoadLocal, I32: 2},
-		{Kind: OpGeS},
-		{Kind: OpBrIf, I32: 1},
-		// __drop_enum_<Name>(mem[ptr + i*stride]); drop result.
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpConstI32, I32: stride},
-		{Kind: OpMul},
-		{Kind: OpAdd},
-		{Kind: OpLoad, Width: WidthPtr},
-		{Kind: OpCallDirect, Str: "__drop_enum_" + elemName, I32: 1},
-		{Kind: OpDrop},
-		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpConstI32, I32: 1},
-		{Kind: OpAdd},
-		{Kind: OpStoreLocal, I32: 1},
-		{Kind: OpBr, I32: 0},
-		{Kind: OpEnd}, // loop
-		{Kind: OpEnd}, // block
-		{Kind: OpEnd}, // if rc==1
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpConstI32, I32: stride},
-		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
-		{Kind: OpDrop},
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpReturn},
-	}
-	return &Func{
-		Name:         "__drop_arr_enum_" + elemName,
-		Params:       []ast.Param{{Name: "__ae", Type: ast.NumberType{}}},
-		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
-		ReturnType:   ast.NumberType{},
-		Ops:          ops,
-	}
+	return genArrElemDropFn("__drop_arr_enum_"+elemName, "__drop_enum_"+elemName, "__ae", ptrW)
 }
 
 // genArrClosureDropFn builds __drop_arr_closure(ptr): the array-of-closure
@@ -1715,55 +1680,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 // shape carries the only key the worklist + per-element helper
 // agree on. Slots: 0=ptr (param), 1=i, 2=len (scratch).
 func genArrTupleDropFn(mangled string, ptrW int) *Func {
-	stride := int32(ptrW)
-	ops := []Op{
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
-		{Kind: OpIf, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpConstI32, I32: 4},
-		{Kind: OpSub},
-		{Kind: OpLoad},
-		{Kind: OpStoreLocal, I32: 2},
-		{Kind: OpConstI32, I32: 0},
-		{Kind: OpStoreLocal, I32: 1},
-		{Kind: OpBlock, I32: BlockTypeVoid},
-		{Kind: OpLoop, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpLoadLocal, I32: 2},
-		{Kind: OpGeS},
-		{Kind: OpBrIf, I32: 1},
-		// __drop_tuple_<mangled>(mem[ptr + i*stride]); drop result.
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpConstI32, I32: stride},
-		{Kind: OpMul},
-		{Kind: OpAdd},
-		{Kind: OpLoad, Width: WidthPtr},
-		{Kind: OpCallDirect, Str: "__drop_tuple_" + mangled, I32: 1},
-		{Kind: OpDrop},
-		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpConstI32, I32: 1},
-		{Kind: OpAdd},
-		{Kind: OpStoreLocal, I32: 1},
-		{Kind: OpBr, I32: 0},
-		{Kind: OpEnd}, // loop
-		{Kind: OpEnd}, // block
-		{Kind: OpEnd}, // if rc==1
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpConstI32, I32: stride},
-		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
-		{Kind: OpDrop},
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpReturn},
-	}
-	return &Func{
-		Name:         "__drop_arr_tuple_" + mangled,
-		Params:       []ast.Param{{Name: "__at", Type: ast.NumberType{}}},
-		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
-		ReturnType:   ast.NumberType{},
-		Ops:          ops,
-	}
+	return genArrElemDropFn("__drop_arr_tuple_"+mangled, "__drop_tuple_"+mangled, "__at", ptrW)
 }
 
 // genArrArrDropFn builds __drop_arr_arr_<innerStride>(ptr) — the
