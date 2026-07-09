@@ -769,6 +769,30 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 // io/streams, so ComposeUdpClientCliRun pulls in a fresh wasi:io/streams
 // (output side) + wasi:cli/stdout for the log write. The datagram is
 // received by a Go socket and the log line lands on the guest's stdout.
+// runWasmtimeUDPFlaky runs a one-shot UDP-datagram preview2 component under
+// wasmtime with a bounded retry. The wasi:sockets udp_send path races
+// intermittently under wasmtime (ephemeral-port bind / send-teardown timing):
+// it exit-1's on roughly 1-in-3 runs and clears on an identical re-run — the
+// classic environmental-race signature tracked in #4358. A genuine fault
+// fails every attempt (deterministic), so bounded retry self-heals the race
+// without masking real regressions. Returns the combined output of the first
+// successful run; fails the test only if all attempts fail.
+func runWasmtimeUDPFlaky(t *testing.T, label string, args ...string) []byte {
+	t.Helper()
+	const attempts = 4
+	var out []byte
+	var err error
+	for i := 1; i <= attempts; i++ {
+		out, err = exec.Command("wasmtime", args...).CombinedOutput()
+		if err == nil {
+			return out
+		}
+		t.Logf("%s: wasmtime UDP run attempt %d/%d failed (#4358 flaky wasi:sockets race), retrying: %v\n%s", label, i, attempts, err, out)
+	}
+	t.Fatalf("%s: wasmtime run failed after %d attempts: %v\n%s", label, attempts, err, out)
+	return nil
+}
+
 func TestWasmPreview2UdpSendStdoutAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -807,10 +831,7 @@ func TestWasmPreview2UdpSendStdoutAdapterFree(t *testing.T) {
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("validate: %v\n%s", err, out)
 	}
-	out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasmtime run (udp+print): %v\n%s", err, out)
-	}
+	out := runWasmtimeUDPFlaky(t, "udp+print", "run", "-S", "inherit-network", componentPath)
 	if !bytes.Contains(out, []byte("emitting metric")) {
 		t.Errorf("expected log line on stdout, got: %q", string(out))
 	}
@@ -1218,9 +1239,7 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
     if (udp_send(host, `+itoa(udpPort)+`, "telemetry") > 0 && t > 0) { return 0; }
     return 1;
 }`)
-	if out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "TARGET=127.0.0.1", udpComp).CombinedOutput(); err != nil {
-		t.Fatalf("wasmtime run (udp+env+now): %v\n%s", err, out)
-	}
+	_ = runWasmtimeUDPFlaky(t, "udp+env+now", "run", "-S", "inherit-network", "--env", "TARGET=127.0.0.1", udpComp)
 	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 2048)
 	n, _, err := pc.ReadFrom(buf)
