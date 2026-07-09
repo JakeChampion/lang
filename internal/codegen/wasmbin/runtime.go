@@ -2661,66 +2661,15 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Add(body)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 6) // $dst
-	// Loop 1: i in 0..la — copy a's bytes into mem[dst + i].
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 7) // $i = 0
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-	{
-		// if $i >= $la: break (br to enclosing block, label 1).
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstLocalGet(body, 4)
-		body = numeric.InstI32GeS(body)
-		body = inst.InstBrIf(body, 1)
-		// mem[dst + i] = __fern_str_byte(a, i)
-		body = inst.InstLocalGet(body, 6)
-		body = inst.InstLocalGet(body, 7)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 0)
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstCall(body, strByte)
-		body = memory.InstI32Store8(body, 0, 0)
-		// $i = $i + 1; continue loop.
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalSet(body, 7)
-		body = inst.InstBr(body, 0)
-	}
-	body = inst.InstEnd(body) // end loop
-	body = inst.InstEnd(body) // end block
-	// Loop 2: i in 0..lb — copy b's bytes into mem[dst + la + i].
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 7) // $i = 0
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-	{
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstLocalGet(body, 5)
-		body = numeric.InstI32GeS(body)
-		body = inst.InstBrIf(body, 1)
-		// addr = dst + la + i
-		body = inst.InstLocalGet(body, 6)
-		body = inst.InstLocalGet(body, 4)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 7)
-		body = numeric.InstI32Add(body)
-		// byte = __fern_str_byte(b, i)
-		body = inst.InstLocalGet(body, 2)
-		body = inst.InstLocalGet(body, 3)
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstCall(body, strByte)
-		body = memory.InstI32Store8(body, 0, 0)
-		// $i++
-		body = inst.InstLocalGet(body, 7)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalSet(body, 7)
-		body = inst.InstBr(body, 0)
-	}
-	body = inst.InstEnd(body) // end loop
-	body = inst.InstEnd(body) // end block
+	// Copy a's bytes into mem[dst + 0..la], then b's into mem[dst + la..].
+	// Heap-form inputs (top len bit clear) are contiguous in linear memory,
+	// so a single memory.copy moves them; inline/SSO inputs (top bit set) pack
+	// their bytes into the (data,len) words rather than memory, so those keep
+	// the per-byte __fern_str_byte loop (≤7 bytes, negligible). #4379 — replaces
+	// the unconditional per-byte copy with memory.copy on the common
+	// large-string path.
+	body = strConcatCopyOne(body, strByte, 0, 1, 4, 6, 0, false) // a → dst
+	body = strConcatCopyOne(body, strByte, 2, 3, 5, 6, 4, true)  // b → dst + la
 	// Return (dst, la + lb) as the multi-value result.
 	body = inst.InstLocalGet(body, 6) // dst (data)
 	body = inst.InstLocalGet(body, 4)
@@ -2729,6 +2678,65 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 	// Four i32 locals: $la, $lb, $dst, $i.
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// strConcatCopyOne appends one input string's byte-copy block to a
+// __str_concat body (see buildStrConcatBody). The write base is $dst (local
+// dstLocal), plus local[offLocal] when hasOff (the +la offset for the second
+// string). dataLocal/lenLocal are the string's (data, raw-len) params, and
+// lenComputed is its resolved byte length (from __fern_str_len). For a
+// heap-form string (raw-len top bit clear → contiguous in memory) it emits a
+// single memory.copy; for an inline/SSO string (top bit set → bytes live in
+// the words) it falls back to the per-byte __fern_str_byte loop using scratch
+// local 7 ($i). #4379.
+func strConcatCopyOne(body []byte, strByte uint32, dataLocal, lenLocal, lenComputed, dstLocal, offLocal uint32, hasOff bool) []byte {
+	// dstBase pushes the write base ($dst [+ off]).
+	dstBase := func(b []byte) []byte {
+		b = inst.InstLocalGet(b, dstLocal)
+		if hasOff {
+			b = inst.InstLocalGet(b, offLocal)
+			b = numeric.InstI32Add(b)
+		}
+		return b
+	}
+	// heap check: (raw_len & 0x80000000) == 0.
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// heap: memory.copy(dstBase, data, lenComputed).
+	body = dstBase(body)
+	body = inst.InstLocalGet(body, dataLocal)
+	body = inst.InstLocalGet(body, lenComputed)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstElse(body)
+	// inline: per-byte loop, $i in 0..lenComputed → mem[dstBase + i].
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 7) // $i = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstLocalGet(body, lenComputed)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = dstBase(body)
+	body = inst.InstLocalGet(body, 7)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, dataLocal)
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstCall(body, strByte)
+	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 7)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	body = inst.InstEnd(body) // end if
+	return body
 }
 
 func buildStrLenBody(_ map[string]uint32) []byte {
