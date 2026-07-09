@@ -269,12 +269,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	// Size-neutral IR pass battery (#4377 slice 1) — mirrors the x86-64
-	// backend: in-place per-function rewrites that keep ip.Funcs index-
-	// aligned with prog.Funcs for the parallel walk below. OptimizeCleanup
-	// (Fold) is held back to slice 1b — it segfaults the tuple_elem_tag_run
-	// self-host driver on both natives (a latent emitter assumption Fold's
-	// output violates); ir.Inline + the whole-function cull are slice 2.
+	// IR pass battery (#4377) — mirrors the x86-64 backend: in-place
+	// per-function rewrites that keep ip.Funcs index-aligned with prog.Funcs
+	// for the parallel walk below (slice 1, #4678). OptimizeCleanup (the
+	// copyprop/constprop/Fold/strength fixpoint, slice 1b) is still NOT
+	// enabled: the ir.Fold emitter crash it hit is fixed (the index
+	// zero-extend in emitInlineIdxHelper above — a folded-constant array index
+	// otherwise carried dirty upper bits into the scaled address add, past the
+	// 32-bit bounds check), but the fixpoint balloons self-host build times, so
+	// slice 1b additionally needs the convergence-cost fix first. ir.Inline +
+	// the whole-function cull remain slice 2 (parallel-index → name-keyed walk).
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
@@ -2623,6 +2627,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		inlineLbl := fmt.Sprintf(".Lstridx2w_inline_%d", id)
 		doneLbl := fmt.Sprintf(".Lstridx2w_done_%d", id)
 		g.emit("ldr x0, [sp], #%d", slotBytes) // idx
+		g.emit("mov w0, w0")                   // zero-extend i32 index (see below, #4377)
 		g.emit("ldr x1, [sp], #%d", slotBytes) // len
 		g.emit("ldr x2, [sp], #%d", slotBytes) // data
 		g.emit("tbnz x1, #63, %s", inlineLbl)
@@ -2643,6 +2648,12 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		return nil
 	}
 	g.emit("ldr x0, [sp], #%d", slotBytes) // idx
+	// Zero-extend the i32 index: the bounds checks compare the low 32 bits
+	// (`w0`) but the address adds shift the full 64-bit `x0`, so stale garbage
+	// in bits 32..63 would pass the check yet produce a wild scaled address
+	// (the #4377 ir.Fold-exposed miscompile — a materialised constant index
+	// can carry dirty upper bits). `mov w0, w0` zeroes x0's top 32 bits.
+	g.emit("mov w0, w0")
 	g.emit("ldr x1, [sp], #%d", slotBytes) // base
 	switch name {
 	case "__str_idx":

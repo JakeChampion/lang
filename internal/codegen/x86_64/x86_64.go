@@ -183,20 +183,22 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	// Size-neutral IR pass battery (#4377 slice 1) — per-function rewrites
-	// the wasm backend runs that neither add nor remove functions, so the
-	// emitFunc AST↔IR parallel-index walk below stays valid. FuseTee fuses
-	// store+reload into OpTeeLocal (both natives already emit it);
-	// FlattenBranches drops `if (false) { … }` bodies before they reach asm;
-	// EliminateDeadCode trims ops after a terminator.
+	// IR pass battery (#4377) — per-function rewrites the wasm backend runs
+	// that neither add nor remove functions, so the emitFunc AST↔IR
+	// parallel-index walk below stays valid. FuseTee fuses store+reload into
+	// OpTeeLocal (both natives already emit it); FlattenBranches drops
+	// `if (false) { … }` bodies before they reach asm; EliminateDeadCode trims
+	// ops after a terminator (slice 1, #4678).
 	//
-	// OptimizeCleanup (copyprop/constprop/Fold/strength) is deliberately NOT
-	// here yet: enabling it segfaults the tuple_elem_tag_run self-host driver
-	// (bisected to ir.Fold) — a latent native-emitter assumption Fold's
-	// output violates, which the wasm backend never exercised. That is slice
-	// 1b, gated on diagnosing + fixing the emitter interaction (#4377).
-	// ir.Inline and the whole-function IR cull are slice 2 (parallel-index
-	// refactor).
+	// OptimizeCleanup (the copyprop/constprop/Fold/strength fixpoint, slice 1b)
+	// is still NOT enabled here. The ir.Fold emitter crash it used to hit is
+	// fixed (the index zero-extend in emitInlineIdxHelper above — a
+	// folded-constant array index otherwise carried dirty upper bits into a
+	// scaled `lea` past the 32-bit bounds check), but enabling the fixpoint
+	// balloons self-host driver build times (its up-to-8× whole-program
+	// convergence snapshot), so slice 1b additionally needs the
+	// changed-bool convergence fix before it can go on. ir.Inline + the
+	// whole-function cull remain slice 2 (name-keyed walk).
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
@@ -3421,6 +3423,15 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	// use: rhs (idx, top of stack) first, lhs (base, next)
 	// second.
 	g.emit("mov rcx, [rsp]") // idx
+	// Zero-extend the index to 32 bits. Fern indices are i32 and the bounds
+	// checks below compare the low 32 bits (`ecx`), but the address `lea`s
+	// use the full 64-bit `rcx`, so any stale garbage in bits 32..63 of the
+	// slot would pass the check yet produce a wild scaled address. An i32
+	// value can carry dirty upper bits (e.g. a materialised constant that
+	// didn't come through a 32-bit ALU op that would have zeroed them — the
+	// #4377 `ir.Fold`-exposed miscompile), so mask it here. `mov ecx,ecx`
+	// zeroes rcx's upper 32 bits; a no-op for already-clean indices.
+	g.emit("mov ecx, ecx")
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	g.emit("mov rax, [rsp]") // base
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
