@@ -128,6 +128,80 @@ like `1.0e38f32`). The differential oracle still excludes f32 from
 its generated programs by policy (see below), but the snippets above
 are supported everywhere, not just on the native backends.
 
+## Printing and round-trip
+
+The sections above cover float *arithmetic and conversion*. Float
+*formatting* (`to_string`) and *parsing* (`parse_float`) have their own
+contract, pinned here.
+
+### `to_string` is deterministic and cross-backend-identical, but not bit-exact
+
+`(f32).to_string()` and `(f64).to_string()` route through one shared
+Fern implementation — `__float_to_string` in `std/float.fern` — which is
+compiled per target from the same source. It immediately widens an f32 to
+f64 (`n as f64`) and does all of its work in the f64 domain, sidestepping
+the trapping/non-portable `f64 → i64` cast for large magnitudes by
+formatting the integer digits in the float domain above 2^63. As a result
+its output is **byte-for-byte identical across interp / x86_64 / arm64 /
+wasm** for every value. This is the contract, and it is enforced by the
+`float_to_string_parity` fixture (`internal/e2e/testdata/cases/`), which
+runs one program on all four backends under exact-stdout comparison —
+f32's only cross-backend formatting coverage, since it is excluded from
+the differential oracle (below).
+
+What the formatter deliberately does **not** guarantee:
+
+- **Not shortest-round-trip (not Ryu/Grisu).** It renders a fixed number
+  of fractional digits — **7 for f32, 15 for f64** — then trims trailing
+  zeros. So an f32 whose nearest value has a long decimal tail shows that
+  tail rather than the shortest string that round-trips: `3.14f32`
+  formats as `"3.1400001"`, not `"3.14"`. This is intentional
+  ("close-enough-for-handler output", matching this doc's overall
+  under-specify posture); a bit-exact minimal-digits formatter is
+  explicitly out of scope, the same way the NaN/`-0.0` edges are.
+- **`Inf` / `NaN` spelling** is `"Inf"` / `"-Inf"` / `"NaN"`. Inf is
+  detected via `n * 2.0 == n` (no `inf` literal), after sign extraction
+  and a NaN pre-check.
+- **`-0.0` prints as `"0"`** — the sign of zero is one of the
+  deliberately non-portable edges, so it is not preserved through
+  formatting.
+
+`to_string_prec(prec)` is the fixed-width sibling: exactly `prec`
+fractional digits, no trailing-zero trim, rounded half-away-from-zero.
+
+### `parse_float` round-trips within a tolerance, not exactly
+
+`(string).parse_float(): Option[f32]` (`std/string.fern`) accepts an
+optional sign, integer and fractional digits, and returns `None` on empty
+/ sign-only / no-digit / trailing-garbage input. Two properties matter for
+the contract:
+
+- **Mantissa saturation.** Digits accumulate into an i64 capped at 1e15;
+  beyond that, extra integer digits bump the decimal exponent and extra
+  fractional digits are dropped. Very-high-precision inputs therefore lose
+  their low-order digits before the f32 rounding even happens.
+- **Round-trip is within tolerance, not identity.** `parse_float ∘
+  to_string` recovers a value within a small relative tolerance (the
+  e2e checks use `≤ 0.001` for f32), not the exact original — both the
+  7-digit formatting and the f32-domain `* 10^n` scaling in the parser
+  accumulate rounding. Code that needs a value to survive a
+  string round-trip unchanged must not assume float equality; compare
+  with a tolerance. Exactly-representable values (dyadic rationals like
+  `0.5`, `-0.25`, `2.5`) do round-trip exactly.
+
+### Default float width
+
+`f32` is the default float (`float` is not a keyword — the native parser
+recognises only `f32` / `f64`, and a bare `float` annotation is `E064`
+with a "did you mean `f64`?" hint; the self-host compiler treats a
+`float` type name as f64-width in several paths, a discrepancy to
+reconcile if `float` ever becomes a real alias). Whether the default
+*should* be f64 (matching JSON and most scripting expectations), with f32
+opt-in, is an open **owner decision** — it would also shrink the
+"two float widths + polymorphic-literal promotion" surface. Left
+unresolved here on purpose; this doc pins the *current* contract, not the
+future default.
+
 ## Generator + oracle implications
 
 `internal/fernsmith` has two generation profiles (see
@@ -160,3 +234,12 @@ The direct float e2e tests (`TestArm64Floats`, `TestWASMFloatArithmetic`,
 `TestX86_64Floats`, `TestArm64FloatBitCast`, `TestWASMFloatCasts`)
 exercise the portable subset only. Adding tests that assert specific
 NaN bit-patterns across backends would contradict this doc — don't.
+
+The `float_to_string_parity` fixture
+(`internal/e2e/testdata/cases/float_to_string_parity/`) pins the printing
++ round-trip contract above: one program, run across all four backends
+under exact-stdout comparison (formatting parity) plus in-program
+round-trip-within-tolerance assertions. Extend its value table when the
+formatter changes; keep the printed values exactly representable in f32 so
+the exact-match stays deterministic (put inexact values through the
+round-trip path instead).
