@@ -1870,23 +1870,25 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		// read_line() returns Option[string] (#4369): Some(line INCLUDING the
+		// trailing '\n') / None at EOF. `s.len()` therefore counts the newline.
 		{
 			"read-line-len",
-			"function main(): i32 { var s = read_line(); return s.len(); }",
-			5,
+			"function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }",
+			6,
 			"",
 			"hello\n",
 		},
 		{
 			"read-line-echo",
-			"function main(): i32 { var s = read_line(); write(s); return 0; }",
+			"function main(): i32 { match (read_line()) { Some(s) => { write(s); return 0; }, None => { return 1; }, } }",
 			0,
-			"world",
+			"world\n",
 			"world\n",
 		},
 		{
 			"read-line-compare",
-			"function main(): i32 { var s = read_line(); if (s == \"yes\") { return 1; } return 0; }",
+			"function main(): i32 { match (read_line()) { Some(s) => { if (s == \"yes\\n\") { return 1; } return 0; }, None => { return 0; }, } }",
 			1,
 			"",
 			"yes\n",
@@ -2217,7 +2219,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		},
 		{
 			"str-to-i32-from-read-line",
-			"function main(): i32 { var s = read_line(); var n = str_to_i32(s); return n + 1; }",
+			"function main(): i32 { match (read_line()) { Some(s) => { return str_to_i32(s) + 1; }, None => { return 0; }, } }",
 			43,
 			"",
 			"42\n",
