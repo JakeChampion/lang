@@ -2513,6 +2513,36 @@ impl T for Self { function f(self: Self): void {} }`); err == nil {
 	}
 }
 
+// A `var` declaration MUST carry an initializer — the grammar requires `=`
+// after the (optionally-typed) binding, so an uninitialized declaration is a
+// parse error, never an implicit zero. (`let` is the separate refutable
+// let-else binding, not a plain declaration.) This is what closes
+// the "uninitialized-var read is silently zero" footgun (#4409 part 1) at
+// the source level: a program can't even spell an uninitialized local, so
+// there is no read-before-init to diagnose. (Fall-off-end, #4409 part 2, is
+// pinned separately by the checker's E052 tests.)
+func TestVarDeclRequiresInitializer(t *testing.T) {
+	rejected := []string{
+		`function main(): i32 { var x: i32; return x; }`, // typed, no init
+		`function main(): i32 { var x; return 0; }`,      // untyped, no init
+	}
+	for _, src := range rejected {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("var declaration without initializer should be a parse error:\n%s", src)
+		}
+	}
+	// The initialized forms still parse — the requirement is an initializer,
+	// not a ban on the annotation.
+	for _, src := range []string{
+		`function main(): i32 { var x: i32 = 0; return x; }`,
+		`function main(): i32 { var x = 0; return x; }`,
+	} {
+		if _, err := Parse(src); err != nil {
+			t.Errorf("initialized var declaration should parse: %v\n%s", err, src)
+		}
+	}
+}
+
 // Type-parameter trait bounds parse into FuncDecl.Bounds:
 // `function f[T: Display + Eq, U: Ord](…)`. See docs/TRAITS.md.
 func TestTypeParamBoundsParse(t *testing.T) {
