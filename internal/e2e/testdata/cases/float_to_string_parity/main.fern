@@ -1,0 +1,62 @@
+// Cross-backend f32/f64 printing + round-trip parity (#4410 part 2).
+//
+// The `to_string` formatter (std/float `__float_to_string`) is a single
+// shared Fern implementation compiled per target, and it widens f32 → f64
+// before doing any arithmetic, so its output MUST be byte-identical across
+// interp / x86_64 / arm64 / wasm. This fixture pins that contract: the
+// exact-stdout check below is the cross-backend formatting oracle (f32 was
+// deliberately excluded from the differential fuzz oracle's runnable pool,
+// so this is its only parity coverage), and the round-trip assertions pin
+// parse_float ∘ to_string recovery within the documented tolerance on every
+// backend.
+//
+// The printed table uses only values that are EXACTLY representable in f32
+// (dyadic rationals) so their 7-fractional-digit rendering is unambiguous
+// and every backend agrees bit-for-bit. Values that are NOT exactly
+// representable (0.1, 3.14) are exercised through the round-trip path with a
+// tolerance instead — see docs/FLOAT-SEMANTICS.md "Printing and round-trip".
+import "core/int";
+import "std/float";
+import "std/string";
+
+function abs_f32(x: f32): f32 {
+    if (x < 0.0) { return 0.0 - x; }
+    return x;
+}
+
+// round-trips `x` through to_string → parse_float and returns true when the
+// recovered value is within `tol` of the original.
+function roundtrips(x: f32, tol: f32): boolean {
+    match (x.to_string().parse_float()) {
+        Some(y) => { return abs_f32(y - x) <= tol; },
+        None => { return false; }
+    }
+}
+
+function main(): i32 {
+    // Exactly-representable f32 values → deterministic 7-digit rendering.
+    var a: f32[] = [0.0, 1.0, -1.0, 7.0, -7.0, 0.5, -0.25, 0.125, 2.5, 100.0, 1000.0, -0.75, 42.0, 0.0625];
+    var i: i32 = 0;
+    while (i < a.len()) { print(a[i].to_string()); i = i + 1; }
+
+    // f64 keeps 15 fractional digits; these are deterministic across backends
+    // (f64 literal bits are exact and all arithmetic stays in f64).
+    var g: f64[] = [0.5, 1.5, -2.25, 3.141592653589793, 0.1, 100.0];
+    var j: i32 = 0;
+    while (j < g.len()) { print(g[j].to_string()); j = j + 1; }
+
+    // Round-trip: exactly-representable values recover exactly (tol 0).
+    if (!roundtrips(0.5, 0.0)) { return 10; }
+    if (!roundtrips(-0.25, 0.0)) { return 11; }
+    if (!roundtrips(2.5, 0.0)) { return 12; }
+    // Inexact values recover within the documented f32 tolerance.
+    if (!roundtrips(3.14, 0.001)) { return 20; }
+    if (!roundtrips(0.1, 0.001)) { return 21; }
+
+    // parse_float rejects non-numeric input.
+    match ("nope".parse_float()) {
+        Some(_) => { return 30; },
+        None => {}
+    }
+    return 0;
+}
