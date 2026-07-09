@@ -9,20 +9,21 @@ import (
 )
 
 // readLineIRCases exercise the `read_line()` builtin through the IR path on
-// x86-64, arm64, and wasm (the wasm IR path reads fd 0 via fd_read and boxes the
-// line). read_line lowers to a value IR op that calls each backend's
-// __fern_read_line helper, returning a fresh string box (the line without its
-// trailing newline). `wantOut` cases echo it with write and check stdout;
-// `wantExit` cases return read_line().len() (exercising the str-tracking that
-// makes `.len()` dispatch to str_len) and check the exit code.
+// x86-64, arm64, and wasm. read_line returns Option[string] — Some(line INCLUDING
+// the trailing '\n') / None at EOF, matching native (#4369; was a bare newline-
+// stripped string). The programs `match` on it: `wantExit` cases return the Some
+// payload's len (newline now retained, so 5 not 4) or a code from the None arm and
+// check the exit code. This pins all three fixed divergences (type shape, newline
+// retention, EOF signaling) end-to-end.
 var readLineIRCases = []struct {
 	name, src, stdin, wantOut string
 	wantExit                  int // used when wantOut == ""
 }{
-	{"echo", `function main(): i32 { var s: string = read_line(); write(s); return 0; }`, "hello\nrest", "hello", 0},
-	{"echo-no-newline", `function main(): i32 { var s: string = read_line(); write(s); return 0; }`, "bare", "bare", 0},
-	{"empty-line", `function main(): i32 { var s: string = read_line(); write(s); return 0; }`, "\nx", "", 0},
-	{"len", `function main(): i32 { var s: string = read_line(); return s.len(); }`, "abcd\n", "", 4},
+	{"len", `function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "abcd\n", "", 5},
+	{"no-newline", `function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "bare", "", 4},
+	{"empty-line", `function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 9; }, } }`, "\nx", "", 1},
+	{"eof-none", `function main(): i32 { match (read_line()) { Some(s) => { return 1; }, None => { return 7; }, } }`, "", "", 7},
+	{"method", `function main(): i32 { var r: Reader = stdin(); match (r.read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "xy\n", "", 3},
 }
 
 func TestSelfHostReadLineIRX86_64(t *testing.T) {
@@ -68,10 +69,10 @@ func TestSelfHostReadLineIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReadLineIRWasm runs the same cases through the wasm IR backend
-// under wasmtime, piping stdin in. read_line now lowers on the wasm IR path:
-// wasm_ir emits `call $__fern_read_line` and wasm_ir_run pulls in the fd_read
-// import + the read_line_func helper (reads up to 256 bytes from fd 0, scans for
-// '\n', boxes [len][bytes] — newline stripped).
+// under wasmtime, piping stdin in. read_line lowers on the wasm IR path: wasm_ir
+// emits `call $__fern_read_line` and wasm_ir_run pulls in the fd_read import +
+// the read_line_func helper (reads up to 256 bytes from fd 0, scans for '\n',
+// boxes the line INCLUDING the '\n' as Some / None at EOF — Option[string], #4369).
 func TestSelfHostReadLineIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host read_line wasm IR e2e")

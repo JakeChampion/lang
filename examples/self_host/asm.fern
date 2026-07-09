@@ -4350,23 +4350,25 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // same heap region (the buf bytes up to the newline). On
     // EOF the box has len = bytes_read with no '\n' adjustment.
     if (s.has_need("str_read_line")) {
+        // __fern_read_line: no args -> Option[string] (#4369): Some(line incl. '\n')
+        // / None at EOF. The Option box is rc-headered (__fern_arr_box cap=2, like
+        // op_opt_make) so the match-consume drop is valid; mirrors the IR body.
         s = s.write("__fern_read_line:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        // Allocate 256-byte buffer.
+        s = s.write("    pushq %r12\n");                 // buffer
+        s = s.write("    pushq %r13\n");                 // bytes / strbox
         s = s.write("    movq $256, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r12\n");    // buf ptr
-        // syscall sys_read(0, buf, 256).
+        s = s.write("    movq %rax, %r12\n");            // buf ptr
         s = s.write("    movq $0, %rax\n");
-        s = s.write("    movq $0, %rdi\n");
+        s = s.write("    movq $0, %rdi\n");              // fd 0
         s = s.write("    movq %r12, %rsi\n");
         s = s.write("    movq $256, %rdx\n");
         s = s.write("    syscall\n");
-        s = s.write("    movq %rax, %r13\n");    // bytes_read
-        // Scan for '\n'.
+        s = s.write("    movq %rax, %r13\n");            // bytes_read
+        s = s.write("    cmpq $0, %r13\n");
+        s = s.write("    jle .Lrl_none\n");              // EOF / error -> None
         s = s.write("    movq %r12, %rcx\n");
         s = s.write("    movq %r12, %r8\n");
         s = s.write("    addq %r13, %r8\n");
@@ -4379,20 +4381,30 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rcx\n");
         s = s.write("    jmp .Lrl_scan\n");
         s = s.write(".Lrl_no_nl:\n");
-        // Use bytes_read as len.
-        s = s.write("    movq %r13, %rdx\n");
+        s = s.write("    movq %r13, %rdx\n");            // len = whole read
         s = s.write("    jmp .Lrl_box\n");
         s = s.write(".Lrl_found:\n");
         s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    subq %r12, %rdx\n");
+        s = s.write("    subq %r12, %rdx\n");            // index of '\n'
+        s = s.write("    incq %rdx\n");                  // include the '\n'
         s = s.write(".Lrl_box:\n");
-        // Allocate 16-byte box.
         s = s.write("    pushq %rdx\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
+        s = s.write("    call __fern_alloc\n");          // strbox
         s = s.write("    popq %rdx\n");
         s = s.write("    movq %r12, (%rax)\n");
         s = s.write("    movq %rdx, 8(%rax)\n");
+        s = s.write("    movq %rax, %r13\n");            // strbox
+        s = s.write("    movq $2, %rdi\n");
+        s = s.write("    call __fern_arr_box\n");        // Some box (rc-headered)
+        s = s.write("    movq $0, (%rax)\n");            // tag=0 Some
+        s = s.write("    movq %r13, 8(%rax)\n");         // payload = strbox
+        s = s.write("    jmp .Lrl_ret\n");
+        s = s.write(".Lrl_none:\n");
+        s = s.write("    movq $2, %rdi\n");
+        s = s.write("    call __fern_arr_box\n");        // None box (rc-headered)
+        s = s.write("    movq $1, (%rax)\n");            // tag=1 None
+        s = s.write(".Lrl_ret:\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");

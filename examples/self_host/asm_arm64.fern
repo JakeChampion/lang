@@ -4700,23 +4700,26 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // stdin, scans for '\n', returns a 16-byte box ptr. Linux
     // syscall sys_read (#63 on aarch64).
     if (s.has_need("str_read_line")) {
+        // __fern_read_line: no args -> Option[string] (#4369): Some(line incl. '\n')
+        // / None at EOF, reads stdin (fd 0). The Option box is rc-headered
+        // (__fern_arr_box cap=2, like op_opt_make) so the match-consume drop is
+        // valid. Shared by the AST and IR paths (str_read_line).
         s = s.write("__fern_read_line:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    str x21, [sp, #-16]!\n");
-        // Allocate 256-byte buffer.
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");   // x19=buf, x20=bytes_read
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");   // x21=len/strbox
         s = s.write("    mov x0, #256\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x19, x0\n");      // buf ptr
-        // syscall sys_read(0, buf, 256).
         s = s.write("    mov x0, #0\n");       // fd 0
         s = s.write("    mov x1, x19\n");
         s = s.write("    mov x2, #256\n");
         s = s.write("    mov x8, #63\n");      // sys_read
         s = s.write("    svc #0\n");
         s = s.write("    mov x20, x0\n");      // bytes_read
-        // Scan for '\n'.
+        s = s.write("    cmp x20, #0\n");
+        s = s.write("    b.le .Lrl_none\n");   // EOF / error -> None
         s = s.write("    mov x1, x19\n");
         s = s.write("    add x2, x19, x20\n"); // end ptr
         s = s.write(".Lrl_scan:\n");
@@ -4728,17 +4731,29 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #1\n");
         s = s.write("    b .Lrl_scan\n");
         s = s.write(".Lrl_no_nl:\n");
-        s = s.write("    mov x21, x20\n");
+        s = s.write("    mov x21, x20\n");     // len = whole read
         s = s.write("    b .Lrl_box\n");
         s = s.write(".Lrl_found:\n");
-        s = s.write("    sub x21, x1, x19\n"); // len = cursor - buf
+        s = s.write("    sub x21, x1, x19\n"); // index of '\n'
+        s = s.write("    add x21, x21, #1\n"); // include the '\n'
         s = s.write(".Lrl_box:\n");
-        // Allocate 16-byte box.
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    bl __fern_alloc\n");  // strbox
         s = s.write("    str x19, [x0]\n");
         s = s.write("    str x21, [x0, #8]\n");
-        s = s.write("    ldr x21, [sp], #16\n");
+        s = s.write("    mov x21, x0\n");      // strbox
+        s = s.write("    mov x0, #2\n");
+        s = s.write("    bl __fern_arr_box\n");// Some box (rc-headered)
+        s = s.write("    str xzr, [x0]\n");    // tag=0 Some
+        s = s.write("    str x21, [x0, #8]\n");// payload = strbox
+        s = s.write("    b .Lrl_ret\n");
+        s = s.write(".Lrl_none:\n");
+        s = s.write("    mov x0, #2\n");
+        s = s.write("    bl __fern_arr_box\n");// None box (rc-headered)
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");     // tag=1 None
+        s = s.write(".Lrl_ret:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
