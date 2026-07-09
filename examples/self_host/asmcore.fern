@@ -709,6 +709,7 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                 },
                 parser.ExprFieldAccess(fa) => {
                     if (fa.field == "read_chunk") { return ty_string(); }
+                    if (fa.field == "read_line") { return ty_option(ty_string()); }
                     if (fa.field == "write") { return ty_i32(); }
                     if (fa.field == "get") {
                         var rt: Ty = infer_expr_type(fa.obj, s);
@@ -1787,7 +1788,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // r.read_chunk / w.write / .close off the fd, then checks < 0.
                     if (id.name == "open_reader" || id.name == "open_writer"
                         || id.name == "open_appender") { return ty_i32(); }
-                    if (id.name == "read_line") { return ty_string(); }
+                    // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
+                    // — matches native (#4369). read_all_stdin stays a plain string.
+                    if (id.name == "read_line") { return ty_option(ty_string()); }
                     if (id.name == "read_all_stdin") { return ty_string(); }
                     if (id.name == "i32_to_string") { return ty_string(); }
                     if (id.name == "int__int_to_string") { return ty_string(); }
@@ -1854,6 +1857,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 parser.ExprFieldAccess(fa) => {
                     var rt: Ty = infer_expr_type(fa.obj, s);
                     if (fa.field == "read_chunk") { return ty_option(ty_string()); }
+                    if (fa.field == "read_line") { return ty_option(ty_string()); }
                     // Writer.write(s) -> i32 bytes written / -errno (#4372). Like
                     // read_chunk above, the real non-struct-receiver gate is applied
                     // at lower time (irlower's resource-method dispatch).

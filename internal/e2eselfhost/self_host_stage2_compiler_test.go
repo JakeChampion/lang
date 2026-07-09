@@ -33,10 +33,13 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"function main(): i32 {\n" +
 		"    var src: string = \"\";\n" +
 		"    while (true) {\n" +
-		"        var line: string = read_line();\n" +
-		"        if (line.len() == 0) { break; }\n" +
-		"        src = src + line;\n" +
-		"        src = src + \"\\n\";\n" +
+		// read_line() returns Option[string] (#4369): Some(line INCLUDING the
+		// trailing '\n') / None at EOF. Accumulate each already-newline-terminated
+		// line until EOF; a blank line is Some("\n"), not None.
+		"        match (read_line()) {\n" +
+		"            Some(line) => { src = src + line; },\n" +
+		"            None => { break; },\n" +
+		"        }\n" +
 		"    }\n" +
 		"    print(asm.emit_module(parser.parse_module(lexer.tokenize(src))));\n" +
 		"    return 0;\n" +
