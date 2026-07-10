@@ -1016,6 +1016,44 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
     return None;
 }
 
+// `max_by_i32_key(xs, key)` / `min_by_i32_key(xs, key)` — the ELEMENT of `xs`
+// whose i32 `key(x)` projection is largest / smallest, as `Option[T]` (`None`
+// for an empty array). The "which record has the max timestamp" case, the
+// projection sibling of `sort_by_i32_key` and of `core/cmp`'s value-returning
+// `max_of` / `min_of` (which need the elements themselves to be `Ord`; these
+// only need an i32 key, so they work for any element type via the closure).
+// Each element's `key` is evaluated once. Ties keep the FIRST extremal element
+// (a strict `>` / `<` only replaces on a genuine improvement), so the result is
+// stable w.r.t. input order. Like `find` / `sort_by`, the closure lowers on
+// every backend and the self-host IR path.
+pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var best: T = xs[0];
+    var best_k: i32 = key(best);
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        var k: i32 = key(xs[i]);
+        if (k > best_k) { best = xs[i]; best_k = k; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `min_by_i32_key` is `max_by_i32_key`'s mirror: the element with the smallest
+// i32 key, or `None` when empty.
+pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var best: T = xs[0];
+    var best_k: i32 = key(best);
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        var k: i32 = key(xs[i]);
+        if (k < best_k) { best = xs[i]; best_k = k; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
 // `enumerate(xs)` — pair each element with its 0-based index:
 // `[(0, xs[0]), (1, xs[1]), ...]`. Lets a single `for (i, x) in
 // enumerate(xs)`-style loop carry the index without a manual
