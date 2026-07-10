@@ -2134,6 +2134,18 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			}
 		}
 	}
+	// `assert(cond)` / `assert(cond, msg)` builtin — desugars to
+	// `if (!cond) { eprint("assertion failed[: msg]"); exit(1); }`, a
+	// parser-level rewrite so it lowers through the already-supported
+	// if / eprint / exit path on every backend (native + self-host IR)
+	// with no dedicated codegen. Only intercepted in statement position
+	// with a following `(`, so `assert` stays usable as an ordinary
+	// identifier elsewhere. #4416.
+	if t.Kind == lexer.Ident && t.Text == "assert" && p.i+1 < len(p.tokens) {
+		if nx := p.tokens[p.i+1]; nx.Kind == lexer.Punct && nx.Text == "(" {
+			return p.parseAssert()
+		}
+	}
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
 		case "if":
@@ -3640,6 +3652,54 @@ func (p *parser) parseDefer() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Defer{P: kw.Pos, Expr: expr, OnError: kw.Text == "errdefer"}, nil
+}
+
+// parseAssert parses `assert(cond)` / `assert(cond, msg)` and returns
+// the desugared `if (!cond) { eprint(<text>); exit(1); }`. `<text>` is
+// the literal `"assertion failed"`, suffixed with `: ` + the message
+// expression when a second argument is given (so the message can be any
+// runtime string, not just a literal). Building on the existing `!`,
+// string `+`, `eprint`, and `exit` primitives keeps `assert` codegen-free
+// — it runs identically on every backend and both self-host IR paths. A
+// later change can elide the whole `if` under an optimisation flag. #4416.
+func (p *parser) parseAssert() (ast.Stmt, error) {
+	kw := p.advance() // `assert`
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	var msg ast.Expr
+	if _, ok := p.accept(lexer.Punct, ","); ok {
+		msg, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	pos := kw.Pos
+	var text ast.Expr = &ast.StringLit{P: pos, Value: "assertion failed"}
+	if msg != nil {
+		text = &ast.Binary{P: pos, Op: "+",
+			Left:  &ast.StringLit{P: pos, Value: "assertion failed: "},
+			Right: msg,
+		}
+	}
+	notCond := &ast.Unary{P: pos, Op: "!", Operand: cond}
+	eprintCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "eprint"}, Args: []ast.Expr{text}}
+	exitCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "exit"}, Args: []ast.Expr{&ast.NumberLit{P: pos, Value: 1}}}
+	then := &ast.Block{P: pos, Stmts: []ast.Stmt{
+		&ast.ExprStmt{P: pos, Expr: eprintCall},
+		&ast.ExprStmt{P: pos, Expr: exitCall},
+	}}
+	return &ast.If{P: pos, Cond: notCond, Then: then}, nil
 }
 
 func (p *parser) parseVar() (ast.Stmt, error) {

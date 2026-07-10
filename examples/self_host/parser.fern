@@ -3030,6 +3030,46 @@ function parse_stmt(p: Par): (Stmt, Par) {
             }
         }
     }
+    // `assert(cond)` / `assert(cond, msg)` builtin — desugar to
+    // `if (!cond) { eprint("assertion failed[: msg]"); exit(1); }`. A
+    // parser-level rewrite over the existing `!` / string-`+` / eprint /
+    // exit primitives, so it lowers with no dedicated codegen on every
+    // backend and both IR paths — mirroring the native parser's
+    // parseAssert. `assert` is an identifier (not a keyword), so we only
+    // intercept the statement-position `assert (` shape and leave the
+    // name free for ordinary use elsewhere. #4416.
+    if (p.peek_ident() == "assert") {
+        var as0: Par = p.advance();  // consume `assert`
+        if (as0.peek_punct() == "(") {
+            var asp: Par = as0.advance();  // consume `(`
+            var (as_cond, ascp) = parse_expr(asp);
+            asp = ascp;
+            var as_has_msg: boolean = false;
+            var as_msg: Expr = e_string("");
+            if (asp.peek_punct() == ",") {
+                asp = asp.advance();
+                var (asm_e, asmp) = parse_expr(asp);
+                as_msg = asm_e;
+                asp = asmp;
+                as_has_msg = true;
+            }
+            if (asp.peek_punct() == ")") { asp = asp.advance(); }
+            if (asp.peek_punct() == ";") { asp = asp.advance(); }
+            var as_text: Expr = e_string("assertion failed");
+            if (as_has_msg) {
+                as_text = e_binary("+", e_string("assertion failed: "), as_msg);
+            }
+            var as_body: Stmt[] = [];
+            var as_eargs: Expr[] = [];
+            as_eargs = as_eargs.append(as_text);
+            as_body = as_body.append(s_expr(e_call(e_ident("eprint"), as_eargs)));
+            var as_xargs: Expr[] = [];
+            as_xargs = as_xargs.append(e_number("1", "", false));
+            as_body = as_body.append(s_expr(e_call(e_ident("exit"), as_xargs)));
+            var as_noelse: Stmt[] = [];
+            return (s_if(e_unary("!", as_cond), as_body, as_noelse), asp);
+        }
+    }
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
         // `defer ACTION;` — the deferred action is an ordinary statement
