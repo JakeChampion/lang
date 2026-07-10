@@ -4213,7 +4213,44 @@ function emit_arm64_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string)
     return s;
 }
 
+// emit_ccall_shim1_arm64 emits one `__fn___c_call<n>[suffix]` FFI shim (#4375),
+// the arm64 sibling of asm_ir.emit_ccall_shim1. Entered like any stack-ABI
+// callee (the generic call_direct emit reversed the args so arg0/fn sits on
+// top): param0 (fn) @ [x29,#16], a_i @ [x29,#(32 + 16i)]. Marshal fn into x9
+// and a0..a{n-1} into the AAPCS64 arg registers x0..x3, then `blr x9`; the
+// result lands in x0 (or d0 for the _f32/_f64 variants) and flows straight back.
+// The 16-byte-slotted rt-stack keeps sp 16-aligned, so no extra alignment is
+// needed for the C call.
+function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): asmcore.EmitState {
+    s = s.write("\n__fn_" + variant + ":\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    s = s.write("    ldr x9, [x29, #16]\n");
+    if (n >= 1) { s = s.write("    ldr x0, [x29, #32]\n"); }
+    if (n >= 2) { s = s.write("    ldr x1, [x29, #48]\n"); }
+    if (n >= 3) { s = s.write("    ldr x2, [x29, #64]\n"); }
+    if (n >= 4) { s = s.write("    ldr x3, [x29, #80]\n"); }
+    s = s.write("    blr x9\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n    ret\n");
+    return s;
+}
+
+// emit_ccall_shims_arm64 emits every __c_call variant the module referenced
+// (each registered as `need("ccall:<name>")` by the arm64 call_direct emit).
+function emit_ccall_shims_arm64(s: asmcore.EmitState): asmcore.EmitState {
+    var ca: i32 = 0;
+    while (ca <= 4) {
+        var cbase: string = "__c_call" + util.i32_to_string(ca);
+        if (s.has_need("ccall:" + cbase)) { s = emit_ccall_shim1_arm64(s, cbase, ca); }
+        if (s.has_need("ccall:" + cbase + "_f32")) { s = emit_ccall_shim1_arm64(s, cbase + "_f32", ca); }
+        if (s.has_need("ccall:" + cbase + "_f64")) { s = emit_ccall_shim1_arm64(s, cbase + "_f64", ca); }
+        ca = ca + 1;
+    }
+    return s;
+}
+
 pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    // FFI __c_call<n> shims (#4375): allocation-free arg-marshal + `blr fn`.
+    s = emit_ccall_shims_arm64(s);
     // __fern_print_int helper: converts the i64 in x0 to
     // decimal text in a stack buffer and writes to stdout.
     if (s.has_need("print_int")) {

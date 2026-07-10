@@ -505,6 +505,25 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
 // the shared cache once (not re-lowering every function per call) is what makes
 // the wasm self-host compile linear (#4652). The op-kind arrives by string;
 // resolve it to the integer tag once so the inner scan is an int compare.
+// module_uses_c_call reports whether any function calls an FFI `__c_call<n>`
+// shim (a call_direct, kind 149, whose callee is is_c_call). Wasm has no C-ABI,
+// so such a module stays off the wasm IR path — native parity: native wasm has
+// no __c_call either (#4375). module_emits_op_cached can't express this (it
+// matches by op KIND; __c_call is an ordinary direct call), so scan by name.
+function module_uses_c_call(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && asm_ir.is_c_call(r.ops[i].str)) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string): boolean {
     var ktag: i32 = ir.kind_id(kind);
     var fi: i32 = 0;
@@ -808,7 +827,10 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         && !module_emits_op_cached(cache, "tcp_accept")
         && !module_emits_op_cached(cache, "writer_write")
         && !module_emits_op_cached(cache, "open_file")
-        && !module_emits_op_cached(cache, "subprocess");
+        && !module_emits_op_cached(cache, "subprocess")
+        // FFI __c_call<n> has no wasm C-ABI meaning (#4375) — native wasm has no
+        // __c_call, so a module using it stays on the wasm AST path here.
+        && !module_uses_c_call(cache);
 }
 
 // should_use_ir_core is the CHEAP gate the emit dispatch (wasm.emit_module)

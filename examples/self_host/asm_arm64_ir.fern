@@ -973,6 +973,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // asm_arm64's ABI wants arg0 on TOP (param[i] at [x29,#16+i*16]).
             // Reverse the argc 16-byte rt-stack slots, call, pop the args, push x0.
             var argc: i32 = o.i32_imm;
+            // FFI __c_call<n> (#4375): a normal call to the shim __fn___c_call<n>
+            // (emitted by asm_arm64.emit_runtime). Register its need so the body
+            // is emitted; the shim reads its params off the arm64 stack ABI and
+            // marshals them into the AAPCS64 arg registers.
+            if (asm_ir.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
             var h: i32 = 0;
             while (h < argc / 2) {
                 var lo: i32 = h * 16;
