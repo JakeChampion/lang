@@ -1203,23 +1203,45 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
 // `sort_by(xs, cmp)` — fresh `T[]` sorted by the comparator `cmp`, where
 // `cmp(a, b)` returns negative if `a` should sort before `b`, positive if
 // after, zero if equal (the Ordering-as-i32 convention shared with
-// `core/cmp`). Stable insertion sort (equal elements keep their input
-// order); O(n²), matching the other simple stdlib sorts. The comparator
-// form is what lets ANY element type be sorted without a built-in `Ord`
+// `core/cmp`). Stable bottom-up merge sort (equal elements keep their input
+// order — the merge only takes from the right run on a STRICT less), O(n log n)
+// (#4387 item 3). The comparator form is what lets ANY element type be sorted
+// without a built-in `Ord`
 // — `sort_by(people, function (a: Person, b: Person): i32 { return a.age - b.age; })`.
 pub function sort_by[T](xs: T[], cmp: (T, T) => i32): T[] {
-    var out: T[] = [];
-    for x in xs {
-        out = out.append(x);
-        var i: i32 = out.len() - 1;
-        while (i > 0 && cmp(out[i - 1], out[i]) > 0) {
-            var tmp: T = out[i - 1];
-            out = out.with(i - 1, out[i]);
-            out = out.with(i, tmp);
-            i = i - 1;
+    var n: i32 = xs.len();
+    if (n < 2) { return xs; }
+    var src: T[] = xs;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: T[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (cmp(src[j], src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // `sort(xs)` — ascending sort by the element type's `Ord` ordering: the
@@ -1228,22 +1250,43 @@ pub function sort_by[T](xs: T[], cmp: (T, T) => i32): T[] {
 // self-host IR path — an `i32` instance lowers `.cmp` to the scalar three-way
 // compare, a `string` instance to the lexicographic byte compare — where an
 // unbounded `[T]` would erase to one clone and mis-order strings. Stable (equal
-// elements keep input order): the same insertion sort `sort_by` uses, with the
-// comparator inlined as the `Ord` method, so `> 0` only swaps on a STRICT
-// greater — a tie leaves the earlier element in front. Empty / singleton → as-is.
+// elements keep input order): the same merge sort `sort_by` uses, with the
+// comparator inlined as the `Ord` method, so the right run is taken only on a
+// STRICT less — a tie leaves the earlier element in front. Empty / singleton → as-is.
 pub function sort[T: cmp.Ord](xs: T[]): T[] {
-    var out: T[] = [];
-    for x in xs {
-        out = out.append(x);
-        var i: i32 = out.len() - 1;
-        while (i > 0 && out[i - 1].cmp(out[i]) > 0) {
-            var tmp: T = out[i - 1];
-            out = out.with(i - 1, out[i]);
-            out = out.with(i, tmp);
-            i = i - 1;
+    var n: i32 = xs.len();
+    if (n < 2) { return xs; }
+    var src: T[] = xs;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: T[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j].cmp(src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // =================== EQ-DRIVEN GENERIC VERBS ===================
