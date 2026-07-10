@@ -8,22 +8,33 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+import "std/array";
+
 // `read_all_stdin()` — read until EOF and return the result
 // as a single string. Loops `Reader.read_chunk(4096)` until
 // None.
+//
+// Chunks are collected into an array and joined once at EOF
+// rather than folded with `out = out + chunk` per iteration.
+// The naive fold is O(total²): each `+` copies the whole
+// accumulated prefix, so an N-byte input in 4 KiB chunks
+// copies ~N²/8192 bytes. `join` walks the chunk list twice
+// (sum the lengths, then one preallocated blit), so the whole
+// read is O(total). This is the core-CLI hot path — every
+// `read_input("-")` from cat / wc / head / grep / … lands here.
 pub function read_all_stdin(): string {
     var r: Reader = stdin();
-    var out: string = "";
+    var chunks: string[] = [];
     while (true) {
         match (r.read_chunk(4096)) {
-            Some(chunk) => { out = out + chunk; },
+            Some(chunk) => { chunks = chunks.append(chunk); },
             None => {
                 r.close();
-                return out;
+                return chunks.join("");
             },
         }
     }
-    return out;
+    return "";
 }
 
 // `read_input(path)` — read a CLI-style input operand: the
