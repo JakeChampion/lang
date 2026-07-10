@@ -91,13 +91,17 @@ func TestSelfHostHeapBumpBytesIRX86_64(t *testing.T) {
 // N-iteration loop; the growth (an exit code) must match small-vs-large.
 //
 // #4365 gating: ONLY shapes empirically BOUNDED on the self-host IR path belong
-// here. Two Perceus behaviors the self-host DOES have — precise-drop of a
-// declared owned array local, and prior-box release on a loop reassign — bound
-// their loops (verified: growth flat across N=50..50000). The native suite's
-// discarded-bare-expr shapes (statement-temporary reclamation) and the
-// struct-with-array-field reclaim are NOT yet bounded on the self-host IR path
-// (growth scales with N) — those are feature gaps tracked under #4365, not
-// asserted here as passing.
+// here. Three Perceus behaviors the self-host DOES have bound their loops
+// (verified flat across N=50..5000): precise-drop of a declared owned array
+// local, prior-box release on a loop reassign, and a literal-sized owned buffer
+// temp (`__alloc_u8(8)`). NOT yet bounded on the self-host IR path, so tracked
+// as gaps under #4365 rather than asserted here: the native suite's
+// discarded-bare-expr shapes (statement-temporary reclamation), the
+// struct-with-array-field reclaim, and a rebuilt generic-enum array
+// (`Option[i32[]][]`) all leak with N (verified: discarded-arr 128→leak,
+// generic-enum-array 160→224). A value-consuming-op receiver (`(a + b).len()`)
+// plateaus at 48 for N>=200 but reads 176 at N=50 — a freelist-warmup artifact,
+// not a clean fixpoint at the low end — so it too stays out.
 var heapBumpFixpointCases = []struct {
 	name string
 	src  func(n string) string
@@ -125,6 +129,20 @@ var heapBumpFixpointCases = []struct {
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var v: i32[] = [i, i + 1]; v = [i, i + 2, i + 3]; acc = acc + v[0] + v[1] + v[2]; i = i + 1; }
     if (acc == 987654) { return 200; }
+    return __heap_bump_bytes() - before;
+}`
+	}},
+	// Literal-sized owned buffer (`__alloc_u8(8)`) whose only borrowed input is
+	// the literal size arg — its fresh rc=1 buffer is reclaimed at its last use
+	// each iteration, so the high-water is flat across N (native + self-host
+	// both bounded — #4365 rc_heap_bump_literal_alloc port). The `acc` guard
+	// keeps the borrow reads live so a wrongly-freed buffer would corrupt them.
+	{"literal-alloc", func(n string) string {
+		return `function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) { var b: u8[] = __alloc_u8(8); b = b.with(0, (i % 200) as u8); acc = acc + (b[0] as i32); i = i + 1; }
+    if (acc < 0) { return 0 - 1; }
     return __heap_bump_bytes() - before;
 }`
 	}},
