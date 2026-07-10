@@ -1,0 +1,20 @@
+// String concatenation across both string forms (#4379). wasm's __str_concat
+// now uses memory.copy for heap-form inputs (contiguous in memory) and keeps
+// the per-byte loop for inline/SSO inputs (bytes packed in the words). This
+// pins byte-identical results across every backend for all four form
+// combinations, checking content at the copy boundaries — not just length.
+function main(): i32 {
+    var long: string = "abcdefghijklmnopqrstuvwxyz0123456789"; // 36 bytes → heap
+    var sh: string = "XY";                                     // 2 bytes → inline
+    if ((long + long).len() != 72) { return 1; }
+    if ((sh + sh).len() != 4) { return 2; }
+    if ((long + sh).len() != 38) { return 3; }
+    if ((sh + long).len() != 38) { return 4; }
+    var m: string = long + sh;   // heap + inline
+    if (m[0] != 97 || m[35] != 57 || m[36] != 88 || m[37] != 89) { return 5; }
+    var n: string = sh + long;   // inline + heap
+    if (n[0] != 88 || n[2] != 97 || n[37] != 57) { return 6; }
+    var d: string = long + long; // heap + heap
+    if (d[0] != 97 || d[36] != 97 || d[71] != 57) { return 7; }
+    return 0;
+}
