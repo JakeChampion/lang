@@ -3887,6 +3887,12 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf);
         fi = fi + 1;
     }
+    // #4355: admit the replaced-STRING-field arm per type from the
+    // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
+    // sibling seeding and irlower.strfld_reclaim_ok_types_of).
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var sfoi: i32 = 0;
+    while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
     // with emit_module's single-unit IR path (so the load_run / emit_module
     // route also emits them — previously only this multi-unit path did, so a
@@ -3987,7 +3993,17 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
     var k: i32 = 0;
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
-        if (irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING field (#4355): released via the rc-aware
+        // __fern_str_free under the same cow + snap guards — mirrors the x86
+        // emit_ir_field_reclaim_one string arm (see its comment for the
+        // construction-retain balance and the "strfldok:<T>" whole-program
+        // read-scan gate). UNLIKE arr_dec, __fern_str_free CLOBBERS
+        // x10/x11/x12 (its heap-base / heap-end / freelist-head scratch), so
+        // new/old/snap are reloaded from the stable stack args after the
+        // call — the frame push above shifts them to [sp+48] / [sp+32] /
+        // [sp+16].
+        var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
+        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
@@ -4000,8 +4016,18 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
             s = s.write("    str x1, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_arr_dec\n");           // shallow dec/free the dead buffer
-            s = s.write("    add sp, sp, #16\n");
+            if (fr_str) {
+                s = s.write("    bl __fn___fern_str_free\n");      // rc-aware string free (data buffer + box)
+                s = s.write("    add sp, sp, #16\n");
+                // str_free clobbered x10/x11/x12 — reload new/old/snap from
+                // the stack args (shifted +16 by the stp x29,x30 frame).
+                s = s.write("    ldr x10, [sp, #48]\n");           // new
+                s = s.write("    ldr x11, [sp, #32]\n");           // old
+                s = s.write("    ldr x12, [sp, #16]\n");           // snap
+            } else {
+                s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec/free the dead buffer
+                s = s.write("    add sp, sp, #16\n");
+            }
             s = s.write(".Lafr_" + san + "_skip" + ks + ":\n");
         }
         k = k + 1;
@@ -8657,6 +8683,11 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     // Expand the declarative runtime-dependency closure (see emit_module's IR
     // dispatch) before emit_runtime gates each helper on has_need.
     s = s.close_needs();
+    // #4355: replaced-STRING-field admission — this driver route is
+    // single-module whole-program, so mod.funcs IS the full read scope.
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var sfoi: i32 = 0;
+    while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
     s = emit_runtime(s, darwin);
