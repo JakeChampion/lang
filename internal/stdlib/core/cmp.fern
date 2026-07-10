@@ -344,6 +344,37 @@ pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
     return x;
 }
 
+// max_of / min_of reduce an array to its largest / smallest element under
+// `Ord`, returning `Option[T]` — `None` for an empty array (there is no
+// extremum), `Some(x)` otherwise. The generic, any-`Ord`-type replacement for
+// std/array's per-width `max_i64` / `min_i64` / `max_u32` / … zoo (#4387
+// item 2): one body dispatching `.cmp`, monomorphised per element type, so it
+// lowers on the self-host IR path like `sort` / `is_sorted`. On ties the first
+// extremal element wins (a strict `> 0` / `< 0` only replaces on a genuine
+// improvement), so the result is stable w.r.t. input order.
+pub function max_of[T: Ord](xs: T[]): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var best: T = xs[0];
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (xs[i].cmp(best) > 0) { best = xs[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// min_of is max_of's mirror: the smallest element, or `None` when empty.
+pub function min_of[T: Ord](xs: T[]): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var best: T = xs[0];
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (xs[i].cmp(best) < 0) { best = xs[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
 // lt / lte / gt / gte are the named relational forms of `cmp`, for call
 // sites that read better than a bare `a.cmp(b) < 0`.
 pub function lt[T: Ord](a: T, b: T): boolean { return a.cmp(b) < 0; }
