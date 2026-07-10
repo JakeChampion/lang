@@ -1,0 +1,24 @@
+import "std/io";
+
+// read_all_stdin() over a payload larger than the 4096-byte chunk
+// size, so the reader loops and the chunks are stitched together.
+// #4379 item 2 replaced the O(total²) `out = out + chunk` fold with
+// an O(total) chunk-array + `join("")`; this pins that the stitched
+// result is byte-for-byte correct across the chunk boundaries (no
+// dropped or duplicated bytes at offset 4096, 8192, …).
+//
+// The fixture feeds 5200 bytes where byte i == 'a' + (i % 26). The
+// program re-derives that pattern and returns 42 only if the length
+// and every byte match; a mismatch returns a diagnostic non-42 code.
+function main(): i32 {
+    var s: string = io.read_all_stdin();
+    var n: i32 = s.len();
+    if (n != 5200) { return 1; }
+    var i: i32 = 0;
+    while (i < n) {
+        var expected: i32 = 97 + (i % 26);
+        if ((s[i] as i32) != expected) { return 2; }
+        i = i + 1;
+    }
+    return 42;
+}
