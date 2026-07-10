@@ -3799,12 +3799,30 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   emitter's mid-buffer boxing; irlower-emitted code always calls the
   alloc-boundary __fern_i32_to_string), so a `name: i32_to_string(n)` field is
   handed over uncounted and the reclaim frees it instead of leaking one count
-  per rebind. VERIFIED: TestSelfHostFieldReclaimStrIRX86_64 (+wasm/arm64
-  siblings) — consume-rebind churn flat, carried-field (functional-update)
-  safety, aliased-read safety, snapshot-param safety (caller's original
-  survives the callee's threaded rebinds), and the i32_to_string-producer
-  churn, all at detector zero. Remaining nearby (documented, unchanged):
-  string-ONLY structs (no rc-array field) keep their leak — the construction
-  retain and the reclaim routing are both gated on
-  struct_has_reclaim_array_field, and widening them is the deliberate
-  slot_is_reclaimable_struct-broadening follow-up.
+  per rebind. THE LOAD-BEARING ADMISSION (learned from a per-module compiler
+  self-run segfault + bisect): the string arm is gated per type on a
+  WHOLE-PROGRAM read scan (strfld_reclaim_ok_types_of — a single-pass,
+  field-name-keyed collector) that rejects any type whose string-field names
+  are read in an ESCAPING position anywhere: a call arg (the compiler passes
+  its LowerState/EmitState fields to helpers everywhere — those types are
+  exactly the ones excluded), a return, a slice/trim view, a reassign-alias.
+  Safe transient borrows (binary operands, byte-index bases, read-only /
+  fresh-copy method receivers, retained `var t = x.f` inits) don't exclude.
+  Backends receive the verdict as "strfldok:<T>" needs seeded at the
+  whole-program emit orchestrations (all_funcs on the per-module unit paths —
+  a unit-local list would under-count reads and re-open the UAF); excluded
+  types keep the arrays-only body. ALSO: the arm64 __fern_str_free clobbers
+  x10/x11/x12 (unlike arr_dec), so the arm64 field-reclaim body reloads
+  new/old/snap from the stack args after each string free. VERIFIED:
+  TestSelfHostFieldReclaimStrIRX86_64 (+wasm/arm64 siblings) — consume-rebind
+  churn flat, carried-field (functional-update) safety, aliased-read safety,
+  snapshot-param safety (caller's original survives the callee's threaded
+  rebinds), the i32_to_string-producer churn, and the escaping-read exclusion
+  (`use(s.name)` call arg → arrays-only body, reads stay valid), all at
+  detector zero, plus the per-module whole-compiler self-run. Remaining
+  nearby (documented, unchanged): string-ONLY structs (no rc-array field)
+  keep their leak — the construction retain and the reclaim routing are both
+  gated on struct_has_reclaim_array_field, and widening them is the
+  deliberate slot_is_reclaimable_struct-broadening follow-up; lifting the
+  escaping-read exclusions needs the read-side alias-inc discipline (the
+  #4355 construction/read-side counting follow-up).
