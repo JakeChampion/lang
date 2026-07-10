@@ -3778,3 +3778,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   it) and asserts the try churn grows at most HALF the baseline; plus
   aliased-payload / non-ctor-callee (`pass(b)?` forwards a live box — never
   freed) / escaping-binding exclusions at detector zero.
+- 2026-07-10: **Landed replaced-STRING-field reclaim in `__field_reclaim_<T>`
+  (#4355 slice — self-host irlower + all three backend helper bodies).** The
+  per-type consume-rebind helper freed replaced ARRAY fields only, so a struct
+  threaded through `s = step(s)` rebinds leaked the superseded box's string
+  field per rebind (native flat on the same shape). The three bodies (x86
+  emit_ir_field_reclaim_one, arm64 emit_arm64_field_reclaim_one, wasm
+  emit_wasm_field_reclaim_body) now release a replaced string field under the
+  SAME cow + snap guards as arrays, via the rc-aware __fern_str_free (on wasm
+  $__fern_arr_dec IS the string free — one inline rc-headered block). Balance:
+  the construction-side retains already ON for every routed type (the
+  slit_reclaim-gated #4297 A2 override retain + the base-copy retain), fresh
+  fields sole-owned, carried fields cow-skipped. Two supporting changes: (1) a
+  read-side retain for `var t = s.name` (a string field read of a
+  reclaimable / snapshot struct local whose type routes through
+  __field_reclaim) alias-incs the rc-headered box so the rebind's field free
+  can't dangle the alias — arrays already had this via the is_arr alias-inc;
+  (2) `i32_to_string` is now Owned in str_producer_ownership (the issue's
+  exclusion-note resolution — the historical exclusion guarded the NATIVE
+  emitter's mid-buffer boxing; irlower-emitted code always calls the
+  alloc-boundary __fern_i32_to_string), so a `name: i32_to_string(n)` field is
+  handed over uncounted and the reclaim frees it instead of leaking one count
+  per rebind. VERIFIED: TestSelfHostFieldReclaimStrIRX86_64 (+wasm/arm64
+  siblings) — consume-rebind churn flat, carried-field (functional-update)
+  safety, aliased-read safety, snapshot-param safety (caller's original
+  survives the callee's threaded rebinds), and the i32_to_string-producer
+  churn, all at detector zero. Remaining nearby (documented, unchanged):
+  string-ONLY structs (no rc-array field) keep their leak — the construction
+  retain and the reclaim routing are both gated on
+  struct_has_reclaim_array_field, and widening them is the deliberate
+  slot_is_reclaimable_struct-broadening follow-up.

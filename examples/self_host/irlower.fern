@@ -2775,6 +2775,17 @@ pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
                     // __raw_string boxes a freshly-__raw_alloc'd buffer → a fresh
                     // owned string (#2649 Tier-2 floor).
                     if (cid.name == "__raw_string" && c.args.len() == 2) { return 0; }
+                    // i32_to_string is Owned on THIS path (#4355 — the exclusion
+                    // note's resolution): the historical exclusion guarded the
+                    // NATIVE emitter's mid-buffer boxing, but everything irlower
+                    // emits calls the self-host __fern_i32_to_string, which
+                    // __raw_alloc(len)s a tight buffer and boxes it at the base —
+                    // an alloc boundary __fern_str_free reclaims cleanly (the
+                    // same rationale that already admits it in
+                    // str_free_producer_ident). Without this a replaced
+                    // `name: i32_to_string(n)` struct field was construction-
+                    // retained (Borrowed) and leaked one count per rebind.
+                    if (cid.name == "i32_to_string" && c.args.len() == 1) { return 0; }
                     return 1;
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -2829,13 +2840,14 @@ pub function field_ownerships(slit: parser.ExprStructLit, s: LowerState): i32[] 
 // tuple `(i, 1)` arc):
 //   - chr(n) / string_from_bytes(a)           — alloc builtins, fresh box
 //   - str_to_upper/str_to_lower/str_repeat(s) — free-fn spellings, fresh copy
-//   - i32_to_string(n)                         — decimal-text builtin. NOTE this
-//     is DELIBERATELY excluded from the native-shaped expr_is_fresh_str because
-//     the NATIVE emitter boxes a pointer into the MIDDLE of a scratch buffer; the
-//     self-host IR helper (__fern_i32_to_string) instead __raw_alloc(len)s a tight
-//     buffer and boxes it at the base, so its data pointer IS an alloc boundary
-//     and __fern_str_free (class = ceil(len/8)) reclaims it cleanly. (u32_to_string
-//     is left out — expr_is_str doesn't str-track it, so its slot never marks is_str.)
+//   - i32_to_string(n)                         — decimal-text builtin. Also Owned
+//     in str_producer_ownership / expr_is_fresh_str since #4355 (the historical
+//     exclusion guarded the NATIVE emitter's mid-buffer boxing; everything
+//     irlower emits calls the self-host __fern_i32_to_string, which
+//     __raw_alloc(len)s a tight buffer and boxes it at the base, so its data
+//     pointer IS an alloc boundary and __fern_str_free (class = ceil(len/8))
+//     reclaims it cleanly). (u32_to_string is left out — expr_is_str doesn't
+//     str-track it, so its slot never marks is_str.)
 //   - __raw_string(p, n)                       — the Tier-2 raw box constructor
 // EXCLUDED here (need the `: string` disambiguation, handled in the caller): a
 // bare `a + b` (could be int add) and the `.<m>()` methods (`.reverse()` /
