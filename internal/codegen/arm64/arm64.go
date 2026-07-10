@@ -7437,8 +7437,18 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 
 	retLabel := fmt.Sprintf(".Lret_%s_%d", fn.Name, g.fresh())
 	var scope []irScope
-	for _, op := range irFn.Ops {
-		if err := g.emitOp(op, frameSize, retLabel, &scope); err != nil {
+	for i := 0; i < len(irFn.Ops); i++ {
+		// Compare-and-branch fusion (#4378): an integer comparison whose
+		// 0/1 result flows straight into the OpIf / OpBrIf that follows it
+		// (through zero or more OpNots) emits `cmp; b.cond` instead of the
+		// `cmp; cset; …; cbz/cbnz` materialise-and-retest chain. Safe
+		// because the IR is single-use: the branch is the comparison's only
+		// consumer.
+		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope); ok {
+			i += adv
+			continue
+		}
+		if err := g.emitOp(irFn.Ops[i], frameSize, retLabel, &scope); err != nil {
 			return err
 		}
 	}
@@ -8128,6 +8138,123 @@ func (g *generator) condBranchFar(skipInsn, reg, target string) {
 	g.emit("%s %s, %s", skipInsn, reg, skip)
 	g.emit("b %s", target)
 	g.label(skip)
+}
+
+// condBranchFarCC is condBranchFar's flag-based sibling: a range-safe
+// conditional branch that reaches `target` when condition code `fireCC` holds.
+// `skipCC` is fireCC's inverse. aarch64's `b.cond` reaches only ±1MB and GAS
+// won't relax it, so a direct `b.<fireCC> target` can overflow ("conditional
+// branch out of range") in a very large emitted function; we take the inverted
+// test over a short forward skip and reach `target` with an unconditional `b`
+// (±128MB). Used by the compare-and-branch fusion (#4378).
+func (g *generator) condBranchFarCC(fireCC, skipCC, target string) {
+	skip := g.freshLabel("brFar")
+	g.emit("b.%s %s", skipCC, skip)
+	g.emit("b %s", target)
+	g.label(skip)
+}
+
+// isFusableCompare reports whether an integer comparison op produces a 0/1
+// boolean the compare-and-branch fusion can turn into a direct conditional
+// branch. Float compares are excluded: NaN breaks the negation identity
+// (`!(a < b)` is not `a >= b` when either is NaN), so their `fcmp; cset`
+// materialisation stays. Mirrors the x86-64 predicate of the same name.
+func isFusableCompare(k ir.OpKind) bool {
+	switch k {
+	case ir.OpEq, ir.OpNe, ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS:
+		return true
+	}
+	return false
+}
+
+// armCondFor maps an integer comparison to the AArch64 condition code that
+// holds when the comparison is TRUE (cc) and its inverse (invcc), assuming
+// `cmp lhs, rhs` has already set the flags. `unsigned` selects the unsigned
+// codes (lo/ls/hi/hs) over the signed ones (lt/le/gt/ge) — the b.cond
+// counterpart of the `cset` code selection in the OpLtS/… cases.
+func armCondFor(k ir.OpKind, unsigned bool) (cc, invcc string) {
+	switch k {
+	case ir.OpEq:
+		return "eq", "ne"
+	case ir.OpNe:
+		return "ne", "eq"
+	case ir.OpLtS:
+		if unsigned {
+			return "lo", "hs"
+		}
+		return "lt", "ge"
+	case ir.OpLeS:
+		if unsigned {
+			return "ls", "hi"
+		}
+		return "le", "gt"
+	case ir.OpGtS:
+		if unsigned {
+			return "hi", "ls"
+		}
+		return "gt", "le"
+	case ir.OpGeS:
+		if unsigned {
+			return "hs", "lo"
+		}
+		return "ge", "lt"
+	}
+	return "", ""
+}
+
+// tryFuseCmpBranch fuses `cmp (Not)* {If|BrIf}` into `cmp; b.cond` (#4378, the
+// arm64 mirror of the x86-64 slice). An integer comparison whose 0/1 result
+// flows straight into the following OpIf / OpBrIf — through any number of
+// OpNots — becomes a compare that directly feeds a conditional branch, instead
+// of the `cmp; cset; …; cbz/cbnz` materialise-and-retest chain. Returns the
+// number of EXTRA ops consumed past index i (the caller advances by that) and
+// whether the fusion fired; when it does not fire the op stream is untouched
+// and normal per-op emission runs. The operand-stack effect is identical to the
+// un-fused path (two operands popped, no boolean pushed then re-popped).
+func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	cmp := ops[i]
+	if !isFusableCompare(cmp.Kind) {
+		return 0, false
+	}
+	j := i + 1
+	nots := 0
+	for j < len(ops) && ops[j].Kind == ir.OpNot {
+		nots++
+		j++
+	}
+	if j >= len(ops) {
+		return 0, false
+	}
+	br := ops[j]
+	// OpBrIf branches when the effective condition is TRUE; OpIf branches to
+	// its else-label when the effective condition is FALSE. Each OpNot flips
+	// which comparison outcome that is.
+	whenTrue := br.Kind == ir.OpBrIf
+	if nots%2 == 1 {
+		whenTrue = !whenTrue
+	}
+	cc, invcc := armCondFor(cmp.Kind, cmp.Unsigned)
+	fireCC, skipCC := cc, invcc
+	if !whenTrue {
+		fireCC, skipCC = invcc, cc
+	}
+	switch br.Kind {
+	case ir.OpIf:
+		g.binPop()
+		g.cmpForWidth(cmp.Width)
+		elseL := g.freshLabel("ifElse")
+		endL := g.freshLabel("ifEnd")
+		g.condBranchFarCC(fireCC, skipCC, elseL)
+		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
+		return j - i, true
+	case ir.OpBrIf:
+		g.binPop()
+		g.cmpForWidth(cmp.Width)
+		target := (*scope)[len(*scope)-1-int(br.I32)].brTarget
+		g.condBranchFarCC(fireCC, skipCC, target)
+		return j - i, true
+	}
+	return 0, false
 }
 
 // loadImm32 / loadImm64 materialise an immediate into `reg` with movz/movk
