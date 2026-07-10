@@ -174,6 +174,36 @@ pub function field_reclaim_type(name: string): string {
     return name[16 : name.len()];
 }
 
+// is_c_call reports whether a call_direct callee is an FFI shim of the
+// `__c_call<n>` family — `__c_call0`..`__c_call4` with an optional `_f32` /
+// `_f64` return-type suffix (#4375). The family calls a C-ABI (System V /
+// AAPCS64) function pointer with up to four integer/pointer args; the shim
+// bodies are emitted by emit_ir_runtime (x86) / emit_arm64_ir_runtime (arm64),
+// so a module using them stays IR-eligible instead of bailing to the AST path
+// (which never had a body → undefined `__fn___c_call0` link failure). Wasm has
+// no C-ABI, so wasm_ir_deferrals_ok subtracts the family (native parity: native
+// wasm has no __c_call either).
+pub function is_c_call(name: string): boolean {
+    if (name.len() < 9) { return false; }
+    if (name[0:8] != "__c_call") { return false; }
+    var d: string = name[8:9];
+    if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
+    var rest: string = name[9 : name.len()];
+    return rest == "" || rest == "_f32" || rest == "_f64";
+}
+
+// c_call_arity returns the integer-arg count n (0..4) of a `__c_call<n>...`
+// callee name (the digit at index 8). The shim body depends only on n, not on
+// the return-type suffix.
+pub function c_call_arity(name: string): i32 {
+    var d: string = name[8:9];
+    if (d == "1") { return 1; }
+    if (d == "2") { return 2; }
+    if (d == "3") { return 3; }
+    if (d == "4") { return 4; }
+    return 0;
+}
+
 // ir_helper_symbol maps an IR runtime-helper name to the asm.fern symbol the
 // IR path calls (stack-arg ABI). The exit-sweep / reassign release
 // (__fern_rc_dec) maps to __fn___fern_arr_dec — the array release that frees
@@ -765,6 +795,57 @@ function emit_ir_sleep_ms(s: asmcore.EmitState): asmcore.EmitState {
 // (not the reverse), so these bodies are duplicated here rather than shared;
 // the two emit paths are mutually exclusive per compile (emit_module vs
 // emit_module_ir), so there is no symbol clash. Keep in sync with asm.fern.
+// emit_ccall_shim1 emits one `__fn___c_call<n>[suffix]` FFI shim (#4375). The
+// shim is entered like any stack-ABI callee — the generic call_direct emit
+// reversed the args so arg0 (fn) sits on top, i.e. param0 @ 16(%rbp), a_i @
+// (24 + 8i)(%rbp). It marshals fn into %r11 and a0..a{n-1} into the System V
+// integer-arg registers (%rdi/%rsi/%rdx/%rcx), 16-byte-aligns %rsp for the C
+// ABI, and `call *%r11`s the pointer; the callee's result lands in %rax (or
+// %xmm0 for the _f32/_f64 variants) and flows straight back. Mirrors native's
+// emitCCallRuntime, adapted from the register-arg to the stack-arg ABI.
+function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcore.EmitState {
+    s = s.write("\n__fn_" + variant + ":\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
+    s = s.write("    movq 16(%rbp), %r11\n");
+    if (n >= 1) { s = s.write("    movq 24(%rbp), %rdi\n"); }
+    if (n >= 2) { s = s.write("    movq 32(%rbp), %rsi\n"); }
+    if (n >= 3) { s = s.write("    movq 40(%rbp), %rdx\n"); }
+    if (n >= 4) { s = s.write("    movq 48(%rbp), %rcx\n"); }
+    s = s.write("    andq $-16, %rsp\n");
+    s = s.write("    call *%r11\n");
+    s = s.write("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
+    return s;
+}
+
+// emit_ccall_shims emits every __c_call variant the module referenced (each
+// registered as `need("ccall:<name>")` by the generic call_direct emit). The
+// body depends only on the arity n; the _f32/_f64 suffixes share it verbatim.
+function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
+    var arity: i32 = 0;
+    while (arity <= 4) {
+        var base: string = "__c_call" + util.i32_to_string(arity);
+        if (s.has_need("ccall:" + base)) { s = emit_ccall_shim1(s, base, arity); }
+        if (s.has_need("ccall:" + base + "_f32")) { s = emit_ccall_shim1(s, base + "_f32", arity); }
+        if (s.has_need("ccall:" + base + "_f64")) { s = emit_ccall_shim1(s, base + "_f64", arity); }
+        arity = arity + 1;
+    }
+    return s;
+}
+
+// any_ccall_need reports whether the module referenced any __c_call variant, so
+// the emit dispatch knows to switch to .text and emit the shim block.
+function any_ccall_need(s: asmcore.EmitState): boolean {
+    var arity: i32 = 0;
+    while (arity <= 4) {
+        var base: string = "__c_call" + util.i32_to_string(arity);
+        if (s.has_need("ccall:" + base)) { return true; }
+        if (s.has_need("ccall:" + base + "_f32")) { return true; }
+        if (s.has_need("ccall:" + base + "_f64")) { return true; }
+        arity = arity + 1;
+    }
+    return false;
+}
+
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // .bss: heap bump pointer + arena end, the over-release detector, and the
     // size-classed freelist (65536 classes * 8 bytes). The heap arena itself is
@@ -3295,7 +3376,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
+            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         } else if (o.kind_tag == 6) {  // const_func
             if (!module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         }
@@ -3451,7 +3532,7 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
+            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
     }
@@ -4586,6 +4667,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // asm.fern's stack ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)).
             // Reverse the argc on-stack slots, call, pop the args, push %rax.
             var argc: i32 = o.i32_imm;
+            // FFI __c_call<n> (#4375): a normal call to the shim __fn___c_call<n>
+            // (emitted by emit_ir_runtime). Register its need so the body is
+            // emitted; the shim reads its params off the stack ABI like any
+            // callee and marshals them into the C-ABI registers.
+            if (is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
             var h: i32 = 0;
             while (h < argc / 2) {
                 var lo: i32 = h * 8;
@@ -5498,7 +5584,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
         while (j < r.ops.len()) {
             var o: ir.Op = r.ops[j];
             if (o.kind_tag == 149) {  // call_direct
-                if (!is_fern_helper(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
+                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
             } else if (o.kind_tag == 6) {  // const_func
                 if (!module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
             }
@@ -5721,6 +5807,13 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
     if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    // FFI __c_call<n> shims (#4375): allocation-free register-marshal + `call
+    // *fn`, so independent of the heap runtime above. Emitted in .text when the
+    // module referenced any variant (emit_ir_runtime, when it ran, left .bss).
+    if (any_ccall_need(s)) {
+        s = s.write("    .text\n");
+        s = emit_ccall_shims(s);
+    }
     // String search predicates (starts_with / ends_with / index_of) are now
     // Fern runtime functions (#2649): allocation-free + self-contained, lowered
     // through the IR pipeline via emit_ir_runtime_fern_fn (entry-only, .text;
