@@ -117,6 +117,52 @@ pub function http_response_no_content(): HttpResponse {
     return HttpResponse { status: 204, body: "", headers: headers.header_map_new() };
 }
 
+// ============================================================
+// Typed-body builders (#4385 — "response builders never set
+// Content-Type"). The plain `http_response_*` builders above
+// leave the media type unset, so a browser sniffs the body and
+// a JSON API response can render as text. These set the right
+// `Content-Type` up front, saving the `.with_header("Content-
+// Type", …)` at every handler call site. Body types that carry
+// text use an explicit `charset=utf-8` (Fern strings are UTF-8).
+// ============================================================
+
+// Build a 200 response with `Content-Type: ct` set.
+function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
+    var h: HeaderMap = headers.header_map_new();
+    h = h.set("Content-Type", ct);
+    return HttpResponse { status: status, body: body, headers: h };
+}
+
+// `http_response_json(body)` — 200 with `Content-Type:
+// application/json`. `body` is the already-serialized JSON
+// text (e.g. from `json.encode(...)`); this only sets the
+// media type, it does not itself serialize.
+pub function http_response_json(body: string): HttpResponse {
+    return __http_response_typed(200, body, "application/json");
+}
+
+// `http_response_json_status(status, body)` — like
+// `http_response_json` but with an explicit status code, for
+// `201 Created` / `422 Unprocessable Entity` / … JSON replies.
+pub function http_response_json_status(status: i32, body: string): HttpResponse {
+    return __http_response_typed(status, body, "application/json");
+}
+
+// `http_response_html(body)` — 200 with `Content-Type:
+// text/html; charset=utf-8`.
+pub function http_response_html(body: string): HttpResponse {
+    return __http_response_typed(200, body, "text/html; charset=utf-8");
+}
+
+// `http_response_plain(body)` — 200 with `Content-Type:
+// text/plain; charset=utf-8`. The typed sibling of
+// `http_response_ok`, for when the client should be told the
+// body is plain text rather than left to sniff it.
+pub function http_response_plain(body: string): HttpResponse {
+    return __http_response_typed(200, body, "text/plain; charset=utf-8");
+}
+
 // `http_path_segments(path)` — split an HTTP path into
 // non-empty components. Drops the leading "/" and any
 // double slashes; query string (`?...`) is also stripped.
@@ -473,4 +519,14 @@ pub function (r: HttpResponse) with_header(name: string, value: string): HttpRes
 // (append semantics — duplicate-safe, e.g. Set-Cookie).
 pub function (r: HttpResponse) with_appended_header(name: string, value: string): HttpResponse {
     return HttpResponse { ...r, headers: r.headers.append(name, value) };
+}
+
+// `(r: HttpResponse).with_content_type(ct)` — set (replace) the
+// `Content-Type` header. Convenience over `with_header` for the
+// most common single header a handler overrides; pairs with the
+// plain `http_response_*` builders when you want to keep their
+// status/body but add a media type:
+//   r = http_response_ok(csv).with_content_type("text/csv");
+pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
+    return HttpResponse { ...r, headers: r.headers.set("Content-Type", ct) };
 }
