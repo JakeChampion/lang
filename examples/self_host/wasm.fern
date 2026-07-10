@@ -1298,7 +1298,14 @@ function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32): string {
             var k: i32 = 0;
             while (k < cx.structs[si].fields.len()) {
                 var ft: string = cx.structs[si].fields[k].type_name;
-                if (struct_field_kind_char(ft, cx) == "a") {
+                // A replaced STRING field (#4355) rides the same guarded dec:
+                // a wasm heap string is a single inline rc-headered block, so
+                // $__fern_arr_dec IS the wasm string free (it null-/low-/
+                // sentinel-guards a literal internally). Balanced by the shared
+                // irlower construction retain — see the x86
+                // emit_ir_field_reclaim_one string arm.
+                var frk: string = struct_field_kind_char(ft, cx);
+                if (frk == "a" || frk == "s") {
                     var off: string = util.i32_to_string(8 + k * 8);
                     var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
                     var newf: string = "(i32.load offset=" + off + " (local.get $new))";

@@ -10272,6 +10272,32 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // second reference → retain (alias_inc).
             if (se.is_arr_slot(se.slot_of(id.name))) { is_arr = true; alias_inc = true; }
         },
+        parser.ExprFieldAccess(sfa) => {
+            // #4355: `var t = s.name` — a STRING field read of a local whose
+            // consume-rebind routes through the string-widened
+            // __field_reclaim_<T>. The read is UNCOUNTED (strings have no
+            // read-side alias-inc discipline yet), so the next rebind's
+            // replaced-field free would release the string out from under t.
+            // Retain it (alias_inc → __fern_rc_inc on the rc-headered string
+            // box): the reclaim's rc-aware __fern_str_free then only decs,
+            // and t's copy stays valid — one count leaks (sound), mirroring
+            // the construction-side base-copy retain family. Gated on the
+            // source slot actually being reclaimable / snapshot-routed and
+            // its type routing through __field_reclaim (array field present).
+            match (sfa.obj) {
+                parser.ExprIdent(sfid) => {
+                    var sfsl: i32 = se.slot_of(sfid.name);
+                    if (sfsl >= 0 && (slot_is_reclaimable_struct(se, sfsl) || slot_is_snapshot_param(se, sfsl))) {
+                        var sfst: string = se.struct_type_of_slot(sfsl);
+                        if (sfst != "" && decl_field_type(se.structs, sfst, sfa.field) == "string"
+                            && struct_has_reclaim_array_field(se.structs, sfst)) {
+                            alias_inc = true;
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
         parser.ExprCall(cc) => {
             // `var x = f()` where f returns an array: a MOVE — x takes
             // ownership of the callee's already-owned buffer (rc=1), so

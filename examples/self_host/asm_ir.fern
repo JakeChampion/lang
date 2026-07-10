@@ -5047,7 +5047,17 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
     var k: i32 = 0;
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
-        if (irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING field (#4355): released via the rc-aware
+        // __fern_str_free (free rc==1, dec rc>1, skip immortal view /
+        // literal) under the SAME cow + snap guards as the array fields —
+        // a carried-over field (functional update / `name: s.name` copy)
+        // is pointer-equal in new and skipped; the caller's original is
+        // protected by the snap compare. Balanced by the struct-lit
+        // string-field retain (lower_expr's ExprStructLit arm, gated on
+        // slit_reclaim — true for every type routed here): a non-fresh
+        // field value was inc'd into the box, a fresh one is sole-owned.
+        var fr_str: boolean = fdt == "string";
+        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
@@ -5059,7 +5069,11 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lfr_" + san + "_dec" + ks + ":\n");
             s = s.write("    pushq %rsi\n");
-            s = s.write("    call __fn___fern_arr_dec\n");          // shallow dec/free the dead buffer
+            if (fr_str) {
+                s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)
+            } else {
+                s = s.write("    call __fn___fern_arr_dec\n");      // shallow dec/free the dead buffer
+            }
             s = s.write("    addq $8, %rsp\n");
             s = s.write(".Lfr_" + san + "_skip" + ks + ":\n");
         }

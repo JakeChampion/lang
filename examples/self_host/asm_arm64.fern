@@ -3987,7 +3987,13 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
     var k: i32 = 0;
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
-        if (irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING field (#4355): released via the rc-aware
+        // __fern_str_free under the same cow + snap guards — mirrors the x86
+        // emit_ir_field_reclaim_one string arm (see its comment for the
+        // construction-retain balance). __fern_str_free clobbers only
+        // x0..x3,x9 like arr_dec, so x10/x11/x12 survive.
+        var fr_str: boolean = fdt == "string";
+        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
@@ -4000,7 +4006,11 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
             s = s.write("    str x1, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_arr_dec\n");           // shallow dec/free the dead buffer
+            if (fr_str) {
+                s = s.write("    bl __fn___fern_str_free\n");      // rc-aware string free (data buffer + box)
+            } else {
+                s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec/free the dead buffer
+            }
             s = s.write("    add sp, sp, #16\n");
             s = s.write(".Lafr_" + san + "_skip" + ks + ":\n");
         }
