@@ -6671,6 +6671,17 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// rcInlineOK gates the #4402 opt-2b inline rc fast path per function.
+	// Inlining expands each rc op from a single `bl` into ~10 instructions;
+	// in the self-host compiler's largest lowering functions (irlower__
+	// lower_expr is ~9.75M IR ops with ~1.66M rc ops) that bloat pushes the
+	// function body past aarch64's ±128MB unconditional-branch reach, so the
+	// intra-function `b .Lret_…` epilogue jumps overflow ("branch out of
+	// range"). Set false for such a function (see rcInlineMaxOps) so its rc
+	// ops fall back to the `bl` call form that already assembled — every
+	// normal function (all user code, and all but the one self-host monster)
+	// keeps the inline win.
+	rcInlineOK bool
 	// usesStrInc / usesStrDec / usesCellFree gate the two-word
 	// string runtime helpers — the arm64 port of the wasm
 	// __fern_str_inc / __fern_str_dec / __fern_cell_free. Tail-call
@@ -7317,10 +7328,26 @@ func (g *generator) emitStartRuntime() {
 // We reserve a fixed slot count per function — the IR doesn't
 // expose a "max locals" field directly, so we walk irFn.Ops
 // and find the highest-numbered slot referenced.
+
+// rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
+// fast path (see the rcInlineOK field). 1M sits ~2× above the largest normal
+// self-host function (~0.5M ops) and ~10× below irlower__lower_expr (~9.75M
+// ops), the only function whose inlined body overflows aarch64's ±128MB
+// branch reach.
+const rcInlineMaxOps = 1_000_000
+
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.current = fn
 	g.currentIR = irFn
 	defer func() { g.current = nil; g.currentIR = nil; g.slotOffsets = nil }()
+
+	// #4402 opt 2b: inline rc ops only when the function is small enough
+	// that the ~10-instruction-per-op expansion can't push its body past
+	// aarch64's ±128MB branch reach. Only the self-host compiler's largest
+	// lowering function (irlower__lower_expr, ~9.75M ops) exceeds this; the
+	// next-largest is ~0.5M ops, so the threshold has wide margin and every
+	// user-scale function inlines. See the rcInlineOK field comment.
+	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps
 
 	maxSlot := int32(-1)
 	for _, op := range irFn.Ops {
@@ -9321,7 +9348,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		} else {
 			g.usesRcDec = true
 		}
-		if ast.RcFreeDebug {
+		// RcFreeDebug keeps the call for the RcPoison trap; !rcInlineOK falls
+		// back to the call in functions too large to absorb the inline bloat.
+		if ast.RcFreeDebug || !g.rcInlineOK {
 			g.pop()
 			g.emit("bl %s", op.Str)
 			g.push()
@@ -9361,8 +9390,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// compare. Mirrors emitRcIsUniqueRuntime (whose guards differ
 		// from inc/dec: low bound 0x10000, no SSO-tag test). Result i32
 		// in w0.
-		g.usesRcIsUnique = true // keep the helper emitted (RcFreeDebug bl)
-		if ast.RcFreeDebug {
+		g.usesRcIsUnique = true // keep the helper emitted (RcFreeDebug / large-fn bl)
+		if ast.RcFreeDebug || !g.rcInlineOK {
 			g.pop()
 			g.emit("bl %s", op.Str)
 			g.push()
