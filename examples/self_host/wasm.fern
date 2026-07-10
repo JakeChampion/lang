@@ -1150,10 +1150,14 @@ function array_field_elem_is_ptr(ft: string, cx: Ctx): boolean {
 pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[]): string {
     var out: string = "";
     var rc_cx: Ctx = release_module_ctx(mod.structs, collect_method_types(mod), mod.funcs);
+    // #4355: replaced-STRING-field admission — the wasm IR driver is
+    // single-module whole-program, so mod.funcs is the full read scope
+    // (see irlower.strfld_reclaim_ok_types_of).
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var frt: string[] = wasm_ir.field_reclaim_types(cache);
     var frti: i32 = 0;
     while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(cache));
+        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(cache), util.index_of_str(sfok, frt[frti]) >= 0);
         frti = frti + 1;
     }
     var sdt: string[] = wasm_ir.struct_drop_types(cache, mod.structs);
@@ -1289,7 +1293,7 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32): string {
+function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32, str_ok: boolean): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
     var si: i32 = 0;
@@ -1302,10 +1306,11 @@ function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32): string {
                 // a wasm heap string is a single inline rc-headered block, so
                 // $__fern_arr_dec IS the wasm string free (it null-/low-/
                 // sentinel-guards a literal internally). Balanced by the shared
-                // irlower construction retain — see the x86
-                // emit_ir_field_reclaim_one string arm.
+                // irlower construction retain, and gated on the whole-program
+                // read scan (str_ok) — see the x86 emit_ir_field_reclaim_one
+                // string arm.
                 var frk: string = struct_field_kind_char(ft, cx);
-                if (frk == "a" || frk == "s") {
+                if (frk == "a" || (frk == "s" && str_ok)) {
                     var off: string = util.i32_to_string(8 + k * 8);
                     var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
                     var newf: string = "(i32.load offset=" + off + " (local.get $new))";

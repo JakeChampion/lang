@@ -5056,7 +5056,12 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // string-field retain (lower_expr's ExprStructLit arm, gated on
         // slit_reclaim — true for every type routed here): a non-fresh
         // field value was inc'd into the box, a fresh one is sole-owned.
-        var fr_str: boolean = fdt == "string";
+        // Gated on the whole-program read scan ("strfldok:<T>", seeded by
+        // emit_module_ir_unit): a type whose string fields are read in any
+        // ESCAPING position (call arg / return / view / reassign-alias)
+        // keeps the arrays-only body — those reads are uncounted aliases
+        // the free would dangle (the per-module compiler self-run segfault).
+        var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
         if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
@@ -5680,6 +5685,18 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
     s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache);
+    // #4355: admit the replaced-STRING-field arm per type, from the
+    // WHOLE-PROGRAM read scan (all_funcs — a unit-local list would
+    // under-count the reads and re-open the UAF the scan exists to prevent;
+    // see irlower.strfld_reclaim_ok_types_of). Seeded as "strfldok:<T>"
+    // needs so emit_ir_field_reclaim_one can gate its string arm; every
+    // unit computes the same verdict, so the weak-deduped bodies agree.
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var sfoi: i32 = 0;
+    while (sfoi < sfok.len()) {
+        s = s.need("strfldok:" + sfok[sfoi]);
+        sfoi = sfoi + 1;
+    }
     // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
     // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a
     // library module's call resolves locally rather than relying on the entry's

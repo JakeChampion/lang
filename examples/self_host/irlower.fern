@@ -22454,6 +22454,193 @@ function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: stri
     return a;
 }
 
+// --- replaced-string-field reclaim admission (#4355) ---------------------------
+//
+// The __field_reclaim_<T> string arm frees a REPLACED string field at rc==1.
+// That is sound only if no read of the field can outlive the box chain: the
+// self-host has no read-side alias-inc discipline for strings, so a field
+// read that ESCAPES (a call arg, a return, a container/struct store, a
+// slice/trim view) is an UNCOUNTED alias the free would dangle — the
+// per-module compiler self-run segfaulted on exactly this (its own
+// LowerState/EmitState string fields are passed to helpers everywhere).
+// strfld_reclaim_ok_types_of therefore admits a type's string arm only when
+// EVERY read of its string-field NAMES, across the WHOLE program, is a
+// provable transient borrow: a binary operand (concat/compare), a byte-index
+// base, the receiver of a read-only / fresh-copy string method, or a direct
+// `var t = x.f` init (retained by the #4768 read-side alias-inc). The walk is
+// field-NAME-keyed and obj-type-blind — a same-named field on another type
+// over-excludes (sound). Callers must pass the WHOLE-PROGRAM func list
+// (all_funcs on the per-module paths); a partial list would under-count the
+// reads and re-open the UAF.
+
+// strfld_is_fa: e is a DIRECT `<obj>.field` read (any obj shape).
+function strfld_is_fa(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprFieldAccess(_) => { return true; },
+        _ => {}
+    }
+    return false;
+}
+
+// strfld_mark: record e's field name as unsafely read (dedup'd), then keep
+// walking its receiver chain.
+function strfld_mark(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            a = push_str_unique(a, fa.field);
+            a = strfld_collect_unsafe(fa.obj, a);
+        },
+        _ => {}
+    }
+    return a;
+}
+
+// strfld_safe_operand: the DIRECT read in this position is a transient
+// borrow — skip marking it, but keep walking beneath it (its obj chain and
+// any nested expressions).
+function strfld_safe_operand(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprFieldAccess(fa) => { return strfld_collect_unsafe(fa.obj, acc); },
+        _ => {}
+    }
+    return strfld_collect_unsafe(e, acc);
+}
+
+// strfld_collect_unsafe walks one expression and accumulates every field
+// NAME read in a position that could outlive its box (see the section
+// comment). A bare ExprFieldAccess reached here — i.e. not consumed by one
+// of the safe parents (binary operand, byte-index base, read-only /
+// fresh-copy method receiver, direct var-init) — is unsafe by default.
+function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(_) => { return strfld_mark(e, a); },
+        parser.ExprBinary(b) => {
+            // direct operands borrow (concat copies bytes, compares read).
+            a = strfld_safe_operand(b.left, a);
+            return strfld_safe_operand(b.right, a);
+        },
+        parser.ExprUnary(u) => { return strfld_collect_unsafe(u.operand, a); },
+        parser.ExprIndex(ix) => {
+            // x.f[i] byte read borrows the base.
+            a = strfld_safe_operand(ix.array, a);
+            return strfld_collect_unsafe(ix.index, a);
+        },
+        parser.ExprSlice(sl) => {
+            // a slice/trim of a field is a VIEW aliasing the buffer — unsafe.
+            a = strfld_collect_unsafe(sl.array, a);
+            match (sl.array) { parser.ExprFieldAccess(_) => { a = strfld_mark(sl.array, a); }, _ => {} }
+            a = strfld_collect_unsafe(sl.start, a);
+            return strfld_collect_unsafe(sl.end, a);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    // read-only / fresh-copy string methods borrow their
+                    // receiver; any other method may retain it.
+                    if (cfa.field == "len" || cfa.field == "to_upper" || cfa.field == "to_lower"
+                        || cfa.field == "reverse" || cfa.field == "repeat"
+                        || cfa.field == "starts_with" || cfa.field == "ends_with"
+                        || cfa.field == "contains" || cfa.field == "index_of") {
+                        a = strfld_safe_operand(cfa.obj, a);
+                    } else {
+                        a = strfld_collect_unsafe(cfa.obj, a);
+                        match (cfa.obj) { parser.ExprFieldAccess(_) => { a = strfld_mark(cfa.obj, a); }, _ => {} }
+                    }
+                },
+                _ => { a = strfld_collect_unsafe(c.callee, a); }
+            }
+            // ANY argument may retain the value (helpers, appends, map sets
+            // are all calls) — direct reads there are unsafe.
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                a = strfld_collect_unsafe(c.args[ai], a);
+                ai = ai + 1;
+            }
+            return a;
+        },
+        _ => {}
+    }
+    return a;
+}
+
+// strfld_collect_unsafe_stmts: single-pass statement walk. A direct
+// `var t = x.f` init is SAFE (the #4768 read-side retain incs it); a
+// REASSIGN `t = x.f` is not retained and stays unsafe.
+function strfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { a = strfld_safe_operand(v.init, a); },
+            parser.StmtReturn(r) => { a = strfld_collect_unsafe(r.value, a); },
+            parser.StmtAssign(as2) => { a = strfld_collect_unsafe(as2.value, a); },
+            parser.StmtExpr(ex) => { a = strfld_collect_unsafe(ex.value, a); },
+            parser.StmtIf(iff) => {
+                a = strfld_collect_unsafe(iff.cond, a);
+                a = strfld_collect_unsafe_stmts(iff.then_body, a);
+                a = strfld_collect_unsafe_stmts(iff.else_body, a);
+            },
+            parser.StmtWhile(w) => {
+                a = strfld_collect_unsafe(w.cond, a);
+                a = strfld_collect_unsafe_stmts(w.body, a);
+            },
+            parser.StmtFor(fo) => {
+                a = strfld_collect_unsafe(fo.iter, a);
+                a = strfld_collect_unsafe_stmts(fo.body, a);
+            },
+            parser.StmtMatch(m) => {
+                a = strfld_collect_unsafe(m.scrutinee, a);
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (m.arms[mi].has_guard) { a = strfld_collect_unsafe(m.arms[mi].guard, a); }
+                    a = strfld_collect_unsafe_stmts(m.arms[mi].body, a);
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// strfld_reclaim_ok_types_of: struct types whose __field_reclaim_<T> body may
+// include the string arm — see the section comment for the contract. The
+// backends seed each admitted type as a "strfldok:<T>" need at their
+// whole-program emit orchestration; partial-funcs emit paths must pass []
+// funcs (admitting nothing) rather than a unit-local list.
+pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    // Single pass: collect every unsafely-read field NAME across the whole
+    // program, then admit each candidate type iff none of its string-field
+    // names is in the set.
+    var unsafe_names: string[] = [];
+    var ki: i32 = 0;
+    while (ki < funcs.len()) {
+        unsafe_names = strfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names);
+        ki = ki + 1;
+    }
+    var out: string[] = [];
+    var si: i32 = 0;
+    while (si < structs.len()) {
+        var t: string = structs[si].name;
+        if (struct_has_string_field(structs, t) && struct_has_reclaim_array_field(structs, t)) {
+            var ok: boolean = true;
+            var n: i32 = structs[si].fields.len();
+            var fi: i32 = 0;
+            while (fi < n) {
+                if (structs[si].fields[fi].type_name == "string"
+                    && util.index_of_str(unsafe_names, structs[si].fields[fi].name) >= 0) { ok = false; }
+                fi = fi + 1;
+            }
+            if (ok) { out = out.append(t); }
+        }
+        si = si + 1;
+    }
+    return out;
+}
+
 // tuple_elem_tags parses a tuple type string `(t0, t1, …)` into its element
 // type spellings joined by commas ("i32,string,Point"), splitting on top-level
 // commas only (nested brackets/parens don't count) and trimming spaces. Each

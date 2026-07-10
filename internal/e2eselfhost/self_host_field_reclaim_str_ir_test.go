@@ -125,6 +125,30 @@ function main(): i32 {
     return bad;
 }`, "field-reclaim-str-snap-safe", 0)
 
+	// ESCAPING read → type EXCLUDED by the whole-program scan
+	// (strfld_reclaim_ok_types_of): `use(s.name)` passes the field to a call
+	// arg — an uncounted alias the free would dangle — so S keeps the
+	// arrays-only reclaim body and its strings keep the sound leak. Every
+	// read must stay valid across rebinds, detector zero.
+	run(t, `struct S { xs: i32[], name: string, n: i32 }
+function use(nm: string): i32 { return nm.len(); }
+function step(s: S): S { return S { xs: [s.n], name: s.name + "x", n: s.n + 1 }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 1000) {
+        var s: S = S { xs: [1], name: "a" + "b", n: 0 };
+        if (use(s.name) != 2) { bad = 1; }
+        s = step(s);
+        s = step(s);
+        if (use(s.name) != 4) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "field-reclaim-str-escaping-read-excluded", 0)
+
 	// i32_to_string as the replaced field's producer (the exclusion note on
 	// the issue): on the self-host IR path __fern_i32_to_string boxes at an
 	// alloc boundary, so the replaced field frees cleanly — churn flat.

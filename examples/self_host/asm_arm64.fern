@@ -3887,6 +3887,12 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf);
         fi = fi + 1;
     }
+    // #4355: admit the replaced-STRING-field arm per type from the
+    // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
+    // sibling seeding and irlower.strfld_reclaim_ok_types_of).
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var sfoi: i32 = 0;
+    while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
     // with emit_module's single-unit IR path (so the load_run / emit_module
     // route also emits them — previously only this multi-unit path did, so a
@@ -3990,12 +3996,13 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         // A replaced STRING field (#4355): released via the rc-aware
         // __fern_str_free under the same cow + snap guards — mirrors the x86
         // emit_ir_field_reclaim_one string arm (see its comment for the
-        // construction-retain balance). UNLIKE arr_dec, __fern_str_free
-        // CLOBBERS x10/x11/x12 (its heap-base / heap-end / freelist-head
-        // scratch), so new/old/snap are reloaded from the stable stack args
-        // after the call — the frame push above shifts them to [sp+48] /
-        // [sp+32] / [sp+16].
-        var fr_str: boolean = fdt == "string";
+        // construction-retain balance and the "strfldok:<T>" whole-program
+        // read-scan gate). UNLIKE arr_dec, __fern_str_free CLOBBERS
+        // x10/x11/x12 (its heap-base / heap-end / freelist-head scratch), so
+        // new/old/snap are reloaded from the stable stack args after the
+        // call — the frame push above shifts them to [sp+48] / [sp+32] /
+        // [sp+16].
+        var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
         if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
@@ -8676,6 +8683,11 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     // Expand the declarative runtime-dependency closure (see emit_module's IR
     // dispatch) before emit_runtime gates each helper on has_need.
     s = s.close_needs();
+    // #4355: replaced-STRING-field admission — this driver route is
+    // single-module whole-program, so mod.funcs IS the full read scope.
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var sfoi: i32 = 0;
+    while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
     s = emit_runtime(s, darwin);
