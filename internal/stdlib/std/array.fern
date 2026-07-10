@@ -1054,6 +1054,50 @@ pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
     return Some(best);
 }
 
+// `position(xs, pred)` — `Some(i)` for the FIRST index whose element
+// satisfies `pred`, else `None`. The predicate sibling of `index_of` (which
+// matches by `Eq` value) and the index-returning companion of `find` (which
+// returns the element): `find` answers "which element", `position` answers
+// "where". Works for any element type via the closure; empty → `None`.
+pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (pred(xs[i])) { return Some(i); }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `take_while(xs, pred)` — fresh `T[]` of the LONGEST leading run whose every
+// element satisfies `pred`; stops at (and excludes) the first that doesn't.
+// The predicate form of the count-based `take`. `[]` when the first element
+// fails, a full copy when all pass. Complement of `drop_while`:
+// `take_while(xs, p) ++ drop_while(xs, p) == xs`.
+pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < xs.len() && pred(xs[i])) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `drop_while(xs, pred)` — fresh `T[]` starting at the FIRST element that fails
+// `pred` (the suffix `take_while` stops before). The predicate form of the
+// count-based `drop`. A full copy when the first element fails, `[]` when all
+// pass.
+pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
+    var i: i32 = 0;
+    while (i < xs.len() && pred(xs[i])) { i = i + 1; }
+    var out: T[] = [];
+    while (i < xs.len()) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // `enumerate(xs)` — pair each element with its 0-based index:
 // `[(0, xs[0]), (1, xs[1]), ...]`. Lets a single `for (i, x) in
 // enumerate(xs)`-style loop carry the index without a manual
