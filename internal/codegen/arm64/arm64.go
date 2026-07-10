@@ -9299,12 +9299,93 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpMakeClosure, ir.OpMakeEnv:
 		return g.emitMakeClosureOrEnv(op)
 
-	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
-		// The dedicated rc ops (#4402 opt 2) carry the helper name in
-		// Str and argc in I32, so they share OpCallDirect's lowering
-		// verbatim — same call, same result push. Opt 2b replaces
-		// this shared path with inline fast-path bodies.
+	case ir.OpRcInc, ir.OpRcDec:
+		// #4402 opt 2b: inline the rc fast path (arm64 mirror of the
+		// x86-64 slice) — the hot no-op guards (null / SSO inline-tag /
+		// below-heap / static sentinel) and the RMW happen without a
+		// `bl` and no caller-save spill. Semantics mirror
+		// emitRcIncRuntime / emitRcDecRuntime instruction-for-
+		// instruction, including rc_dec's underflow-counter bump. The
+		// helpers stay emitted (runtime code tail-calls them, and the
+		// RcFreeDebug build below still calls out for the RcPoison
+		// use-after-free trap the inline path omits). rc ops are
+		// pass-through: x0 holds the pointer and doubles as the result.
+		// The guard branches all target `done` a few instructions ahead,
+		// so plain cbz/tbnz/b.lo are in range (no condBranchFar needed).
 		//
+		// Keep the helper emitted (it used to be gated off this op
+		// reaching the OpCallDirect switch): runtime helpers tail-call it
+		// and the RcFreeDebug `bl` below needs a target.
+		if op.Kind == ir.OpRcInc {
+			g.usesRcInc = true
+		} else {
+			g.usesRcDec = true
+		}
+		if ast.RcFreeDebug {
+			g.pop()
+			g.emit("bl %s", op.Str)
+			g.push()
+			return nil
+		}
+		done := g.freshLabel("rcopDone")
+		g.pop()                         // x0 = ptr
+		g.emit("cbz x0, %s", done)      // null
+		g.emit("tbnz x0, #0, %s", done) // SSO inline-tag (bit 0 set)
+		g.emit("mov x1, #1")
+		g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 heap base hint
+		g.emit("cmp x0, x1")
+		g.emit("b.lo %s", done)          // below heap
+		g.emit("ldur w1, [x0, #-8]")     // rc
+		g.emit("tbnz w1, #31, %s", done) // static sentinel (negative)
+		if op.Kind == ir.OpRcInc {
+			g.emit("add w1, w1, #1")
+		} else {
+			// Underflow detector: a healthy dec sees rc >= 1; rc <= 0
+			// here is an over-release — bump the counter, then still dec.
+			decLbl := g.freshLabel("rcopDec")
+			g.emit("cmp w1, #0")
+			g.emit("b.gt %s", decLbl)
+			g.adrpAdd("x2", "__fern_rc_underflow")
+			g.emit("ldr w3, [x2]")
+			g.emit("add w3, w3, #1")
+			g.emit("str w3, [x2]")
+			g.label(decLbl)
+			g.emit("sub w1, w1, #1")
+		}
+		g.emit("stur w1, [x0, #-8]")
+		g.label(done)
+		g.push()
+		return nil
+	case ir.OpRcIsUnique:
+		// #4402 opt 2b: inline is_unique — load, sentinel test, ==1
+		// compare. Mirrors emitRcIsUniqueRuntime (whose guards differ
+		// from inc/dec: low bound 0x10000, no SSO-tag test). Result i32
+		// in w0.
+		g.usesRcIsUnique = true // keep the helper emitted (RcFreeDebug bl)
+		if ast.RcFreeDebug {
+			g.pop()
+			g.emit("bl %s", op.Str)
+			g.push()
+			return nil
+		}
+		uniqNo := g.freshLabel("rcopUniqNo")
+		uniqEnd := g.freshLabel("rcopUniqEnd")
+		g.pop() // x0 = ptr
+		g.emit("cbz x0, %s", uniqNo)
+		g.emit("cmp x0, #0x10000")
+		g.emit("b.lo %s", uniqNo)
+		g.emit("ldur w1, [x0, #-8]")
+		g.emit("tbnz w1, #31, %s", uniqNo) // static sentinel
+		g.emit("cmp w1, #1")
+		g.emit("b.ne %s", uniqNo)
+		g.emit("mov w0, #1")
+		g.emit("b %s", uniqEnd)
+		g.label(uniqNo)
+		g.emit("mov w0, #0")
+		g.label(uniqEnd)
+		g.push()
+		return nil
+	case ir.OpCallDirect:
 		// AAPCS64: load args 0..n-1 from the operand stack into
 		// x0..x{n-1} (rightmost-on-top, so we pop in reverse
 		// order), then `bl target`. Result lands in x0; push it.
