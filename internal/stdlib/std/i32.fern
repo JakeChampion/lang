@@ -379,10 +379,10 @@ pub function (b: i32) to_upper(): i32 {
 // === i32 numeric methods ===
 //
 // `(n: i32) abs()` migrated to `std/i32` — see the
-// `import "std/i32";` at the top of this file. The
-// auto-prelude path in `internal/checker/checker.go`
-// follows stdlib imports declared here, so existing
-// programs keep working unchanged.
+// `import "std/i32";` at the top of this file. The checker's
+// method auto-discovery (`internal/checker/checker.go`)
+// registers these off the stdlib imports a program declares,
+// so an explicit `import "std/i32";` brings them into scope.
 //
 // `(n: i32) min(other) i32` / `max` / `clamp(lo, hi)` —
 // scalar reductions. Standard shape; matches Rust /

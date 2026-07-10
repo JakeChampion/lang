@@ -21,7 +21,7 @@
 //                         resolve `..` against the preceding
 //                         element (Go `path.Clean`, Unix).
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 pub function path_join(parts: string[]): string {

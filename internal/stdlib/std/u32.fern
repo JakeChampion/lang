@@ -2,7 +2,7 @@
 //
 // u32 has no `abs` — values are always non-negative — so this
 // module is just the scalar reductions and string formatting.
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 import "core/int";
@@ -27,8 +27,8 @@ pub function (n: u32) clamp(lo: u32, hi: u32): u32 {
 // through the i64-shaped formatter helper to avoid the
 // signed-truncation pitfall a direct `n as i32` cast would
 // hit for values >= 2^31. Qualified call into core/int via
-// the import above — auto-prelude's `LoadStdlibFlat` rewrites
-// `int.__int_to_string_u64(...)` to the bare-name call site.
+// the import above — modload's flat-load path (`LoadStdlibFlat`)
+// rewrites `int.__int_to_string_u64(...)` to the bare-name call site.
 pub function (n: u32) to_string(): string {
     return int.__int_to_string_u64((n as i64) & (4294967295 as i64), 0);
 }

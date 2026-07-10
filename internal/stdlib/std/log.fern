@@ -21,11 +21,10 @@
 // builds the line (or "" when filtered) and is pure/testable; the
 // `emit` method is `eprint(render(...))`.
 
-// Migrated from the auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The auto-prelude declares
-// `import "std/log";` so existing programs that call
-// `log_info(msg)` / etc. by bare name keep working unchanged
-// during the transition.
+// Migrated from the former auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
+// Phase 5, so a program now `import "std/log";` explicitly to
+// call `log_info(msg)` / etc.
 
 // for `(n: i32).to_string()` in the structured `int` field helper.
 import "std/i32";

@@ -6,7 +6,7 @@
 // newline support — multi-line records left for a richer
 // follow-up).
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 // Dispatches (string) `.index_of()` / `.replace()` on field

@@ -1,7 +1,7 @@
 // std/math — random integers, integer ranges, numeric-width
 // constants, packed-RGB helper.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 // `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`

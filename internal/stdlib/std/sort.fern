@@ -8,11 +8,10 @@
 // `sort_by[T](arr, cmp)` (below) covers any element type / custom
 // ordering now that closure args lower on every backend.
 //
-// Migrated from the auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The auto-prelude declares
-// `import "std/sort";` so existing programs that call
-// `sort_i32_asc(arr)` etc. by bare name keep working
-// unchanged.
+// Migrated from the former auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
+// Phase 5, so a program now `import "std/sort";` explicitly
+// to call `sort_i32_asc(arr)` etc.
 //
 // `string_cmp` / `string_cmp_ci` are the underlying byte-
 // lex comparators the string sorts use; exporting them so

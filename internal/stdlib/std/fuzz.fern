@@ -452,8 +452,7 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
             // way each run. Qualified `sort.sort_strings_asc`
             // call so modload's rewriter routes correctly
             // under the user-side mangled-load path too
-            // (the auto-prelude flat-load path would resolve
-            // the bare name).
+            // (the flat-load path would resolve the bare name).
             var sorted: string[] = sort.sort_strings_asc(names);
             var seeds: string[] = [];
             var i: i32 = 0;

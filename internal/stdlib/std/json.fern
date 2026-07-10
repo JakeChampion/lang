@@ -12,13 +12,13 @@
 // `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX` for BMP
 // code points). Surrogate pairs aren't combined yet.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 // === JSON encoding ===
 //
-// `json_encode(v)` walks the auto-injected `JsonValue` tree
-// and produces the canonical JSON text. Strings are escape-
+// `json_encode(v)` walks the `JsonValue` tree and produces
+// the canonical JSON text. Strings are escape-
 // encoded; arrays / objects recurse. Numbers emit their
 // payload string verbatim — the responsibility for valid
 // numeric formatting sits with the caller.

@@ -13,7 +13,7 @@
 // ignoring case). Used by the `to_binary` / `to_oct` / `to_hex`
 // / `parse_hex_int` / etc. method-style sugar in std/i32.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 // `int_to_string(n)` — signed-i32 → ASCII decimal. The
