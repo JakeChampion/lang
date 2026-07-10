@@ -82,6 +82,79 @@ func TestParseDeferAndErrDefer(t *testing.T) {
 	}
 }
 
+// TestParseAssertDesugar pins that `assert(cond)` / `assert(cond, msg)`
+// desugars, at parse time, to `if (!cond) { eprint(<text>); exit(1); }`
+// (#4416) — so no dedicated AST node, checker rule, or codegen is needed;
+// it runs on every backend through the existing if/eprint/exit path.
+func TestParseAssertDesugar(t *testing.T) {
+	prog, err := Parse(`function main(): i32 {
+		assert(1 > 0, "msg");
+		assert(2 > 1);
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+
+	// Both asserts become If statements with a unary-! condition and a
+	// two-statement then-block (eprint(...) then exit(1)); no else.
+	check := func(idx int, wantConcat bool) {
+		t.Helper()
+		iff, ok := stmts[idx].(*ast.If)
+		if !ok {
+			t.Fatalf("stmt %d: expected *ast.If, got %T", idx, stmts[idx])
+		}
+		if iff.Else != nil {
+			t.Errorf("stmt %d: assert desugar must have no else", idx)
+		}
+		u, ok := iff.Cond.(*ast.Unary)
+		if !ok || u.Op != "!" {
+			t.Fatalf("stmt %d: cond should be unary `!`, got %T %v", idx, iff.Cond, iff.Cond)
+		}
+		blk, ok := iff.Then.(*ast.Block)
+		if !ok || len(blk.Stmts) != 2 {
+			t.Fatalf("stmt %d: then should be a 2-stmt block, got %T", idx, iff.Then)
+		}
+		// First stmt: eprint(<text>). The message form uses string `+`.
+		ep, ok := blk.Stmts[0].(*ast.ExprStmt)
+		if !ok {
+			t.Fatalf("stmt %d: then[0] not an ExprStmt", idx)
+		}
+		epCall, ok := ep.Expr.(*ast.Call)
+		if !ok {
+			t.Fatalf("stmt %d: then[0] not a Call", idx)
+		}
+		if id, ok := epCall.Callee.(*ast.Ident); !ok || id.Name != "eprint" {
+			t.Errorf("stmt %d: then[0] callee should be eprint, got %v", idx, epCall.Callee)
+		}
+		_, isConcat := epCall.Args[0].(*ast.Binary)
+		if isConcat != wantConcat {
+			t.Errorf("stmt %d: eprint arg concat = %v, want %v", idx, isConcat, wantConcat)
+		}
+		// Second stmt: exit(1).
+		ex, ok := blk.Stmts[1].(*ast.ExprStmt)
+		if !ok {
+			t.Fatalf("stmt %d: then[1] not an ExprStmt", idx)
+		}
+		exCall, ok := ex.Expr.(*ast.Call)
+		if !ok {
+			t.Fatalf("stmt %d: then[1] not a Call", idx)
+		}
+		if id, ok := exCall.Callee.(*ast.Ident); !ok || id.Name != "exit" {
+			t.Errorf("stmt %d: then[1] callee should be exit, got %v", idx, exCall.Callee)
+		}
+	}
+	check(0, true)  // has a message → "assertion failed: " + msg
+	check(1, false) // no message → bare "assertion failed" literal
+
+	// `assert` is only special in statement position with a following `(`;
+	// as an ordinary identifier it still parses fine.
+	if _, err := Parse(`function main(): i32 { var assert: i32 = 5; return assert; }`); err != nil {
+		t.Errorf("`assert` as an identifier should still parse: %v", err)
+	}
+}
+
 // A type-name keyword that's also a stdlib module basename
 // (`string`, `i32`, …) parses as a module qualifier in expression
 // position when followed by `.` — `string.repeat_char(...)`. Without

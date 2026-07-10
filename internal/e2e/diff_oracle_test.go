@@ -478,7 +478,29 @@ func runInterpByte(t *testing.T, src string) int {
 	for _, fn := range prog.Funcs {
 		i.Register(fn)
 	}
-	v, err := i.CallByName("main", nil)
+	// `exit(code)` must be captured, not run as a real os.Exit (which would
+	// kill the whole test binary). The interp expects a non-returning Exiter
+	// substitute, so panic with the code and recover it here — the captured
+	// code wins over main's return value, matching process semantics.
+	type interpExit struct{ code int }
+	i.Exiter = func(code int) { panic(interpExit{code}) }
+	var v interp.Value
+	exitCode := -1
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if ie, ok := r.(interpExit); ok {
+					exitCode = ie.code
+					return
+				}
+				panic(r)
+			}
+		}()
+		v, err = i.CallByName("main", nil)
+	}()
+	if exitCode >= 0 {
+		return exitCode & 0xFF
+	}
 	if err != nil {
 		t.Skipf("interp coverage gap: %v", err)
 	}
