@@ -7605,6 +7605,25 @@ func (b *builder) expr(e ast.Expr) error {
 		// width comes from the checker-stamped Type.
 		ptrSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__try_p_%d", ptrSlot)] = ptrSlot
+		// Reclaim a FRESH owned source box once the `?` consumes it — the
+		// try-operator sibling of the match-scrutinee reclaim. Two disjoint
+		// fresh-box shapes (see reclaimableTryScrutinee / tryPairReboxSize):
+		// a heap-form owned call result, and a pair-form callee's result
+		// reboxed by emitRepackPairAsHeapBox (the TryOp site does not
+		// suppress the rebox, so each evaluation allocated a fresh rc=1 box
+		// that was never dec'd — one leaked box per `?`). Freed at each edge
+		// where the box provably dies: the success path after the payload
+		// load, the Option failure path (the propagated None is a fresh
+		// sentinel, the source box is dead), and a pair-form enclosing
+		// Result failure path after the (tag, payload) copy-out. A heap-form
+		// enclosing Result failure FORWARDS the box, so it is never freed
+		// there.
+		tryEnum, reclaimTry := b.reclaimableTryScrutinee(n)
+		var tryReboxSize int32
+		tryReboxFresh := false
+		if !reclaimTry {
+			tryReboxSize, tryReboxFresh = b.tryPairReboxSize(n.Inner)
+		}
 		if err := b.expr(n.Inner); err != nil {
 			return err
 		}
@@ -7668,6 +7687,13 @@ func (b *builder) expr(e ast.Expr) error {
 		// heap-box pointer via OpReturn.
 		switch n.Kind {
 		case ast.TryKindOption:
+			// The failure box is dead here (a fresh None replaces it). A
+			// heap-form fresh inner's None is a static sentinel (no box, no
+			// leak); a PAIR-FORM inner's rebox is a real rc=1 heap box that
+			// leaked one allocation per failed `?` — free it.
+			if tryReboxFresh {
+				b.emitTryBoxFreeSized(ptrSlot, tryReboxSize)
+			}
 			if b.thisIsPair {
 				b.emit(Op{Kind: OpMakeNoneI32})
 				b.emitRcDecLocalsAtExit()
@@ -7690,6 +7716,17 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpConstI32, I32: 4})
 				b.emit(Op{Kind: OpAdd})
 				b.emit(Op{Kind: OpLoad}) // payload at ptr+4
+				// The (tag, payload) pair is copied out for OpReturnPair, so
+				// a FRESH source box dies here rather than being forwarded —
+				// free it (tag==1 proven: Err-variant size for the heap-form
+				// shape, repack size for the pair rebox). An Err pointer
+				// payload's reference MOVES into the returned pair, so the
+				// shallow free dangles nothing.
+				if reclaimTry {
+					b.emitTryBoxFreeVariant(ptrSlot, tryEnum, 1)
+				} else if tryReboxFresh {
+					b.emitTryBoxFreeSized(ptrSlot, tryReboxSize)
+				}
 				if sweepFailurePath {
 					b.emitRcDecLocalsAtExitExcept(sweepExclude)
 				}
@@ -7721,6 +7758,18 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpConstI32, I32: offsets[0]})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(payloadLoadOpFor(n.Type, b.ptrW))
+		// Success edge of the fresh-source-box reclaim (see the gate above
+		// the inner lowering): the payload was extracted, the box is dead.
+		// tag==0 is proven here, so the heap-form shape frees with the
+		// SUCCESS variant's exact size; the pair-form shape frees the rebox
+		// with the repack's size. The extracted payload sits on the operand
+		// stack beneath the net-zero free sequence, untouched — a scalar was
+		// copied out, a pointer payload's reference MOVED to the consumer.
+		if reclaimTry {
+			b.emitTryBoxFreeVariant(ptrSlot, tryEnum, 0)
+		} else if tryReboxFresh {
+			b.emitTryBoxFreeSized(ptrSlot, tryReboxSize)
+		}
 	case *ast.Index:
 		// Compile-time fold: `"literal"[const_idx]` collapses to
 		// the byte at that index, as a single `OpConstI32`. Skips
@@ -12441,6 +12490,92 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
+}
+
+// emitTryBoxFreeVariant frees the `?`-consumed source box at a consume edge
+// where the box's tag is statically PROVEN to be `varIdx` (see
+// reclaimableTryScrutinee): variant 0 (Ok/Some) on the success path after the
+// payload was extracted, variant 1 (Err) on a pair-form enclosing function's
+// failure path after the (tag, payload) pair was copied out for OpReturnPair.
+// The box is freed with THAT variant's EXACT payload size — uniformity across
+// variants is not required, covering Result[string, i32]'s ragged layout.
+// SHALLOW: no payload deep-drop — a scalar payload was copied out, a pointer
+// payload's reference MOVED to the consumer. A payloadless variant (Option's
+// None) is a static sentinel with no box, so it emits nothing. is_unique-
+// gated: an aliased box (rc>=2 via the return-transfer inc) is only dec'd,
+// never freed. Net-zero on the operand stack — extracted values beneath are
+// untouched.
+func (b *builder) emitTryBoxFreeVariant(slot int32, et ast.EnumType, varIdx int) {
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	if varIdx >= len(ed.Variants) || len(ed.Variants[varIdx].Payloads) == 0 {
+		return
+	}
+	for _, pt := range ed.Variants[varIdx].Payloads {
+		if _, isParam := pt.(ast.ParamType); isParam {
+			return // unresolved generic payload — size unknown, keep the leak
+		}
+	}
+	_, size := payloadLayout(ed.Variants[varIdx].Payloads, len(ed.Variants[varIdx].Payloads), b.ptrW)
+	b.emitTryBoxFreeSized(slot, size)
+}
+
+// emitTryBoxFreeSized is emitTryBoxFree's emission half, shared with the
+// pair-form rebox free (tryPairReboxSize) whose box size comes from the
+// repack layout instead of the enum decl.
+func (b *builder) emitTryBoxFreeSized(slot int32, size int32) {
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+}
+
+// tryPairReboxSize reports the exact data size of the heap box
+// emitRepackPairAsHeapBox allocates for a PAIR-FORM callee's result at a `?`
+// site, when the try's inner is such a direct call. The TryOp lowering does
+// not suppress the rebox (unlike Match / IfLet / LetElse scrutinees), so a
+// pair-form `mk(pre)?` allocates one fresh rc=1 box per evaluation whose only
+// consumer is the try dispatch — dead after the success payload load and
+// never dec'd (leaked one box per iteration). The size mirrors
+// emitRepackPairAsHeapBox exactly: 8 for an i32-payload pair, 16 when the
+// payload is pointer-shaped on an 8-byte target.
+func (b *builder) tryPairReboxSize(inner ast.Expr) (int32, bool) {
+	if !ast.RcFreeEnabled {
+		return 0, false
+	}
+	call, ok := inner.(*ast.Call)
+	if !ok {
+		return 0, false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return 0, false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return 0, false
+	}
+	sig, ok := b.info.FuncSigs[id.Name]
+	if !ok || sig == nil || !b.pairForm[id.Name] {
+		return 0, false
+	}
+	boxSize := int32(8)
+	if b.payloadWidthForCalleeReturn(sig.Result) == WidthPtr && b.ptrW == 8 {
+		boxSize = 16
+	}
+	return boxSize, true
 }
 
 // emitOwnedConsumingArmDrop releases an OWNED-BY-DEFAULT enum scrutinee's box

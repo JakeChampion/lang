@@ -3729,3 +3729,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   tolerated), 6000-iter churn flat + zero. The #4613 alias suite's RC note
   updated accordingly. Remaining #4354 surface unchanged otherwise
   (struct/enum/map/string[] capture kinds, closure arrays, drop thunk).
+- 2026-07-10: **Landed `?`-consumed source-box reclaim + `?`-bound string
+  ownership (#4355 slice — NATIVE internal/ir AND self-host irlower, all three
+  backends).** `mk(pre)?` evaluates the callee's Option/Result box into a
+  scratch slot, reads the success payload, and the box is dead — but neither
+  compiler ever dec'd it, so a per-iteration `?` leaked one box per evaluation
+  on every backend (the try-operator sibling of the match-scrutinee reclaim;
+  probes: fresh-call `?` grew the bump unbounded on native x86/arm64/wasm and
+  on the self-host IR path alike). NATIVE: reclaimableTryScrutinee gates on
+  ownedCallResultType (fresh user-call result, is_unique-protected against
+  aliased returns via the return-transfer inc) + EnumRcPayloads-eligible +
+  scalar-or-string success payload; emitTryBoxFreeVariant frees SHALLOW with
+  the statically-proven variant's exact size (variant 0 on the success edge,
+  variant 1 on a pair-form enclosing Result failure edge where the (tag,
+  payload) pair is copied out for OpReturnPair); tryPairReboxSize catches the
+  PAIR-FORM inner shape whose emitRepackPairAsHeapBox rebox (a fresh rc=1 box
+  per evaluation) leaked at both edges. A STRING success payload's reference
+  MOVES to the binding: rhsTainted's new TryOp case (mirroring the same gate,
+  so analysis and lowering can never disagree) credits `var s: string =
+  mk(pre)?` as owned and the exit sweep balances it — construction-side
+  alias-incs under EnumRcPayloads keep an `Ok(pre)`-style aliased payload
+  safe (rc>=2). NOT covered natively: wasm32 pair-form string payloads (the
+  pair-form ctor return carries NO alias-inc, so ownership transfer would be
+  unsound — the documented #4355 construction-side-discipline follow-up) and
+  non-string pointer payloads (struct/array/tuple/enum keep the box+payload
+  leak). SELF-HOST (no return-transfer inc → freshness proven statically):
+  opt_fresh_ret_fns_of admits FREE functions whose every return is a direct
+  Ok/Err/Some/None ctor (fresh rc-headered op_opt_make / op_opt_none boxes);
+  lower_func seeds them as "OPTFRESH:<name>" into reclaimable_names (33-field
+  LowerState pin — prefix-tagged entries, the established convention);
+  lower_try frees the $try box via the established __fern_rc_dec box free at
+  the success edge and the Option failure edge (the Result failure edge
+  forwards the box). String ownership: producers whose success payloads are
+  all static literals / syntactically-fresh strings carry flag "f", and
+  collect_try_str_binding_names credits the `var s: string = mk(..)?` binding
+  "STR:" (body_unsafe_for escape gate + not-reassigned, exactly like the
+  frets path); a bare-ident payload (`Ok(pre)`) flags "a" — box-free only,
+  the aliased payload keeps its sound leak (op_opt_make stores payloads
+  uncounted on this path). A local slot shadowing the callee name skips the
+  free. VERIFIED — native: TestX86_64/Arm64/WASMTryScrutineeReclaim (bounded
+  high-water for scalar / Option-with-failures / string (+wasm literal-payload
+  sibling), aliased-box (`id2(mk())?`) and aliased-payload (`Ok(pre)`)
+  safety at detector zero); self-host: TestSelfHostTryBoxReclaimIRX86_64
+  (+wasm/arm64 siblings) — the outer call-result box consumed by the caller's
+  match still leaks (a PRE-EXISTING class, candidates are direct-ctor inits
+  only), so each churn case compares a hand-desugared baseline against the
+  `?` version in one program (baseline first, so freelist reuse can't flatter
+  it) and asserts the try churn grows at most HALF the baseline; plus
+  aliased-payload / non-ctor-callee (`pass(b)?` forwards a live box — never
+  freed) / escaping-binding exclusions at detector zero.
