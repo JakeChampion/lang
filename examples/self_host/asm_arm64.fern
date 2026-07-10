@@ -3990,8 +3990,11 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         // A replaced STRING field (#4355): released via the rc-aware
         // __fern_str_free under the same cow + snap guards — mirrors the x86
         // emit_ir_field_reclaim_one string arm (see its comment for the
-        // construction-retain balance). __fern_str_free clobbers only
-        // x0..x3,x9 like arr_dec, so x10/x11/x12 survive.
+        // construction-retain balance). UNLIKE arr_dec, __fern_str_free
+        // CLOBBERS x10/x11/x12 (its heap-base / heap-end / freelist-head
+        // scratch), so new/old/snap are reloaded from the stable stack args
+        // after the call — the frame push above shifts them to [sp+48] /
+        // [sp+32] / [sp+16].
         var fr_str: boolean = fdt == "string";
         if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
@@ -4008,10 +4011,16 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    str x1, [sp, #-16]!\n");
             if (fr_str) {
                 s = s.write("    bl __fn___fern_str_free\n");      // rc-aware string free (data buffer + box)
+                s = s.write("    add sp, sp, #16\n");
+                // str_free clobbered x10/x11/x12 — reload new/old/snap from
+                // the stack args (shifted +16 by the stp x29,x30 frame).
+                s = s.write("    ldr x10, [sp, #48]\n");           // new
+                s = s.write("    ldr x11, [sp, #32]\n");           // old
+                s = s.write("    ldr x12, [sp, #16]\n");           // snap
             } else {
                 s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec/free the dead buffer
+                s = s.write("    add sp, sp, #16\n");
             }
-            s = s.write("    add sp, sp, #16\n");
             s = s.write(".Lafr_" + san + "_skip" + ks + ":\n");
         }
         k = k + 1;
