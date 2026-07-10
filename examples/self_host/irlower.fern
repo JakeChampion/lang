@@ -4375,7 +4375,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // drop only fires for those; a string-only struct is left leak-only to
             // avoid broadening slot_is_reclaimable_struct).
             var slit_own: i32[] = field_ownerships(slit, s);
-            var slit_reclaim: boolean = struct_has_reclaim_array_field(s.structs, slit.type_name);
+            // #4355 slice 3: the retain widens in lockstep with the reclaim
+            // routing — a STRFLDOK-admitted string-only struct now retains
+            // its non-fresh string fields exactly like an array-carrying
+            // one, balancing the __field_reclaim / __struct_drop k_str decs.
+            var slit_reclaim: boolean = s.struct_routes_field_reclaim(slit.type_name);
             var sm: LowerState = s;
             // COMPACT functional-update lowering (#4650): when the struct's fields all
             // copy with no per-field rc-inc (struct_copy_eligible), the N unchanged
@@ -10302,7 +10306,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     if (sfsl >= 0 && (slot_is_reclaimable_struct(se, sfsl) || slot_is_snapshot_param(se, sfsl))) {
                         var sfst: string = se.struct_type_of_slot(sfsl);
                         if (sfst != "" && decl_field_type(se.structs, sfst, sfa.field) == "string"
-                            && struct_has_reclaim_array_field(se.structs, sfst)) {
+                            && se.struct_routes_field_reclaim(sfst)) {
                             alias_inc = true;
                         }
                     }
@@ -11145,7 +11149,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // (which is a plain store of `new` — no prior box to free). A once-bound
     // (non-loop) local is unaffected: old is null, so only the store happens, and
     // the exit sweep still frees the final value.
-    if (slot_is_reclaimable_struct(sb, slot) && struct_has_reclaim_array_field(sb.structs, struct_ty)) {
+    if (slot_is_reclaimable_struct(sb, slot) && sb.struct_routes_field_reclaim(struct_ty)) {
         return emit_field_reclaim_store(sb, slot, struct_ty, 0 - 1);
     }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
@@ -11479,18 +11483,19 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (slot_is_snapshot_param(s, slot)) {
         var snsl: i32 = s.slot_of("$snap$" + s.locals[slot].slot_name);
         var snty: string = s.struct_type_of_slot(slot);
-        if (struct_has_reclaim_array_field(s.structs, snty)) {
+        if (s.struct_routes_field_reclaim(snty)) {
             return emit_field_reclaim_store(se, slot, snty, snsl);
         }
         return emit_snapshot_store(se, slot, snsl);
     }
     // A reclaimable struct LOCAL consume-rebind (`c = bump(c)`) with
-    // rc-tracked ARRAY fields likewise routes to __field_reclaim_<T>
-    // (snap = 0 — no caller's original to protect), freeing the old box's
-    // replaced field buffers before the box. A scalar-only reclaimable
-    // struct keeps the plain box free via emit_arr_store's do_dec.
+    // rc-tracked ARRAY fields — or STRFLDOK-admitted string fields (#4355
+    // slice 3) — likewise routes to __field_reclaim_<T> (snap = 0 — no
+    // caller's original to protect), freeing the old box's replaced fields
+    // before the box. A scalar-only reclaimable struct keeps the plain box
+    // free via emit_arr_store's do_dec.
     var asty: string = s.struct_type_of_slot(slot);
-    if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && struct_has_reclaim_array_field(s.structs, asty)) {
+    if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && s.struct_routes_field_reclaim(asty)) {
         return emit_field_reclaim_store(se, slot, asty, 0 - 1);
     }
     return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
@@ -21137,7 +21142,7 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
 }
 
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
-    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[]): LowerResult {
+    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[]): LowerResult {
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
@@ -21535,6 +21540,15 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         while (ofr_bar < ofr_e.len() && ofr_e[ofr_bar] != 124) { ofr_bar = ofr_bar + 1; }   // 124 = '|'
         reclaim = reclaim.append("OPTFRESH:" + ofr_e[0:ofr_bar]);
         ofr_i = ofr_i + 1;
+    }
+    // #4355 slice 3: seed the STRFLDOK-admitted types (the whole-program
+    // string-field read scan) so struct_routes_field_reclaim and the
+    // construction retain can consult the verdict from LowerState. Same
+    // prefix-tag convention as OPTFRESH; inert for every other consumer.
+    var sfo_i: i32 = 0;
+    while (sfo_i < strfld_ok_types.len()) {
+        reclaim = reclaim.append("STRFLDOK:" + strfld_ok_types[sfo_i]);
+        sfo_i = sfo_i + 1;
     }
     // #4334: pick up the parse-level defer pass's `?`-edge cleanup markers —
     // the `if (__dfa_tryall) {…}` / `if (__dfa_tryerr) {…}` blocks
@@ -22606,11 +22620,27 @@ function strfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): strin
     return a;
 }
 
+// struct_routes_field_reclaim: slot type `sty` takes the __field_reclaim_<T>
+// consume-rebind path — either it carries an rc-array / nested-struct / enum
+// field (the original routing), or it is a STRING-fielded type admitted by
+// the whole-program read scan ("STRFLDOK:<T>" seeded into reclaimable_names
+// by lower_func — #4355 slice 3, the string-ONLY struct widening). The
+// construction-side retain (slit_reclaim in the ExprStructLit lowering) uses
+// the same disjunction so the field frees stay balanced.
+pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
+    if (struct_has_reclaim_array_field(s.structs, sty)) { return true; }
+    return struct_has_string_field(s.structs, sty)
+        && util.index_of_str(s.reclaimable_names, "STRFLDOK:" + sty) >= 0;
+}
+
 // strfld_reclaim_ok_types_of: struct types whose __field_reclaim_<T> body may
 // include the string arm — see the section comment for the contract. The
 // backends seed each admitted type as a "strfldok:<T>" need at their
-// whole-program emit orchestration; partial-funcs emit paths must pass []
-// funcs (admitting nothing) rather than a unit-local list.
+// whole-program emit orchestration (and lower_func seeds the SAME verdict as
+// "STRFLDOK:<T>" into reclaimable_names for the lowering-time routing +
+// construction-retain decisions — the two must agree, so both come from this
+// one scan); partial-funcs emit paths must pass [] funcs (admitting nothing)
+// rather than a unit-local list.
 pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     // Single pass: collect every unsafely-read field NAME across the whole
     // program, then admit each candidate type iff none of its string-field
@@ -22625,7 +22655,11 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     var si: i32 = 0;
     while (si < structs.len()) {
         var t: string = structs[si].name;
-        if (struct_has_string_field(structs, t) && struct_has_reclaim_array_field(structs, t)) {
+        // Any string-fielded struct is a candidate — array-carrying types
+        // gain the string arm in their existing __field_reclaim body, and
+        // string-ONLY types (slice 3) gain the routing itself (their body is
+        // the string arms + the snapshot_dec box free).
+        if (struct_has_string_field(structs, t)) {
             var ok: boolean = true;
             var n: i32 = structs[si].fields.len();
             var fi: i32 = 0;
@@ -23321,7 +23355,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs), strfld_reclaim_ok_types_of(funcs, structs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -23346,7 +23380,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs), strfld_reclaim_ok_types_of(funcs, structs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -25553,6 +25587,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var sarf: string[] = strarr_ret_fns_of(funcs);
     var amf: string[] = arr_method_fns_of(funcs);
     var orf: string[] = opt_ret_fns_of(funcs);
+    var sfot: string[] = strfld_reclaim_ok_types_of(funcs, structs);
     var irf: string[] = i64_ret_fns_of(funcs);
     var trf: string[] = tuple_ret_fns_of(funcs);
     var srtf: string[] = struct_ret_fns_of(funcs, structs);
@@ -25563,7 +25598,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs), sfot);
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'

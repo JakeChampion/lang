@@ -67,6 +67,22 @@ function main(): i32 {
     if (s.n != 1500) { return 96; }
     return 0;
 }`, 0},
+		// STRING-ONLY struct (#4355 slice 3) — routed via STRFLDOK, churn flat.
+		{"field-reclaim-str-only-flat-wasm", `struct B { name: string, n: i32 }
+function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
+function main(): i32 {
+    var b: B = B { name: "a" + "b", n: 0 };
+    var i: i32 = 0;
+    while (i < 200) { b = step(b); i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 1500) { b = B { name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { b = step(b); k = k + 1; } j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (b.n != 3) { return 97; }
+    return 0;
+}`, 0},
 		// Aliased read (`var t = s.name`) survives the rebind's field free.
 		{"field-reclaim-str-aliased-read-safe-wasm", `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], name: s.name + "x", n: s.n + 1 }; }

@@ -3370,7 +3370,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     // PROGRAM struct union for a per-module unit (so a function touching an
     // imported struct's layout lowers in the gate exactly as it does in
     // emit_module_funcs, which already lowers against all_structs).
-    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fn_names, [], [], [], [], []);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fn_names, [], [], [], [], [], []);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -3954,8 +3954,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[]): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns);
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types);
     return emit_function_via_ir_pre(r, fd, s);
 }
 
@@ -5369,6 +5369,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(fns);
     var ofrf: string[] = irlower.opt_fresh_ret_fns_of(fns);
+    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls);
     var fnames: string[] = irlower.fn_names_of(fns);
     // String literals the helper body interns (e.g. "\n" in str_lines's
     // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
@@ -5379,7 +5380,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf);
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -5441,6 +5442,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
     var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs);
+    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
     // window that overshoots the module length can't index past mod.funcs.
     var hh: i32 = hi;
@@ -5457,7 +5459,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
         if (cache.len() == 0) {
-            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf);
+            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot);
         } else {
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s);
         }
@@ -5593,6 +5595,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(im.funcs, im.structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(im.funcs);
     var ofrf: string[] = irlower.opt_fresh_ret_fns_of(im.funcs);
+    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(im.funcs, im.structs);
     var fnames: string[] = irlower.fn_names_of(im.funcs);
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail (AST fallback) on the first function whose body doesn't lower or whose
@@ -5600,7 +5603,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var cache: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf);
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot);
         if (!r.ok) { return ""; }
         var j: i32 = 0;
         while (j < r.ops.len()) {
