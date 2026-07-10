@@ -7227,6 +7227,30 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         }
         tcm = tcm + 1;
     }
+    // #4355: is the source box a FRESH producer's (every callee return a direct
+    // Ok/Err/Some/None ctor — "OPTFRESH:" seeded by lower_func)? Then the $try
+    // box is sole-owned and dead once consumed, so both consume edges free it:
+    // the success path after the payload read (below), and the Option failure
+    // path here (its box is a real rc-headered op_opt_none allocation on this
+    // path — NOT a static sentinel — and a fresh None replaces it). The Result
+    // failure path FORWARDS the box to the caller, so it is never freed there.
+    var try_box_fresh: boolean = false;
+    match (inner) {
+        parser.ExprCall(tfc) => {
+            match (tfc.callee) {
+                parser.ExprIdent(tfid) => {
+                    // A LOCAL slot by the callee's name shadows the top-level
+                    // producer (a function-typed local / closure whose return
+                    // ownership is unknown) — the registry verdict doesn't
+                    // apply, so the free is skipped (sound leak).
+                    if (ts.slot_of(tfid.name) < 0
+                        && util.index_of_str(ts.reclaimable_names, "OPTFRESH:" + tfid.name) >= 0) { try_box_fresh = true; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
     if (is_result) {
         // From-converting `?` (#2697): when the source error type E1 differs
         // from the enclosing function's return error type E2, the failure path
@@ -7263,6 +7287,14 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
             ts = ts.emit(ir.op_load_local(tslot));   // forward the source Err box
         }
     } else {
+        // #4355: the fresh source None box is dead — free it before building
+        // the propagated None (rc_dec is the established option-box free; its
+        // guards no-op on anything non-heap).
+        if (try_box_fresh) {
+            ts = ts.emit(ir.op_load_local(tslot));
+            ts = ts.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            ts = ts.emit(ir.op_drop());
+        }
         ts = ts.emit(ir.op_opt_none());          // fresh None
     }
     // Release owned locals live at this early exit. The `?` failure path is an
@@ -7285,14 +7317,28 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // i64/u64 payload uses the 8-byte width-64 read (mirrors the match path's
     // op_opt_payload_w(64, true)).
     ts = ts.emit(ir.op_load_local(tslot));
-    if (pt_is_i64) { return ts.emit(ir.op_opt_payload_w(64, true)); }
+    if (pt_is_i64) { ts = ts.emit(ir.op_opt_payload_w(64, true)); }
     // An f64 payload is also an 8-byte width-64 read, but the wasm backend keys
     // i64.load vs f64.load off the is_i64 flag (a typed-stack load), so pass
     // false: the success value must land on the stack as an f64 to match the
     // `var x: f64` slot. x86/arm64 asm_ir ignore the flag (a raw 8-byte movq),
     // so this is wasm-only and harmless there.
-    if (pt == "f64") { return ts.emit(ir.op_opt_payload_w(64, false)); }
-    return ts.emit(ir.op_opt_payload());
+    else if (pt == "f64") { ts = ts.emit(ir.op_opt_payload_w(64, false)); }
+    else { ts = ts.emit(ir.op_opt_payload()); }
+    // #4355: free the consumed fresh source box — the payload (a scalar copy,
+    // or a pointer whose sole reference just MOVED to the extracted value)
+    // sits on the operand stack; the load/dec/drop triple beneath is net-zero,
+    // so it stays on top for the consumer. rc_dec frees the rc==1 op_opt_make
+    // box exactly like the consumed-by-match option free
+    // (emit_opt_payload_drop's box dec). A string payload's new owner is the
+    // `var s: string = ...?` binding, credited "STR:" by reclaimable_names_of
+    // (collect_try_str_binding_names) when the producer's payloads are fresh.
+    if (try_box_fresh) {
+        ts = ts.emit(ir.op_load_local(tslot));
+        ts = ts.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        ts = ts.emit(ir.op_drop());
+    }
+    return ts;
 }
 
 // try_opt_type recovers the Option/Result type spelling of a try-operator's
@@ -15823,7 +15869,7 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[
     }
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -15939,6 +15985,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (fri < frets.len()) {
         if (!body_unsafe_for(body, frets[fri], borrowable)) { out = out.append("STR:" + frets[fri]); }
         fri = fri + 1;
+    }
+    // `?`-bound string payloads (#4355): `var s: string = mk(pre)?` where mk is
+    // an opt-fresh producer whose success payloads are all fresh (flag "f") —
+    // the `?` edge frees the source box (lower_try) and MOVES the payload's
+    // sole reference to s, so s is credited "STR:" exactly like a fresh
+    // producer-call binding. Same two gates as frets: non-escape
+    // (body_unsafe_for) and not reassigned (enforced by the collector).
+    var tstrs: string[] = collect_try_str_binding_names(body, opt_fresh_ret, reassigned, []);
+    var tsi: i32 = 0;
+    while (tsi < tstrs.len()) {
+        if (!body_unsafe_for(body, tstrs[tsi], borrowable)) { out = out.append("STR:" + tstrs[tsi]); }
+        tsi = tsi + 1;
     }
     // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
     // prefix so only slot_is_reclaimable_map matches. __fern_map_free frees the keys
@@ -21041,7 +21099,7 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
 }
 
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
-    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[]): LowerResult {
+    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[]): LowerResult {
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
@@ -21353,7 +21411,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params, return_fresh_struct_ret_fns, str_fresh_ret_fns);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -21428,6 +21486,18 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var clo_seed: string[] = clo_rc_candidate_names(fn.body, borrowable_params);
     var clo_si: i32 = 0;
     while (clo_si < clo_seed.len()) { reclaim = reclaim.append("CLO:" + clo_seed[clo_si]); clo_si = clo_si + 1; }
+    // #4355: seed the opt-fresh producer NAMES as "OPTFRESH:<name>" so
+    // lower_try's `?`-edge source-box free can check callee eligibility from
+    // LowerState (33-field pin — no new registry field; prefix-tagged entries
+    // are the established convention, inert for every other consumer).
+    var ofr_i: i32 = 0;
+    while (ofr_i < opt_fresh_ret_fns.len()) {
+        var ofr_e: string = opt_fresh_ret_fns[ofr_i];
+        var ofr_bar: i32 = 0;
+        while (ofr_bar < ofr_e.len() && ofr_e[ofr_bar] != 124) { ofr_bar = ofr_bar + 1; }   // 124 = '|'
+        reclaim = reclaim.append("OPTFRESH:" + ofr_e[0:ofr_bar]);
+        ofr_i = ofr_i + 1;
+    }
     // #4334: pick up the parse-level defer pass's `?`-edge cleanup markers —
     // the `if (__dfa_tryall) {…}` / `if (__dfa_tryerr) {…}` blocks
     // lower_defers_func appends at the body tail. Threaded via try_cleanup so
@@ -22181,6 +22251,171 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// --- `?`-consumed fresh source-box reclaim (#4355) -----------------------------
+//
+// `mk(pre)?` evaluates the callee's Option/Result box into a $try temp, reads
+// the success payload, and the box is dead — but it was never dec'd, so a
+// per-iteration `?` leaked one box per success (and, for Option, one None box
+// per failure). Mirrors native's reclaimableTryScrutinee/emitTryBoxFree.
+// The self-host IR path has NO return-transfer inc (a callee returning its
+// param hands back an rc==1 alias a runtime rc gate cannot distinguish from a
+// fresh box), so freshness is proven STATICALLY: every return in the callee
+// must be a DIRECT Ok/Err/Some constructor or None — each allocates a fresh
+// rc-headered box (op_opt_make / op_opt_none), so the caller's `?` is the sole
+// owner and a shallow __fern_rc_dec at the consume edge frees exactly once.
+
+// opt_return_is_direct_ctor: `e` is a direct Ok(..)/Err(..)/Some(..) call or a
+// bare None — the fresh-box return shapes (anything else may alias: a bare
+// ident/param/field forwards a live box; a call result's ownership is unknown).
+function opt_return_is_direct_ctor(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Ok" || cid.name == "Err" || cid.name == "Some") { return true; }
+                },
+                _ => {}
+            }
+        },
+        parser.ExprIdent(id) => { if (id.name == "None") { return true; } },
+        _ => {}
+    }
+    return false;
+}
+
+// body_has_nonctor_opt_return: any return whose value is NOT a direct
+// Ok/Err/Some/None construction (the shape gate for opt_fresh_ret_fns_of).
+function body_has_nonctor_opt_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!opt_return_is_direct_ctor(r.value)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonctor_opt_return(f.then_body) || body_has_nonctor_opt_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonctor_opt_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonctor_opt_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonctor_opt_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// body_has_nonfresh_opt_success_payload: any Ok(..)/Some(..) return whose
+// payload is NOT a static literal or a syntactically-fresh string producer
+// (str_local_binding_is_fresh — concat / .to_upper family / named producer).
+// The self-host op_opt_make stores its payload UNCOUNTED (no construction-side
+// alias-inc on this path yet — the #4355 remaining item), so a bare-ident
+// payload (`Ok(pre)`) aliases a live local: the `?` binding must NOT take
+// string ownership of it. A literal payload is admitted — __fern_str_free's
+// heap-base guard no-ops on .rodata data, so crediting the binding is safe.
+function body_has_nonfresh_opt_success_payload(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprCall(c) => {
+                        match (c.callee) {
+                            parser.ExprIdent(cid) => {
+                                if ((cid.name == "Ok" || cid.name == "Some") && c.args.len() == 1) {
+                                    var pfresh: boolean = str_local_binding_is_fresh(c.args[0]);
+                                    match (c.args[0]) { parser.ExprString(_) => { pfresh = true; }, _ => {} }
+                                    if (!pfresh) { return true; }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfresh_opt_success_payload(f.then_body) || body_has_nonfresh_opt_success_payload(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_opt_success_payload(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_opt_success_payload(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_opt_success_payload(m.arms[a].body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// opt_fresh_ret_fns_of collects "name|ptype|flag" for FREE functions whose
+// Option/Result box return is ALWAYS a direct constructor (fresh rc=1 box —
+// see the section comment above): `ptype` is the SUCCESS payload spelling
+// (opt_payload_type, Ok/Some), `flag` is "f" when every success payload is a
+// static literal or a fresh string producer (so a string `?` binding may take
+// ownership — see collect_try_str_binding_names), else "a" (box-free only;
+// the aliased payload keeps its sound leak). lower_func seeds each name as
+// "OPTFRESH:<name>" into reclaimable_names so lower_try's consume-edge box
+// free can check eligibility from LowerState (pinned at 33 fields — no new
+// registry field).
+pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var rt: string = funcs[k].ret_type;
+        if (rt.len() >= 8 && (rt[0:7] == "Option[" || rt[0:7] == "Result[")
+                && funcs[k].receiver_type.len() == 0
+                && body_has_return(funcs[k].body) && !body_has_nonctor_opt_return(funcs[k].body)) {
+            var flag: string = "a";
+            if (!body_has_nonfresh_opt_success_payload(funcs[k].body)) { flag = "f"; }
+            out = out.append(funcs[k].name + "|" + opt_payload_type(rt, "Ok") + "|" + flag);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// collect_try_str_binding_names: string LOCALS bound from a `?` over an
+// opt-fresh callee with a FRESH string success payload (`var s: string =
+// mk(pre)?`, mk in opt_fresh_ret with flag "f") that are NOT reassigned. The
+// box free at the `?` edge (lower_try) MOVES the payload's sole reference to
+// the binding, so — after reclaimable_names_of's body_unsafe_for escape gate —
+// the binding is credited "STR:" and the exit sweep frees it exactly once.
+// The `: string` annotation is required (it is what types the slot is_str at
+// the StmtVar lowering, and slot_is_reclaimable_str's type gate keys on it).
+function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0) {
+                    match (v.init) {
+                        parser.ExprUnary(u) => {
+                            if (u.op == "try_") {
+                                match (u.operand) {
+                                    parser.ExprCall(c) => {
+                                        match (c.callee) {
+                                            parser.ExprIdent(cid) => {
+                                                if (util.index_of_str(opt_fresh_ret, cid.name + "|string|f") >= 0) {
+                                                    a = push_str_unique(a, v.name);
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => { a = collect_try_str_binding_names(f.then_body, opt_fresh_ret, reassigned, a); a = collect_try_str_binding_names(f.else_body, opt_fresh_ret, reassigned, a); },
+            parser.StmtWhile(w) => { a = collect_try_str_binding_names(w.body, opt_fresh_ret, reassigned, a); },
+            parser.StmtFor(fo) => { a = collect_try_str_binding_names(fo.body, opt_fresh_ret, reassigned, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_try_str_binding_names(m.arms[ai].body, opt_fresh_ret, reassigned, a); ai = ai + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // tuple_elem_tags parses a tuple type string `(t0, t1, …)` into its element
 // type spellings joined by commas ("i32,string,Point"), splitting on top-level
 // commas only (nested brackets/parens don't count) and trimming spaces. Each
@@ -22861,7 +23096,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -22886,7 +23121,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -25103,7 +25338,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs));
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'

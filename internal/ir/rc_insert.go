@@ -244,6 +244,60 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingTypes [][]ast.T
 	return et, true
 }
 
+// reclaimableTryScrutinee reports whether a `?`'s source Option/Result box is
+// a FRESH owned call result the TryOp lowering can free once the success
+// payload is extracted — the value-consuming-position sibling of
+// reclaimableMatchScrutinee (`mk()?` leaked one box per iteration on the
+// success path; the failure path forwards the box (Result) or reads a static
+// None sentinel (Option), so only the success edge leaks). Returns the enum
+// type for emitTryBoxFree.
+//
+// Eligibility:
+//   - the inner is a fresh owned call result (ownedCallResultType — a user
+//     function returning a heap-boxed Option/Result; pair-form / builtin /
+//     variant-constructor callees are excluded there, so the value is always
+//     a real box the lowering stores in ptrSlot);
+//   - the success payload (`n.Type`) is a NON-POINTER scalar or a STRING. A
+//     scalar copy can't alias the freed box. A string payload is MOVED out:
+//     the box's payload reference transfers to the extracted value —
+//     construction-side alias-incs under EnumRcPayloads make that reference
+//     counted, so rhsTainted's TryOp case credits the binding as owned and
+//     the exit sweep balances it. Other pointer payloads (struct / array /
+//     tuple / enum / Map) keep today's sound box+payload leak until their
+//     ownership-transfer story is wired;
+//   - the enum is EnumRcPayloads-eligible, so an aliased payload (`Ok(pre)`)
+//     was inc'd at construction — the move hands the binding a counted
+//     reference, never an uncounted borrow.
+//
+// The free itself (emitTryBoxFree) is is_unique-gated, so an aliased box (a
+// callee returning its param, rc>=2 via the return-transfer inc) is only
+// dec'd, never freed.
+func (b *builder) reclaimableTryScrutinee(n *ast.TryOp) (ast.EnumType, bool) {
+	if !ast.RcFreeEnabled {
+		return ast.EnumType{}, false
+	}
+	t, ok := b.ownedCallResultType(n.Inner)
+	if !ok {
+		return ast.EnumType{}, false
+	}
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return ast.EnumType{}, false
+	}
+	if !b.enumRcPayloadsEligible(et.Name) {
+		return ast.EnumType{}, false
+	}
+	if n.Type == nil {
+		return ast.EnumType{}, false
+	}
+	if ast.IsPointerType(n.Type) {
+		if _, isStr := n.Type.(ast.StringType); !isStr {
+			return ast.EnumType{}, false
+		}
+	}
+	return et, true
+}
+
 // emitOwnedTempStackDrop releases a FRESH owned rc temporary whose value is
 // currently on top of the operand stack — the stage-(a) replacement for the
 // plain OpDrop a discarded ExprStmt would otherwise emit (see

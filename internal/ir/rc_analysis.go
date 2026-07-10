@@ -1044,6 +1044,22 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			}
 		}
 		return false
+	case *ast.TryOp:
+		// `f()?` MOVES the success payload out of a fresh call-result box —
+		// the TryOp lowering frees the box shallow (emitTryBoxFree), so a
+		// STRING payload's counted reference transfers to the binding: owned,
+		// exactly like a fresh concat (the construction-side alias-inc under
+		// EnumRcPayloads keeps an `Ok(pre)`-style aliased payload balanced —
+		// see reclaimableTryScrutinee, whose gate this mirrors so analysis
+		// and lowering can never disagree). Non-reclaimable inners (a bare
+		// local `r?`, field / index projections, pair-form callees) and
+		// non-string payloads keep the conservative taint.
+		if _, ok := b.reclaimableTryScrutinee(x); ok {
+			if _, isStr := x.Type.(ast.StringType); isStr {
+				return false
+			}
+		}
+		return true
 	default:
 		return true
 	}
