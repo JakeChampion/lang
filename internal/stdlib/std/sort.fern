@@ -352,26 +352,56 @@ pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
 // and what `core/cmp`'s `Ord.cmp` returns — so `sort_by(xs, Ord.cmp)`
 // is the comparator form of `core/cmp`'s `sort[T: Ord]`). Generic over
 // ANY element type via the comparator, without an `Ord` bound: sort by a
-// projected key, reverse order, or any custom relation. Stable insertion
-// sort, O(n²) — same small-input niche as the monomorphic sorts above;
-// it now lowers on the self-host IR path too (the closure-arg
-// infrastructure the module header once deferred has since landed, incl.
-// fn-typed args in loop conditions). The input is not mutated.
+// projected key, reverse order, or any custom relation.
+//
+// Stable bottom-up (iterative) merge sort, O(n log n) comparisons — the
+// "future generic merge sort" the older insertion-sort revision pointed
+// at, for arbitrary / large inputs rather than the small-list niche the
+// monomorphic `sort_i32_*` entry points serve (#4387 item 3). Stability:
+// on a tie the left run's element is emitted first (the merge only takes
+// from the right run when it compares *strictly* less), so equal keys keep
+// their input order. It lowers on the self-host IR path (only `while`,
+// closure calls, `.with`/`.len()`/index, and i32 arithmetic — the same
+// constructs the insertion-sort form used). The input is not mutated: the
+// first `.with` on the aliased scratch buffer copies-on-write, leaving
+// `arr` untouched.
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
-    var out: T[] = arr;
-    var n: i32 = out.len();
-    var i: i32 = 1;
-    while (i < n) {
-        var j: i32 = i;
-        while (j > 0 && cmp(out[j], out[j - 1]) < 0) {
-            var tmp: T = out[j];
-            out = out.with(j, out[j - 1]);
-            out = out.with(j - 1, tmp);
-            j = j - 1;
+    var n: i32 = arr.len();
+    if (n < 2) { return arr; }
+    var src: T[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        // Merge adjacent runs of `width` from `src` into `dst`. `dst`
+        // starts aliased to `src`; the first `.with` copies it, so reads
+        // from `src` stay valid while we overwrite `dst` slot by slot.
+        var dst: T[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (cmp(src[j], src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        i = i + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // `is_sorted_by[T](arr, cmp)` — true iff `arr` is in non-decreasing order
@@ -392,29 +422,46 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
 // numeric field" case (`sort_by_i32_key(rows, \r -> r.timestamp)`), without
 // spelling a full comparator. Keys are computed ONCE up front into a parallel
 // array (a Schwartzian transform — each element's `key` is evaluated a single
-// time, not O(n log n) times), then the elements and their keys are insertion-
-// sorted together by the precomputed i32 key. Stable, O(n²); the input is not
-// mutated. (Correct on every backend; on the self-host it currently lowers via
-// the AST emitter rather than the IR path — a closure-typed param over a
-// generic `T[]` isn't yet IR-eligible there.)
+// time, not O(n log n) times), then the elements and their keys are merge-
+// sorted together in lockstep by the precomputed i32 key. Stable bottom-up
+// merge sort, O(n log n) (#4387 item 3); the input is not mutated. (Correct
+// on every backend; on the self-host it currently lowers via the AST emitter
+// rather than the IR path — a closure-typed param over a generic `T[]` isn't
+// yet IR-eligible there.)
 pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
-    var out: T[] = arr;
-    var keys: i32[] = [];
-    for x in out { keys = keys.append(key(x)); }
-    var n: i32 = out.len();
-    var i: i32 = 1;
-    while (i < n) {
-        var j: i32 = i;
-        while (j > 0 && keys[j] < keys[j - 1]) {
-            var tv: T = out[j];
-            out = out.with(j, out[j - 1]);
-            out = out.with(j - 1, tv);
-            var tk: i32 = keys[j];
-            keys = keys.with(j, keys[j - 1]);
-            keys = keys.with(j - 1, tk);
-            j = j - 1;
+    var srcv: T[] = arr;
+    var srck: i32[] = [];
+    for x in srcv { srck = srck.append(key(x)); }
+    var n: i32 = srcv.len();
+    if (n < 2) { return srcv; }
+    var width: i32 = 1;
+    while (width < n) {
+        var dstv: T[] = srcv;
+        var dstk: i32[] = srck;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (srck[j] < srck[i]) {
+                    dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1;
+                } else {
+                    dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        i = i + 1;
+        srcv = dstv;
+        srck = dstk;
+        width = width + width;
     }
-    return out;
+    return srcv;
 }

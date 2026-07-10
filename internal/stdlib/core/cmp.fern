@@ -364,24 +364,47 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
 
 // sort returns a new array with `arr`'s elements in non-decreasing `Ord` order.
 // Generic over any `T: Ord` (incl. `@derive(Ord)` types) — the type-erased
-// counterpart to std/sort's monomorphic `sort_i32_asc` etc. A stable insertion
-// sort: O(n²), so it suits small / convenience cases; reach for the specialised
-// std/sort entry points (or a future generic merge sort) for large inputs.
+// counterpart to std/sort's monomorphic `sort_i32_asc` etc. Stable bottom-up
+// merge sort, O(n log n) (#4387 item 3): equal elements keep their input order
+// because the merge only takes from the right run when it compares *strictly*
+// less. Suits arbitrary / large inputs as well as the small convenience cases
+// the older insertion-sort revision was limited to.
 pub function sort[T: Ord](arr: T[]): T[] {
-    var out = arr;
-    var n = out.len();
-    var i = 1;
-    while (i < n) {
-        var j = i;
-        while (j > 0 && out[j].cmp(out[j - 1]) < 0) {
-            var tmp = out[j];
-            out = out.with(j, out[j - 1]);
-            out = out.with(j - 1, tmp);
-            j = j - 1;
+    var n = arr.len();
+    if (n < 2) { return arr; }
+    var src = arr;
+    var width = 1;
+    while (width < n) {
+        // `dst` starts aliased to `src`; the first `.with` copies it, so
+        // reads from `src` stay valid while `dst` is overwritten in place.
+        var dst = src;
+        var lo = 0;
+        while (lo < n) {
+            var mid = lo + width;
+            if (mid > n) { mid = n; }
+            var hi = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i = lo;
+            var j = mid;
+            var k = lo;
+            while (i < mid && j < hi) {
+                if (src[j].cmp(src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        i = i + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // ---- Eq-bounded sequence verbs ---------------------------------

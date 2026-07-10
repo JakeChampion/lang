@@ -27,6 +27,14 @@ function main(): i32 { var xs: i32[] = [3, 1, 2]; var s = sort_by(xs, function (
 	{"is-sorted-by", `function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean { var i = 1; var n = arr.len(); while (i < n) { if (cmp(arr[i], arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
 function asc(a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }
 function main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = [3, 1]; var r = 0; if (is_sorted_by(a, asc)) { r = r + 5; } if (!is_sorted_by(b, asc)) { r = r + 2; } return r; }`, 7},
+	// The shipped `sort_by` body is a stable bottom-up merge sort (#4387 item 3),
+	// not insertion sort — verify its exact shape lowers + runs on every backend
+	// AND the self-host IR path over a 10-element input with duplicates:
+	// [8,3,3,9,1,7,2,5,0,6] asc → [0,1,2,3,3,5,6,7,8,9]; s[0]*100+s[5]*10+s[9] =
+	// 0 + 50 + 9 = 59. Larger than the min two-run case, so it drives the
+	// width=1→2→4→8 pass loop and the tail (odd, short) runs.
+	{"sort-by-merge", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var n = arr.len(); if (n < 2) { return arr; } var src: T[] = arr; var width = 1; while (width < n) { var dst: T[] = src; var lo = 0; while (lo < n) { var mid = lo + width; if (mid > n) { mid = n; } var hi = lo + width + width; if (hi > n) { hi = n; } var i = lo; var j = mid; var k = lo; while (i < mid && j < hi) { if (cmp(src[j], src[i]) < 0) { dst = dst.with(k, src[j]); j = j + 1; } else { dst = dst.with(k, src[i]); i = i + 1; } k = k + 1; } while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; } while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; } lo = lo + width + width; } src = dst; width = width + width; } return src; }
+function main(): i32 { var xs: i32[] = [8, 3, 3, 9, 1, 7, 2, 5, 0, 6]; var s = sort_by(xs, function (a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[5] * 10 + s[9]; }`, 59},
 }
 
 // TestNativeSortBy runs the inline sort_by programs on interp / x86-64 / wasm.
