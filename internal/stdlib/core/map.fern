@@ -61,7 +61,7 @@
 //   for a map that was never deleted from, but a post-delete map
 //   serialises with the swapped key order.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 pub function __map_pow2_ceil(n: i32): i32 {

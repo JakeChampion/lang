@@ -8,7 +8,7 @@
 // covers every practically-encountered case but isn't bit-
 // exact against `f64.const inf`.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 // __float_to_string's body dispatches (i64) `.to_string()` on

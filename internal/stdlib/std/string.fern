@@ -1,10 +1,9 @@
 // std/string — string receiver methods.
 //
-// Methods are migrated here gradually from the auto-injected
-// magic prelude per docs/PRELUDE-TO-MODULES.md. Files declare
-// `import "std/string";` to bring the methods into scope.
-// During the transition the prelude itself does the same import
-// so existing single-file programs keep working unchanged.
+// Methods were migrated here from the former auto-injected
+// magic prelude per docs/PRELUDE-TO-MODULES.md. The prelude was
+// removed in Phase 5, so a file now `import "std/string";`
+// explicitly to bring the methods into scope.
 
 import "core/int";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`

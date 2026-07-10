@@ -33,7 +33,7 @@
 // shaped programs can be tuned via `PORT=N ./bin` without a
 // manual main().
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 import "std/http";

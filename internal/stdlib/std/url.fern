@@ -19,7 +19,7 @@
 // otherwise fills missing sections with empty strings / port=0.
 // Query duplicates collect into a `string[]` per key.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 import "core/map";

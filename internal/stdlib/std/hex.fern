@@ -7,7 +7,7 @@
 // raising — partial inputs round-trip cleanly. Companion
 // to base64 with no `=` padding.
 //
-// Migrated from the auto-injected prelude per
+// Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
 function __hex_lower_char(d: i32): i32 {

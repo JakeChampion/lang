@@ -71,9 +71,8 @@ import "std/array";
 import "std/string";
 // `assert_json_eq` parses both sides and walks the JsonValue
 // trees in order-independent fashion (JObject keys can come
-// out of `Map.keys()` in any order). Std/json is already on
-// the auto-prelude path, so the dependency is just an
-// in-stdlib link.
+// out of `Map.keys()` in any order). Std/json is already a
+// stdlib module, so the dependency is just an in-stdlib link.
 import "std/json";
 // `assert_set_eq_*` sorts both inputs before comparing so the
 // order-independent multiset compare reuses the existing
@@ -3169,7 +3168,7 @@ pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
 //
 // Uses the qualified `json.json_parse(...)` form rather than
 // bare `json_parse(...)` so modload's rewriter routes the
-// call correctly under both the auto-prelude flat-load path
+// call correctly under both the flat-load path (`LoadStdlibFlat`)
 // AND the user-side mangled-load path (where the user's own
 // `import "std/json";` would have already loaded json's
 // decls under the `json__` prefix; bare-name lookup would
