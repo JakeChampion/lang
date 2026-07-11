@@ -3950,3 +3950,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   n: i32 }` payloads keep their sound leak); bare-local match reclaim beyond
   the same-block single-match shape; the native direct-call pair-form match
   scrutinee (slice-4 note).
+- 2026-07-11: **Landed #4355 slice 6 — literal string-arg box reclaim at
+  borrowable call positions (self-host IR path).** A string-LITERAL call arg
+  allocates a fresh 16-byte rc-headered box per evaluation (const_str; the
+  .rodata data itself is heap-guard-skipped) and nothing freed it — one box
+  leaked per call in any loop passing literal string args (`readit("ab")` in
+  a loop; surfaced by the slice-5 churn tests, where `mk("a", j)` tripped the
+  bump assertion). Wasm never leaked (literals are data-section). FIX, at the
+  IR layer so every backend shares it: in the generic direct-call arg loop,
+  a literal arg at a BORROWABLE param position of a known free function
+  (borrowable_params_of — provably borrow-read-only and never escaping, so
+  the callee can neither retain nor return the arg) is stashed into a
+  scratch slot (store+reload keeps the arg in place) and freed right after
+  the call via the rc-aware __fern_str_free — emitted NET-ZERO on the
+  operand stack (load → free → drop) UNDER the live call result, so no
+  width-sensitive result parking is needed (the call-arg sibling of the
+  #2649 concat-operand anonymous-temp reclaim, which parks because concat's
+  result is always a string). The borrowable registry rides into the expr
+  lowering as prefix-tagged "BORROW:<name>|<flags>" reclaimable_names
+  entries seeded by lower_func (LowerState pinned at 33 fields — the
+  OPTFRESH/STRFLDOK convention). Non-borrowable positions — returned,
+  stored, forwarded-to-a-call args — keep the sound leak (pinned:
+  `keepit("xy")` returning its param stays readable at detector zero).
+  VERIFIED: TestSelfHostLiteralArgReclaim{IRX86_64,IRArm64,WasmIR} —
+  borrowable churn flat at detector zero, retained-value safety, mixed
+  literal+live args (live survives, churn flat) — plus the per-module
+  whole-compiler self-run. Remaining nearby: non-literal fresh temp args
+  (concat results / producer calls passed directly as args) at borrowable
+  positions — the same stash-free pattern applies but needs the
+  is_fresh_str_temp classifier and care with evaluation order.
