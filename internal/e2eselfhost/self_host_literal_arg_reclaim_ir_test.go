@@ -82,6 +82,65 @@ function main(): i32 {
     return 0;
 }`, "literal-arg-retained-safe", 0)
 
+	// FRESH CONCAT arg (#4355 slice 7): `readit(base + "bc")` — the concat
+	// byte-copies into a fresh anonymous temp; is_fresh_str_temp admits it at
+	// the borrowable position and the post-call free reclaims it. base (an
+	// operand, only read) stays readable; churn flat at detector zero.
+	run(t, `function readit(nm: string): i32 { return nm.len(); }
+function main(): i32 {
+    var base: string = "a";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + readit(base + "bc"); i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + readit(base + "bc"); j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (base.len() != 1) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 6600) { return 97; }
+    return 0;
+}`, "fresh-concat-arg-flat", 0)
+
+	// FRESH PRODUCER-METHOD arg (#4355 slice 7): `readit(src.to_upper())` —
+	// a copying string method's result is a fresh temp; reclaimed after the
+	// call, the receiver survives, churn flat at detector zero.
+	run(t, `function readit(nm: string): i32 { return nm.len(); }
+function main(): i32 {
+    var src: string = "AbC" + "d";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + readit(src.to_upper()); i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + readit(src.to_upper()); j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (src.len() != 4) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 8800) { return 97; }
+    return 0;
+}`, "fresh-producer-arg-flat", 0)
+
+	// BARE-IDENT arg trap: `readit(src)` aliases a live local —
+	// is_fresh_str_temp excludes it, so NO free is emitted; src stays
+	// readable across every call at detector zero.
+	run(t, `function readit(nm: string): i32 { return nm.len(); }
+function main(): i32 {
+    var src: string = "aa" + "bb";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        if (readit(src) != 4) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (src.len() != 4) { return 88; }
+    if (bad != 0) { return 87; }
+    return 0;
+}`, "bare-ident-arg-safe", 0)
+
 	// MIXED args: the literal frees, the LIVE ident arg is untouched (a
 	// borrowed read — no stash, no free) and stays readable; churn flat.
 	run(t, `function pick(a: string, b: string): i32 { return a.len() + b.len(); }

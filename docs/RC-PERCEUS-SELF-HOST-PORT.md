@@ -3979,3 +3979,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (concat results / producer calls passed directly as args) at borrowable
   positions — the same stash-free pattern applies but needs the
   is_fresh_str_temp classifier and care with evaluation order.
+- 2026-07-11: **Landed #4355 slice 7 — fresh string temp args at borrowable
+  call positions.** The slice-6 follow-up: the literal-arg box reclaim now
+  also admits NON-literal fresh anonymous string temps passed directly as
+  call args — a concat `f(a + "x")`, a named producer `f(chr(n))`, a copying
+  string method `f(s.to_upper())` — via the existing #2649 is_fresh_str_temp
+  classifier (type-gated by expr_is_str; the aliasing shapes — bare idents,
+  field/index reads, `.trim()` views, receiver-identity fast-paths — stay
+  excluded, pinned by the bare-ident-arg trap test). Same stash +
+  post-call rc-aware __fern_str_free, net-zero under the live result; the
+  seeding collector's syntactic match widened in lockstep (over-collection
+  only seeds a harmless extra BORROW entry — the lowering gate carries the
+  type check), and the slice-6 arena disciplines (targeted seeding,
+  allocation-free lookup) are unchanged. VERIFIED: fresh-concat-arg +
+  fresh-producer-arg churn flat at detector zero with the operand/receiver
+  surviving, bare-ident-arg safety, all slice-5/6 regressions, and the
+  per-module whole-compiler self-run.
