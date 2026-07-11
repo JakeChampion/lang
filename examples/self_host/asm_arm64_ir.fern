@@ -1288,7 +1288,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(mod.funcs, mod.structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(mod.funcs, mod.structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(mod.funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(mod.funcs);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(mod.funcs, mod.structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {

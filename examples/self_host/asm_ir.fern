@@ -5269,6 +5269,14 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         k = k + 1;
     }
     s = s.write(".Lstd_" + san + "_ret:\n");
+    // Return the BOX (the documented contract): the field-release calls above
+    // (__fern_arr_dec / __fern_str_free / nested __struct_drop_*) all return in
+    // %rax, so the entry-time copy is clobbered by the time we get here — the
+    // enum-payload deep-drop (emit_enum_variant_drops) CONSUMES this return for
+    // its payload-box free, and the clobber made it dec the LAST-FREED FIELD a
+    // second time (rc-underflow tick per consume; heap corruption for a string
+    // field via the wrong-size-class free) while the payload box itself leaked.
+    s = s.write("    movq 8(%rsp), %rax\n");
     s = s.write("    ret\n");
     return s;
 }
@@ -5368,7 +5376,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(fns, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(fns);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(fns);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(fns, s.struct_decls);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls);
     var fnames: string[] = irlower.fn_names_of(fns);
     // String literals the helper body interns (e.g. "\n" in str_lines's
@@ -5441,7 +5449,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
     // window that overshoots the module length can't index past mod.funcs.
@@ -5594,7 +5602,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(im.funcs, im.structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(im.funcs, im.structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(im.funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(im.funcs);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(im.funcs, im.structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(im.funcs, im.structs);
     var fnames: string[] = irlower.fn_names_of(im.funcs);
     // Lower every function once into `cache`, checking eligibility on each result.

@@ -3899,3 +3899,54 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   struct_routes_field_reclaim), an OPTFRESH-style whole-program freshness
   scan for ctor functions, and construction-side payload retain balance.**
   Native-only surface referenced against the #4451 convergence tracker.
+- 2026-07-11: **Landed the SELF-HOST half of #4355 slice 5 — RCENUM call-init
+  admission + the __struct_drop_<T> return-clobber fix.** Two coupled changes:
+  (1) ADMISSION: the RCENUM enum-local reclaim (loop-rebind / consume
+  deep-drop of a fresh, match-consumed enum local via
+  emit_enum_deep_reinit_store → emit_enum_variant_drops) only fired for
+  DIRECT variant-ctor inits (`var b = Full([..])`); a factored ctor
+  (`var e: E = mk(i)`) was never credited, so the whole chain (enum box +
+  payload struct box + string/array fields) leaked per iteration.
+  opt_fresh_ret_fns_of(funcs, structs) now ALSO emits "RCE:<name>|<Enum>"
+  entries — prefix-tagged in the SAME list so the verdict rides the existing
+  lower_func opt_fresh_ret threading (no new params; LowerState stays at 33
+  fields) — for free functions whose declared return is an rc-droppable enum
+  and whose EVERY return is a fresh direct variant construction
+  (fresh_rcpayload_enum_init — the OPTFRESH static-freshness rule applied to
+  user enums; this path has no return-transfer inc), with the extra gate
+  rcenum_ctor_payload_strings_fresh: StructLit payloads' string-typed fields
+  must be fresh (literal / str_local_binding_is_fresh) — a param-embedding
+  `S { name: nm }` would hand the caller a chain whose k_str deep-drop frees
+  a string the CALLER still owns (the per-slot rule native's
+  exprNoParamEscape enforces, pinned by the param-embed exclusion test).
+  collect_fresh_rcenum_names then admits a call init via
+  rcenum_call_init_owner; all other RCENUM gates unchanged.
+  (2) THE BUG THE WIDENING EXPOSED (pre-existing, all enum-with-struct-payload
+  consumes): __struct_drop_<T>'s documented contract is "returns the box",
+  but the x86 body set %rax at ENTRY and the field-release calls
+  (__fern_arr_dec / __fern_str_free / nested __struct_drop_*) clobbered it —
+  it returned the LAST-FREED FIELD pointer; the arm64 body restored from x10,
+  which __fern_str_free and nested struct-drop bls clobber (the slice-2
+  lesson). emit_enum_variant_drops CONSUMES that return for its payload-box
+  free (irlower ~17264), so every consume dec'd the last-freed field AGAIN —
+  one rc-underflow tick per consume, LATENT in the shipped
+  TestSelfHostEnumStructPayloadDrop* suite because it asserts boundedness
+  only (the detector absorbs the spurious dec) — while the payload box
+  LEAKED; a STRING field segfaulted (__fern_str_free freeing the twice-freed
+  block by the wrong size class). gdb pinned it: struct_drop_S(box) →
+  arr_dec(field rc=1) → arr_dec(field rc=0 ← tick) → arr_dec(enum box).
+  FIX: both bodies reload the box from the stable stack arg before ret (x86
+  `movq 8(%rsp), %rax` at .Lstd_<T>_ret; arm64 `ldr x0, [sp, #16]` under the
+  stp frame at .Lasd_<T>_ret); the wasm body was already correct
+  ((local.get $box) tail). The one known workaround site (the discarded-temp
+  dyn-struct reclaim, which stashes the box in a scratch and discards the
+  return) is unaffected. VERIFIED: TestSelfHostRcEnumCallInit{IRX86_64,
+  IRArm64,WasmIR} — call-init string-field + array-field payload churn flat
+  at detector zero, param-embed exclusion (caller's string survives),
+  direct-init struct-payload consume at DETECTOR ZERO (the regression pin the
+  shipped boundedness test misses), and the string-field direct-init shape
+  that segfaulted. Remaining nearby: scalar-only payload structs
+  (nested_field_deep_drop_ok requires a reclaimable leaf, so `S { m: i32,
+  n: i32 }` payloads keep their sound leak); bare-local match reclaim beyond
+  the same-block single-match shape; the native direct-call pair-form match
+  scrutinee (slice-4 note).

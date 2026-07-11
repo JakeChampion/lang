@@ -3869,7 +3869,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     // [lo, hi) function-index window (function-sharding, #3425 — the arm64
     // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
@@ -4182,8 +4182,14 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         }
         k = k + 1;
     }
-    s = s.write("    mov x0, x10\n");                   // restore return (bls clobbered x0)
     s = s.write(".Lasd_" + san + "_ret:\n");
+    // Return the BOX (the documented contract) by reloading the stack arg —
+    // NOT `mov x0, x10`: __fern_str_free and a nested __struct_drop_* bl
+    // clobber x10/x11/x12 (the slice-2 field-reclaim lesson), so a string /
+    // deep-struct field release left x10 stale and the enum-payload deep-drop
+    // (which CONSUMES this return for its payload-box free) dec'd a garbage /
+    // already-freed pointer. The arg sits at [sp, #16] under the stp frame.
+    s = s.write("    ldr x0, [sp, #16]\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     return s;
