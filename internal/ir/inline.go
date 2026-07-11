@@ -149,6 +149,21 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 			slots = append(slots, v.Type)
 		}
 		slots = append(slots, fn.ScratchTypes...)
+		// Two-word inline `dyn Trait` slot (wasm, ptrW==4): a dyn local is one
+		// IR slot but a two-value `[data, vtable]` operand, and its exit-sweep
+		// reclaim loads that pair and hands it to __drop_dyn_<set> as two args.
+		// The splice mis-orders that pair against the slot's own store — the
+		// reclaim runs on the slot's *pre-init* value and the fresh box is
+		// stored un-swept, corrupting the freelist (a struct/enum-behind-dyn
+		// churn traps: memory fault at 0xffffffff — #4786). Two-word STRINGS
+		// inline fine (their reclaim is a single-arg __fern_str_dec, no split
+		// pair), so this is dyn-specific. Boxed natives (ptrW==8) hold the dyn
+		// value in one word and are unaffected. Skip such callees — the
+		// closure-drop-thunk exclusion above is the same "don't inline this
+		// shape" precedent.
+		if ptrW == 4 && slotsHaveDynTrait(slots) {
+			continue
+		}
 		out[fn.Name] = inlineCandidate{
 			fn:              fn,
 			body:            fn.Ops,
@@ -157,6 +172,17 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 		}
 	}
 	return out
+}
+
+// slotsHaveDynTrait reports whether any slot type is a `dyn Trait` value —
+// the two-word inline representation on wasm the inliner mis-splices (#4786).
+func slotsHaveDynTrait(slots []ast.Type) bool {
+	for _, t := range slots {
+		if _, ok := t.(ast.DynTraitType); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // isInlineable reports whether fn meets every eligibility rule.

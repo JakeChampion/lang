@@ -183,17 +183,74 @@ function main(): i32 {
 }`
 }
 
-// No wasm sibling: the wasm dyn drop of an ENUM concrete traps at runtime
-// (an unreachable during the __drop_enum dispatch under RcFreeEnabled) — a
-// pre-existing wasm-backend gap, #4786. Add
-// TestWASMDynTraitEnumPayloadHeapBumpBounded in the shape of the natives
-// below once that drop is fixed.
+// The wasm sibling: #4786 — a struct/enum-behind-dyn local dropped at a
+// helper function's exit sweep trapped (memory fault at 0xffffffff), because
+// the Inline pass mis-spliced the two-word inline `dyn` value's exit-sweep
+// reclaim, running it on the slot's pre-init value and stranding the fresh
+// box un-swept → freelist corruption. Fixed by excluding dyn-slot callees
+// from inlining (internal/ir/inline.go). Now bounded like the natives.
+func TestWASMDynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	small := runWasm(t, dynEnumPayloadBumpGrowthSrc("50"))
+	large := runWasm(t, dynEnumPayloadBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("dyn enum-payload growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
 
 func TestX86_64DynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
 	small := mustRunX86_64FreeOn(t, dynEnumPayloadBumpGrowthSrc("50"))
 	large := mustRunX86_64FreeOn(t, dynEnumPayloadBumpGrowthSrc("5000"))
 	if small != large {
 		t.Errorf("dyn enum-payload growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
+// dynStructFnExitBumpGrowthSrc churns a `dyn Show` over a STRUCT concrete
+// through a helper FUNCTION (the dyn local dies at the helper's exit sweep).
+// This is the general #4786 shape — a struct behind dyn dropped at a
+// non-main function exit also tripped the inliner two-word mis-splice on
+// wasm; not enum-specific.
+func dynStructFnExitBumpGrowthSrc(n string) string {
+	return `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+struct Dot { r: i32 }
+impl Show for Dot {
+    function show(self: Self): i32 { return self.r * 2; }
+}
+function go(k: i32): i32 { var d: dyn Show = Dot { r: 41 }; return d.show() + k; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < ` + n + `) {
+        sum = (sum + go(3)) % 251;
+        i = i + 1;
+    }
+    return __heap_bump_bytes() - before;
+}`
+}
+
+func TestWASMDynTraitStructFnExitHeapBumpBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	small := runWasm(t, dynStructFnExitBumpGrowthSrc("50"))
+	large := runWasm(t, dynStructFnExitBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("fn-exit dyn struct growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
+func TestX86_64DynTraitStructFnExitHeapBumpBounded(t *testing.T) {
+	small := mustRunX86_64FreeOn(t, dynStructFnExitBumpGrowthSrc("50"))
+	large := mustRunX86_64FreeOn(t, dynStructFnExitBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("fn-exit dyn struct growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
 	}
 }
 
