@@ -3812,7 +3812,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 4278190080 // 0xFF000000 (3.984 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. As the IR subset widened (enum-array Expr[]/Stmt[] aliasing), the stage-2 self-compile live set crossed 2.5 GiB (exit-137 alloc trap), then 3.5 GiB as more compiler source was added (the strbuf_* IR ops), then 3.875 GiB (the #4351 dyn reclaim walkers); 3.984 GiB restores headroom on x86-64. This is x86-ONLY: the arm64 backend stays at 3.5 GiB (0xE0000000), pinned by its 0x10000000-base + size < 4 GiB 32-bit-pointer ceiling, and its CI self-compile still fits there. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 4278190080) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. Lazy MAP_ANONYMOUS so it costs nothing until touched. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. heapBytes is the `mov esi, heapBytes` mmap length (u32 zero-extend; 0xFF000000 < 0xFFFFFFFF, so it still fits) and the heap-END is built `mov ecx, heapBytes` (u32) + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
+	const heapBytes = 8589934592 // 0x200000000 (8 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. The stage-2 self-compile live set crossed the exit-137 alloc trap at 2.5 GiB, 3.5 GiB, then filled 99.4% of the 3.875 GiB arena (3944 MB measured at the #4355 arr-of-arr slice, whose additions tipped it over); the u32 mmap-length form capped further bumps under 4 GiB (an interim 0xFF000000/3.984 GiB bump was superseded by this), so the length now loads via `movabs rsi` (64-bit imm) and the arena jumps to 8 GiB of real headroom. This is x86-ONLY: the arm64 backend stays at 3.5 GiB (0xE0000000), pinned by its 0x10000000-base + size < 4 GiB 32-bit-pointer ceiling, and its CI self-compile still fits there. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 8589934592) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. Lazy MAP_ANONYMOUS so it costs nothing until touched. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. The heap-END is built `movabs rcx, heapBytes` + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
@@ -3911,7 +3911,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("push rdi")
 	g.emit("sub rsp, 8") // 16-byte align with the four pushes above
 	g.emit("mov rdi, r13")
-	g.emit(fmt.Sprintf("mov esi, %d", heapBytes))
+	g.emit(fmt.Sprintf("movabs rsi, %d", heapBytes))
 	g.emit("mov edx, 3")
 	g.emit("mov r10d, 0x22")
 	g.emit("mov r8d, -1")
@@ -3925,10 +3925,10 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov [rbx], rax")
 	// Phase 6: record the region base for __fern_heap_bump_bytes.
 	g.emit("mov [rip + __fern_heap_base], rax")
-	// heap-END = base + heapBytes. Build via u32 zero-extend + add rather
+	// heap-END = base + heapBytes. Build via 64-bit imm + add rather
 	// than `lea [rax + heapBytes]` (a signed disp32 that caps at 0x7FFFFFFF)
-	// so heapBytes may exceed 2 GiB.
-	g.emit(fmt.Sprintf("mov ecx, %d", heapBytes))
+	// so heapBytes may exceed 4 GiB.
+	g.emit(fmt.Sprintf("movabs rcx, %d", heapBytes))
 	g.emit("add rcx, rax")
 	g.emit("mov [r12], rcx")
 	g.label(".Lalloc_have_heap")

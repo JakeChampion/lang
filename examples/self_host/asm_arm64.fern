@@ -5707,7 +5707,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // identical shell to __fn___fern_str_arr_free above, but each element is
         // a scalar-element INNER buffer released fully by one rc-guarded
         // __fn___fern_arr_dec. Same register discipline (x19/x20/x21 + x30
-        // saved across the bl).
+        // saved across the bl). Gated on need (seeded at asm_arm64_ir's
+        // helper-call emit), mirroring the x86 gating: an unrelated binary
+        // must not carry the strarrarr body's `bl __fn___fern_str_arr_free`
+        // (negative asm-grep contracts, e.g. strarr-elem-alias-excluded).
+        if (s.has_need("arrarr_free")) {
         s = s.write("__fn___fern_arrarr_free:\n");
         s = s.write("    ldr x0, [sp]\n");
         s = s.write("    cbz x0, .Laaf_ret\n");
@@ -5763,9 +5767,12 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str w3, [x2]\n");
         s = s.write(".Laaf_ret:\n");
         s = s.write("    ret\n");
+        }
         // __fern_strarrarr_free(arr) — string[][] reclaim (#4355 slice 9): each
         // element is a string[] INNER buffer released fully by
         // __fn___fern_str_arr_free (string boxes + inner buffer, rc-guarded).
+        // Same need-gating rationale as __fn___fern_arrarr_free above.
+        if (s.has_need("strarrarr_free")) {
         s = s.write("__fn___fern_strarrarr_free:\n");
         s = s.write("    ldr x0, [sp]\n");
         s = s.write("    cbz x0, .Lssaf_ret\n");
@@ -5821,6 +5828,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str w3, [x2]\n");
         s = s.write(".Lssaf_ret:\n");
         s = s.write("    ret\n");
+        }
         // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
         // map-local slice), the arm64 sibling of the x86-64 body in
         // asm_ir.emit_ir_runtime. The asm map box is a RAW 16-byte __fern_alloc(16)
