@@ -132,6 +132,27 @@ function main(): i32 {
 }`
 }
 
+// A FRESH string-concat RECEIVER (`(s1 + s2).len()`) — the value-consuming-op
+// sibling of the discarded-statement concat (#4365; native's
+// rc_heap_bump_len_receiver arc). The `.len()` intercept stashes the fresh
+// temp box in an unmarked scratch, reads the length, then releases the box
+// with the rc-aware __fern_str_free. A 200-iteration warmup settles the
+// freelist before the measured window so the fixpoint compares cleanly.
+func stmtTempLenReceiverBumpSrc(n string) string {
+	return `function main(): i32 {
+    var s1: string = "ab";
+    var s2: string = "cd";
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = (acc + (s1 + s2).len()) % 251; w = w + 1; }
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { acc = (acc + (s1 + s2).len()) % 251; i = i + 1; }
+    if (acc < 0) { return 0 - 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // A discarded STRICT fresh-struct-returning call whose return type carries an
 // rc-ARRAY field (`mk(i) -> H { id, xs: [..] };`) sole-owns every field buffer
 // (the strict-fresh registry guarantees no aliased inner buffers), so the ExprCall
@@ -249,6 +270,22 @@ function main(): i32 {
 // mk(i+1) has id=i+1, xs=[i+1,i+2,i+3]; acc += (i+1)+(i+1)+(i+2)+(i+3) = 4i+7
 // over 0..199 = 4*19900 + 1400 = 81000. The box-return-register clobber this
 // guards would double-free xs and trip __rc_underflow (> 0), not the sum.
+// The len-receiver release frees only the fresh CONCAT temp: the operands
+// s1/s2 stay readable after (their own boxes untouched), the length value is
+// exact, and the detector stays zero.
+const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
+    var s1: string = "ab" + "c";
+    var s2: string = "de";
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        acc = acc + (s1 + s2).len();
+        i = i + 1;
+    }
+    if (acc != 1000) { return 999; }
+    if (s1.len() != 3 || s2.len() != 2) { return 998; }
+    return __rc_underflow();
+}`
+
 // The discarded array-returning call `mk(i);` frees only its OWN buffer while
 // the live `v = mk(i + 1)` stays intact: v = [i+1, i+2, i+3], acc += 3i + 6
 // over 0..199 = 3*19900 + 1200 = 60900. A wrong dec of the live buffer would
@@ -361,6 +398,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
 		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldBumpSrc},
 		{"fresh-call-array", stmtTempFreshCallArrBumpSrc},
+		{"len-receiver-concat", stmtTempLenReceiverBumpSrc},
 		{"fresh-strarr", stmtTempFreshStrArrBumpSrc},
 	}
 	for _, sh := range fixpointShapes {
@@ -388,6 +426,7 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"fresh-call-struct", stmtTempFreshCallDetectorSrc},
 		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldDetectorSrc},
 		{"fresh-call-array", stmtTempFreshCallArrDetectorSrc},
+		{"len-receiver-concat", stmtTempLenReceiverDetectorSrc},
 		{"fresh-strarr", stmtTempFreshStrArrDetectorSrc},
 		{"borrowed-strarr", stmtTempBorrowedStrArrDetectorSrc},
 	}

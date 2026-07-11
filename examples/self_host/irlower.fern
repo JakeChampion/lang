@@ -6720,6 +6720,35 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         // reports "" (arr slot), so only the direct-call form needed
                         // this; an array source is always the builtin array length.
                         var str_recv: boolean = expr_is_str(fa.obj, s);
+                        // A FRESH string-concat receiver (`(a + b).len()`) allocates
+                        // a temp box the read would otherwise strand — the receiver-
+                        // position sibling of the discarded-statement concat reclaim
+                        // (#4365; native's value-consuming-op arc bounds this shape).
+                        // Stash the box in an unmarked scratch (the exit sweep is
+                        // is_arr_slot-gated, so it never double-frees it), read the
+                        // length, then release the temp with the rc-aware
+                        // __fern_str_free — operands stay owned by their locals.
+                        if (str_recv) {
+                            var lfresh: boolean = false;
+                            match (fa.obj) {
+                                parser.ExprBinary(lrb) => { if (lrb.op == "+") { lfresh = true; } },
+                                _ => {}
+                            }
+                            if (lfresh) {
+                                var lr: LowerState = lower_expr(fa.obj, s);
+                                if (!lr.ok) { return lr; }
+                                var lscr: string = "$lenr" + util.i32_to_string(lr.locals.len());
+                                lr = lr.add_local(lscr);
+                                var lslot: i32 = lr.slot_of(lscr);
+                                lr = lr.emit(ir.op_store_local(lslot));
+                                lr = lr.emit(ir.op_load_local(lslot));
+                                lr = lr.emit(ir.op_str_len());
+                                lr = lr.emit(ir.op_load_local(lslot));
+                                lr = lr.emit(ir.op_call_direct("__fern_str_free", 1));
+                                lr = lr.emit(ir.op_drop());
+                                return lr;
+                            }
+                        }
                         var sl: LowerState = lower_expr(fa.obj, s);
                         if (!sl.ok) { return sl; }
                         if (str_recv) { return sl.emit(ir.op_str_len()); }
