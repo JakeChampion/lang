@@ -81,6 +81,8 @@ var selfHostImplementedCodes = map[string]bool{
 	"E061": true, // value-position block has no trailing value
 	"E059": true, // `as?` downcast requires a `dyn Trait` value on the left
 	"E064": true, // a type annotation names no declared type (bare nominal)
+	"E060": true, // `as?` downcast target must be a struct/enum implementing the dyn set
+	"E062": true, // ambiguous method on a `dyn A + B` set (declared by 2+ traits)
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -276,6 +278,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// is fine as `dyn T`.
 		{"dyn-unsafe-assoc-fn", "trait T { function make(): Self; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"dyn-unsafe-self-return", "trait T { function m(self: Self): Self; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// E060 (#4347): `d as? T` on a dyn-annotated local — T must be a
+		// declared struct/enum implementing every trait in the dyn set. A
+		// primitive target draws the target-shape arm; a declared struct
+		// missing the impl draws the not-implementing arm; a correct
+		// downcast is clean from both checkers.
+		{"as-downcast-nonimpl-target", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n}\n", []string{"E060"}},
+		{"as-downcast-prim-target", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? i32) { Some(x) => { return x; }, None => { return 0; } }\n}\n", []string{"E060"}},
+		{"as-downcast-impl-ok", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Circle) { Some(c) => { return c.r; }, None => { return 0; } }\n}\n", nil},
+		// E062 (#4347): `d.m()` on `dyn A + B` where BOTH traits declare m is
+		// ambiguous (the E006 rides along from the two impls both writing m on
+		// S; the impl bodies avoid `self` in the clashing method so the Go
+		// checker's post-E006 cascade emits no E001 and the sets match
+		// exactly). Distinct method names dispatch cleanly.
+		{"dyn-ambiguous-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m();\n}\n", []string{"E006", "E062"}},
+		{"dyn-multi-trait-dispatch-ok", "trait A { function m(self: Self): i32; }\ntrait B { function n(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function n(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m() + d.n();\n}\n", nil},
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
