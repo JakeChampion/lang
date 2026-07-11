@@ -12279,21 +12279,36 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// the freelist. It's true only for OWNED top-level array locals
 	// (computeFreeEligible); struct fields and enum payloads always pass false
 	// (their borrow-ness isn't tracked, so they never free — conservative).
-	if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) && mayFree {
-		// Transitive reclamation Stage B: an array of CONCRETE structs drops
-		// each element box deeply (via __drop_arr_struct_<Elem> →
-		// __drop_struct_<Elem> per element) before freeing the buffer, instead
-		// of the flat per-element rc_dec __fern_drop_arr_ptr does. Gated on
-		// RcFreeEnabled to match the genfn post-pass.
-		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
-			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
+	if at, ok := t.(ast.ArrayType); ok && mayFree {
+		// `dyn Trait[]` (#4351): not in arrElemIsRcTracked (dyn elements are
+		// never inc'd — no rc header on the cells), but an ELIGIBLE dyn array
+		// releases its elements through the dedicated __drop_arr_dyn_<set>
+		// walk (arrElemStructDropName's dyn arm, gated on the backend's
+		// dyn-RC capability there). Without this the function-exit sweep fell
+		// to the plain box dec below and leaked every element. NATIVES ONLY
+		// (ptrW==8) — see the exit-sweep arm's wasm caveat.
+		_, elemIsDyn := at.Elem.(ast.DynTraitType)
+		if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.ptrW == 8 && b.dynReclaim()) {
+			// Transitive reclamation Stage B: an array of CONCRETE structs drops
+			// each element box deeply (via __drop_arr_struct_<Elem> →
+			// __drop_struct_<Elem> per element) before freeing the buffer, instead
+			// of the flat per-element rc_dec __fern_drop_arr_ptr does. Gated on
+			// RcFreeEnabled to match the genfn post-pass.
+			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
+				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+				b.emit(Op{Kind: OpDrop})
+				return
+			}
+			if !elemIsDyn {
+				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+				return
+			}
+			// dyn elements with no generatable walk (flag-off): fall through
+			// to the plain dec — __fern_drop_arr_ptr would rc_dec headerless
+			// cells.
 		}
-		b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
-		b.emit(Op{Kind: OpDrop})
-		return
 	}
 	// __fern_rc_dec is a void-returning runtime helper but OpCallDirect's
 	// codegen always pushes the call's return-value register onto the operand

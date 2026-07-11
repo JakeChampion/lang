@@ -399,10 +399,29 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// (borrowed-derived) array uses a plain dec — never freeing a
 		// buffer a live borrow still holds. The helper carries the
 		// null / low-address / sentinel guards.
-		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			decValueOnStack(t, eligible)
-			return
+		// `dyn Trait[]` locals (#4351): route through decValueOnStack so the
+		// eligible exit-sweep release walks the elements via
+		// __drop_arr_dyn_<set> (per-element __drop_dyn — concrete dtor +
+		// cell free) before freeing the buffer, exactly like the loop-var
+		// reinit path already did. arrElemIsRcTracked deliberately excludes
+		// DynTraitType (dyn cells carry no rc header, so construction must
+		// not inc them), so without this arm a FUNCTION-local dyn array fell
+		// to the buffer-only dec below and leaked every element (cell +
+		// concrete + transitively-owned strings) on each call. `eligible`
+		// (computeFreeEligible) plus __drop_arr_dyn's own rc==1 gate keep an
+		// aliased/escaping array a sound leak, never a double-free. NATIVES
+		// ONLY (ptrW==8): wasm's inline two-word `dyn` elements double-drop
+		// when an element was bound out (`for s in xs` + a call arg) — the
+		// same hazard dropStructField's dyn arm documents — so wasm keeps
+		// the buffer-only dec here (status-quo sound leak; its loop-reinit
+		// element walk is unchanged).
+		if at, ok := t.(ast.ArrayType); ok {
+			_, elemIsDyn := at.Elem.(ast.DynTraitType)
+			if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.ptrW == 8 && b.dynReclaim() && ast.RcFreeEnabled && eligible) {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				decValueOnStack(t, eligible)
+				return
+			}
 		}
 		// Phase 3 step-4: a plain array (primitive elements — i32[],
 		// u8[], …) frees its buffer at the last reference when the
