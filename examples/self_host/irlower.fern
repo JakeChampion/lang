@@ -24419,6 +24419,12 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         else if (rt.len() >= 3 && rt[rt.len() - 2 : rt.len()] == "[]") {
             var et: string = rt[0 : rt.len() - 2];
             if (decl_is_struct(structs, et) && decl_is_leaksafe(structs, et)) { elig = true; elem_t = et; }
+            // A `dyn Trait[]` return (#4780): record the coarse "dyn <Trait>"
+            // ELEMENT type, exactly as the dyn-array LITERAL binding and the
+            // dyn-array PARAM do — the slot is already is_arr (arr_ret_fns
+            // admits any `[]` return), but without this tag an unannotated
+            // `var ys = mk()` lost the trait and `ys[i].m()` mis-dispatched.
+            else if (et.len() > 4 && et[0:4] == "dyn ") { elig = true; elem_t = et; }
         }
         // A SCALAR `dyn Trait` return: record the coarse "dyn <Trait>" type so a
         // call site recovers the result as a `dyn` value — expr_struct_type's
@@ -24426,8 +24432,8 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         // `d.m()` through op_dyn_dispatch (runtime shape dispatch) and (b) keeps
         // lower_dyn_arg from RE-boxing an already-boxed dyn return (its
         // expr_recv_prim_type sees a non-empty struct type and returns ""). A
-        // `dyn Trait[]` return is NOT recorded here (the array path above already
-        // handles struct-array returns; a dyn-array return still bails to AST).
+        // `dyn Trait[]` return is recorded by the array arm above (#4780), with
+        // the coarse "dyn <Trait>" as its ELEMENT type.
         if (!elig && rt.len() > 4 && rt[0:4] == "dyn " && !(rt.len() >= 3 && rt[rt.len() - 2 : rt.len()] == "[]")) { elig = true; elem_t = rt; }
         if (elig) {
             var key: string = funcs[k].name;
