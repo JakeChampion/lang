@@ -3826,3 +3826,40 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   deliberate slot_is_reclaimable_struct-broadening follow-up; lifting the
   escaping-read exclusions needs the read-side alias-inc discipline (the
   #4355 construction/read-side counting follow-up).
+- 2026-07-10: **Landed string-ONLY struct reclaim (#4355 slice 3 — the
+  slot_is_reclaimable_struct broadening, self-host irlower + all three
+  backends; PR #4769).** A struct with string fields but NO rc-array field
+  (e.g. `struct B { name: string, n: i32 }`) was excluded from consume-rebind
+  reclaim entirely — both the construction-side retain and the reclaim
+  routing gated on struct_has_reclaim_array_field — so a `b = step(b)` churn
+  leaked the whole box chain (box + string field per rebind). The routing
+  predicate is now `(s: LowerState) struct_routes_field_reclaim(sty)`:
+  has-rc-array-field OR (has-string-field AND "STRFLDOK:<sty>" admitted),
+  applied at every site that previously asked struct_has_reclaim_array_field
+  — the snapshot-param routing, the StmtAssign reclaimable-local site, the
+  StmtVar loop-rebind site, the slit_reclaim construction retain, and the
+  read-side `var t = b.name` retain arm — so retain and free widen in
+  LOCKSTEP (an admitted type gets both; anything else gets neither).
+  Admission reuses the slice-2 whole-program read scan
+  (strfld_reclaim_ok_types_of), with the array-field candidacy requirement
+  dropped: any struct_has_string_field type is a candidate, admitted iff
+  none of its string-field names is read in an escaping position anywhere.
+  PLUMBING (LowerState is pinned at 33 fields — the legacy AST backend
+  miscompiles 34): the verdict list rides into lower_func as a new final
+  param `strfld_ok_types`, seeded into reclaimable_names as prefix-tagged
+  "STRFLDOK:<T>" entries next to the OPTFRESH block; the three emit
+  orchestrations (asm_ir, asm_arm64 via asm_arm64_ir, wasm_ir) precompute it
+  next to sfrf/ofrf and thread it through — the per-function eligibility
+  prepass passes `[]` (routing verdicts don't affect eligibility).
+  SOUNDNESS of the lowering-time (module-local funcs) vs emit-time
+  (all_funcs) verdict mismatch: emit's all_funcs scan is a superset reader —
+  a type routed at lowering but rejected at emit gets a __field_reclaim body
+  with no string arm (sound leak, arrays-only behavior); the reverse
+  direction can't add frees the retains didn't fund because construction
+  retains key off the same lowering-time verdict. VERIFIED:
+  field-reclaim-str-only-flat + -aliased-carried-safe (x86), -flat-wasm,
+  -flat-arm64 in the three TestSelfHostFieldReclaimStr* suites — string-only
+  churn flat at detector zero, carried/aliased reads survive — plus the
+  full CI matrix. Remaining nearby (unchanged): escaping-read exclusions
+  (read-side counting), string fields of enum-payload structs, string[][],
+  map string K/V deep reclaim (#4353), wasm pair-form `?` string payloads.
