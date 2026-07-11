@@ -3448,6 +3448,28 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			return true
 		}
 		return freshLocals[x.Name]
+	case *ast.StringLit:
+		// A string literal is a static sentinel (immortal, below-heap) — no
+		// parameter heap can flow through it. Without this case every
+		// constructor embedding a literal string field (`S { name: "x" }`)
+		// lost its escape-free verdict, and each local bound to its call
+		// result stayed borrow-tainted — the enum-payload-struct string-field
+		// leak (#4355): the whole box chain (enum box + payload struct box +
+		// its string) was never swept.
+		return true
+	case *ast.Binary:
+		// String concatenation BYTE-COPIES both operands into a fresh owned
+		// buffer — the result aliases neither operand, so no param heap
+		// escapes through it even when an operand IS a param (the same
+		// provenance-free-fresh rule rhsTainted's IsStringConcat case
+		// encodes). Non-concat binaries are scalar-valued and only reach
+		// here for a non-scalar slot — conservatively rejected as before.
+		return x.IsStringConcat
+	case *ast.SliceExpr:
+		// A STRING slice copies into a fresh owned buffer (not a view) —
+		// same freshness as concat. Array slices are views into their
+		// source and stay rejected.
+		return x.IsString
 	case *ast.IfExpr:
 		return exprNoParamEscape(x.Then, slot, info, variantPayloads, q, freshLocals) &&
 			exprNoParamEscape(x.Else, slot, info, variantPayloads, q, freshLocals)
