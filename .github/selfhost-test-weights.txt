@@ -1,0 +1,32 @@
+# Duration weights (seconds) for the self-host e2e shard partition —
+# consumed by scripts/selfhost-shard-tests (greedy LPT). Only tests that
+# are meaningfully slower than the ~0.1-1s norm need an entry; everything
+# else defaults to weight 1. Staleness is benign: a wrong/missing/extra
+# entry only skews shard BALANCE (the partition always covers the real
+# -test.list output), so update opportunistically when a shard's log
+# shows a test dominating its wall-clock, not religiously.
+#
+# Measured on the x86_64 ubuntu-latest lane with all drivers warm
+# (2026-07-11, run 29157258229). aarch64-only entries note it.
+
+TestSelfHostModloadPerModuleWholeCompilerX86_64 210
+TestSelfHostAsmX86_64 90
+TestSelfHostModloadPerModuleWholeCompilerArm64 80
+TestSelfHostLoadFixpointX86_64 75
+TestSelfHostFieldReclaimIRX86_64 55
+TestSelfHostStage2FixedPoint 23
+TestSelfHostWriteFileIRX86_64 16
+TestSelfHostCallOnCallIRX86_64 14
+TestSelfHostDeriveStdlibIR 13
+TestSelfHostNestedFnValueIRX86_64 13
+TestSelfHostAsyncCombinatorsModloadIRX86_64 12
+TestSelfHostWasmArityGate 10
+TestSelfHostEnumFnPayloadIRX86_64 9
+TestSelfHostBoundedArrayMethodIR 8
+TestSelfHostStructMultiLevelDropIRX86_64 8
+TestSelfHostSSALiftCoverageScan 6
+TestSelfHostExportAttributeCompiles 6
+TestSelfHostParserX86_64 5
+TestSelfHostIRPipelineProbe 4
+TestSelfHostStructFreshRetFieldIRX86_64 4
+TestSelfHostPrinterX86_64 3
