@@ -18346,7 +18346,14 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], acc: string[]): string
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (arrarr_lit_is_fresh(v.init)) { a = push_str_unique(a, v.name); } },
+            parser.StmtVar(v) => {
+                if (arrarr_lit_is_fresh(v.init)) {
+                    a = push_str_unique(a, v.name);
+                    // strings-fresh marker: lets the crediting loop grant the
+                    // STRICT "ARRARRS:" credit a string-kind slot requires.
+                    if (arrarr_lit_strings_fresh(v.init)) { a = push_str_unique(a, "S|" + v.name); }
+                }
+            },
             parser.StmtIf(f) => { a = collect_fresh_arrarr_names(f.then_body, a); a = collect_fresh_arrarr_names(f.else_body, a); },
             parser.StmtWhile(w) => { a = collect_fresh_arrarr_names(w.body, a); },
             parser.StmtFor(fo) => { a = collect_fresh_arrarr_names(fo.body, a); },
@@ -18362,13 +18369,39 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], acc: string[]): string
 }
 
 // arrarr_lit_is_fresh: `e` is a non-empty array literal whose EVERY element is
-// itself an array literal of scalar literals / fresh strings — a sole-owned
-// two-level structure the arr-of-arr reclaim may free whole. An ident /
-// call / non-literal element (row or inner) aliases something and rejects.
+// itself an array LITERAL — every row buffer is freshly constructed, so the
+// two-level structure is sole-owned at the outer level. Inner ELEMENT
+// freshness is kind-dependent: scalar elements (numbers / idents / binaries)
+// are VALUE-copied into the row buffer, so any expression is safe; string
+// elements are POINTER-stored, so the STRICT sibling below must also pass
+// before a string-kind slot is freed (the slot's type-aware arrarr_elem
+// picks which credit slot_is_reclaimable_arrarr consults).
 function arrarr_lit_is_fresh(e: parser.Expr): boolean {
     match (e) {
         parser.ExprArray(outer) => {
             if (outer.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < outer.elements.len()) {
+                match (outer.elements[i]) {
+                    parser.ExprArray(_) => {},
+                    _ => { return false; }
+                }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrarr_lit_strings_fresh: every inner element of every row is a string
+// LITERAL or a fresh producer (concat / string method / named producer) —
+// the strict gate for string-kind inners, whose pointers the reclaim frees
+// (an ident element would alias a live local the free would dangle).
+function arrarr_lit_strings_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(outer) => {
             var i: i32 = 0;
             while (i < outer.elements.len()) {
                 match (outer.elements[i]) {
@@ -18377,8 +18410,6 @@ function arrarr_lit_is_fresh(e: parser.Expr): boolean {
                         while (j < inner.elements.len()) {
                             var ok: boolean = false;
                             match (inner.elements[j]) {
-                                parser.ExprNumber(_) => { ok = true; },
-                                parser.ExprBool(_) => { ok = true; },
                                 parser.ExprString(_) => { ok = true; },
                                 _ => { ok = str_local_binding_is_fresh(inner.elements[j]); }
                             }
@@ -18448,6 +18479,13 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arrarr) { return false; }
+    // String-kind inners (type-aware arrarr_elem) need the STRICT credit —
+    // every inner element proved a fresh string, so freeing their pointers
+    // can't dangle a live local. Scalar-kind inners value-copy their
+    // elements, so the lax rows-are-literals credit suffices.
+    if (s.arrarr_elem_of_slot(i) == "string") {
+        return util.index_of_str(s.reclaimable_names, "ARRARRS:" + s.locals[i].slot_name) >= 0;
+    }
     return util.index_of_str(s.reclaimable_names, "ARRARR:" + s.locals[i].slot_name) >= 0;
 }
 
