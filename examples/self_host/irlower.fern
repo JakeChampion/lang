@@ -15007,14 +15007,20 @@ function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[
 // escape gate here is name_escapes_outside_stmt with the MATCH statement skipped —
 // so the match scrutinee `b` (the consuming read) is NOT counted as an escape,
 // unlike the coarse body_unsafe_for which flags any bare-ident use.
-function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
             parser.StmtVar(v) => {
-                if (fresh_rcpayload_enum_init(v.init, structs) != "" && util.index_of_str(reassigned, v.name) < 0) {
+                // Direct/qualified variant-ctor init, OR (#4355 slice 5) a CALL to
+                // a whole-program-proven fresh rc-enum ctor fn ("RCE:<name>|<Enum>"
+                // in opt_fresh_ret — every return a fresh direct construction, so
+                // the call result is a sole-owned chain exactly like an inline ctor).
+                var rceo: string = fresh_rcpayload_enum_init(v.init, structs);
+                if (rceo == "") { rceo = rcenum_call_init_owner(v.init, opt_fresh_ret); }
+                if (rceo != "" && util.index_of_str(reassigned, v.name) < 0) {
                     var match_idx: i32 = 0 - 1;
                     var n_match: i32 = 0;
                     var mj: i32 = 0;
@@ -15031,16 +15037,16 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                     }
                 }
             },
-            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, a); a = collect_fresh_rcenum_names(iff.else_body, structs, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, a); },
-            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, a); },
+            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, opt_fresh_ret, a); a = collect_fresh_rcenum_names(iff.else_body, structs, opt_fresh_ret, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, opt_fresh_ret, a); },
+            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, opt_fresh_ret, a); },
             parser.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { a = collect_fresh_rcenum_names(m.arms[ai].body, structs, a); ai = ai + 1; }
+                while (ai < m.arms.len()) { a = collect_fresh_rcenum_names(m.arms[ai].body, structs, opt_fresh_ret, a); ai = ai + 1; }
             },
             parser.StmtDefer(d) => {
                 match (d.action) {
-                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, a); },
+                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, opt_fresh_ret, a); },
                     _ => {}
                 }
             },
@@ -15049,6 +15055,30 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
         vi = vi + 1;
     }
     return a;
+}
+
+// rcenum_call_init_owner: `e` is a direct call `mk(args...)` to a fn the
+// whole-program scan proved a fresh rc-enum ctor ("RCE:<name>|<Enum>" in
+// opt_fresh_ret — see opt_fresh_ret_fns_of). Returns the enum name, else "".
+function rcenum_call_init_owner(e: parser.Expr, opt_fresh_ret: string[]): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var key: string = "RCE:" + cid.name + "|";
+                    var i: i32 = 0;
+                    while (i < opt_fresh_ret.len()) {
+                        var ent: string = opt_fresh_ret[i];
+                        if (ent.len() > key.len() && ent[0:key.len()] == key) { return ent[key.len() : ent.len()]; }
+                        i = i + 1;
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
 }
 
 // collect_fresh_string_names / collect_fresh_string_in_stmt gather the LOCAL
@@ -15970,7 +16000,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // moved-out payload is rejected) before crediting. The consuming-match reclaim
     // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
     // loop-local; this closes that gap (#4357) with no overlap.
-    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, []);
+    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, []);
     var rei: i32 = 0;
     while (rei < rcenums.len()) {
         // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
@@ -22403,7 +22433,7 @@ function body_has_nonfresh_opt_success_payload(stmts: parser.Stmt[]): boolean {
 // "OPTFRESH:<name>" into reclaimable_names so lower_try's consume-edge box
 // free can check eligibility from LowerState (pinned at 33 fields — no new
 // registry field).
-pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
@@ -22415,9 +22445,101 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             if (!body_has_nonfresh_opt_success_payload(funcs[k].body)) { flag = "f"; }
             out = out.append(funcs[k].name + "|" + opt_payload_type(rt, "Ok") + "|" + flag);
         }
+        // #4355 slice 5: fresh rc-ENUM ctor fns, tagged "RCE:<name>|<Enum>" in the
+        // SAME list (the tag keeps the "name|ptype|flag" lookups above from ever
+        // matching) so the verdict reaches reclaimable_names_of through the
+        // existing lower_func opt_fresh_ret param — no new threading. A qualifying
+        // fn's every return is a direct fresh variant construction of its declared
+        // enum (the OPTFRESH freshness rule applied to user enums: the self-host
+        // IR path has no return-transfer inc, so soleness is proven statically),
+        // with the extra string-field gate of rcenum_ctor_payload_strings_fresh.
+        // collect_fresh_rcenum_names then admits `var e: E = mk(i)` call inits
+        // exactly like direct-ctor inits, so the RCENUM loop-rebind/exit reclaim
+        // fires for factored constructors.
+        else if (funcs[k].receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
+                && enum_all_variants_rc_droppable(structs, rt)
+                && body_has_return(funcs[k].body)
+                && !body_has_nonqualifying_rcenum_return(funcs[k].body, structs, rt)) {
+            out = out.append("RCE:" + funcs[k].name + "|" + rt);
+        }
         k = k + 1;
     }
     return out;
+}
+
+// rcenum_ctor_payload_strings_fresh: every StructLit payload arg of the variant
+// construction `e` has FRESH string-typed fields — a string literal or a fresh
+// producer (str_local_binding_is_fresh: concat / string-method copy / named
+// producer). __struct_drop_<S>'s k_str arm frees the payload struct's string
+// fields at the consuming reclaim, so a param-embedding field (`S { name: nm }`,
+// nm a callee param) would hand the caller a chain whose deep-drop frees a
+// string the CALLER still owns — such a ctor disqualifies its function from the
+// RCE set (the exact rule native's exprNoParamEscape enforces per-slot).
+// Non-struct-lit args impose no constraint here: variant_struct_payloads_fresh
+// (checked by fresh_rcpayload_enum_init) already requires deep-drop-ok struct
+// payloads to BE fresh literals and string payloads to be fresh.
+function rcenum_ctor_payload_strings_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                match (c.args[ai]) {
+                    parser.ExprStructLit(sl) => {
+                        if (sl.has_base) { return false; }
+                        var si: i32 = rc_struct_decl_index(structs, sl.type_name);
+                        if (si < 0) { return false; }
+                        var fi: i32 = 0;
+                        while (fi < sl.field_names.len()) {
+                            var fdt: string = "";
+                            var df: i32 = 0;
+                            while (df < structs[si].fields.len()) {
+                                if (structs[si].fields[df].name == sl.field_names[fi]) { fdt = structs[si].fields[df].type_name; }
+                                df = df + 1;
+                            }
+                            if (fdt == "string") {
+                                var sfresh: boolean = false;
+                                match (sl.field_values[fi]) {
+                                    parser.ExprString(_) => { sfresh = true; },
+                                    _ => { sfresh = str_local_binding_is_fresh(sl.field_values[fi]); }
+                                }
+                                if (!sfresh) { return false; }
+                            }
+                            fi = fi + 1;
+                        }
+                    },
+                    _ => {}
+                }
+                ai = ai + 1;
+            }
+            return true;
+        },
+        _ => { return true; }
+    }
+}
+
+// body_has_nonqualifying_rcenum_return: any return whose value is NOT a fresh
+// direct construction of enum `owner` (fresh_rcpayload_enum_init) with fresh
+// string fields in its StructLit payloads (rcenum_ctor_payload_strings_fresh).
+// Statement coverage mirrors body_has_nonctor_opt_return — a return hiding in
+// any covered nested block disqualifies; uncovered statement kinds cannot
+// contain returns that reach this function's exit.
+function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: parser.StructDecl[], owner: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                if (fresh_rcpayload_enum_init(r.value, structs) != owner) { return true; }
+                if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // collect_try_str_binding_names: string LOCALS bound from a `?` over an
@@ -23355,7 +23477,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs), strfld_reclaim_ok_types_of(funcs, structs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -23380,7 +23502,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs), strfld_reclaim_ok_types_of(funcs, structs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -25598,7 +25720,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs), sfot);
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot);
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
