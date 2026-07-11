@@ -186,9 +186,27 @@ fixpoints.
   a session-tail add-on. Keep it NARROW (only `string[]` fields of
   already-reclaimable structs; no `struct_has_reclaim_array_field` broadening)
   to avoid the `slot_is_reclaimable_struct` OOM.
-- **CS4.** Carry `ownership` on the self-host `Ty` itself (`asmcore.fern:956`) so
-  a bound local / field remembers its classification, not just the producing
-  expression — the self-host analogue of C1's structural axis.
+- **CS4 (#4812, LANDED).** Carry `ownership` on the self-host type layer so a
+  bound local remembers its classification, not just the producing expression —
+  the self-host analogue of C1's structural axis + C3's binding resolver.
+  Implementation note: the axis lives on **`LocalInfo.str_own`** (irlower's
+  per-slot record), NOT on asmcore's `Ty` — irlower does not import asmcore
+  (`Ty` serves the legacy AST emitters slated for retirement, `LocalInfo` is
+  the IR path's type carrier), and the issue's additive-preference points the
+  same way. Codes mirror `str_producer_ownership` / native `ast.Ownership`
+  (0 Owned / 1 Borrowed / 2 View / 3 Static); every slot defaults **Borrowed**
+  (the conservative never-free class — params, container-element binders, and
+  IIFE temps stay there). Seeded in `lower_var` from the new
+  `str_binding_ownership` (producer classification; an ident init propagates a
+  View/Static source verbatim and demotes an Owned source to Borrowed — an
+  alias never acquires ownership); read back via `str_own_slot` and the
+  read-side `str_expr_ownership` (ident reflects the slot fact VERBATIM, the
+  native `ExprResultOwnershipWith` contract). Observable via the driver's
+  `-str-own` dump (`irlower_run.fern`), pinned by
+  `TestSelfHostStrOwnDump` (`internal/e2eselfhost/self_host_strown_dump_test.go`)
+  — the self-host analogue of native `ownership_test.go`. No codegen decision
+  consults the facts yet (behaviour-identical; fixpoints + the per-module run
+  gate pin that); CS3 (#4355) and the reuse-analysis slice are the consumers.
 - **Not doing:** migrating `str_local_binding_is_fresh` / `str_free_producer_
   ident` to derive from `str_producer_ownership` — inspection shows genuinely
   different admit-sets (syntactic-vs-typed, box-freshness-vs-ownership, even

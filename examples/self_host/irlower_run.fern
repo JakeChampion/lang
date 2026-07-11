@@ -14,6 +14,11 @@
 // `<Type>.<name>` like native's fn.Name), then the function's non-empty
 // table lines. The Go-side gate diffs this against ir.RcPlanHook's output
 // for the same source.
+//
+// `-str-own` (#4297 CS4): print each function's slot-carried string-
+// ownership facts (irlower.str_own_dump — `p/v/r <name>: <ownership>` lines,
+// codes mirroring native ast.Ownership) instead of evaluating; pinned by the
+// Go-side gate in internal/e2eselfhost/self_host_strown_dump_test.go.
 
 import "std/io";
 import "./lexer";
@@ -26,15 +31,37 @@ function main(): i32 {
     var av: string[] = args();
     var want_dump: boolean = false;
     var want_rc_plan: boolean = false;
+    var want_str_own: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-dump") { want_dump = true; }
         if (av[ai] == "-rc-plan") { want_rc_plan = true; }
+        if (av[ai] == "-str-own") { want_str_own = true; }
         ai = ai + 1;
     }
 
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+
+    // `-str-own` (#4297 CS4): print each function's slot-carried string-
+    // ownership facts (irlower.str_own_dump) instead of evaluating — the
+    // observable surface for the ownership-axis unit gate, format-mirroring
+    // `-rc-plan` (one `== <name>` header per function, then the dump lines).
+    if (want_str_own) {
+        var sout: string = "";
+        var sfi: i32 = 0;
+        while (sfi < mod.funcs.len()) {
+            var skey: string = mod.funcs[sfi].name;
+            if (mod.funcs[sfi].receiver_type.len() > 0) {
+                skey = util.base_type_name(mod.funcs[sfi].receiver_type) + "." + mod.funcs[sfi].name;
+            }
+            sout = sout + "== " + skey + "\n";
+            sout = sout + irlower.str_own_dump(mod.funcs[sfi], mod.structs, mod.funcs);
+            sfi = sfi + 1;
+        }
+        write(sout);
+        return 0;
+    }
 
     if (want_rc_plan) {
         var out: string = "";
