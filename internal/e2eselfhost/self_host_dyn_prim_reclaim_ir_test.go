@@ -91,6 +91,21 @@ function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { 
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"dyn-prim-reassigned-excluded", 0)
 
+	// ENUM payload (#4351 slice 4): `var d: dyn T = V(<args>)` — the variant
+	// construction is a fresh rc-headered enum box, credited with the ENUM
+	// name as its tag; the sweep's shallow dec frees it (pointer payloads
+	// would leak with it — safe). Flat churn, no underflow. (An enum LOCAL
+	// coerced to dyn — `var e: Op = Add(k); var d: dyn Show = e;` — currently
+	// mis-dispatches on the IR path, a pre-existing gap tracked separately,
+	// so only the direct-construction shape is pinned here.)
+	run(t, `trait Show { function show(self: Self): i32; }
+enum Op { Add(i32), Neg }
+impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
+function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
+function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+		"dyn-enum-payload-reclaim-flat", 0)
+
 	// ALIASED STRING payload excluded: `var d: dyn Show = s` where s is a
 	// string local — a non-literal init is never credited, so the inner
 	// free can't fire on a box someone else owns. Values + detector.
@@ -138,6 +153,12 @@ function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes
 		{"dyn-prim-str-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 function go(k: i32): i32 { var d: dyn Show = "hello"; return d.show() + k; }
+function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+		{"dyn-enum-payload-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
+enum Op { Add(i32), Neg }
+impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
+function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-prim-escaping-excluded-wasm", `trait Show { function show(self: Self): i32; }
