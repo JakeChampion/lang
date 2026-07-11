@@ -21,14 +21,17 @@
 // allocation profile matches `sort_by`'s: one scratch copy per merge
 // pass, materialized explicitly — see sort_i32_asc's doc comment for
 // why it must not alias). The string sorts are monomorphic too, but
-// only because the native wasm backend cannot yet resolve a
-// call_indirect signature with string params (#4804: strings are
-// two-slot on wasm32 — `valtypeFor` in internal/codegen/wasmbin; a
-// `sort_by[string]` instantiation fails to compile for `-target
-// wasm`). Once that seam handles the two-slot string ABI, they should
-// become one-line `sort_by` delegations — the modload mangling of
-// module-local references from arg positions and lambda bodies now
-// works (#4802).
+// only for a codegen reason: a `sort_by[string]` instantiation still
+// emits invalid wasm in several configurations (#4816) — e.g. two
+// string sorts in one program, which the `prop_sort_strings` fixture
+// catches. Both intended enablers have landed — modload rewrites the
+// module-local comparator references from arg positions and lambda
+// bodies of a mangled module (#4802), and the `call_indirect`
+// signature seam accepts two-slot `string` params (#4804) — but a
+// value-flow site in the wasm closure-call lowering still unbalances
+// the stack for `string` (#4816). Until that's fixed, the string
+// merge bodies are spelled out monomorphically here; once #4816
+// closes they should become one-line `sort_by` delegations.
 // The generic comparator form `sort_by[T](arr, cmp)` (below) covers
 // any element type / custom ordering now that closure args lower on
 // every backend.
@@ -339,16 +342,15 @@ pub function string_cmp(a: string, b: string): i32 {
 //
 // These SHOULD be one-line delegations to `sort_by` (a string
 // compare is a call either way, so delegating costs nothing;
-// the modload mangling of module-local references from arg
-// positions and lambda bodies now supports it — #4802), but a
-// `sort_by[string]` instantiation does not compile for
-// `-target wasm` (#4804): the wasm backend's call_indirect
-// signature seam only handles single-slot types, and strings
-// are two-slot on wasm32 ("unsupported type string" from
-// `valtypeFor`, internal/codegen/wasmbin). Until that seam
-// handles the two-slot string ABI, the merge body is spelled
-// out monomorphically here (mirroring `sort_by`; keep them in
-// sync).
+// modload rewrites the module-local comparator reference — #4802,
+// and the call_indirect signature seam takes two-slot `string`
+// params — #4804), but a `sort_by[string]` instantiation still
+// emits invalid wasm in several configurations (#4816): a
+// value-flow site in the wasm closure-call lowering unbalances
+// the stack for `string`, so e.g. two string sorts in one program
+// fail `-target wasm` validation (caught by the `prop_sort_strings`
+// fixture). Until #4816 closes, the merge body is spelled out
+// monomorphically here (mirroring `sort_by`; keep them in sync).
 pub function sort_strings_asc(arr: string[]): string[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
@@ -451,7 +453,7 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 // alphabetical listings where case shouldn't fragment the
 // ordering. Stable (merge sort): strings that compare ci-equal
 // ("Apple" / "apple") keep their input order. (Monomorphic
-// body for the same wasm call_indirect reason as
+// body for the same #4816 wasm-codegen reason as
 // sort_strings_asc.)
 pub function sort_strings_asc_ci(arr: string[]): string[] {
     var n: i32 = arr.len();

@@ -305,10 +305,14 @@ O(n²) insertion sorts). Insertion sort survives only in the `fip`
 `sort_i32_inplace_*` variants, which cannot allocate merge scratch by
 definition. The scalar entry points stay monomorphic for the direct
 `<`/`>` hot-loop compare; the string sorts are monomorphic only
-because modload's mangling can't yet rewrite module-local function
-references in arg positions / closure bodies (they should become
-`sort_by` delegations when that lands); the planned deprecation in
-favor of the `Ord`-bound generic remains open.
+because a `sort_by[string]` instantiation still emits invalid wasm in
+several configurations (#4816) — the two intended enablers have landed
+(modload rewrites module-local comparator references from arg
+positions / lambda bodies, #4802; the `call_indirect` seam accepts
+two-slot `string` params, #4804), but a value-flow site in the wasm
+closure-call lowering still unbalances the stack for `string`. They
+become `sort_by` delegations once #4816 closes; the planned
+deprecation in favor of the `Ord`-bound generic remains open.
 
 ### 11. Time primitives · medium · ☐
 
