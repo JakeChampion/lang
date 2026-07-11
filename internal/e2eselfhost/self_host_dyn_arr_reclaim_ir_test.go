@@ -97,16 +97,31 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { re
 
 	// ALIASED excluded: `var ys = xs` — a bare-ident alias rejects the
 	// candidate (both names see live elements through frame exit; the array
-	// leaks, sound). Values + detector stay clean. (A `return xs` escape is
-	// equally excluded by the same Ident arm, but returning a `dyn T[]`
-	// currently mis-dispatches on the self-host IR path — a pre-existing,
-	// separately-tracked gap — so the alias shape carries this case.)
+	// leaks, sound). Values + detector stay clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { var xs: dyn Show[] = [41, 5]; var ys = xs; return ys[0].show() + xs[1].show() + k; }
 function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 51) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"dyn-arr-aliased-excluded", 0)
+
+	// RETURNED `dyn T[]` dispatches in the caller (#4780): struct_ret_fns_of
+	// now records the coarse "dyn <Trait>" ELEMENT type for a `dyn Trait[]`
+	// return (exactly as the literal-binding and param paths tag it), so an
+	// unannotated `var ys = mk()` — and the annotated form — recover the
+	// trait and route `ys[i].m()` through op_dyn_dispatch. Pre-fix this
+	// mis-dispatched (returned 74 for a want-10 program). The returned array
+	// itself is escaping → excluded from the DARR sweep (leaks, sound):
+	// values + detector pin correctness, not flatness.
+	run(t, `trait Show { function show(self: Self): i32; }
+struct Dot { r: i32 }
+impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
+impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
+function mk(k: i32): dyn Show[] { var xs: dyn Show[] = [k, Dot { r: 5 }]; return xs; }
+function go(k: i32): i32 { var ys: dyn Show[] = mk(k); var zs = mk(k + 1); return ys[0].show() + ys[1].show() + zs[0].show(); }
+function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 19) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"dyn-arr-returned-dispatch", 0)
 }
 
 // TestSelfHostDynArrReclaimWasmIR: the wasm sibling through the -ir driver.
@@ -143,6 +158,14 @@ impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
 function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+		{"dyn-arr-returned-dispatch-wasm", `trait Show { function show(self: Self): i32; }
+struct Dot { r: i32 }
+impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
+impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
+function mk(k: i32): dyn Show[] { var xs: dyn Show[] = [k, Dot { r: 5 }]; return xs; }
+function go(k: i32): i32 { var ys: dyn Show[] = mk(k); var zs = mk(k + 1); return ys[0].show() + ys[1].show() + zs[0].show(); }
+function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 19) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0},
 		{"dyn-arr-forin-excluded-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { var xs: dyn Show[] = [k, 5]; var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
