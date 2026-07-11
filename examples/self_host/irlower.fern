@@ -6201,6 +6201,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     var sc: LowerState = s;
                     var ai: i32 = 0;
                     var lat_slots: i32[] = [];
+                    var laa_slots: i32[] = [];
                     while (ai < c.args.len()) {
                         // A bare function-name argument at a "fn"-typed param
                         // position is a function VALUE (a function pointer):
@@ -6250,6 +6251,33 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                 sc = sc.emit(ir.op_load_local(lats));
                                 lat_slots = lat_slots.append(lats);
                             }
+                            // #4365 stage (b): a fresh SCALAR-element array-literal
+                            // arg (`f([i, i+1])`, discardable_scalar_arr_lit — a
+                            // rc=1 sole-owned single-level buffer, never bound or
+                            // aliased) at a BORROWABLE param position is dead the
+                            // moment the call returns, exactly like the string
+                            // temps above: stash it and __fern_rc_dec (the
+                            // rc-guarded array release — __fn___fern_arr_dec /
+                            // $__fern_arr_dec per backend, freelist-returning at
+                            // rc==1) right after the call. Pointer-element
+                            // literals (string / nested-array / struct elements)
+                            // stay excluded — a shallow buffer free would leak
+                            // their element boxes; they keep today's safe leak.
+                            var arrlit_arg: boolean = false;
+                            if (!lit_arg && sc.ok) {
+                                match (c.args[ai]) {
+                                    parser.ExprArray(laa) => { arrlit_arg = discardable_scalar_arr_lit(laa, sc); },
+                                    _ => {}
+                                }
+                            }
+                            if (arrlit_arg && sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
+                                var laan: string = "$laa" + util.i32_to_string(sc.locals.len());
+                                sc = sc.add_local(laan);
+                                var laas: i32 = sc.slot_of(laan);
+                                sc = sc.emit(ir.op_store_local(laas));
+                                sc = sc.emit(ir.op_load_local(laas));
+                                laa_slots = laa_slots.append(laas);
+                            }
                         }
                         if (!sc.ok) { return sc; }
                         ai = ai + 1;
@@ -6266,6 +6294,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         scr = scr.emit(ir.op_call_direct("__fern_str_free", 1));
                         scr = scr.emit(ir.op_drop());
                         lfi = lfi + 1;
+                    }
+                    // The array-literal arg temps: same net-zero stack shape, the
+                    // rc-guarded array release instead of the string free.
+                    var lfa: i32 = 0;
+                    while (lfa < laa_slots.len()) {
+                        scr = scr.emit(ir.op_load_local(laa_slots[lfa]));
+                        scr = scr.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                        scr = scr.emit(ir.op_drop());
+                        lfa = lfa + 1;
                     }
                     return scr;
                 },
@@ -15337,7 +15374,10 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                     var has_lit: boolean = false;
                     var li: i32 = 0;
                     while (li < c.args.len()) {
-                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, _ => {
+                        // ExprArray: the #4365 stage-(b) fresh array-literal arg
+                        // (the scalar-element gate runs at the lowering with type
+                        // info; over-collection here just seeds a harmless entry).
+                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, _ => {
                             if (str_local_binding_is_fresh(c.args[li])) { has_lit = true; }
                         } }
                         li = li + 1;
@@ -24654,6 +24694,120 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
 // only free-function entries are consulted at call sites. Entries with no
 // borrowable param are omitted (lookup defaults to false). Mirrors native's
 // borrow inference, the conservative first cut.
+// param_consumed_in_body reports whether the callee body CONSUMES param `name`
+// in a way the borrow walker reads as a harmless borrow: a reassignment
+// (`name = …` — the functional-update spelling `xs = xs.append(x)` /
+// `m = m.insert(k, v)`), or `name.append(…)` in ANY position — append REUSES or
+// FREES a unique receiver's buffer on growth, so even the unbound
+// `var ys = xs.append(x)` can free the caller's buffer out from under a
+// caller-side release. expr_unsafe_for deliberately treats a bare-ident method
+// receiver as a borrow (that rule is correct for its named-LOCAL consumers,
+// which bail on reassignment separately via body_assign_targets), but a
+// borrowability verdict feeds CALLER-side frees (the Level-2 precise drop, the
+// call-arg temp reclaim), so a consumed param admitted as borrowable
+// over-released: caller dec'd a buffer append had already freed (rc underflow,
+// found by the #4365 stage-(b) probes; pre-existing for the L2 named-local
+// drop). Consuming set: `append` — the one receiver method that releases the
+// receiver buffer itself; map mutators keep the box pointer alive so the
+// caller's release stays sole.
+function param_consumed_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "append") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == name) { return true; } },
+                            _ => {}
+                        }
+                    }
+                    if (param_consumed_expr(fa.obj, name)) { return true; }
+                },
+                _ => { if (param_consumed_expr(c.callee, name)) { return true; } }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (param_consumed_expr(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return param_consumed_expr(b.left, name) || param_consumed_expr(b.right, name); },
+        parser.ExprUnary(u) => { return param_consumed_expr(u.operand, name); },
+        parser.ExprIndex(ix) => { return param_consumed_expr(ix.array, name) || param_consumed_expr(ix.index, name); },
+        parser.ExprSlice(sl) => { return param_consumed_expr(sl.array, name) || param_consumed_expr(sl.start, name) || param_consumed_expr(sl.end, name); },
+        parser.ExprFieldAccess(fa) => { return param_consumed_expr(fa.obj, name); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (param_consumed_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (param_consumed_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && param_consumed_expr(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (param_consumed_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { if (param_consumed_stmt(lm.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function param_consumed_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return param_consumed_expr(v.init, name); },
+        parser.StmtReturn(r) => { return param_consumed_expr(r.value, name); },
+        parser.StmtExpr(e) => { return param_consumed_expr(e.value, name); },
+        parser.StmtAssign(a) => { return param_consumed_expr(a.value, name); },
+        parser.StmtIf(f) => {
+            if (param_consumed_expr(f.cond, name)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (param_consumed_stmt(f.then_body[ti], name)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (param_consumed_stmt(f.else_body[ei], name)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (param_consumed_expr(w.cond, name)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (param_consumed_stmt(w.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (param_consumed_expr(fo.iter, name)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (param_consumed_stmt(fo.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (param_consumed_expr(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && param_consumed_expr(m.arms[ai].guard, name)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (param_consumed_stmt(m.arms[ai].body[bi], name)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return param_consumed_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+function param_consumed_in_body(stmts: parser.Stmt[], name: string, reassigned: string[]): boolean {
+    if (util.index_of_str(reassigned, name) >= 0) { return true; }
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (param_consumed_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+
 pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     var none: string[] = [];
     var out: string[] = [];
@@ -24661,10 +24815,12 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     while (k < funcs.len()) {
         var flags: string = "";
         var any: boolean = false;
+        var reasgn: string[] = body_assign_targets(funcs[k].body);
         var pj: i32 = 0;
         while (pj < funcs[k].params.len()) {
             var pname: string = funcs[k].params[pj].name;
-            if (!body_unsafe_for(funcs[k].body, pname, none)) { flags = flags + "1"; any = true; }
+            if (!param_consumed_in_body(funcs[k].body, pname, reasgn)
+                && !body_unsafe_for(funcs[k].body, pname, none)) { flags = flags + "1"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -24754,9 +24910,11 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
             if (funcs[i].params.len() > 0) {
                 var flags: string = "";
                 var any: boolean = false;
+                var ip_reasgn: string[] = body_assign_targets(funcs[i].body);
                 var pj: i32 = 0;
                 while (pj < funcs[i].params.len()) {
-                    if (!body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
+                    if (!param_consumed_in_body(funcs[i].body, funcs[i].params[pj].name, ip_reasgn)
+                        && !body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
