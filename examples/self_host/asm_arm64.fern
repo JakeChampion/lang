@@ -4990,12 +4990,15 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        // 8 GiB heap arena, lazily mmap'd at hint 0x04000000 on the first
+        // 8 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
         // allocation (mirrors the native arm64 emitAllocRuntime) rather than
         // reserved as a huge `.bss` in the loaded image. Two payoffs: the
         // R+W data segment stays tiny (so the binary can be a position-
         // independent ET_DYN loaded at any base — `-target arm64-android`),
-        // and the mapping is lazy so untouched pages cost nothing. Heap
+        // and the mapping is lazy so untouched pages cost nothing (the hint
+        // must stay 0x10000000 — the NATIVE backend's below-heap rc guards
+        // key on it, and the two backends' binaries interoperate in the
+        // differential suites). Heap
         // pointers may now exceed 4 GiB (the historical 32-bit-safe-range
         // guideline was retired when the stage-2 self-compile's ~3.95 GiB
         // live set outgrew every arena a 32-bit range can hold — the value
@@ -5062,7 +5065,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    stp x8, x9, [sp, #-16]!\n");
         s = s.write("    mov x9, x0\n");                  // save rounded size
         s = s.write("    mov x0, #1\n");
-        s = s.write("    lsl x0, x0, #26\n");             // hint = 0x04000000 (64 MB — above the ~45 MB binary image, low enough that hint+size stays under 4 GiB)
+        s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000 — keep in lockstep with the NATIVE arm64 backend, whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower base no-ops every native rc inc/dec)
         // length = 8 GiB = 0x200000000 = 1 << 33. Built with mov+lsl, not a
         // `ldr =N` literal: the in-process assembler's literal parser is
         // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
