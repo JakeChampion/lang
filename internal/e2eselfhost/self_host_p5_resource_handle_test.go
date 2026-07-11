@@ -67,7 +67,7 @@ func TestSelfHostExternResourceHandle(t *testing.T) {
 	}
 
 	// Self-host backend: emit the core from the resource-driving program.
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -76,23 +76,7 @@ func TestSelfHostExternResourceHandle(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "res_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "res_run.fern", "res_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "poll-ok"
 	prog := `@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
@@ -197,7 +181,7 @@ func TestSelfHostExternResourceHandleTypes(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -206,23 +190,7 @@ func TestSelfHostExternResourceHandleTypes(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "res_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "res_run.fern", "res_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "poll-ok"
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")
@@ -327,7 +295,7 @@ func TestSelfHostExternResourceHandleDrop(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -336,23 +304,7 @@ func TestSelfHostExternResourceHandleDrop(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "res_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "res_run.fern", "res_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "poll-ok"
 	prog := `@import("wasi:io/poll@0.2.0", "pollable")
@@ -463,7 +415,7 @@ func TestSelfHostExternResourceHandleAutoDrop(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -472,23 +424,7 @@ func TestSelfHostExternResourceHandleAutoDrop(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "res_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "res_run.fern", "res_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "poll-ok"
 	// No drop function — the self-host must auto-insert it.

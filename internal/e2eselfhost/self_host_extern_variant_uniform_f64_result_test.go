@@ -100,7 +100,7 @@ func TestSelfHostExternVariantUniformF64ResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -109,23 +109,7 @@ func TestSelfHostExternVariantUniformF64ResultCustomProvider(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "vufr_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "vufr_run.fern", "vufr_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "vufr-ok"
 	prog := `enum Ev { A(f64), B(f64) }
