@@ -12,7 +12,7 @@ name: Test e2e self-host
 # internal/e2e — files that pair a TestSelfHost* leg with its
 # TestNative* oracle sibling sharing one fixture table (splitting them
 # would sever the fixtures). The build job compiles BOTH test binaries
-# and the shard script round-robins over the UNION of both lists,
+# and the shard script partitions the UNION of both lists,
 # running each test against the binary/package it lives in — so the
 # residuals keep exactly their old coverage.
 #
@@ -44,9 +44,13 @@ name: Test e2e self-host
 #     another — a warm job that always finishes does. Warmed: every file-based
 #     x86 driver the suite builds — asm_run / asm_pathprobe_run (the bulk of
 #     `*IRX86_64` tests), asm_ir_run / asm_load_run / asm_modload_run /
-#     checker_modload_run / ssa, and asm_ir_elig_run (the lean front-end+asm_ir
-#     probe the six IR-eligibility tests share, in place of a whole-compiler
-#     driver whose 256 MB binary did not disk-cache).
+#     checker_modload_run / ssa (incl. ssa_lift_scan_run, whose per-shard cold
+#     build used to make TestSelfHostSSALiftCoverageScan a ~74s test), the wasm
+#     stdin drivers wasm_run / wasm_ir_run / wasm_runio_run (built by hundreds
+#     of call-sites; TestSelfHostWasmArityGate alone cold-built two of them for
+#     ~126s per shard before this), and asm_ir_elig_run (the lean
+#     front-end+asm_ir probe the six IR-eligibility tests share, in place of a
+#     whole-compiler driver whose 256 MB binary did not disk-cache).
 #     Un-warmed drivers still compile per shard, now at most once each.
 #     IMPORTANT: artifacts are used instead of actions/cache here because the
 #     repo's 10 GB shared cache budget is routinely filled by other PRs/branches.
@@ -65,12 +69,23 @@ name: Test e2e self-host
 # toolchain rather than skipping for lack of qemu / cross-gcc. The
 # aarch64 runner skips the x86 self-host driver builds (and vice-versa),
 # so the x86 lane is the long pole; the aarch64 shards finish in well
-# under a minute.
+# under a minute — which is why the aarch64 lane runs 8 shards to the
+# x86 lane's 20 (its per-shard cost is dominated by job setup, so 20
+# near-empty shards were just 12 wasted runner slots delaying the x86
+# fan-out under the account-wide concurrent-job cap).
 #
-# SHARDED by test name: each shard claims `index % N == shard` over the
-# sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, so the
-# tests split ~evenly and new tests are picked up automatically.
-# N = 20 (the `test` job is 2 arch × 20 = 40 jobs, plus 2 build + the warm jobs).
+# SHARDED by weighted LPT partition (scripts/selfhost-shard-tests): the
+# sorted `-test.list '^TestSelfHost'` union of both prebuilt binaries is
+# split into NSHARD buckets by a greedy longest-processing-time-first
+# assignment, weighted by .github/selfhost-test-weights.txt (default
+# weight 1; stale weights only skew balance, never coverage — the
+# partition is over the live test list). The suite has a few 1-4 MINUTE
+# tests (whole-compiler self-builds / fixpoints) among hundreds of
+# sub-second ones; the old `index % NSHARD` round-robin regularly stacked
+# two of them in one shard (observed: a 326s shard while others ran 50s).
+# LPT pins each heavy test to its own near-empty bucket, so max-shard
+# wall-clock ≈ the single slowest test — the floor for any partition.
+# New tests are picked up automatically at weight 1.
 #
 # RUNNER PREEMPTION — why short shards matter.
 # The x86 self-host shards were intermittently coming back `failure` with
@@ -87,25 +102,19 @@ name: Test e2e self-host
 # preemption of the runner pool, and the lever is to make the x86 jobs
 # *shorter*: compile-once (drops the ~2.5 min per-shard rebuild), the DRIVER
 # WARM CACHE above (drops a shard's ~50-130s-per-driver build+link to a ~1s
-# disk restore), and enough shards that the per-shard wall-clock stays well
-# under the reclaim window.
-# N was 6 while every shard still REBUILT its drivers (so 6 → 12 didn't help
-# then — each shard's cost was dominated by the redundant rebuilds, not the
-# test count). Now that the warm cache serves the builds, per-shard wall-clock
-# scales with the test count, so raising N genuinely shortens each shard;
-# hence N = 12, then 20.
+# disk restore), and the LPT sharding above (caps a shard at ~the single
+# slowest test instead of an unlucky stack of them).
 #
 # The remaining tail was the set of tests that RUN the self-host compiler on
 # whole programs (bootstrap / fixpoint / per-module / CLI / derive-stdlib).
 # They were once believed to have inherent multi-second runtime and were split
 # out into isolated one-test jobs (the old HEAVY-TEST SPLIT, driven by a
-# selfhost-heavy-tests.txt list). That belief was wrong: a 2-pass measurement
-# put every one of them at <0.1 s once its driver is cached — their entire cost
-# was the ~47 s driver BUILD, which the DRIVER WARM CACHE above (now keyed on
-# the driver BINARY, not the 680 MB asm, so the restore actually fits the
-# runner's disk) serves in ~1 s. With the build no longer paid per test, the
-# split bought nothing and was retired: every TestSelfHost* test runs in the
-# round-robin shards again. The x86 test job stays `continue-on-error` so a rare
+# selfhost-heavy-tests.txt list). That belief was wrong for most: a 2-pass
+# measurement put nearly all of them at <0.1 s once their driver is cached —
+# their entire cost was the ~47 s driver BUILD, which the DRIVER WARM CACHE
+# above serves in ~1 s. The handful with GENUINE minutes-long runtimes
+# (they run the built compiler over the whole compiler source) are what the
+# weights file exists for. The x86 test job stays `continue-on-error` so a rare
 # runner reclaim (a cancellation, not a trappable exit code) can't fail the run;
 # the aarch64 lane is always green because the x86-only self-host tests t.Skip
 # there for lack of cross-gcc / qemu-x86_64.
@@ -136,17 +145,17 @@ concurrency:
 # the shard re-emits fern.fern COLD mid-run — which is exactly when the long x86
 # shards crossed into the runner-preemption window (observed: shard kills landing
 # during TestSelfHostCLIX86_64 ~6 min in). These tests are pulled OUT of the
-# round-robin `test` shards (below) and run INSIDE the `cli` warm job, right after
+# LPT `test` shards (below) and run INSIDE the `cli` job, right after
 # it builds fern.fern — reading that just-built driver from the LOCAL on-disk cache
 # (in-process, one `go test` invocation), so fern.fern is cold-built exactly ONCE
 # per run and never via an evictable cross-job GitHub cache. (An earlier cut ran
 # them in a standalone `driver-tests` job that RESTORED the cli cache; under the
 # 10 GB repo-cache budget that restore was evicted, forcing a SECOND cold rebuild
 # that itself got preempted — hence the fold.) A single string is the source of
-# truth for BOTH the `cli` warm job's `-test.run` filter and the `test` shards'
+# truth for BOTH the `cli` job's `-test.run` filter and the `test` shards'
 # `-test.list` exclusion, so the two can't drift. ALL FOUR t.Skip on aarch64 (they
 # need a native x86 run), so this is x86-only and excluding them from the aarch64
-# round-robin loses no coverage. Adding a NEW test that builds fern.fern? Add its
+# shards loses no coverage. Adding a NEW test that builds fern.fern? Add its
 # name here too, or it will cold-build inside a preemptable shard again.
 env:
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
@@ -154,8 +163,8 @@ env:
 jobs:
   # Local-CI sign-off gate. `gh signoff e2e-selfhost` on this commit skips the
   # whole pipeline below (see docs/CI-SIGNOFF.md): `build` is gated directly and
-  # `warm` / `test` cascade-skip through their `needs: build` dependency. Fork
-  # PRs can't sign off; gate fails open on any error.
+  # `warm` / `cli` / `test` cascade-skip through their `needs: build` dependency.
+  # Fork PRs can't sign off; gate fails open on any error.
   gate:
     runs-on: ubuntu-latest
     permissions:
@@ -208,16 +217,22 @@ jobs:
   # link that, for the bigger drivers, runs another ~minute. With the closure-
   # keyed cache (hashSelfHostSources keys on a driver's import closure, not its
   # dir contents) a given stock driver hashes to ONE key across every test, so it
-  # can be compiled+linked once here and restored by the shards. ONE driver per
-  # warm job: warming several big drivers in a single job ran the job's disk low
-  # and the (silent) per-driver .bin disk-cache write was dropped, so the shards
-  # re-linked them (~min each) — the residual preemption after the first cut.
-  # A dedicated runner per driver has ample disk to persist both the .s and the
-  # .bin. Keyed by (driver, SHA): SHA so warm + shards share one intra-run hand-
-  # off (a source change is a new SHA → fresh warm, no staleness); per-driver so
-  # each restores into its own dir (actions/cache/restore only populates the
-  # first restore into a shared path). The aarch64 lane skips the x86 driver
-  # tests, so warming is x86-only (x86_64Tooling t.Skip()s elsewhere).
+  # can be compiled+linked once here and restored by the shards. ONE driver (or a
+  # couple of small related ones) per warm job: warming several big drivers in a
+  # single job ran the job's disk low and the (silent) per-driver .bin disk-cache
+  # write was dropped, so the shards re-linked them (~min each) — the residual
+  # preemption after the first cut. A dedicated runner per driver has ample disk
+  # to persist both the .s and the .bin. Keyed by (driver, SHA): SHA so warm +
+  # shards share one intra-run hand-off (a source change is a new SHA → fresh
+  # warm, no staleness); per-driver so each restores into its own dir. The
+  # aarch64 lane skips the x86 driver tests, so warming is x86-only
+  # (x86_64Tooling t.Skip()s elsewhere).
+  #
+  # NOTE the fern.fern (whole-compiler) build is NOT here — it lives in the
+  # standalone `cli` job below, because nothing downloads its artifact and the
+  # `test` shards must NOT wait on its ~4-minute build: `needs: warm` gates the
+  # shards on the SLOWEST warm job, and folding fern.fern in here used to hold
+  # every shard back ~2.5 min for an artifact none of them consumed.
   warm:
     needs: build
     strategy:
@@ -231,8 +246,8 @@ jobs:
           - { key: asmload,   drivers: "asm_load_run.fern" }
           - { key: modload,   drivers: "asm_modload_run.fern" }
           - { key: checker,   drivers: "checker_modload_run.fern" }
-          - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern" }
-          - { key: cli,       drivers: "fern.fern" }
+          - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern,ssa_lift_scan_run.fern" }
+          - { key: wasm,      drivers: "wasm_run.fern,wasm_ir_run.fern,wasm_runio_run.fern" }
           - { key: irx86,     drivers: "irlower_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
@@ -255,20 +270,47 @@ jobs:
           cd internal/e2eselfhost
           "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
-      # CLI/whole-compiler driver tests, folded into the `cli` warm job. Only the
-      # `cli` entry builds fern.fern (the entire self-hosted compiler, ~245 MB), so
-      # the four ISOLATED_DRIVER_TESTS that consume it run HERE, right after that
-      # build, reading the just-built driver from the LOCAL on-disk cache (instant —
-      # one `go test` invocation, in-process driver cache shared across all four).
-      # This is the whole point of the fold: no cross-job GitHub cache, so the
-      # 10 GB-budget eviction that dropped the old standalone `driver-tests` job's
-      # restore — sending it into a cold ~236 s rebuild that got preempted mid-build —
-      # cannot happen. fern.fern is now cold-built exactly ONCE per run (right above),
-      # not a second time. continue-on-error at the step level so a flaky test (e.g.
-      # a qemu-aarch64 float blip) is non-fatal: it must NOT fail the warm job, which
-      # the `test` shards depend on. x86-only — all four t.Skip on aarch64.
+      # Publish each warmed driver for the `test` shards to download.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warm-x86_64-${{ matrix.key }}
+          path: ${{ runner.temp }}/selfhost-unicache
+          retention-days: 1
+          if-no-files-found: warn
+
+  # WHOLE-COMPILER (fern.fern) BUILD + ITS ISOLATED TESTS. Builds the single
+  # largest driver once, then runs the four ISOLATED_DRIVER_TESTS that consume
+  # it, in-process, reading the just-built driver from the LOCAL on-disk cache
+  # (see the ISOLATED WHOLE-COMPILER DRIVER TESTS note above the env block).
+  # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,
+  # and this ~4-min job would gate all 28 of them on an artifact nobody
+  # downloads (no upload here — nothing consumes fern.fern outside this job).
+  # continue-on-error at the test step so a flaky test (e.g. a qemu-aarch64
+  # float blip) is non-fatal; the build step itself stays strict.
+  cli:
+    needs: build
+    name: cli-driver-tests-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - name: warm fern.fern (whole self-hosted compiler)
+        env:
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+          FERN_WARM_DRIVER: "fern.fern"
+        run: |
+          set -euo pipefail
+          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
+          du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       - name: run isolated fern.fern driver tests (in-process, local cache)
-        if: matrix.key == 'cli'
         continue-on-error: true
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -279,154 +321,128 @@ jobs:
           cd internal/e2eselfhost
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
           "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
-      # Publish each warmed driver for the `test` shards to download — EXCEPT `cli`:
-      # nothing consumes the fern.fern artifact anymore (the shards stopped needing it,
-      # and the tests that build it now run in the step above), so skipping its
-      # ~245 MB upload saves artifact storage and transfer time.
-      - uses: actions/upload-artifact@v4
-        if: matrix.key != 'cli'
-        with:
-          name: warm-x86_64-${{ matrix.key }}
-          path: ${{ runner.temp }}/selfhost-unicache
-          retention-days: 1
-          if-no-files-found: warn
-
 
   test:
     needs: [build, warm]
     strategy:
       fail-fast: false
+      # Explicit include list instead of a host × shard cross-product: the
+      # aarch64 lane runs 8 shards to x86's 20 (see the matrix-per-arch note
+      # in the header). `nshard` rides along so the partition script agrees
+      # with the number of jobs actually scheduled.
       matrix:
-        host:
-          - { runner: ubuntu-latest,    name: x86_64  }
-          - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Twenty shards. See SHARDED / RUNNER PREEMPTION notes above.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
-    name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
-    runs-on: ${{ matrix.host.runner }}
+        include:
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 0 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 1 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 2 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 3 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 4 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 5 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 6 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 7 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 8 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 9 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 10 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 11 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 12 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 13 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 14 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 15 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 16 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 17 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 18 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 19 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 1 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 2 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 3 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 4 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 5 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 6 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 7 }
+    name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     # TOLERATE PREEMPTION ON X86 ONLY. The long x86 shards are intermittently
     # reclaimed mid-run by the runner pool (see RUNNER PREEMPTION above) — exit
     # 143 / "runner received a shutdown signal", with no test failure. The fix
-    # tree above (compile-once, warm driver cache, sharding) cut the per-shard
-    # wall-clock hard — the driver WARM CACHE in particular made even the
-    # compiler-running tests <0.1 s apiece once their driver is restored, which
-    # is what let the old heavy-test split be retired — but a stochastic runner
-    # reclaim can still land on any job. Rather than chase that residual risk
-    # forever — the Go e2e harness is transitional; the project is moving to the
-    # self-hosted test runner — we let the x86 shards be non-fatal. Correctness is NOT lost: the aarch64 shards run the IDENTICAL
-    # test set, finish in well under a minute (never preempted), and stay strict
-    # — so a real self-host regression still turns this workflow red on aarch64.
-    # x86 keeps running (native-toolchain coverage, warm-cache exercise) but a
-    # preempted x86 shard no longer fails the PR.
-    continue-on-error: ${{ matrix.host.name == 'x86_64' }}
+    # tree above (compile-once, warm driver cache, LPT sharding) cut the
+    # per-shard wall-clock hard, but a stochastic runner reclaim can still land
+    # on any job. Rather than chase that residual risk forever — the Go e2e
+    # harness is transitional; the project is moving to the self-hosted test
+    # runner — we let the x86 shards be non-fatal. Correctness is NOT lost: the
+    # aarch64 shards run the IDENTICAL test set, finish in well under a minute
+    # (never preempted), and stay strict — so a real self-host regression still
+    # turns this workflow red on aarch64. x86 keeps running (native-toolchain
+    # coverage, warm-cache exercise) but a preempted x86 shard no longer fails
+    # the PR.
+    continue-on-error: ${{ matrix.host == 'x86_64' }}
     steps:
       - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
-      - uses: ./.github/actions/setup-fern # wasmtime / qemu / cross-gcc + FERN_WASI_ADAPTER
+      - uses: ./.github/actions/setup-fern # Go + build cache (tests shell out to `go build` for the native oracle) + lld
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-test-${{ matrix.host.name }}
-      # DOWNLOAD the driver artifacts warmed by the `warm` jobs (x86 only). Each
-      # download drops one prebuilt driver (content-addressed, byte-identical to a
-      # fresh compile) into FERN_SELFHOST_BUILD_CACHE, so a shard whose tests use
-      # that driver serve it from disk (~1s) instead of the ~70s front-end emit.
-      # Drivers are per-run workflow artifacts (not actions/cache): artifacts are not
-      # subject to the 10 GB shared cache budget, so they survive however long shards
-      # queue before running — the eviction that was causing cold-build preemptions.
-      # Drivers not warmed here still compile per-shard (now closure-cached, so a
-      # given driver builds at most once per shard regardless of dir shape).
-      # One download per warm group into a SEPARATE dir: each artifact name is unique,
-      # so all groups can coexist. The shard points FERN_SELFHOST_BUILD_CACHE at the
-      # whole ':'-list (read scans all). continue-on-error so a missing artifact
-      # (shouldn't happen — warm job is a prerequisite) falls back to cold build
-      # rather than failing the whole shard before any test runs.
+          name: e2e-test-${{ matrix.host }}
+      # DOWNLOAD every driver artifact the `warm` jobs published (x86 only) in a
+      # single step: `pattern` places each artifact in its own subdirectory of
+      # `path` (content-addressed, byte-identical to a fresh compile), so a
+      # shard whose tests use a warmed driver serves it from disk (~1s) instead
+      # of the ~70s front-end emit. Adding a warm job now requires NO change
+      # here — the pattern picks it up and the run step scans whatever arrived.
+      # Drivers are per-run workflow artifacts (not actions/cache): artifacts
+      # are not subject to the 10 GB shared cache budget, so they survive
+      # however long shards queue before running — the eviction that was
+      # causing cold-build preemptions. Drivers not warmed still compile
+      # per-shard (closure-cached, so at most once each). continue-on-error so
+      # a missing artifact (shouldn't happen — warm is a prerequisite) falls
+      # back to cold build rather than failing the shard before any test runs.
       - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
+        if: matrix.host == 'x86_64'
         continue-on-error: true
         with:
-          name: warm-x86_64-elig
-          path: ${{ runner.temp }}/uc-elig
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-asm
-          path: ${{ runner.temp }}/uc-asm
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-pathprobe
-          path: ${{ runner.temp }}/uc-pathprobe
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-asmir
-          path: ${{ runner.temp }}/uc-asmir
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-asmload
-          path: ${{ runner.temp }}/uc-asmload
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-modload
-          path: ${{ runner.temp }}/uc-modload
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-checker
-          path: ${{ runner.temp }}/uc-checker
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-ssa
-          path: ${{ runner.temp }}/uc-ssa
-      # NOTE: the `cli` (fern.fern) warm artifact is intentionally NOT downloaded here —
-      # the fern.fern driver tests are isolated into the `driver-tests` step (see
-      # ISOLATED_DRIVER_TESTS), so no round-robin shard builds fern.fern anymore.
-      - uses: actions/download-artifact@v4
-        if: matrix.host.name == 'x86_64'
-        continue-on-error: true
-        with:
-          name: warm-x86_64-irx86
-          path: ${{ runner.temp }}/uc-irx86
-      - name: run self-host shard ${{ matrix.shard }}/20 (prebuilt binary, streaming)
+          pattern: warm-x86_64-*
+          path: ${{ runner.temp }}/warm
+      # NOTE: fern.fern is intentionally absent — its tests run inside the
+      # `cli` job (see ISOLATED_DRIVER_TESTS), so no shard builds it.
+      - name: run self-host shard ${{ matrix.shard }}/${{ matrix.nshard }} (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "20"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-irx86"
+          NSHARD: "${{ matrix.nshard }}"
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test e2e.test
           SH_BIN="$PWD/e2eselfhost.test"
           E2E_BIN="$PWD/e2e.test"
+          # Point FERN_SELFHOST_BUILD_CACHE at a writable local dir (first —
+          # the write target for any un-warmed driver built here) followed by
+          # every downloaded warm-artifact dir (read-only sources; the harness
+          # scans the whole ':'-list on lookup).
+          CACHE="$RUNNER_TEMP/uc-local"
+          mkdir -p "$CACHE"
+          for d in "$RUNNER_TEMP"/warm/*/; do
+            # -d guards the unexpanded literal when no artifacts were
+            # downloaded (aarch64); the `if` form keeps a false test from
+            # tripping `set -e`.
+            if [ -d "$d" ]; then CACHE="$CACHE:${d%/}"; fi
+          done
+          export FERN_SELFHOST_BUILD_CACHE="$CACHE"
+          echo "FERN_SELFHOST_BUILD_CACHE=$FERN_SELFHOST_BUILD_CACHE"
           # Sorted UNION of every TestSelfHost* function across BOTH packages
           # (internal/e2eselfhost + the ~30 residuals still in internal/e2e —
-          # see RESIDUAL TESTS above), partitioned round-robin by list index so
-          # each shard runs a disjoint ~1/N slice. Read from the prebuilt
-          # binaries (no recompile). Sorting makes the partition deterministic
-          # and stable as tests are added. The isolated fern.fern driver tests
-          # (ISOLATED_DRIVER_TESTS) are filtered out here — they run inside the
-          # `cli` warm job, not the round-robin shards.
+          # see RESIDUAL TESTS above), partitioned by the weighted LPT script
+          # (see SHARDED above) so heavy tests spread instead of stacking.
+          # Read from the prebuilt binaries (no recompile). The isolated
+          # fern.fern driver tests (ISOLATED_DRIVER_TESTS) are filtered out
+          # here — they run inside the `cli` job, not the shards.
           mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
           mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
-          mapfile -t ALL < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort)
+          mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/selfhost-shard-tests "$SHARD" "$NSHARD" .github/selfhost-test-weights.txt)
           SEL_SH=()
           SEL_RES=()
-          for i in "${!ALL[@]}"; do
-            if [ $(( i % NSHARD )) -eq "$SHARD" ]; then
-              t="${ALL[$i]}"
-              # membership: residual tests run against the e2e binary, the rest
-              # against the selfhost binary (names are disjoint across packages).
-              if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
-            fi
+          for t in "${MINE[@]}"; do
+            # membership: residual tests run against the e2e binary, the rest
+            # against the selfhost binary (names are disjoint across packages).
+            if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
           done
           if [ ${#SEL_SH[@]} -eq 0 ] && [ ${#SEL_RES[@]} -eq 0 ]; then
             echo "no TestSelfHost tests for shard $SHARD/$NSHARD"; exit 0

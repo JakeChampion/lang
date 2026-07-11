@@ -1,12 +1,14 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSelfHostModloadPerModuleWholeCompilerArm64 is the arm64 counterpart of
@@ -99,41 +101,46 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 
 	// 3. Emit every module as its own arm64 unit (every module emitting proves
 	// the per-module eligibility frontier; a bail returns 0 bytes). Oversized
-	// modules emit in threshold-sized [lo,hi) function windows.
+	// modules emit in threshold-sized [lo,hi) function windows. As in the x86
+	// twin, each window is an independent driver sub-process, so the plan runs
+	// on the shared bounded worker pool (runPmEmitJobs) — this loop is most of
+	// the test's runtime — with errors recorded on the job and units written
+	// out in plan order on the main goroutine. Unlike the x86 twin there is no
+	// OOM-split safety net here (there never was): a 137 fails the job hard.
 	var objs []string
 	entryUnits := 0
-	emitUnit := func(t *testing.T, modIdx int, tag string, rangeArgs []string) {
-		t.Helper()
-		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(modIdx)}, needArgs...)
-		emitArgs = append(emitArgs, rangeArgs...)
+	emitStart := time.Now()
+	jobs := planPmEmitWindows(funcCounts, modBytes, shardThreshold)
+	runPmEmitJobs(jobs, func(j *pmEmitJob) {
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(j.modIdx)}, needArgs...)
+		tag := ""
+		if !(j.lo == 0 && j.hi == j.count) {
+			emitArgs = append(emitArgs, "-func-range", strconv.Itoa(j.lo)+":"+strconv.Itoa(j.hi))
+			tag = "_s" + strconv.Itoa(j.lo)
+		}
 		unit, err := drive(t, emitArgs...)
 		if err != nil || len(unit) == 0 {
-			t.Fatalf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", modIdx, tag, err, len(unit))
+			j.err = fmt.Errorf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", j.modIdx, tag, err, len(unit))
+			return
 		}
-		if strings.Contains(unit, "\n_start:\n") || strings.HasPrefix(unit, "_start:\n") {
-			entryUnits++
+		j.units = append(j.units, pmEmittedUnit{tag: tag, unit: unit})
+	})
+	for _, j := range jobs {
+		if j.err != nil {
+			t.Fatal(j.err)
 		}
-		p := filepath.Join(dir, "wc_arm_unit_"+strconv.Itoa(modIdx)+tag+".s")
-		if err := os.WriteFile(p, []byte(unit), 0o644); err != nil {
-			t.Fatalf("write unit %d%s: %v", modIdx, tag, err)
-		}
-		objs = append(objs, p)
-	}
-	for i := 0; i < n; i++ {
-		window := emitWindowSize(funcCounts[i], modBytes[i], shardThreshold)
-		if funcCounts[i] <= window {
-			emitUnit(t, i, "", nil)
-			continue
-		}
-		for lo := 0; lo < funcCounts[i]; lo += window {
-			hi := lo + window
-			if hi > funcCounts[i] {
-				hi = funcCounts[i]
+		for _, u := range j.units {
+			if strings.Contains(u.unit, "\n_start:\n") || strings.HasPrefix(u.unit, "_start:\n") {
+				entryUnits++
 			}
-			rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
-			emitUnit(t, i, "_s"+strconv.Itoa(lo), []string{"-func-range", rng})
+			p := filepath.Join(dir, "wc_arm_unit_"+strconv.Itoa(j.modIdx)+u.tag+".s")
+			if err := os.WriteFile(p, []byte(u.unit), 0o644); err != nil {
+				t.Fatalf("write unit %d%s: %v", j.modIdx, u.tag, err)
+			}
+			objs = append(objs, p)
 		}
 	}
+	t.Logf("per-module emit phase: %d units in %.1fs", len(objs), time.Since(emitStart).Seconds())
 	if entryUnits == 0 {
 		t.Fatalf("no entry unit (_start) among the per-module units")
 	}
