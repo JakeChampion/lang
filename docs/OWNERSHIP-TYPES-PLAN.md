@@ -73,6 +73,23 @@ syntax), **then Option A** (a user-facing `str` view type), **park Option B**
 (a general borrow modifier / lifetimes — against the "infer, don't annotate"
 direction). Each slice below is independently shippable and validated.
 
+### Tracked sub-issues (#4297 children)
+
+The remaining phases are tracked as GitHub sub-issues under #4297 so the work is
+visible outside this doc:
+
+- **CS4** → **#4812** — carry `ownership` on the self-host `Ty` (not just the
+  producing expr).
+- **A1** → **#4813** — introduce the user-facing `str` view type.
+- **A2** → **#4814** — the `str` escape/dangling rule.
+
+Landed slices (C1–C3, CS1, CS2) have no open issue. C4–C6 (native RC rewire /
+enforcement) are deprioritized and intentionally not filed — see the Phase C
+notes below. CS3 (`string[]`-element reclaim) is the ownership-axis framing of
+work already tracked in **#4355** (string RC on the IR path) and is cross-
+referenced there rather than duplicated. Adjacent (non-axis) RC leaks live in
+**#2704** and **#4357**.
+
 ### Phase C — internal ownership axis (native compiler first, the reference)
 
 - **C1 (foundation, additive, no behaviour change).** Introduce `ast.Ownership`
