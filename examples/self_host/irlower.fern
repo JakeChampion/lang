@@ -11050,6 +11050,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     sb = sb.mark_arrarr(slot, is_arrarr);
     sb = sb.mark_arrarr_elem(slot, arrarr_e);
     sb = sb.mark_struct_type(slot, struct_ty);
+    // #4365: an explicit `Option[<tuple-with-array>]` annotation is authoritative
+    // over the inferred opt_ty (some_opt_type collapses a tuple payload's element
+    // type), so the slot carries the full tuple type the OPTTUP deep-drop needs at
+    // the loop-rebind and exit sweep. Only overrides an opttup-shaped annotation;
+    // every other option binding keeps the inferred opt_ty.
+    if (opttup_ann_is(v.type_name)) { opt_ty = v.type_name; }
     sb = sb.mark_opt_type(slot, opt_ty);
     // An array-of-maps binding (`var ms = [Map { … }, …]`, an annotated
     // `Map[K,V][]`, or an alias `var qs = ms`): record the ELEMENT map type
@@ -11305,6 +11311,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             }
         },
         _ => {}
+    }
+    // A reclaimable Option[<tuple-with-array>] LOOP-LOCAL (#4365): the loop-rebind
+    // must deep-drop the prior iteration's Some payload tuple (array buffers +
+    // nested boxes) + the option box before the store, else all levels leak per
+    // iteration. emit_opttup_reclaim_store inlines the tag-check + type-driven
+    // tuple deep-drop.
+    if (slot_is_reclaimable_opttup(sb, slot)) {
+        return emit_opttup_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
     }
     // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
     // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
@@ -13381,6 +13395,90 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
     return s;
 }
 
+// emit_tuple_type_child_drops is the TYPE-driven sibling of emit_tuple_child_drops:
+// when the drop site has no construction LITERAL (an Option's tuple payload — the
+// reclaim works from the type annotation, not the `Some((..))` args), the array /
+// nested-tuple positions are read from the tuple TYPE `ttype` instead. A leak-safe
+// scalar-array position is arr_dec'd; a nested tuple-type position is recursed then
+// its box arr_dec'd; scalar positions are skipped. SOUND only when the payload was a
+// FRESH tuple literal whose every array position is a direct array literal
+// (tuple_arg_payload_fresh, checked at admission) — then every array-typed position
+// sole-owns its buffer, so dec'ing all of them is balanced (unlike the literal-driven
+// helper, this can't skip a bare-ident alias, so admission forbids one).
+function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], ttype: string): LowerState {
+    var s: LowerState = st;
+    var k: i32 = 0;
+    while (k < 64) {
+        var tag: string = tuple_type_elem_tag(ttype, k);
+        if (tag == "") { return s; }
+        if (is_leaksafe_array_field(tag)) {
+            s = emit_load_tuple_path(s, slot, path.append(k));       // array ptr
+            s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
+            s = s.emit(ir.op_drop());
+        } else if (tag.len() >= 2 && tag[0:1] == "(") {
+            s = emit_tuple_type_child_drops(s, slot, path.append(k), tag);   // inner children first
+            s = emit_load_tuple_path(s, slot, path.append(k));       // inner box ptr
+            s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the inner tuple box
+            s = s.emit(ir.op_drop());
+        }
+        k = k + 1;
+    }
+    return s;
+}
+
+// tuple_field_deep_droppable: `t` is a tuple TYPE whose every element is a flat
+// scalar, a leak-safe scalar array, or a nested deep-droppable tuple — with AT
+// LEAST ONE array somewhere (else nothing rc to reclaim). Released by
+// emit_tuple_type_child_drops + a box dec. String / struct / enum / option / map
+// elements are excluded (first cut).
+function tuple_field_deep_droppable(t: string): boolean {
+    if (t.len() < 2 || t[0:1] != "(") { return false; }
+    var any_arr: boolean = false;
+    var k: i32 = 0;
+    while (k < 64) {
+        var tag: string = tuple_type_elem_tag(t, k);
+        if (tag == "") { break; }
+        if (is_leaksafe_array_field(tag)) { any_arr = true; }
+        else if (tag.len() >= 2 && tag[0:1] == "(") {
+            if (!tuple_field_deep_droppable(tag)) { return false; }
+            any_arr = true;
+        } else if (!is_scalar_type_name(tag)) { return false; }
+        k = k + 1;
+    }
+    return any_arr;
+}
+
+// tuple_arg_payload_fresh: the construction's tuple payload `arg` is a FRESH tuple
+// literal whose every ARRAY-typed position (per the field TYPE `ttype`) is a DIRECT
+// array literal and every nested-tuple position a nested tuple literal (recursively
+// fresh). The freshness gate the type-driven drop needs: it dec's every array
+// position blind, so an ident alias at an array position must be forbidden. Scalar
+// positions accept any expression (value-copied, never rc-tracked).
+function tuple_arg_payload_fresh(ttype: string, arg: parser.Expr): boolean {
+    match (arg) {
+        parser.ExprTuple(tl) => {
+            var k: i32 = 0;
+            while (k < tl.elements.len()) {
+                var tag: string = tuple_type_elem_tag(ttype, k);
+                if (tag == "") { return false; }
+                if (is_leaksafe_array_field(tag)) {
+                    var isarr: boolean = false;
+                    match (tl.elements[k]) { parser.ExprArray(_) => { isarr = true; }, _ => {} }
+                    if (!isarr) { return false; }
+                } else if (tag.len() >= 2 && tag[0:1] == "(") {
+                    if (!tuple_arg_payload_fresh(tag, tl.elements[k])) { return false; }
+                } else if (!is_scalar_type_name(tag)) {
+                    return false;
+                }
+                k = k + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // emit_tuple_deep_reinit_store stores `new` (on the stack) into a reclaimable
 // rc-tuple slot and DEEP-drops the OLD tuple box: emit_tuple_child_drops frees
 // every fresh array buffer and nested tuple box the init literal `dtl` builds
@@ -14415,6 +14513,20 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         tj = tj + 1;
     }
+    // Reclaimable Option[<tuple-with-array>] locals (#4365): deep-free the final
+    // live box (Some payload tuple + option box) via the same inline path the
+    // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes a dedicated
+    // loop here like the scalar-tuple sweep above. Slots are entry-zeroed
+    // (arr_slots_of), so an untaken-branch slot routes a null through the guard.
+    var otj: i32 = st.n_params;
+    while (otj < st.locals.len()) {
+        if (!slot_list_has(keeps, otj) && slot_is_reclaimable_opttup(st, otj)) {
+            st = emit_opttup_deep_free(st, otj, opttup_inner_type(st.locals[otj].opt_type));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(otj));
+        }
+        otj = otj + 1;
+    }
     // (Reclaimable arr-of-arr locals are freed INSIDE the is_arr sweep above —
     // an arrarr slot is also is_arr, so a separate loop here double-freed;
     // see the slot_is_reclaimable_arrarr branch.)
@@ -14892,7 +15004,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -17311,6 +17423,24 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         oai = oai + 1;
     }
+    // Fresh Option[<tuple-with-array>] locals (#4365): `var o: Option[(i32, i32[])]
+    // = Some((i, [i, i+1]))` consumed by a borrow-only match — credited "OPTTUP:"
+    // so slot_is_reclaimable_opttup routes the loop-rebind + exit sweep through the
+    // inline emit_opttup_deep_free (tag-check → type-driven tuple deep-drop → box
+    // dec). Gates: no escape of o itself (body_unsafe_for), not reassigned, and no
+    // Some-arm payload escape (opt_body_binding_escapes on "Some" — a `match (o) {
+    // Some(p) => <p stored/returned/aliased> }` binds the payload out of the arm;
+    // a borrow-only read is fine, dropped after the match).
+    // collect_fresh_opttup_names is self-gating (block-level consuming-match
+    // analysis), so the names it returns are already escape-checked — credit
+    // them directly (a body_unsafe_for gate here would reject the consuming
+    // match scrutinee, exactly what the block-level analysis handles instead).
+    var ots: string[] = collect_fresh_opttup_names(body, []);
+    var oti: i32 = 0;
+    while (oti < ots.len()) {
+        out = out.append("OPTTUP:" + ots[oti]);
+        oti = oti + 1;
+    }
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
     // concrete's rc-headered box) — credited "DYN:<name>|<Concrete>" so the
@@ -19405,6 +19535,285 @@ function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boole
     return false;
 }
 
+// opttup_inner_type: for a type string `Option[<inner>]`, return `<inner>` (the
+// payload type), or "". Comma-preserving — the inner may itself be a tuple type.
+function opttup_inner_type(type_name: string): string {
+    if (type_name.len() < 9) { return ""; }
+    if (type_name[0:7] != "Option[") { return ""; }
+    if (type_name[type_name.len() - 1] != 93) { return ""; }   // 93 = ']'
+    return type_name[7 : type_name.len() - 1];
+}
+
+// opttup_ann_is (#4365): the local's type annotation is `Option[<tuple-with-array>]`
+// — a single Option box whose Some payload is a deep-droppable tuple (carries a
+// fresh scalar array at some depth). The single-box sibling of optaarr_ann_is.
+function opttup_ann_is(type_name: string): boolean {
+    var inner: string = opttup_inner_type(type_name);
+    if (inner == "") { return false; }
+    return tuple_field_deep_droppable(inner);
+}
+
+// opttup_init_is_fresh (#4365): the binding init is `Some(<fresh tuple literal>)`
+// (tuple_arg_payload_fresh — every array position a direct literal, so the
+// type-driven drop sole-owns each buffer) or `None` (nothing to reclaim, admitted
+// for uniformity). Anything else (a bare-ident/call Some payload aliasing a live
+// value) declines — freeing the payload would double-release.
+function opttup_init_is_fresh(inner: string, e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" && c.args.len() == 1) { return tuple_arg_payload_fresh(inner, c.args[0]); }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(nid) => { return nid.name == "None"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// opttup_arm_expr_escapes: does expression `e` use the Some-payload binding `p`
+// (a tuple, type `inner`) in a way that lets an owned ARRAY sub-field (or the
+// whole tuple) outlive the arm? The existing binding_escapes_arm treats `p.N` as
+// a borrow (its "name.field is a borrow" rule is right for an ARRAY payload but
+// WRONG for a tuple — `p.1` EXTRACTS an owned array), so OPTTUP needs this
+// stricter, type-aware walker. Borrow-only reads that are SAFE:
+//   - `p.N` where field N is a SCALAR (a value copy),
+//   - `p.N[i]` (an array-element read — the array field is only indexed),
+//   - `p.N.len()` (the one whitelisted read method on an array field).
+// Anything else touching `p` — a bare `p`, a bare `p.<arrayfield>` (stored /
+// returned / passed / aliased / sliced), a non-`len` method on an array field, a
+// nested-tuple sub-field — is an ESCAPE (rejected). Erring toward rejection is a
+// safe LEAK, never an over-release.
+function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == p; },   // bare tuple escapes
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprFieldAccess(fa) => {
+            // `p.N` bare: a scalar field is a safe value copy; an array / nested /
+            // other field extracted bare escapes.
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name == p && util.is_all_digits(fa.field)) {
+                        var tag: string = tuple_type_elem_tag(inner, util.digits_to_i32(fa.field));
+                        return !is_scalar_type_name(tag);
+                    }
+                    return false;
+                },
+                _ => { return opttup_arm_expr_escapes(fa.obj, p, inner); }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            // `p.N[i]`: the array field is only indexed (a safe element read) — check
+            // just the index expression. Any other base recurses normally.
+            match (ix.array) {
+                parser.ExprFieldAccess(bfa) => {
+                    match (bfa.obj) {
+                        parser.ExprIdent(bid) => {
+                            if (bid.name == p && util.is_all_digits(bfa.field)) { return opttup_arm_expr_escapes(ix.index, p, inner); }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            return opttup_arm_expr_escapes(ix.array, p, inner) || opttup_arm_expr_escapes(ix.index, p, inner);
+        },
+        parser.ExprCall(c) => {
+            // `p.N.len()`: the one whitelisted borrow method on an array field —
+            // safe receiver, check the args. Any other call touching p escapes.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        parser.ExprFieldAccess(pfa) => {
+                            match (pfa.obj) {
+                                parser.ExprIdent(pid) => {
+                                    if (pid.name == p && util.is_all_digits(pfa.field) && cfa.field == "len") {
+                                        var ai: i32 = 0;
+                                        while (ai < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ai], p, inner)) { return true; } ai = ai + 1; }
+                                        return false;
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            if (opttup_arm_expr_escapes(c.callee, p, inner)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ci], p, inner)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return opttup_arm_expr_escapes(b.left, p, inner) || opttup_arm_expr_escapes(b.right, p, inner); },
+        parser.ExprUnary(u) => { return opttup_arm_expr_escapes(u.operand, p, inner); },
+        parser.ExprSlice(sl) => { return opttup_arm_expr_escapes(sl.array, p, inner) || opttup_arm_expr_escapes(sl.start, p, inner) || opttup_arm_expr_escapes(sl.end, p, inner); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { if (opttup_arm_expr_escapes(ar.elements[i], p, inner)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (opttup_arm_expr_escapes(t.elements[i], p, inner)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && opttup_arm_expr_escapes(sl.base, p, inner)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (opttup_arm_expr_escapes(sl.field_values[i], p, inner)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function opttup_arm_stmt_escapes(st: parser.Stmt, p: string, inner: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return opttup_arm_expr_escapes(v.init, p, inner); },
+        parser.StmtReturn(r) => { return opttup_arm_expr_escapes(r.value, p, inner); },
+        parser.StmtExpr(e) => { return opttup_arm_expr_escapes(e.value, p, inner); },
+        parser.StmtAssign(a) => { return opttup_arm_expr_escapes(a.value, p, inner); },
+        parser.StmtIf(f) => {
+            if (opttup_arm_expr_escapes(f.cond, p, inner)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (opttup_arm_stmt_escapes(f.then_body[ti], p, inner)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (opttup_arm_stmt_escapes(f.else_body[ei], p, inner)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (opttup_arm_expr_escapes(w.cond, p, inner)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (opttup_arm_stmt_escapes(w.body[i], p, inner)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (opttup_arm_expr_escapes(fo.iter, p, inner)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (opttup_arm_stmt_escapes(fo.body[i], p, inner)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (opttup_arm_expr_escapes(m.scrutinee, p, inner)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, p, inner)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (opttup_arm_stmt_escapes(m.arms[ai].body[bi], p, inner)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return opttup_arm_stmt_escapes(d.action, p, inner); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// opttup_payload_escapes: for the option local `name` (payload tuple type `inner`),
+// does the consuming `match (name)`'s Some-arm use its bound payload in an escaping
+// way (opttup_arm_expr/stmt_escapes)? The tuple-aware replacement for
+// opt_body_binding_escapes in the OPTTUP admission. Scans nested blocks for the
+// `match (name)`; a `Some(_)` (no binding) never escapes.
+function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var is_scrut: boolean = false;
+                match (m.scrutinee) {
+                    parser.ExprIdent(sid) => { if (sid.name == name) { is_scrut = true; } },
+                    _ => {}
+                }
+                if (is_scrut) {
+                    var ai: i32 = 0;
+                    while (ai < m.arms.len()) {
+                        match (m.arms[ai].pattern) {
+                            parser.PatVariant(pv) => {
+                                var vn: string = pv.type_name;
+                                var vc: i32 = 0;
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()]; } vc = vc + 1; }
+                                if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
+                                    if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, pv.binding, inner)) { return true; }
+                                    var bi: i32 = 0;
+                                    while (bi < m.arms[ai].body.len()) { if (opttup_arm_stmt_escapes(m.arms[ai].body[bi], pv.binding, inner)) { return true; } bi = bi + 1; }
+                                }
+                            },
+                            _ => {}
+                        }
+                        ai = ai + 1;
+                    }
+                }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (opttup_payload_escapes(m.arms[mi].body, name, inner)) { return true; } mi = mi + 1; }
+            },
+            parser.StmtIf(f) => { if (opttup_payload_escapes(f.then_body, name, inner) || opttup_payload_escapes(f.else_body, name, inner)) { return true; } },
+            parser.StmtWhile(w) => { if (opttup_payload_escapes(w.body, name, inner)) { return true; } },
+            parser.StmtFor(fo) => { if (opttup_payload_escapes(fo.body, name, inner)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_fresh_opttup_names: `var o: Option[(i32, i32[])] = Some((i, [i, i+1]))`
+// bindings consumed by exactly one borrow-only `match (o)` in the SAME block —
+// the single-Option-box analogue of collect_fresh_rcenum_names. Block-level
+// gating (NOT body_unsafe_for, which flags the consuming match scrutinee as an
+// escape): the match must be the sole consumer (n_match == 1, after the binding),
+// its arms must not re-reference o (match_arms_use_name), its Some-arm must bind
+// the payload only as a borrow (opt_body_binding_escapes false), and o must not be
+// used or escape anywhere outside that match (name_used_after /
+// name_escapes_outside_stmt with the match skipped). Recurses nested blocks.
+function collect_fresh_opttup_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (opttup_ann_is(v.type_name)
+                    && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init)
+                    && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < stmts.len()) {
+                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi
+                        && !match_arms_use_name(stmts[match_idx], v.name)
+                        && !opttup_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name))
+                        && !name_used_after(stmts, v.name, match_idx)
+                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        a = push_str_unique(a, v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, a); a = collect_fresh_opttup_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_opttup_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
 // collect_fresh_optaarr_names: `var xs: Option[i32[]][] = [Some([..]), None]`
 // bindings, recursing nested blocks. Escape gates applied by
 // reclaimable_names_of (body_unsafe_for + not-reassigned + no element alias
@@ -19651,6 +20060,70 @@ function emit_optaarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// slot_is_reclaimable_opttup (#4365): slot i holds a fresh, non-escaping
+// `Option[<tuple-with-array>]` local, credited "OPTTUP:" by reclaimable_names_of.
+// Gated on the opt_type mark (an option-box slot) + the credit. Reclaimed inline
+// (no runtime helper): a Some box first deep-drops its tuple payload, then the box
+// itself is freed.
+function slot_is_reclaimable_opttup(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].opt_type.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "OPTTUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_opttup_deep_free frees the option box in `slot`: null-guarded, if the box
+// is Some (op_opt_tag == 0) it extracts the tuple payload (op_opt_payload — the
+// pointer at [payload@8 asm / @4 wasm]), TYPE-drives its deep-drop
+// (emit_tuple_type_child_drops on the inner tuple type), and frees the tuple box;
+// then the option box itself is dec'd. A None box (tag 1) skips straight to the
+// box dec. Consumes no operand; the slot is left dangling (callers store new / zero
+// it). Admission (opttup_init_is_fresh) guarantees the payload tuple is fresh, so
+// every array position sole-owns its buffer.
+function emit_opttup_deep_free(se: LowerState, slot: i32, inner: string): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    // if Some (tag 0): deep-drop the payload tuple.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some)
+    st = st.emit(ir.op_if(0));
+    var etn: string = "$optup" + util.i32_to_string(st.locals.len());
+    st = st.add_local(etn);
+    var etslot: i32 = st.slot_of(etn);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());               // tuple box ptr
+    st = st.emit(ir.op_store_local(etslot));
+    var et_path: i32[] = [];
+    st = emit_tuple_type_child_drops(st, etslot, et_path, inner);   // free array/nested children
+    st = st.emit(ir.op_load_local(etslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the tuple box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-Some
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_opttup_reclaim_store: the loop-rebind. Stash `new` (on stack), deep-free the
+// OLD option box (emit_opttup_deep_free), then store new. A fresh Some/None init
+// makes old != new implicit, so no cow guard beyond the null guard inside deep_free.
+function emit_opttup_reclaim_store(se: LowerState, slot: i32, inner: string): LowerState {
+    var scratch: string = "$otr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_opttup_deep_free(st, slot, inner);     // free old box + payload
+    st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
 
