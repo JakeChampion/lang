@@ -548,11 +548,18 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		addClosureSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params)+1)
 			for _, pt := range sig.Params {
-				vt, err := valtypeFor(pt)
+				// slotValtypes (not valtypeFor) so a two-word string param
+				// fans out to [i32, i32] — matching the callee definition,
+				// which types its params via paramValtypes → slotValtypes
+				// (line ~636). valtypeFor rejected string outright, so any
+				// `(string, …) => …` closure invoked through call_indirect
+				// failed to compile for wasm (#4804). Mirrors addSigType's
+				// OpCallDyn seam, which already fans strings this way.
+				vts, err := slotValtypes(pt)
 				if err != nil {
 					return 0, err
 				}
-				params = append(params, vt)
+				params = append(params, vts...)
 			}
 			// Closure-target ABI: env_ptr (i32) as last param.
 			params = append(params, encode.ValtypeI32)
