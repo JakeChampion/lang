@@ -548,6 +548,29 @@ struct `dyn Trait` via `emit_dyn_dispatch`: it reads the receiver's struct id
 (the offset-0 type tag) and branches to the matching `$Struct__method`
 over every implementing struct — see TRAITS.md §7a slice 9.
 
+**ENUM receivers on the IR path (#4785).** "A struct/enum value carries
+its own shape" needs one qualification: an enum value's offset-0
+identity is its **variant's** interned shape (the same identity
+`op_variant_is` reads — `struct_make` with the variant name), never the
+enum name itself. The AST backends handle this with a blanket
+enum-receiver *fallback* arm (first enum method of that name wins —
+`asm.fern`'s `is_enum_recv` chain), but the IR backends' `dyn_dispatch`
+chains originally had **no enum arm at all**: an enum local coerced into
+a `dyn` slot compared its variant shape against struct/prim arms, missed
+everything, and fell through to the 0 fallback — wrong values from a
+native-valid program. All three IR backends (`asm_ir.fern`,
+`asm_arm64_ir.fern`, `wasm_ir.fern`) now emit a **per-variant arm** for
+each `impl Trait for <Enum>` method: the receiver's shape is compared
+against every variant of the enum (`enum_owner` walk; an OR-chain of
+type-id compares on wasm), and a hit calls `<Enum>.<method>` with the
+variant box as the receiver (its body's `match (self)` re-reads the
+variant). Per-variant keying — unlike the AST fallback — means two enums
+implementing the same trait dispatch to their own impls. Coverage:
+`internal/e2eselfhost/self_host_dyn_enum_ir_test.go` (x86-64 + wasm +
+arm64) and the native leg `internal/e2e/dyn_enum_dispatch_native_test.go`.
+(The native x86-64 backend still segfaults on an enum LOCAL as a
+`dyn Trait[]` array-literal element — #4787, separate coercion-side gap.)
+
 ### 4.4 RC of trait objects (Perceus follow-up — design)
 
 Slices 2b–2d nailed dispatch but left every compiled `dyn Trait` value

@@ -2265,8 +2265,10 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
 
 // lower_dyn_arg lowers an expression that flows into a `dyn Trait` slot
 // (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its shape at
-// offset 0, so it is the `dyn` pointer directly — lowered unchanged. A
-// primitive/string value (expr_recv_prim_type != "") has no shape pointer, so
+// offset 0 (a struct its type's shape; an enum its VARIANT's shape — the
+// identity op_variant_is reads, which the backends' per-variant enum dispatch
+// arms match, #4785), so it is the `dyn` pointer directly — lowered unchanged.
+// A primitive/string value (expr_recv_prim_type != "") has no shape pointer, so
 // it is heap-boxed into a cell [shape@0, value@8] via op_dyn_box, keyed by the
 // primitive type name; the box pointer becomes the `dyn` value. op_dyn_dispatch
 // then reads offset 0 and, on a primitive arm, reloads the value from offset 8.

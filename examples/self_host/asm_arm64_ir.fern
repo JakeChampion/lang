@@ -1048,6 +1048,49 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
                     s = s.write(dnext + ":\n");
                     darmn = darmn + 1;
                 }
+                // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
+                // value's offset-0 shape is its VARIANT's interned shape (the
+                // same identity op_variant_is reads), never the enum name
+                // itself, so the struct-arm compare above can never identify
+                // it. Match the receiver against EVERY variant of the enum;
+                // on any hit call `<Enum>.<method>` with the variant box as
+                // the receiver (its body's `match (self)` re-reads the
+                // variant). Keyed per-variant so two enums implementing the
+                // same trait dispatch to their own impls. recv_is_array
+                // excludes an array method's `T[]` receiver (base_type_name
+                // strips the `[]`, which would otherwise mis-read as an
+                // enum — #2766). Mirrors the x86 asm_ir arm.
+                if (dfd.name == o.str && dfd.receiver_type.len() > 0
+                        && !asmcore.recv_is_array(dfd.receiver_type)
+                        && irlower.decl_is_enum(s.struct_decls, ddbn)) {
+                    var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+                    var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+                    var dvi: i32 = 0;
+                    while (dvi < s.struct_decls.len()) {
+                        if (s.struct_decls[dvi].enum_owner == ddbn) {
+                            var vlit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, s.struct_decls[dvi].name);
+                            s = vlit.state;
+                            s = s.write("    adrp x2, " + vlit.label + "\n");
+                            s = s.write("    add x2, x2, :lo12:" + vlit.label + "\n");
+                            s = s.write("    cmp x1, x2\n    b.eq " + dehit + "\n");
+                        }
+                        dvi = dvi + 1;
+                    }
+                    s = s.write("    b " + denext + "\n");
+                    s = s.write(dehit + ":\n");
+                    var dek: i32 = dargc - 1;
+                    while (dek >= 0) {
+                        s = fr_ldr(s, "x0", 0 - 8 * (dbase + dek + 1));
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        dek = dek - 1;
+                    }
+                    s = s.write("    bl __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
+                    s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    b " + dend + "\n");
+                    s = s.write(denext + ":\n");
+                    darmn = darmn + 1;
+                }
                 dfi = dfi + 1;
             }
             s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");   // fallback (unreachable)
