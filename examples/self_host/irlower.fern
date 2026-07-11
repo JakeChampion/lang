@@ -6196,6 +6196,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // lowers exactly as asm.fern's AST path does.
                     var sc: LowerState = s;
                     var ai: i32 = 0;
+                    var lat_slots: i32[] = [];
                     while (ai < c.args.len()) {
                         // A bare function-name argument at a "fn"-typed param
                         // position is a function VALUE (a function pointer):
@@ -6219,11 +6220,45 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             sc = lower_i64(c.args[ai], sc);
                         } else {
                             sc = lower_expr(c.args[ai], sc);
+                            // #4355 slice 6: a string-LITERAL arg allocates a fresh
+                            // 16-byte rc-headered box per evaluation (const_str; the
+                            // .rodata data is heap-guard-skipped). At a BORROWABLE
+                            // param position of a known free function the callee
+                            // cannot retain or return it, so the box is dead the
+                            // moment the call returns: stash it (store+reload keeps
+                            // the arg in place) and free it right after the call —
+                            // the call-arg sibling of the #2649 concat-operand
+                            // anonymous-temp reclaim.
+                            if (sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
+                                var lit_arg: boolean = false;
+                                match (c.args[ai]) { parser.ExprString(_) => { lit_arg = true; }, _ => {} }
+                                if (lit_arg) {
+                                    var latn: string = "$lat" + util.i32_to_string(sc.locals.len());
+                                    sc = sc.add_local(latn);
+                                    var lats: i32 = sc.slot_of(latn);
+                                    sc = sc.emit(ir.op_store_local(lats));
+                                    sc = sc.emit(ir.op_load_local(lats));
+                                    lat_slots = lat_slots.append(lats);
+                                }
+                            }
                         }
                         if (!sc.ok) { return sc; }
                         ai = ai + 1;
                     }
-                    return sc.emit(ir.op_call_direct(cid.name, c.args.len()));
+                    var scr: LowerState = sc.emit(ir.op_call_direct(cid.name, c.args.len()));
+                    // Free the stashed literal-arg boxes. Net-zero on the operand
+                    // stack (load → free → drop), so the call's result — live
+                    // beneath — is untouched; __fern_str_free is rc-aware and
+                    // is_unique-gated, so a retained box (impossible at a
+                    // borrowable position, but belt-and-braces) only decs.
+                    var lfi: i32 = 0;
+                    while (lfi < lat_slots.len()) {
+                        scr = scr.emit(ir.op_load_local(lat_slots[lfi]));
+                        scr = scr.emit(ir.op_call_direct("__fern_str_free", 1));
+                        scr = scr.emit(ir.op_drop());
+                        lfi = lfi + 1;
+                    }
+                    return scr;
                 },
                 // `fns[i](args)` — calling an element of a function-value ARRAY
                 // inline. A CLOSURE array (`is_closurearr`, elements are env boxes
@@ -15058,6 +15093,29 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
     return a;
 }
 
+// call_arg_borrowable: the callee's param `ai` is BORROWABLE — provably only
+// borrow-read and never escaping (the borrowable_params_of verdict, seeded
+// into reclaimable_names as "BORROW:<name>|<flags>" by lower_func so the
+// expr-lowering can consult it without a LowerState field; the state is
+// pinned at 33). A borrowable position cannot retain, return, or alias its
+// argument, so a fresh anonymous temp passed there is dead after the call.
+function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var ent: string = s.reclaimable_names[i];
+        if (ent.len() > 7 && ent[0:7] == "BORROW:") {
+            var rest: string = ent[7 : ent.len()];
+            if (rest.len() > callee.len() + 1 && rest[0:callee.len()] == callee && rest[callee.len()] == 124) {
+                var flags: string = rest[callee.len() + 1 : rest.len()];
+                if (ai < flags.len()) { return flags[ai] == 49; }
+                return false;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // rcenum_call_init_owner: `e` is a direct call `mk(args...)` to a fn the
 // whole-program scan proved a fresh rc-enum ctor ("RCE:<name>|<Enum>" in
 // opt_fresh_ret — see opt_fresh_ret_fns_of). Returns the enum name, else "".
@@ -21580,6 +21638,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     while (sfo_i < strfld_ok_types.len()) {
         reclaim = reclaim.append("STRFLDOK:" + strfld_ok_types[sfo_i]);
         sfo_i = sfo_i + 1;
+    }
+    // #4355 slice 6: seed the borrowable-params registry ("name|flags") so the
+    // call lowering's literal-arg box reclaim (call_arg_borrowable) can consult
+    // it from LowerState. Same prefix-tag convention; inert elsewhere.
+    var bpk: i32 = 0;
+    while (bpk < borrowable_params.len()) {
+        reclaim = reclaim.append("BORROW:" + borrowable_params[bpk]);
+        bpk = bpk + 1;
     }
     // #4334: pick up the parse-level defer pass's `?`-edge cleanup markers —
     // the `if (__dfa_tryall) {…}` / `if (__dfa_tryerr) {…}` blocks
