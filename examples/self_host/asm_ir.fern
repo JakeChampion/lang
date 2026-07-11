@@ -4741,15 +4741,21 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write(dend + ":\n");
         } else if (o.kind_tag == 146) {  // dyn_box
             // Heap-box a primitive/string value coerced into a `dyn Trait` slot
-            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 16 bytes;
+            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
             // shape = the interned primitive type name (the SAME .S label struct
             // shapes use), so op_dyn_dispatch's offset-0 compare matches. The
-            // value (one word — an i32/i64/f64 scalar OR a string box pointer) is
-            // on the operand stack; alloc first (it survives on the machine stack,
-            // like opt_make), then store shape + value, push the cell pointer.
+            // cell is rc-HEADERED via __fern_arr_box(cap=2) — exactly like
+            // opt_make — so a fresh, non-escaping prim/string dyn local can be
+            // freed by the exit sweep's __fern_rc_dec (#4351; the former raw
+            // __fern_alloc cell had no header, so it could never be reclaimed).
+            // Offsets unchanged (arr_box's len@0 is overwritten by the shape;
+            // cap@data-16 drives the free size). The value (one word — an
+            // i32/i64/f64 scalar OR a string box pointer) is on the operand
+            // stack; alloc first (it survives on the machine stack, like
+            // opt_make), then store shape + value, push the cell pointer.
             var dbl: ShapeRefOut = shape_ref(s, o.str);
             s = dbl.state;
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
             s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");

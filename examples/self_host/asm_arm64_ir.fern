@@ -1048,24 +1048,24 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write(dend + ":\n");
         } else if (o.kind_tag == 146) {  // dyn_box
             // Heap-box a primitive/string value coerced into a `dyn Trait` slot
-            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 16 bytes;
+            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
             // shape = the interned primitive type name (the SAME .S label struct
-            // shapes use). The value (one word) is on the operand stack. arm64's
-            // __fern_alloc clobbers x0..x14, so pop the value into the callee-saved
-            // x19 (saved/restored around the call) before alloc; then store shape
-            // (x2 = .S addr) + value, push the cell pointer. Mirrors opt_make's
-            // alloc-then-store, with x19 carrying the value across the call.
+            // shapes use). The cell is rc-HEADERED via __fern_arr_box(cap=2) —
+            // exactly like opt_make — so a fresh, non-escaping prim/string dyn
+            // local can be freed by the exit sweep's __fern_rc_dec (#4351; the
+            // former raw __fern_alloc cell had no header, so it could never be
+            // reclaimed). Offsets unchanged (arr_box's len@0 is overwritten by
+            // the shape; cap@data-16 drives the free size). The value (one word)
+            // waits on the operand stack (memory, callee-preserved) across the
+            // alloc and is popped after — opt_make's alloc-then-store discipline.
             var dbl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
             s = dbl.state;
-            s = s.write("    ldr x9, [sp], #16\n");                  // pop value -> x9
-            s = s.write("    str x19, [sp, #-16]!\n");               // save callee-saved x19
-            s = s.write("    mov x19, x9\n");                        // x19 = value (survives alloc)
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");   // x0 = cell ptr
+            s = s.mark_heap();
+            s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");  // x0 = cell ptr
             s = s.write("    adrp x2, " + dbl.label + "\n");
             s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
             s = s.write("    str x2, [x0]\n");                       // shape @0
-            s = s.write("    str x19, [x0, #8]\n");                  // value @8
-            s = s.write("    ldr x19, [sp], #16\n");                 // restore x19
+            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");   // value @8
             s = s.write("    str x0, [sp, #-16]!\n");                // push cell ptr
         } else if (o.kind_tag == 148) {  // dyn_downcast
             // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap

@@ -2016,6 +2016,57 @@ func genArrDynDropFn(dynDrop string, ptrW int) *Func {
 	}
 }
 
+// genDynPrimDropFn builds the `__drop_dynprim_<prim>` destructor a
+// PRIMITIVE/STRING concrete's vtable drop slot points at (#4351 —
+// docs/DYN-TRAITS.md §4.2.3 / §4.4). A primitive coerced to `dyn Trait` is
+// heap-boxed into a headerless VALUE CELL (boxPrimitiveDynValue) whose
+// pointer is the fat pointer's `data` word; before this helper the drop
+// slot was the null sentinel, so every coercion leaked the cell (16 bytes
+// per iteration in a churn loop). The helper frees exactly that cell —
+// `__free(data, payloadSlotSize(prim))`, the same size the coercion
+// allocated — matching the (ptr)->ptr dropSig every concrete dtor uses.
+// A `string` concrete's cell holds the string value; the string BUFFER
+// itself is deliberately NOT dec'd here: the coercion takes no retain, so
+// an aliased source (`var s = ...; var d: dyn T = s;`) would be freed out
+// from under `s`. Literal strings are static sentinels and heap strings
+// leak their buffer — the safe-leak invariant, exactly like the pre-slice
+// whole-cell behaviour. The cell is fresh at every coercion site and its
+// pointer lives only in the `dyn` cell, so freeing it at the dyn drop is
+// sole-owner sound. Null-guarded like __drop_dyn_<set>'s cell free.
+func genDynPrimDropFn(prim string, ptrW int) *Func {
+	ct := astTypeForConcreteName(prim)
+	if ct == nil {
+		return nil
+	}
+	size := payloadSlotSize(ct, ptrW)
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: size},
+		{Kind: OpCallDirect, Str: "__free", I32: 2},
+	}
+	// The natives model every call as pushing a result (the register
+	// backends push %rax/x0 unconditionally), so the meaningless __free
+	// result must be dropped; wasm's __free is genuinely (i32, i32) → ()
+	// and an OpDrop there would underflow the operand stack (invalid
+	// module). Mirrors buildDynDropHelpers' native-only __free+drop.
+	if ptrW != 4 {
+		ops = append(ops, Op{Kind: OpDrop})
+	}
+	ops = append(ops,
+		Op{Kind: OpEnd},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpReturn},
+	)
+	return &Func{
+		Name:       "__drop_dynprim_" + prim,
+		Params:     []ast.Param{{Name: "__dp", Type: ast.NumberType{}}},
+		ReturnType: ast.NumberType{},
+		Ops:        ops,
+	}
+}
+
 // mapValDropName returns the column-walk drop function name for a Map
 // whose VALUE type has a generated recursive drop (concrete struct or
 // enum), plus whether one applies. The name embeds the per-value drop fn

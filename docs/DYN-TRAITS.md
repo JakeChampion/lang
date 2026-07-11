@@ -636,8 +636,12 @@ owns an RC value (a `struct` with a `String` field behind `dyn`) to
 prove the inner free runs through the vtable destructor.
 
 **Slice (a) — wasm — SHIPPED.** `VtableDecl` gained a `Drop` field
-(`collectVtables` records `dropFnNameFor(C)`, or "" for a primitive
-concrete that lives inline behind `data`); the wasm `internVtable`
+(`collectVtables` records `dropFnNameFor(C)`; a primitive concrete
+originally recorded "" — since #4351 it records `__drop_dynprim_<prim>`,
+which frees the `boxPrimitiveDynValue` VALUE CELL behind `data` that the
+null sentinel used to leak on every coercion. The string BUFFER behind a
+string payload stays leak-mode: the coercion takes no retain, so an
+aliased source must never be freed from the dyn drop); the wasm `internVtable`
 appends it as the trailing function-table-index slot at index
 `len(Methods)`. `dropFnNameFor` learns `DynTraitType` → `__drop_dyn_<set>`
 (wasm only — declines on `ptrW==8` so the natives keep leaking, no
