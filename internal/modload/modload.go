@@ -1465,13 +1465,38 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	case *ast.FuncDecl:
 		// Nested local function — its name doesn't get the module
 		// prefix because closure conversion mangles it on its own
-		// (`__closure_<name>_N`). Just walk the body for refs.
+		// (`__closure_<name>_N`). Walk the body for refs, with the
+		// nested function's params + locals added to the shadow set
+		// (a param named like a module-level function must stay
+		// bound to the param).
 		for i := range x.Params {
 			r.rewriteType(&x.Params[i].Type)
 		}
 		r.rewriteType(&x.ReturnType)
-		r.rewriteBlock(x.Body)
+		r.rewriteNestedFuncBody(x.Params, x.Body)
 	}
+}
+
+// rewriteNestedFuncBody rewrites the body of a nested function
+// (a Lambda expression or a local FuncDecl statement) with the
+// nested function's params and body locals ADDED to the enclosing
+// local-shadow set. Unlike rewriteFuncBody (top-level functions),
+// the enclosing locals stay in the set: a nested function can
+// capture them, and a captured local that shares a module-level
+// function's name must keep resolving to the local.
+func (r *rewriter) rewriteNestedFuncBody(params []ast.Param, body *ast.Block) {
+	prev := r.localVars
+	locals := make(map[string]bool, len(prev)+len(params))
+	for k := range prev {
+		locals[k] = true
+	}
+	for _, p := range params {
+		locals[p.Name] = true
+	}
+	collectLocals(body, locals)
+	r.localVars = locals
+	r.rewriteBlock(body)
+	r.localVars = prev
 }
 
 // rewriteExpr is the workhorse — checks every expression node for
@@ -1599,6 +1624,23 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		for i := range x.Captures {
 			r.rewriteExpr(&x.Captures[i])
 		}
+	case *ast.Lambda:
+		// Anonymous function expression — its body can reference
+		// module-local functions and consts (e.g. a comparator
+		// closure calling a sibling helper), which need the same
+		// selfPrefix mangling as references anywhere else in the
+		// module (#4802: this case was missing, so `import`ing any
+		// module whose lambdas called module-local functions failed
+		// E001). The lambda's params and body locals shadow
+		// module-level names inside the body, but enclosing locals
+		// stay visible to it (captures) — so extend the current
+		// local set rather than resetting it like rewriteFuncBody
+		// does for a top-level function.
+		for i := range x.Params {
+			r.rewriteType(&x.Params[i].Type)
+		}
+		r.rewriteType(&x.ReturnType)
+		r.rewriteNestedFuncBody(x.Params, x.Body)
 	case *ast.MatchExpr:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
