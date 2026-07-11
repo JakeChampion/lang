@@ -136,6 +136,25 @@ type rcPlan struct {
 	borrowedAlias      map[string]bool
 	borrowedAliasSites map[ast.Node]bool
 	borrowSources      map[string]bool
+	// dynBorrowedViews[name] marks a `dyn Trait` local bound (or ever
+	// reassigned) from an UNCOUNTED alias shape — an element read
+	// (`var x = xs[i]`), a field read, or a bare dyn-to-dyn ident — with no
+	// DynCoercion recorded on the source expr (a coercion packs a FRESH
+	// {data, vtable} cell at the site, which the binding owns; an alias
+	// shape just copies the owner's cell pointer). Dyn cells carry no rc
+	// header, so there is no retain to balance: sweeping such a view drops
+	// the owner's cell out from under it (double free with the owning
+	// array's / local's own drop — #4787). The exit sweep and the reinit
+	// drop skip these; the true owner releases the cell. Over-marking is
+	// leak-safe (a skipped owned cell merely leaks), never a UAF.
+	dynBorrowedViews map[string]bool
+	// dynAliasElemArrays[name] marks a `dyn Trait[]` local whose literal
+	// received a bare pre-coerced dyn LOCAL as an element (`[d]` — an
+	// uncounted cell move; see computeDynBorrowedViews). The array keeps
+	// its exit-sweep drop (it owns the moved cells) but skips the
+	// loop-reinit drop: re-declaring it per iteration would free the
+	// still-live source local's cell.
+	dynAliasElemArrays map[string]bool
 }
 
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
@@ -161,8 +180,95 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.movedLocals = b.computeMovedLocals()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
+	b.rc.dynAliasElemArrays = map[string]bool{}
+	b.rc.dynBorrowedViews = b.computeDynBorrowedViews()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
+}
+
+// computeDynBorrowedViews finds `dyn Trait` locals that are pure borrowed
+// VIEWS of a cell some other value owns (see rc.dynBorrowedViews). A dyn
+// local OWNS its cell only when the cell was freshly packed at the binding —
+// an init with a DynCoercion recorded (a concrete coerced into the dyn slot)
+// or a non-alias shape (a call result / match-expr moving a cell in). An
+// Ident / Index / FieldAccess init WITHOUT a coercion copies an existing
+// cell pointer uncounted (dyn cells have no rc header, so needsRcIncOnAlias
+// deliberately never incs them), making the binding a borrow the sweep must
+// not drop. A dyn local ASSIGNED such a shape anywhere is marked too — the
+// slot may hold a borrow at exit, and skipping an owned cell only leaks.
+func (b *builder) computeDynBorrowedViews() map[string]bool {
+	out := map[string]bool{}
+	if b.fn.Body == nil {
+		return out
+	}
+	isUncoercedAlias := func(init ast.Expr) bool {
+		if init == nil {
+			return false
+		}
+		switch init.(type) {
+		case *ast.Ident, *ast.Index, *ast.FieldAccess:
+		default:
+			return false
+		}
+		if b.info != nil && b.info.DynCoercions != nil {
+			if _, coerced := b.info.DynCoercions[init]; coerced {
+				return false
+			}
+		}
+		return true
+	}
+	localIsDyn := func(name string) bool {
+		t, ok := b.localDeclType(name)
+		if !ok {
+			return false
+		}
+		_, isDyn := t.(ast.DynTraitType)
+		return isDyn
+	}
+	// A dyn LOCAL flowing bare into an ARRAY LITERAL element (`[d]` where d
+	// is already dyn — no coercion, so no fresh cell is packed) MOVES its
+	// cell into the array uncounted: the array's drop walk
+	// (__drop_arr_dyn_<set>) frees the cell, so the source local must not
+	// be swept too. The array itself keeps its exit-sweep drop (it owns the
+	// cells now) but must skip the loop-reinit drop (dynAliasElemArrays):
+	// re-declaring `var xs = [d]` per iteration would free d's cell on
+	// iteration 2 while d is still live.
+	markDynAliasElems := func(init ast.Expr) bool {
+		al, ok := init.(*ast.ArrayLit)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, el := range al.Elems {
+			if id, ok := el.(*ast.Ident); ok && localIsDyn(id.Name) && isUncoercedAlias(el) {
+				out[id.Name] = true
+				found = true
+			}
+		}
+		return found
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if localIsDyn(x.Name) && isUncoercedAlias(x.Init) {
+				out[x.Name] = true
+			}
+			if markDynAliasElems(x.Init) {
+				b.rc.dynAliasElemArrays[x.Name] = true
+			}
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				if localIsDyn(id.Name) && isUncoercedAlias(x.Value) {
+					out[id.Name] = true
+				}
+				if markDynAliasElems(x.Value) {
+					b.rc.dynAliasElemArrays[id.Name] = true
+				}
+			}
+		}
+		return true
+	})
+	return out
 }
 
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
@@ -2055,17 +2161,34 @@ func (b *builder) preciseDroppableType(name string) bool {
 		// excluded (payloads carry no counted box reference).
 		return b.enumRcPayloadsEligible(et.Name)
 	}
-	switch t.(type) {
-	case ast.ArrayType, ast.StructType, ast.TupleType:
-		// Arrays (every element kind — slices 1–3) and STRUCT / Map / tuple
-		// boxes (slice 4). emitOwnedSlotDrop reclaims each fully and
-		// is_unique-gates; freeEligible (the taint set) excludes any value
-		// whose nested fields/payloads alias a live local; and the init/use
-		// alias gates exclude boxes bound from / flowing into an uncounted
-		// alias. Struct & tuple construction INC their pointer fields/elements
-		// (StructLit / TupleLit), so a precise drop is rc-protected — the same
-		// reason slice-2 rc-element arrays are sound. Non-droppable runtime handles (Reader /
-		// Writer / MapIter) aren't freeEligible, so they never reach here.
+	switch tt := t.(type) {
+	case ast.ArrayType:
+		// `dyn Trait[]` is NEVER precise-droppable (#4787): an element read
+		// (`xs[i]`, the for-in loop var) is an UNCOUNTED borrow — dyn cells
+		// carry no rc header, so needsRcIncOnAlias deliberately has no dyn
+		// arm and the element-view binding takes no retain. The dyn-array
+		// drop (__drop_arr_dyn_<set>) frees every cell + runs the concrete
+		// dtor UNCONDITIONALLY, so an early drop at xs's last syntactic use
+		// frees the cell a live element view still points at (segfault on
+		// the natives / garbage dispatch). The "x[i] alias sites are SAFE —
+		// the precise drop only decs there" argument in computePreciseDrops
+		// holds only for rc-headered elements. Falls back to the exit
+		// sweep, which runs after every read.
+		if _, elemDyn := tt.Elem.(ast.DynTraitType); elemDyn {
+			return false
+		}
+		// Arrays of every other element kind (slices 1–3): emitOwnedSlotDrop
+		// reclaims fully and is_unique-gates; freeEligible (the taint set)
+		// excludes any value whose nested fields/payloads alias a live
+		// local; and the init/use alias gates exclude boxes bound from /
+		// flowing into an uncounted alias.
+		return true
+	case ast.StructType, ast.TupleType:
+		// STRUCT / Map / tuple boxes (slice 4). Struct & tuple construction
+		// INC their pointer fields/elements (StructLit / TupleLit), so a
+		// precise drop is rc-protected — the same reason slice-2 rc-element
+		// arrays are sound. Non-droppable runtime handles (Reader / Writer /
+		// MapIter) aren't freeEligible, so they never reach here.
 		return true
 	}
 	return false
