@@ -6060,9 +6060,10 @@ function main(): i32 {
 }
 
 // `sort_i32_asc` / `sort_i32_desc` — non-mutating stable merge
-// sort (fresh result, input untouched). Locks the first sort
-// helper's behavioral contract: ordering, empty/singleton, and
-// the input-preserved property.
+// sort (input untouched; n < 2 inputs are returned as-is, larger
+// ones as a fresh array). Locks the first sort helper's behavioral
+// contract: ordering, empty/singleton, and the input-preserved
+// property.
 func TestArm64SortI32(t *testing.T) {
 	src := `
 import "std/sort";

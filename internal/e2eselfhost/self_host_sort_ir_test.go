@@ -15,15 +15,18 @@ import (
 // compiler had never been pinned to lower the sorts through its IR path). The
 // single-program driver resolves no imports, so the relevant sort surface is
 // inlined verbatim from `internal/stdlib/std/sort.fern`: the i32 ascending /
-// descending stable bottom-up merge sorts, the byte-lexicographic `string_cmp`
-// three-way comparator, and the string ascending / descending sorts built on
-// it. This verifies the constructs std/sort lowers to compile on the IR path:
-// scalar (`i32[]`) and pointer (`string[]`) array element rewrite via `.with`
-// on an aliased scratch buffer (copy-on-write on the first write), indexed
-// scalar + string-byte reads, `.len()`, numeric `<`/`>` comparisons, and the
-// nested `while` merge loops. Each program returns a small deterministic int
-// (kept <= 126), pinned to the `"ir"` path; expectations are oracle-checked
-// against the native interpreter. FEATURE-AUDIT std/sort row.
+// descending stable bottom-up merge sorts (monomorphic, direct scalar
+// compares), the byte-lexicographic `string_cmp` three-way comparator, and
+// the string ascending / descending merge sorts built on it. This verifies
+// the constructs std/sort lowers to compile on the IR path: scalar (`i32[]`)
+// and pointer (`string[]`) array element rewrite via `.with` on an aliased
+// scratch buffer (copy-on-write on the first write), indexed scalar +
+// string-byte reads, `.len()`, numeric `<`/`>` comparisons, the nested
+// `while` merge loops, and the n < 2 return-borrowed-param early-out
+// (executed by the i32-empty / string-singleton cases). Each program
+// returns a small deterministic int (kept <= 126), pinned to the `"ir"`
+// path; expectations are oracle-checked against the native interpreter.
+// FEATURE-AUDIT std/sort row.
 const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
@@ -208,6 +211,12 @@ var sortIRCases = []struct {
 	{"string-asc", `var a: string[] = ["cherry", "apple", "banana"]; var s: string[] = sort_strings_asc(a); return s[0].len();`, 5},
 	// string sort descending: largest is "cherry" (len 6).
 	{"string-desc", `var a: string[] = ["cherry", "apple", "banana"]; var s: string[] = sort_strings_desc(a); return s[0].len();`, 6},
+	// n < 2 early-return actually EXECUTES (returns the borrowed scalar
+	// array param directly): empty -> len 0 (+3 to distinguish from traps).
+	{"i32-empty", `var e: i32[] = []; return sort_i32_asc(e).len() + 3;`, 3},
+	// n < 2 early-return over a pointer-element (string[]) array: the
+	// singleton survives the return-borrowed-param path intact.
+	{"string-singleton", `var a: string[] = ["hi"]; var s: string[] = sort_strings_asc(a); return s[0].len();`, 2},
 }
 
 func sortIRSrc(mainBody string) string {
