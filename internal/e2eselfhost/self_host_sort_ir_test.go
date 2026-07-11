@@ -19,10 +19,12 @@ import (
 // compares), the byte-lexicographic `string_cmp` three-way comparator, and
 // the string ascending / descending merge sorts built on it. This verifies
 // the constructs std/sort lowers to compile on the IR path: scalar (`i32[]`)
-// and pointer (`string[]`) array element rewrite via `.with` on an aliased
-// scratch buffer (copy-on-write on the first write), indexed scalar +
-// string-byte reads, `.len()`, numeric `<`/`>` comparisons, the nested
-// `while` merge loops, and the n < 2 return-borrowed-param early-out
+// and pointer (`string[]`) array build via `.append` (the per-pass scratch
+// buffer is materialized fresh — NOT aliased + CoW, which the self-host
+// non-IR paths mutate through in place; see std/sort's sort_i32_asc doc
+// comment), element rewrite via `.with`, indexed scalar + string-byte
+// reads, `.len()`, numeric `<`/`>` comparisons, the nested `while` merge
+// loops, and the n < 2 return-borrowed-param early-out
 // (executed by the i32-empty / string-singleton cases). Each program
 // returns a small deterministic int (kept <= 126), pinned to the `"ir"`
 // path; expectations are oracle-checked against the native interpreter.
@@ -33,7 +35,9 @@ const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
     var src: i32[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: i32[] = src;
+        var dst: i32[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -68,7 +72,9 @@ pub function sort_i32_desc(arr: i32[]): i32[] {
     var src: i32[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: i32[] = src;
+        var dst: i32[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -118,7 +124,9 @@ pub function sort_strings_asc(arr: string[]): string[] {
     var src: string[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: string[] = src;
+        var dst: string[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -153,7 +161,9 @@ pub function sort_strings_desc(arr: string[]): string[] {
     var src: string[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: string[] = src;
+        var dst: string[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;

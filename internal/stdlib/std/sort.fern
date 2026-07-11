@@ -18,8 +18,9 @@
 // The scalar entry points (`sort_i32_*` / `sort_i64_*` / `sort_u32/u64_*`)
 // keep monomorphic bodies so the hot-loop compare is the direct scalar
 // `<` / `>` — no per-element comparator-closure indirection (their
-// allocation profile is identical to `sort_by`'s: one CoW scratch copy
-// per merge pass). The string sorts are monomorphic too, but only
+// allocation profile matches `sort_by`'s: one scratch copy per merge
+// pass, materialized explicitly — see sort_i32_asc's doc comment for
+// why it must not alias). The string sorts are monomorphic too, but only
 // because of a modload mangler gap (see their doc comment) — they
 // should become `sort_by` delegations once module-local functions can
 // be referenced from arg positions / closure bodies in a mangled
@@ -51,9 +52,20 @@
 //
 // Functional shape (returns a new array) matches the rest
 // of the prelude's array conventions (`arr.push` returns a
-// new array); the input is not mutated — `dst` starts
-// aliased to the input, and the first `.with` copies it, so
-// reads from `src` stay valid while `dst` is overwritten.
+// new array); the input is not mutated — each merge pass
+// materializes `dst` as a FRESH copy of `src` (append loop)
+// before overwriting it slot by slot. Do not "optimize" this
+// back to `var dst = src;` + copy-on-write: the self-hosted
+// compiler has no Perceus yet, so on its non-IR paths `.with`
+// writes through an alias in place, and an aliased merge
+// corrupts (reads see this pass's writes — caught by
+// TestSelfHostSortX86_64 / TestSelfHostAuditStdArray in CI).
+// Native and the self-host IR path handle the aliased CoW
+// shape correctly (generic `sort_by` below still uses it, and
+// is green in its own gates), but the monomorphic bodies keep
+// the explicit copy so they are correct on every path. Under
+// native RC the fresh buffer is rc==1, so the merge's `.with`
+// writes stay in-place — same cost as the CoW copy.
 
 // std/sort's case-insensitive string comparison dispatches
 // (string) `.to_lower()` — declare std/string so the receiver
@@ -66,7 +78,9 @@ pub function sort_i32_asc(arr: i32[]): i32[] {
     var src: i32[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: i32[] = src;
+        var dst: i32[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -106,7 +120,9 @@ pub function sort_i64_asc(arr: i64[]): i64[] {
     var src: i64[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: i64[] = src;
+        var dst: i64[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -142,7 +158,9 @@ pub function sort_i64_desc(arr: i64[]): i64[] {
     var src: i64[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: i64[] = src;
+        var dst: i64[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -178,7 +196,9 @@ pub function sort_u32_asc(arr: u32[]): u32[] {
     var src: u32[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: u32[] = src;
+        var dst: u32[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -214,7 +234,9 @@ pub function sort_u64_asc(arr: u64[]): u64[] {
     var src: u64[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: u64[] = src;
+        var dst: u64[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -250,7 +272,9 @@ pub function sort_i32_desc(arr: i32[]): i32[] {
     var src: i32[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: i32[] = src;
+        var dst: i32[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -324,7 +348,9 @@ pub function sort_strings_asc(arr: string[]): string[] {
     var src: string[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: string[] = src;
+        var dst: string[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -360,7 +386,9 @@ pub function sort_strings_desc(arr: string[]): string[] {
     var src: string[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: string[] = src;
+        var dst: string[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -423,7 +451,9 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
     var src: string[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        var dst: string[] = src;
+        var dst: string[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
