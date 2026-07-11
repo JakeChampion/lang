@@ -16968,7 +16968,13 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
 // map / opt / tuple, and NOT a non-leaf (cycle-risk) struct.
 function enum_field_rc_droppable(structs: parser.StructDecl[], t: string): boolean {
     return is_leaksafe_array_field(t) || t == "string"
-        || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t));
+        || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t))
+        // #4355 slice 8: a SCALAR-ONLY struct payload (`S { m: i32, n: i32 }`)
+        // is one flat rc-headered box with no inner rc fields — released by a
+        // single __fern_rc_dec, exactly like a leak-safe array. Fresh-gated at
+        // admission (variant_struct_payloads_fresh requires a fresh struct
+        // LITERAL for this arm too), so the box is the sole owner.
+        || (decl_is_struct(structs, t) && struct_lit_all_scalar(structs, t));
 }
 
 // enum_variant_rc_droppable: every payload field of variant `vname` is either a
@@ -17030,7 +17036,12 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
     var i: i32 = 0;
     while (i < n && i < args.len()) {
         var ft: string = decl_field_type_at(structs, variant_name, i);
-        if (decl_is_struct(structs, ft) && nested_field_deep_drop_ok(structs, ft)) {
+        // Deep-drop-ok OR scalar-only struct payloads (#4355 slice 8) both get
+        // released at the consuming match, so both must be FRESH struct
+        // literals — a bare-ident payload aliases a local whose own sweep
+        // would double-free the box.
+        if (decl_is_struct(structs, ft)
+            && (nested_field_deep_drop_ok(structs, ft) || struct_lit_all_scalar(structs, ft))) {
             var fresh: boolean = false;
             match (args[i]) {
                 parser.ExprStructLit(_) => { fresh = true; },
@@ -17443,6 +17454,16 @@ function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: stri
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__struct_drop_" + eft, 1));   // release payload's rc fields; returns box
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));          // free the payload box
+                    st = st.emit(ir.op_drop());
+                } else if (decl_is_struct(st.structs, eft) && struct_lit_all_scalar(st.structs, eft)) {
+                    // SCALAR-ONLY struct payload (#4355 slice 8): no inner rc
+                    // fields, so a single __fern_rc_dec frees the payload box —
+                    // the struct sibling of the leak-safe array arm. Same
+                    // fresh-literal admission gate as the deep-drop-ok arm, so
+                    // the box is the sole owner.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
                 }
                 fk = fk + 1;

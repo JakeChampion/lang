@@ -3995,3 +3995,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   fresh-producer-arg churn flat at detector zero with the operand/receiver
   surviving, bare-ident-arg safety, all slice-5/6 regressions, and the
   per-module whole-compiler self-run.
+- 2026-07-11: **Landed #4355 slice 8 — scalar-only struct payloads in the
+  RCENUM reclaim.** `S { m: i32, n: i32 }` as an enum payload failed
+  nested_field_deep_drop_ok (no reclaimable leaf), so enums carrying one
+  were never RCENUM-admitted and the enum box + payload box leaked per
+  consume-rebind (native reclaims the identical shape). Three coupled
+  widenings, all fresh-literal-gated like the deep-drop-ok arm:
+  enum_field_rc_droppable admits an all-scalar struct payload
+  (struct_lit_all_scalar); variant_struct_payloads_fresh requires it to be
+  a fresh struct LITERAL (a bare-ident payload aliases a local whose own
+  sweep would double-free the box — pinned); and
+  emit_enum_variant_drops_moved releases it with a single __fern_rc_dec
+  (one flat box, no inner rc fields — the struct sibling of the leak-safe
+  array arm). The slice-5 RCE call-init scan picks the widened predicates
+  up automatically, so `var e = mk(i)` factored ctors qualify too.
+  VERIFIED: scalar-struct-payload churn flat at detector zero (direct +
+  call-init), aliased bare-ident payload exclusion (s0 survives), slice
+  5/6/7 regressions, per-module whole-compiler self-run.
