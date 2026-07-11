@@ -6790,6 +6790,26 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "        (br $adp_lp))))) \n";
     o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
+    // $__fern_arr_dec_ptr2(a) -> a: the TWO-LEVEL sibling (#4355 slice 9 —
+    // string[][] / arr-of-arr-of-pointers reclaim): identical shell, but each
+    // element is itself a POINTER-element array released fully by
+    // $__fern_arr_dec_ptr (its elements — wasm strings are single inline
+    // blocks — then its buffer), before the outer buffer frees. Same rc==1
+    // gate, so a shared outer just decs and elements live on.
+    o = o + "  (func $__fern_arr_dec_ptr2 (param $a i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32)\n";
+    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "      (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $adp2_done (loop $adp2_lp\n";
+    o = o + "        (br_if $adp2_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $adp2_lp))))) \n";
+    o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
     return o;
 }
 

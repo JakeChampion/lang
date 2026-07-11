@@ -4012,3 +4012,36 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: scalar-struct-payload churn flat at detector zero (direct +
   call-init), aliased bare-ident payload exclusion (s0 survives), slice
   5/6/7 regressions, per-module whole-compiler self-run.
+- 2026-07-11: **Landed #4355 slice 9 — arr-of-arr local reclaim (i32[][] /
+  string[][]), whole-structure.** An arr-of-arr local (`var g = [[..],[..]]`)
+  had NO reclaim at all on the self-host IR path: the init marks is_arrarr
+  but the slot is not is_arr, so the exit sweep's array loop never touched it
+  and no rebind dec fired — outer buffer + inner buffers + string elements
+  all leaked per iteration (native flat on the same shapes). ALSO FOUND: the
+  self-host __fn___fern_drop_arr_ptr is a ret-only STUB — no element-walk
+  helper existed. NEW RUNTIME HELPERS on all three backends, modeled on
+  __fn___fern_str_arr_free's shell (null / low-addr / immortal guards, rc>1
+  dec, rc==0 underflow tick, rc==1 walk + freelist buffer free):
+  __fern_arrarr_free (per-element rc-guarded __fern_arr_dec — a
+  scalar-element row is fully freed by one dec; wasm routes to the existing
+  $__fern_arr_dec_ptr) and __fern_strarrarr_free (per-element
+  __fern_str_arr_free; wasm gets the new two-level $__fern_arr_dec_ptr2 —
+  arr_dec_ptr whose per-element call is arr_dec_ptr itself). ADMISSION,
+  two-tier: rows must be array LITERALS (credit "ARRARR:", lax — scalar
+  inner elements VALUE-COPY, so ident/binary elements like [j, j+1] are
+  safe); a STRING-kind slot (type-aware arrarr_elem) additionally requires
+  every inner element to be a fresh string ("ARRARRS:", strict — a live
+  local stored as an element would dangle; pinned by the ident-element
+  exclusion test). Gates: body_unsafe_for, NOT reassigned, and
+  arrarr_row_escapes (a bare `var row = g[i]` single-index read or
+  `for row in g` binds an inner pointer → rejected; transient g[i][j] /
+  g[i].len() borrows admissible — pinned by the row-alias test). WIRING:
+  emit_arrarr_reclaim_store (the emit_str_reclaim_store sibling,
+  cow-guarded) at the StmtVar loop-rebind; a new exit-sweep loop frees the
+  final value via the kind-picked helper. VERIFIED:
+  TestSelfHostArrArrReclaim{IRX86_64,WasmIR,IRArm64} — string[][] +
+  i32[][] churn flat at detector zero, row-alias + ident-element
+  exclusions, slice 5-8 probe regressions, per-module whole-compiler
+  self-run. Remaining nearby: struct[]-of-arrays and deeper nesting
+  (string[][][]) keep the sound leak; arr-of-arr via call results
+  (`var g = mk()`) needs an OPTFRESH-style fn scan.

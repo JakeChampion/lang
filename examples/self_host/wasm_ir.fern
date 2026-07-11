@@ -350,6 +350,13 @@ function wasm_helper_symbol(name: string): string {
     // block) — then frees the buffer; a shared array just decs; literals /
     // immortal views are guarded no-ops inside the per-element dec.
     if (name == "__fern_str_arr_free") { return "$__fern_arr_dec_ptr"; }
+    // arr-of-arr reclaim (#4355 slice 9): a SCALAR-element inner buffer is
+    // fully freed by one per-element dec, so the outer walk is exactly
+    // $__fern_arr_dec_ptr; a STRING-element inner (string[][]) needs the
+    // two-level $__fern_arr_dec_ptr2 (per-element arr_dec_ptr — the inner's
+    // string blocks then its buffer — then the outer).
+    if (name == "__fern_arrarr_free") { return "$__fern_arr_dec_ptr"; }
+    if (name == "__fern_strarrarr_free") { return "$__fern_arr_dec_ptr2"; }
     // map reclaim (Perceus map-local slice): route to $__fern_map_release, the
     // wasm AST path's full map free — it null-guards, rc-guards (frees only at
     // rc==1), DEEP-releases string keys + string values (a level the asm
