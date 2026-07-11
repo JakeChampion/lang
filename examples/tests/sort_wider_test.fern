@@ -57,6 +57,29 @@ function test_u64_asc_with_large_values(): test.TestOutcome {
   return test.assert_eq(sorted[0], 0u64);
 }
 
+function test_i64_asc_large(): test.TestOutcome {
+  // 100 descending elements — crosses several merge widths
+  // (1,2,4,...,64), unlike the short literal arrays above.
+  var arr: i64[] = [];
+  var i: i32 = 0;
+  while (i < 100) {
+    arr = arr.append((100 - i) as i64);
+    i = i + 1;
+  }
+  var sorted: i64[] = sort.sort_i64_asc(arr);
+  if (sorted.len() != 100) {
+    return test.fail("length changed: " + sorted.len().to_string());
+  }
+  i = 0;
+  while (i < 100) {
+    if (sorted[i] != (i + 1) as i64) {
+      return test.fail("wrong value at " + i.to_string() + ": " + sorted[i].to_string());
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
 function test_i64_empty(): test.TestOutcome {
   var arr: i64[] = [];
   var sorted: i64[] = sort.sort_i64_asc(arr);
@@ -78,6 +101,7 @@ function main(): i32 {
   r = r.it("sort_i64_desc", test_i64_desc());
   r = r.it("sort_u32_asc", test_u32_asc());
   r = r.it("sort_u64_asc near u64-max", test_u64_asc_with_large_values());
+  r = r.it("sort_i64_asc 100 elements", test_i64_asc_large());
   r = r.it("sort_i64_asc empty input", test_i64_empty());
   r = r.it("sort_i64_asc singleton", test_i64_single());
   return r.finish();

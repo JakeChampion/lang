@@ -296,6 +296,12 @@ the common case.
 insertion sort) shipped in `std/array.fern` (#2689), free +
 receiver-method forms. `sort_key` still pending generic `Ord`
 dispatch; later deprecates `sort_i32_asc/desc` once `Ord` lands.
+**Update**: every non-consuming sort (generic `sort_by` /
+`core/cmp.sort[T: Ord]` and the monomorphic `sort_i32_*` /
+`sort_i64_*` / `sort_u32/u64_*` / `sort_strings_*` families) is now a
+stable bottom-up merge sort, O(n log n) — the review-flagged O(n²)
+insertion sorts survive only in the `fip` `sort_i32_inplace_*`
+variants, which cannot allocate merge scratch by definition.
 
 ### 11. Time primitives · medium · ☐
 

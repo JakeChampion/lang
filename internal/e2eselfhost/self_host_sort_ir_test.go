@@ -15,44 +15,84 @@ import (
 // compiler had never been pinned to lower the sorts through its IR path). The
 // single-program driver resolves no imports, so the relevant sort surface is
 // inlined verbatim from `internal/stdlib/std/sort.fern`: the i32 ascending /
-// descending insertion sorts, the byte-lexicographic `string_cmp` three-way
-// comparator, and the string ascending / descending sorts built on it. This
-// verifies the constructs std/sort lowers to compile on the IR path: scalar
-// (`i32[]`) and pointer (`string[]`) array build via `.append`, in-place
-// element rewrite via `.with`, indexed scalar + string-byte reads, `.len()`,
-// numeric `<`/`>` comparisons, and nested `while` loops with the
-// insertion-sort shift. Each program returns a small deterministic int (kept
-// <= 126), pinned to the `"ir"` path; expectations are oracle-checked against
-// the native interpreter. FEATURE-AUDIT std/sort row.
+// descending stable bottom-up merge sorts, the byte-lexicographic `string_cmp`
+// three-way comparator, and the string ascending / descending sorts built on
+// it. This verifies the constructs std/sort lowers to compile on the IR path:
+// scalar (`i32[]`) and pointer (`string[]`) array element rewrite via `.with`
+// on an aliased scratch buffer (copy-on-write on the first write), indexed
+// scalar + string-byte reads, `.len()`, numeric `<`/`>` comparisons, and the
+// nested `while` merge loops. Each program returns a small deterministic int
+// (kept <= 126), pinned to the `"ir"` path; expectations are oracle-checked
+// against the native interpreter. FEATURE-AUDIT std/sort row.
 const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(arr[i]); i = i + 1; }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i32 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] > key) { out = out.with(j + 1, out[j]); j = j - 1; }
-        out = out.with(j + 1, key);
-        k = k + 1;
+    if (n < 2) { return arr; }
+    var src: i32[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: i32[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] < src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 pub function sort_i32_desc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(arr[i]); i = i + 1; }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i32 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] < key) { out = out.with(j + 1, out[j]); j = j - 1; }
-        out = out.with(j + 1, key);
-        k = k + 1;
+    if (n < 2) { return arr; }
+    var src: i32[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: i32[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] > src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 pub function string_cmp(a: string, b: string): i32 {
     var n: i32 = a.len();
@@ -71,33 +111,73 @@ pub function string_cmp(a: string, b: string): i32 {
 }
 pub function sort_strings_asc(arr: string[]): string[] {
     var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(arr[i]); i = i + 1; }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: string = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && string_cmp(out[j], key) > 0) { out = out.with(j + 1, out[j]); j = j - 1; }
-        out = out.with(j + 1, key);
-        k = k + 1;
+    if (n < 2) { return arr; }
+    var src: string[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: string[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (string_cmp(src[j], src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 pub function sort_strings_desc(arr: string[]): string[] {
     var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(arr[i]); i = i + 1; }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: string = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && string_cmp(out[j], key) < 0) { out = out.with(j + 1, out[j]); j = j - 1; }
-        out = out.with(j + 1, key);
-        k = k + 1;
+    if (n < 2) { return arr; }
+    var src: string[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: string[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (string_cmp(src[j], src[i]) > 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 function is_sorted_i32_asc(a: i32[]): i32 {
     var i: i32 = 1;
@@ -114,7 +194,7 @@ var sortIRCases = []struct {
 	main string
 	want int
 }{
-	// ascending insertion sort: [5,3,1,4,2] -> [1,2,3,4,5]; min*10 + max = 15.
+	// ascending merge sort: [5,3,1,4,2] -> [1,2,3,4,5]; min*10 + max = 15.
 	{"i32-asc", `var a: i32[] = [5, 3, 1, 4, 2]; var s: i32[] = sort_i32_asc(a); return s[0] * 10 + s[4];`, 15},
 	// descending: [5,3,1,4,2] -> [5,4,3,2,1]; first*10 + last = 51.
 	{"i32-desc", `var a: i32[] = [5, 3, 1, 4, 2]; var s: i32[] = sort_i32_desc(a); return s[0] * 10 + s[4];`, 51},

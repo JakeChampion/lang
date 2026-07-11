@@ -1,10 +1,19 @@
-// std/sort — free `sort_*` functions for i32[] and string[].
+// std/sort — free `sort_*` functions for scalar and string arrays.
 //
-// Insertion-sort implementations: O(n²) worst case, but for
-// the compiler's small-list use cases (sorted field offsets,
-// declaration orders, capacity hints) it's fine. The monomorphic
-// `sort_i32_*` / `sort_strings_*` entry points stay as the
-// allocation-light common cases; the generic comparator form
+// All the non-consuming sorts are stable bottom-up (iterative) merge
+// sorts, O(n log n) comparisons — the same shape as the generic
+// `sort_by` below and `core/cmp`'s `sort[T: Ord]` (#4387 item 3), so
+// the monomorphic entry points are safe on arbitrary / large inputs,
+// not just the compiler's small-list use cases (sorted field offsets,
+// declaration orders, capacity hints). Stability: on a tie the left
+// run's element is emitted first (the merge only takes from the right
+// run when it compares *strictly* less), so equal keys keep their
+// input order. The `own`-consuming in-place variants remain insertion
+// sorts: `fip` functions must not allocate, and a merge sort needs a
+// scratch buffer.
+//
+// The monomorphic `sort_i32_*` / `sort_strings_*` entry points stay as
+// the allocation-light common cases; the generic comparator form
 // `sort_by[T](arr, cmp)` (below) covers any element type / custom
 // ordering now that closure args lower on every backend.
 //
@@ -19,9 +28,7 @@
 // sort) don't have to roll their own.
 
 // `sort_i32_asc(arr)` — return a fresh ascending-sorted
-// copy of `arr`. Insertion-sort: O(n²) worst case, but
-// for the compiler's small-list use cases (sorted field
-// offsets, declaration orders, capacity hints) it's fine.
+// copy of `arr`. Stable bottom-up merge sort, O(n log n).
 // `sort_i32_desc` flips the comparison direction. (For an
 // arbitrary element type or ordering, see generic `sort_by`.)
 //
@@ -32,7 +39,9 @@
 //
 // Functional shape (returns a new array) matches the rest
 // of the prelude's array conventions (`arr.push` returns a
-// new array); the input is not mutated.
+// new array); the input is not mutated — `dst` starts
+// aliased to the input, and the first `.with` copies it, so
+// reads from `src` stay valid while `dst` is overwritten.
 
 // std/sort's case-insensitive string comparison dispatches
 // (string) `.to_lower()` — declare std/string so the receiver
@@ -41,139 +50,222 @@ import "std/string";
 
 pub function sort_i32_asc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i32 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] > key) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: i32[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: i32[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] < src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
-// i64 / u32 / u64 variants. Same insertion-sort shape as
-// sort_i32_asc; copies into a fresh buffer + sorts in place
-// via the in-bounds index-assign that lang's arrays support
-// for every scalar element type.
+// i64 / u32 / u64 variants. Same stable bottom-up merge-sort
+// shape as sort_i32_asc, monomorphised per element width so
+// the compare is the plain scalar `<` / `>` for that type.
 
 pub function sort_i64_asc(arr: i64[]): i64[] {
     var n: i32 = arr.len();
-    var out: i64[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i64 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] > key) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: i64[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: i64[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] < src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 pub function sort_i64_desc(arr: i64[]): i64[] {
     var n: i32 = arr.len();
-    var out: i64[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i64 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] < key) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: i64[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: i64[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] > src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 pub function sort_u32_asc(arr: u32[]): u32[] {
     var n: i32 = arr.len();
-    var out: u32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: u32 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] > key) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: u32[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: u32[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] < src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 pub function sort_u64_asc(arr: u64[]): u64[] {
     var n: i32 = arr.len();
-    var out: u64[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: u64 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] > key) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: u64[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: u64[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] < src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 pub function sort_i32_desc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i32 = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && out[j] < key) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: i32[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: i32[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] > src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // `string_cmp(a, b)` — lexicographic byte-order comparator.
@@ -198,52 +290,81 @@ pub function string_cmp(a: string, b: string): i32 {
 }
 
 // `sort_strings_asc(arr)` / `sort_strings_desc(arr)` —
-// lexicographic byte-order sort of a string array. Insertion
-// sort like the i32 helpers; O(n²) worst case fine for the
-// small-list use cases (config keys, sorted output for
-// stable tests, alphabetised CLI flags).
+// lexicographic byte-order sort of a string array. Stable
+// bottom-up merge sort over `string_cmp`, O(n log n) — safe
+// for large listings as well as the small-list use cases
+// (config keys, sorted output for stable tests, alphabetised
+// CLI flags).
 pub function sort_strings_asc(arr: string[]): string[] {
     var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: string = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && string_cmp(out[j], key) > 0) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: string[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: string[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (string_cmp(src[j], src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 pub function sort_strings_desc(arr: string[]): string[] {
     var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: string = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && string_cmp(out[j], key) < 0) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: string[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: string[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (string_cmp(src[j], src[i]) > 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // `string_cmp_ci(a, b)` — same as string_cmp but ASCII case-
@@ -269,35 +390,51 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 
 // `sort_strings_asc_ci(arr)` — case-insensitive ascending
 // sort. Useful for user-facing alphabetical listings where
-// case shouldn't fragment the ordering.
+// case shouldn't fragment the ordering. Stable (merge sort):
+// strings that compare ci-equal ("Apple" / "apple") keep
+// their input order.
 pub function sort_strings_asc_ci(arr: string[]): string[] {
     var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    var k: i32 = 1;
-    while (k < n) {
-        var key: string = out[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && string_cmp_ci(out[j], key) > 0) {
-            out = out.with(j + 1, out[j]);
-            j = j - 1;
+    if (n < 2) { return arr; }
+    var src: string[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: string[] = src;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (string_cmp_ci(src[j], src[i]) < 0) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
         }
-        out = out.with(j + 1, key);
-        k = k + 1;
+        src = dst;
+        width = width + width;
     }
-    return out;
+    return src;
 }
 
 // --- In-place (`own`) sorts ------------------------------------------------
 //
-// The `sort_*_asc`/`_desc` functions above are non-mutating: they copy the
-// input into a fresh buffer and sort that, so a borrowed array survives the
-// call unchanged. That copy is pure overhead when the caller is finished with
-// the input and just wants it sorted.
+// The `sort_*_asc`/`_desc` functions above are non-mutating: the input array
+// survives the call unchanged (the merge scratch buffer copies on the first
+// `.with`). That fresh result is pure overhead when the caller is finished
+// with the input and just wants it sorted.
 //
 // `sort_i32_inplace_asc`/`_desc` take the array `own` (consuming): the caller
 // transfers ownership, so the sort permutes the input buffer directly and hands
@@ -306,6 +443,11 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
 // argument to be an owned value (a fresh literal or another `own` binding), and
 // the caller cannot use the array afterwards — exactly the contract that makes
 // the in-place mutation sound.
+//
+// These stay insertion sorts (O(n²) worst case) deliberately: `fip` functions
+// must not allocate, and a merge sort needs a scratch buffer. Reach for them
+// on small inputs where the zero-allocation property matters; for large inputs
+// prefer the O(n log n) non-consuming sorts above.
 //
 // This dogfoods the `own` consuming-parameter feature in the stdlib: real code
 // whose ownership transfer (the returned array IS the input box) is pinned by
@@ -355,16 +497,14 @@ pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
 // projected key, reverse order, or any custom relation.
 //
 // Stable bottom-up (iterative) merge sort, O(n log n) comparisons — the
-// "future generic merge sort" the older insertion-sort revision pointed
-// at, for arbitrary / large inputs rather than the small-list niche the
-// monomorphic `sort_i32_*` entry points serve (#4387 item 3). Stability:
+// same shape the monomorphic `sort_i32_*` / `sort_strings_*` entry points
+// above use, for arbitrary / large inputs (#4387 item 3). Stability:
 // on a tie the left run's element is emitted first (the merge only takes
 // from the right run when it compares *strictly* less), so equal keys keep
 // their input order. It lowers on the self-host IR path (only `while`,
-// closure calls, `.with`/`.len()`/index, and i32 arithmetic — the same
-// constructs the insertion-sort form used). The input is not mutated: the
-// first `.with` on the aliased scratch buffer copies-on-write, leaving
-// `arr` untouched.
+// closure calls, `.with`/`.len()`/index, and i32 arithmetic). The input
+// is not mutated: the first `.with` on the aliased scratch buffer
+// copies-on-write, leaving `arr` untouched.
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
