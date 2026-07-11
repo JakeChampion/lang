@@ -1,0 +1,25 @@
+// examples/self_host/wasm_runio_run.fern — stdin-driven driver for the
+// self-hosted wasm emitter's run_io wrapper. Reads Fern source from
+// stdin, runs it through lexer + parser + wasm.emit_module_run_io, and
+// prints the resulting WASI core module (WAT text, wrapped for the
+// full-io component path) to stdout. Companion to wasm_run.fern (the
+// plain emit_module driver): same front end, io-wrapped emit.
+//
+// The Go-side export/component tests (self_host_p6_export_test.go and
+// the self_host_export_*_test.go family) pipe a source program in and
+// hand the WAT to wasm-tools / wasmtime. This used to live as an
+// identical inline `exp_run.fern` literal in six test files; it is a
+// stock driver so the CI warm cache covers it (see the `warm` matrix in
+// .github/workflows/test-e2e-selfhost.yml) and the copies cannot drift.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./wasm";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
+    return 0;
+}

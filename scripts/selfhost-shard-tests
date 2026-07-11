@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# selfhost-shard-tests — deterministic duration-weighted test partition.
+#
+# Usage: selfhost-shard-tests SHARD NSHARD [WEIGHTS_FILE] < test-list
+#
+# Reads one test name per line on stdin, assigns every test to one of
+# NSHARD buckets with a greedy LPT (longest-processing-time-first)
+# partition, and prints the names assigned to bucket SHARD.
+#
+# Weights come from WEIGHTS_FILE (default .github/selfhost-test-weights.txt
+# relative to the repo root): `TestName seconds` per line, `#` comments and
+# blanks ignored. A test with no entry weighs 1. The weights only steer
+# BALANCE — a stale file can never drop or double-run a test, because the
+# partition is over the actual test list and every listed test lands in
+# exactly one bucket. Ties (equal weight, then name; equal bucket loads,
+# then lowest index) are broken deterministically, so every shard computes
+# the identical assignment from the identical list.
+#
+# Why not `index % NSHARD` (the old scheme): the self-host suite has a few
+# tests with 1-4 MINUTE runtimes (fixpoints / whole-compiler self-builds)
+# among hundreds of sub-second ones. Round-robin regularly stacked two big
+# ones in one shard while others ran ~30s of work; LPT pins each big test
+# to its own near-empty bucket so max-shard wall-clock ≈ the single
+# slowest test, which is the theoretical floor for any partition.
+
+set -euo pipefail
+
+SHARD="${1:?usage: selfhost-shard-tests SHARD NSHARD [WEIGHTS_FILE]}"
+NSHARD="${2:?usage: selfhost-shard-tests SHARD NSHARD [WEIGHTS_FILE]}"
+WEIGHTS="${3:-$(dirname "$0")/../.github/selfhost-test-weights.txt}"
+
+if [ ! -f "$WEIGHTS" ]; then
+  WEIGHTS=/dev/null
+fi
+
+# 1. join each test with its weight (default 1)
+# 2. order by weight desc, then name asc (stable, deterministic)
+# 3. greedily assign to the least-loaded bucket (lowest index on ties);
+#    print the tests landing in bucket SHARD. mawk-compatible (no asort).
+awk -v OFS='\t' '
+  NR == FNR {
+    if ($0 ~ /^[ \t]*(#|$)/) next
+    w[$1] = $2 + 0
+    next
+  }
+  NF { print ($1 in w ? w[$1] : 1), $1 }
+' "$WEIGHTS" - |
+  sort -k1,1nr -k2,2 |
+  awk -v nshard="$NSHARD" -v shard="$SHARD" '
+    {
+      min = 0
+      for (i = 1; i < nshard; i++) if (load[i] < load[min]) min = i
+      if (min == shard) print $2
+      load[min] += $1
+    }
+  '

@@ -22,7 +22,7 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -31,23 +31,7 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "exp_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "exp_run.fern", "exp_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	// An `@export` function, also called from main. The self-host must parse
 	// the attribute and compile the program.
@@ -90,7 +74,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	}
 
 	// --- self-host emits the exporter core (a command with main + @export). ---
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -99,23 +83,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "exp_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "exp_run.fern", "exp_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/math@0.1.0", "add")
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -270,7 +238,7 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 	}
 
 	// self-host emits the exporter core (command with main + string @export).
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -279,23 +247,7 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "exp_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "exp_run.fern", "exp_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "greet")
 function greet(): string { return "hi"; }
@@ -440,7 +392,7 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -449,23 +401,7 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `
-import "std/io";
-import "./lexer";
-import "./parser";
-import "./wasm";
-
-function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
-    return 0;
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "exp_run.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "exp_run.fern", "exp_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32 { return s.len(); }
