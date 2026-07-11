@@ -9323,7 +9323,12 @@ function discardable_scalar_arrarr_lit(arr: parser.ExprArray, s: LowerState): bo
 // or struct. Gates a discarded array / tuple literal's in-place box release: a
 // scalar-only box is single-level, so a shallow __fern_rc_dec fully reclaims it.
 function expr_scalar_leaf(e: parser.Expr, s: LowerState): boolean {
-    return !expr_is_str(e, s) && !expr_is_strarr(e, s) && !expr_is_arr_src(e, s) && expr_struct_type(e, s) == "";
+    // A TUPLE is a heap pointer (an rc-headered box), not a flat scalar — its
+    // box + any pointer elements need a deep drop, so it must NOT ride the
+    // shallow scalar-tuple / scalar-array discard (which would leak the inner
+    // box). expr_is_arr_src / expr_is_str already exclude arrays / strings;
+    // tuples slipped through because none of those match (#4365 nested-tuple).
+    return !expr_is_str(e, s) && !expr_is_strarr(e, s) && !expr_is_arr_src(e, s) && !expr_is_tuple(e, s) && expr_struct_type(e, s) == "";
 }
 
 // discardable_scalar_tuple_lit is the tuple analogue of discardable_scalar_arr_lit:
@@ -9724,32 +9729,22 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprTuple(dte) => {
                     if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
                     else if (tuple_lit_rc_reclaimable(es.value)) {
-                        // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);`,
-                        // #4365): every element scalar-shaped or a DIRECT array
-                        // literal — the box sole-owns each fresh array buffer, so
-                        // deep-drop exactly like the loop-rebind sibling
-                        // (emit_tuple_deep_reinit_store): dec each ExprArray
-                        // position, then the box. A bare-ident pointer element
-                        // aliases a live local and is skipped (leak-safe), same
-                        // admission as the TUPRC: class. The scratch is never
-                        // mark_arr'd, so the exit sweep skips it.
+                        // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);` or
+                        // the nested `((w, [w, w+1]), w);` — #4365): every element
+                        // scalar-shaped, a DIRECT array literal, or a nested tuple
+                        // LITERAL — the box sole-owns each fresh array buffer and
+                        // nested box, so deep-drop exactly like the loop-rebind
+                        // sibling (emit_tuple_child_drops: free array buffers +
+                        // nested boxes depth-first, then the box). A bare-ident
+                        // pointer element aliases a live local and is skipped
+                        // (leak-safe), same admission as the TUPRC: class. The
+                        // scratch is never mark_arr'd, so the exit sweep skips it.
                         var dtt: string = "$tldrop" + util.i32_to_string(se.locals.len());
                         se = se.add_local(dtt);
                         var dtslot: i32 = se.slot_of(dtt);
                         se = se.emit(ir.op_store_local(dtslot));                     // stash box
-                        var dtk: i32 = 0;
-                        while (dtk < dte.elements.len()) {
-                            match (dte.elements[dtk]) {
-                                parser.ExprArray(_) => {
-                                    se = se.emit(ir.op_load_local(dtslot));                  // box
-                                    se = se.emit(ir.op_tuple_get(dtk));                      // element (array ptr)
-                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));     // free the fresh buffer
-                                    se = se.emit(ir.op_drop());
-                                },
-                                _ => {}
-                            }
-                            dtk = dtk + 1;
-                        }
+                        var dt_path: i32[] = [];
+                        se = emit_tuple_child_drops(se, dtslot, dt_path, dte);       // free array/nested children
                         se = se.emit(ir.op_load_local(dtslot));                      // box again
                         se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));         // free the box
                     }
@@ -13342,17 +13337,61 @@ function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: stri
     return st.emit(ir.op_store_local(slot));
 }
 
+// emit_load_tuple_path loads the tuple box in `slot` and chains op_tuple_get
+// for each index in `path`, leaving the value reached by that path on the
+// stack (a pointer for an array / nested-tuple element, since tuple elements
+// are pointer-width slots). An empty path leaves the box itself.
+function emit_load_tuple_path(st: LowerState, slot: i32, path: i32[]): LowerState {
+    var s: LowerState = st.emit(ir.op_load_local(slot));
+    var i: i32 = 0;
+    while (i < path.len()) { s = s.emit(ir.op_tuple_get(path[i])); i = i + 1; }
+    return s;
+}
+
+// emit_tuple_child_drops recursively frees the rc children of the tuple literal
+// `tup` reached from `slot` by `path` (a chain of op_tuple_get indices): a
+// direct ExprArray child's buffer is arr_dec'd, and a NESTED tuple-literal child
+// has its own children freed CHILDREN-FIRST then its box arr_dec'd (a fresh
+// nested tuple box is sole-owned, so freeing it is balanced). Scalar / bare-ident
+// children are skipped — a scalar carries no pointer, and a bare-ident pointer
+// aliases a live local the site never inc'd, so freeing it would double-release;
+// the box's dangling pointer to it is harmless (we never follow it). The
+// depth-first order means an inner array is freed before its enclosing box, so
+// no read chases through an already-freed box.
+function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: parser.ExprTuple): LowerState {
+    var s: LowerState = st;
+    var k: i32 = 0;
+    while (k < tup.elements.len()) {
+        match (tup.elements[k]) {
+            parser.ExprArray(_) => {
+                s = emit_load_tuple_path(s, slot, path.append(k));       // array ptr
+                s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
+                s = s.emit(ir.op_drop());
+            },
+            parser.ExprTuple(inner) => {
+                s = emit_tuple_child_drops(s, slot, path.append(k), inner);   // free inner's children first
+                s = emit_load_tuple_path(s, slot, path.append(k));       // inner box ptr
+                s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the inner tuple box
+                s = s.emit(ir.op_drop());
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return s;
+}
+
 // emit_tuple_deep_reinit_store stores `new` (on the stack) into a reclaimable
-// rc-tuple slot and DEEP-drops the OLD tuple box: for each element that the init
-// literal `dtl` builds from a FRESH array LITERAL, arr_dec that element buffer
-// (op_tuple_get k → __fern_rc_dec/__fern_arr_dec), then __fern_rc_dec the tuple box.
-// Only ExprArray element positions are freed — a scalar / bare-ident element is
-// left untouched (a pointer ident aliases a live local, so freeing it would double-
-// release; a scalar carries no pointer). old's array elements were built by the
-// SAME statement, so they are the same fresh sole-owned shape → freeing them is
-// balanced. Null-guarded (`old != 0`) so the first-iteration null old is a no-op;
-// a fresh tuple literal makes old != new implicit, so no separate cow guard is
-// needed. The scratch stashes `new` (read for the guard compare and final store).
+// rc-tuple slot and DEEP-drops the OLD tuple box: emit_tuple_child_drops frees
+// every fresh array buffer and nested tuple box the init literal `dtl` builds
+// (depth-first), then __fern_rc_dec the outer box. Only ExprArray / nested-tuple-
+// literal positions are freed — a scalar / bare-ident element is left untouched
+// (a pointer ident aliases a live local, so freeing it would double-release; a
+// scalar carries no pointer). old's children were built by the SAME statement, so
+// they are the same fresh sole-owned shape → freeing them is balanced. Null-
+// guarded (`old != 0`) so the first-iteration null old is a no-op; a fresh tuple
+// literal makes old != new implicit, so no separate cow guard is needed. The
+// scratch stashes `new` (read for the guard compare and final store).
 function emit_tuple_deep_reinit_store(se: LowerState, slot: i32, dtl: parser.ExprTuple): LowerState {
     var scratch: string = "$tdr" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
@@ -13362,19 +13401,8 @@ function emit_tuple_deep_reinit_store(se: LowerState, slot: i32, dtl: parser.Exp
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
     st = st.emit(ir.op_if(0));
-    var k: i32 = 0;
-    while (k < dtl.elements.len()) {
-        match (dtl.elements[k]) {
-            parser.ExprArray(_) => {
-                st = st.emit(ir.op_load_local(slot));                     // old box
-                st = st.emit(ir.op_tuple_get(k));                        // element k (array ptr)
-                st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));     // arr_dec frees the array box
-                st = st.emit(ir.op_drop());
-            },
-            _ => {}
-        }
-        k = k + 1;
-    }
+    var empty_path: i32[] = [];
+    st = emit_tuple_child_drops(st, slot, empty_path, dtl);   // free fresh array/nested-tuple children
     st = st.emit(ir.op_load_local(slot));            // old box
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // free the tuple box
     st = st.emit(ir.op_drop());
@@ -15243,6 +15271,19 @@ function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
                     parser.ExprBool(_) => {},
                     parser.ExprIdent(_) => {},
                     parser.ExprArray(_) => { any_arr = true; },
+                    // A NESTED tuple LITERAL element (`((i, [i,i+1]), j)`, #4365):
+                    // admitted iff it is itself deep-reclaimable — every element a
+                    // scalar / ident / array / deeper nested tuple literal — so
+                    // emit_tuple_child_drops can recurse into it. A fresh nested box
+                    // is sole-owned, so freeing it (after its own array children)
+                    // is balanced. If it carries an array anywhere, the outer tuple
+                    // qualifies (any_arr). An ident nested element is NOT a literal
+                    // and stays leak-safe (skipped), so recursion only ever chases
+                    // fresh boxes.
+                    parser.ExprTuple(inner) => {
+                        if (!tuple_lit_rc_reclaimable(tl.elements[i])) { return false; }
+                        if (tuple_lit_has_array(inner)) { any_arr = true; }
+                    },
                     _ => { return false; }
                 }
                 i = i + 1;
@@ -15250,6 +15291,23 @@ function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
             return any_arr;
         },
         _ => { return false; }
+    }
+    return false;
+}
+
+// tuple_lit_has_array reports whether a tuple literal carries a DIRECT or nested
+// array-literal element anywhere — the "at least one buffer to free" test that
+// makes a nested tuple worth crediting (a purely-scalar nested tuple leaks
+// nothing an rc walk would reclaim, so it stays on the shallow path).
+function tuple_lit_has_array(tup: parser.ExprTuple): boolean {
+    var i: i32 = 0;
+    while (i < tup.elements.len()) {
+        match (tup.elements[i]) {
+            parser.ExprArray(_) => { return true; },
+            parser.ExprTuple(inner) => { if (tuple_lit_has_array(inner)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
     }
     return false;
 }
