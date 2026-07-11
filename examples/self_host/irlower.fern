@@ -5124,12 +5124,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 return so.emit(ir.op_bin("not", 0, false));
             }
             // `x as f64`: int -> float widen (cvtsi2sd). An already-f64 operand
-            // is a no-op. (f32/float spellings ride the same f64 path.)
+            // is a no-op for `as f64`/`as float`. `as f32`, however, must ROUND
+            // the value to single precision — f32 shares the 8-byte f64 slot
+            // here, but native gives f32 a true 4-byte slot, so a value that is
+            // not f32-representable (e.g. 16777217.0, or a large int) differs
+            // unless we round. The f32_bits/f32_from_bits pair round-trips
+            // through f32 (demote then promote), applying single-precision
+            // rounding while leaving an f64 on the stack. (#4366)
             if (u.op == "as_f64" || u.op == "as_f32" || u.op == "as_float") {
-                if (expr_is_f64(u.operand, s)) { return lower_expr(u.operand, s); }
-                var sf: LowerState = lower_expr(u.operand, s);
-                if (!sf.ok) { return sf; }
-                return sf.emit(ir.op_i32_to_f64());
+                var fv: LowerState = s;
+                if (expr_is_f64(u.operand, s)) {
+                    fv = lower_expr(u.operand, s);
+                    if (!fv.ok) { return fv; }
+                } else {
+                    fv = lower_expr(u.operand, s);
+                    if (!fv.ok) { return fv; }
+                    fv = fv.emit(ir.op_i32_to_f64());
+                }
+                if (u.op == "as_f32") {
+                    fv = fv.emit(ir.op_f32_bits());
+                    fv = fv.emit(ir.op_f32_from_bits());
+                }
+                return fv;
             }
             // Int→int width cast `x as <ty>` for a 32-bit-or-narrower target
             // (i32 / u32 / u8). The masking/extension matches
