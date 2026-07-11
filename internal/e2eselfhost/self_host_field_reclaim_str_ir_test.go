@@ -149,6 +149,51 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-escaping-read-excluded", 0)
 
+	// STRING-ONLY struct (#4355 slice 3): no rc-array field, so this type was
+	// excluded from both the construction retain and the reclaim routing —
+	// the whole box chain leaked its string per rebind. STRFLDOK admission now
+	// routes it through __field_reclaim_<B> (string arms + snapshot_dec box
+	// free) with the retain widened in lockstep — churn flat.
+	run(t, `struct B { name: string, n: i32 }
+function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
+function main(): i32 {
+    var b: B = B { name: "a" + "b", n: 0 };
+    var i: i32 = 0;
+    while (i < 200) { b = step(b); i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) { b = B { name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { b = step(b); k = k + 1; } j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (b.n != 3) { return 97; }
+    return 0;
+}`, "field-reclaim-str-only-flat", 0)
+
+	// STRING-ONLY struct, carried + aliased-read safety: the functional
+	// update carries the pointer (cow-skip), and a `var t = b.name` read is
+	// retained — both stay valid across rebinds, detector zero.
+	run(t, `struct B { name: string, n: i32 }
+function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
+function bump(b: B): B { return B { ...b, n: b.n + 1 }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 1000) {
+        var b: B = B { name: "a" + "b", n: 0 };
+        var t: string = b.name;
+        b = step(b);
+        b = bump(b);
+        if (t.len() != 2) { bad = 1; }
+        if (b.name.len() != 3) { bad = 1; }
+        if (b.n != 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "field-reclaim-str-only-aliased-carried-safe", 0)
+
 	// i32_to_string as the replaced field's producer (the exclusion note on
 	// the issue): on the self-host IR path __fern_i32_to_string boxes at an
 	// alloc boundary, so the replaced field frees cleanly — churn flat.
