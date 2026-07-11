@@ -4078,3 +4078,36 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   peak, gen1==gen2 byte-identical. The alloc-trap e2e grew 100000 →
   150000 iterations (~10.5 GiB cumulative) so it still overflows the
   bigger arena.
+
+- 2026-07-11: **#4355 slice 10 — arr-of-arr CALL-RESULT reclaim + slice-9
+  double-sweep fix.** (1) CALL-INIT ADMISSION: `var g: T[][] = mk(..)` now
+  earns the slice-9 credits when mk is provably a fresh-arrarr producer.
+  opt_fresh_ret_fns_of registers "AAC:<name>|<flag>" (the RCE: no-new-
+  threading trick — same list, distinct tag) for FREE functions whose ret
+  type ends "[][]" and whose EVERY return is a fresh arrarr literal
+  (arrarr_lit_is_fresh; `return t;` of a local or any non-literal return
+  disqualifies — only direct literal returns keep the static soleness
+  proof, and the IR path has no return-transfer inc so the caller is sole
+  owner at rc=1). flag "s" = every return also arrarr_lit_strings_fresh
+  (a param-embedding row like `[[s]]` disqualifies the strict flag —
+  exactly the dangling hazard ARRARRS: exists for), else "p" (lax only).
+  collect_fresh_arrarr_names (now taking the ofr registry) admits the
+  ExprCall init off those entries; all consumer gates (body_unsafe_for /
+  not-reassigned / arrarr_row_escapes) unchanged. Native was already flat
+  on the same shapes (probe ga5) — this is a self-host-only slice.
+  (2) FOUND + FIXED on the way: the slice-9 exit sweep DOUBLE-FREED
+  fn-scope candidates. An arrarr slot is ALSO is_arr, and
+  emit_dec_sweep_except_list ran a shallow `__fern_rc_dec` (→ arr_dec,
+  frees the outer, rc→0) in the is_arr loop and THEN the separate arrarr
+  loop's helper on the same slot — which saw rc==0, ticked the underflow
+  detector, and skipped its element walk (inner strings LEAKED at
+  fn scope; 2200 calls = 2200 detector ticks masking real over-releases).
+  Slice-9's loop-scoped tests dodged it because retired slot names miss
+  the credit lookup at sweep time. Fix mirrors strarr: the kind-picked
+  whole-structure helper now runs INSIDE the is_arr sweep (one slot, one
+  free) and the separate loop is gone. Pinned behaviorally by the
+  fnscope-sweep-flat cases (flat + detector zero after 2200 fn-scope
+  sweeps). Tests: TestSelfHostArrArrCallRetReclaim{IRX86_64 (5 cases),
+  WasmIR (3), IRArm64 (3)}. Remaining nearby: struct[]-of-arrays,
+  string[][][] deep free, escaping-read exclusions, map string K/V
+  (#4353).

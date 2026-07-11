@@ -14101,15 +14101,30 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 st = st.emit(ir.op_end());
             }
             st = st.emit(ir.op_load_local(i));
-            if (slot_is_reclaimable_strarr(st, i)) {
-                // string[] ELEMENT reclaim (#4355): a proven fresh-element string
-                // array frees its element boxes too — __fern_str_arr_free walks the
-                // elements (rc==1-gated, each via the rc-aware string free) and then
-                // frees the buffer. Every other array slot keeps the shallow
-                // buffer-only dec (elements leak — sound).
-                st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+            if (slot_is_reclaimable_arrarr(st, i)) {
+                // arr-of-arr WHOLE-structure reclaim (#4355 slice 9/10): the
+                // kind-picked helper frees inner buffers/strings then the outer.
+                // Handled HERE — inside the is_arr sweep, like strarr below —
+                // because an arrarr slot is ALSO is_arr: a separate arrarr loop
+                // used to run AFTER this one, so the slot was freed twice (a
+                // shallow arr_dec here zeroed the rc, then the helper saw rc==0,
+                // ticked the underflow detector, and skipped its element walk —
+                // inner strings leaked at function scope and the detector noise
+                // could mask real over-releases; loop-scoped candidates dodged
+                // it only because their retired slot names miss the credit
+                // lookup). One slot, one free.
+                st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, i), 1));
             } else {
-                st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                if (slot_is_reclaimable_strarr(st, i)) {
+                    // string[] ELEMENT reclaim (#4355): a proven fresh-element string
+                    // array frees its element boxes too — __fern_str_arr_free walks the
+                    // elements (rc==1-gated, each via the rc-aware string free) and then
+                    // frees the buffer. Every other array slot keeps the shallow
+                    // buffer-only dec (elements leak — sound).
+                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                } else {
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                }
             }
             st = st.emit(ir.op_drop());
         }
@@ -14193,22 +14208,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         tj = tj + 1;
     }
-    // Reclaimable arr-of-arr locals (#4355 slice 9) — free the whole two-level
-    // structure (inner buffers/strings + outer) via the kind-picked helper.
-    // Only fresh, non-escaping, row-alias-free candidates qualify
-    // (slot_is_reclaimable_arrarr); slots are zeroed at entry, so an
-    // untaken-branch slot routes a null through the helper's null guard, and
-    // the loop-rebind path (emit_arrarr_reclaim_store) already freed every
-    // superseded structure — this frees the final live one.
-    var aaj: i32 = st.n_params;
-    while (aaj < st.locals.len()) {
-        if (!slot_list_has(keeps, aaj) && slot_is_reclaimable_arrarr(st, aaj)) {
-            st = st.emit(ir.op_load_local(aaj));
-            st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, aaj), 1));
-            st = st.emit(ir.op_drop());
-        }
-        aaj = aaj + 1;
-    }
+    // (Reclaimable arr-of-arr locals are freed INSIDE the is_arr sweep above —
+    // an arrarr slot is also is_arr, so a separate loop here double-freed;
+    // see the slot_is_reclaimable_arrarr branch.)
     // Reclaimable fresh heap-string locals — free the box + data buffer via
     // __fern_str_free at scope exit (the sibling of the struct/tuple loops above).
     // Only fresh, proven-non-escaping, non-reassigned string locals qualify
@@ -16875,7 +16877,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // (arrarr_row_escapes: a bare `var row = g[i]` single-index read or a
     // `for row in g` iteration binds an inner buffer the free would dangle —
     // a transient `g[i][j]` / `g[i].len()` borrow is fine).
-    var aarrs: string[] = collect_fresh_arrarr_names(body, []);
+    var aarrs: string[] = collect_fresh_arrarr_names(body, opt_fresh_ret, []);
     var aai: i32 = 0;
     while (aai < aarrs.len()) {
         var aan: string = aarrs[aai];
@@ -18898,8 +18900,13 @@ function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
 // __fern_rc_dec every other array slot gets.
 // collect_fresh_arrarr_names gathers LOCAL names bound from a fresh
 // arr-of-arr literal (`var g = [[..], [..]]`, arrarr_lit_is_fresh) anywhere in
-// the body (#4355 slice 9). Escape gates applied by reclaimable_names_of.
-function collect_fresh_arrarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+// the body (#4355 slice 9), or — slice 10 — from a CALL to a function in the
+// "AAC:" registry (opt_fresh_ret_fns_of proved every return of the callee is a
+// fresh arrarr literal, so the call result is rc=1 and solely owned here; the
+// self-host IR path has no return-transfer inc). `ofr` is the opt_fresh_ret
+// registry list the AAC:/AACS-flag entries ride in. Escape gates applied by
+// reclaimable_names_of.
+function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -18910,14 +18917,36 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], acc: string[]): string
                     // strings-fresh marker: lets the crediting loop grant the
                     // STRICT "ARRARRS:" credit a string-kind slot requires.
                     if (arrarr_lit_strings_fresh(v.init)) { a = push_str_unique(a, "S|" + v.name); }
+                } else {
+                    // Call init `var g: T[][] = mk(..)` of an AAC-registered
+                    // producer: same credits the literal it returns would earn.
+                    // flag "s" = every return also strings-fresh (strict marker);
+                    // "p" = rows-are-literals only (lax credit — enough for
+                    // scalar-kind slots; a string-kind slot stays excluded).
+                    match (v.init) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(cid) => {
+                                    if (util.index_of_str(ofr, "AAC:" + cid.name + "|s") >= 0) {
+                                        a = push_str_unique(a, v.name);
+                                        a = push_str_unique(a, "S|" + v.name);
+                                    } else {
+                                        if (util.index_of_str(ofr, "AAC:" + cid.name + "|p") >= 0) { a = push_str_unique(a, v.name); }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
                 }
             },
-            parser.StmtIf(f) => { a = collect_fresh_arrarr_names(f.then_body, a); a = collect_fresh_arrarr_names(f.else_body, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_arrarr_names(w.body, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_arrarr_names(fo.body, a); },
+            parser.StmtIf(f) => { a = collect_fresh_arrarr_names(f.then_body, ofr, a); a = collect_fresh_arrarr_names(f.else_body, ofr, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrarr_names(w.body, ofr, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrarr_names(fo.body, ofr, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_fresh_arrarr_names(m.arms[mi].body, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_fresh_arrarr_names(m.arms[mi].body, ofr, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -23533,9 +23562,74 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
                 && !body_has_nonqualifying_rcenum_return(funcs[k].body, structs, rt)) {
             out = out.append("RCE:" + funcs[k].name + "|" + rt);
         }
+        // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
+        // in the SAME list (the no-new-threading trick RCE: uses above). A
+        // qualifying FREE function's every return is a fresh arr-of-arr LITERAL
+        // (arrarr_lit_is_fresh — non-empty, rows are array literals), so the
+        // returned structure is rc=1 and solely owned by the caller (the
+        // self-host IR path has no return-transfer inc). `flag` is "s" when
+        // every return also passes arrarr_lit_strings_fresh (string inners are
+        // literals / fresh producers — a param-embedding row like `[[s]]`
+        // disqualifies, exactly the dangling-pointer hazard the strict credit
+        // exists for), else "p" (rows-are-literals only: enough for scalar-kind
+        // slots, whose inner elements value-copy; a string-kind slot gets no
+        // strict credit and stays on its sound leak).
+        // collect_fresh_arrarr_names admits `var g: T[][] = mk(..)` call inits
+        // exactly like literal inits off these entries. Deeper nesting
+        // (`string[][][]`) may register — its rows are array literals too — but
+        // the consuming slot's arrarr_elem is "" for those, so only the lax
+        // shallow-row free applies (sound), mirroring the literal-init path.
+        else if (funcs[k].receiver_type.len() == 0
+                && rt.len() >= 4 && rt[rt.len() - 4 : rt.len()] == "[][]"
+                && body_has_return(funcs[k].body)
+                && !body_has_nonfresh_arrarr_return(funcs[k].body)) {
+            var aflag: string = "p";
+            if (!body_has_nonstrfresh_arrarr_return(funcs[k].body)) { aflag = "s"; }
+            out = out.append("AAC:" + funcs[k].name + "|" + aflag);
+        }
         k = k + 1;
     }
     return out;
+}
+
+// body_has_nonfresh_arrarr_return: any return whose value is NOT a fresh
+// arr-of-arr literal (arrarr_lit_is_fresh) — disqualifies the function from
+// the "AAC:" registry (#4355 slice 10). `return t;` of a local, a param
+// pass-through, or a call chain all disqualify; only direct literal returns
+// keep the static soleness proof.
+function body_has_nonfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!arrarr_lit_is_fresh(r.value)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrarr_return(f.then_body) || body_has_nonfresh_arrarr_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrarr_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrarr_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrarr_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// body_has_nonstrfresh_arrarr_return: any return whose value fails the STRICT
+// strings-fresh test (arrarr_lit_strings_fresh) — withholds the "s" flag from
+// an "AAC:" entry, so string-kind consumer slots stay excluded.
+function body_has_nonstrfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!arrarr_lit_strings_fresh(r.value)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonstrfresh_arrarr_return(f.then_body) || body_has_nonstrfresh_arrarr_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonstrfresh_arrarr_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonstrfresh_arrarr_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrfresh_arrarr_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // rcenum_ctor_payload_strings_fresh: every StructLit payload arg of the variant
