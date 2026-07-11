@@ -4555,7 +4555,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // static-.bss heap, addressed via `movabs $__fern_heap`, only linked
     // correctly under bfd). No deallocation — leak-everything bump heap.
     if (s.has_need("heap")) {
-        var heap_size: string = "4160749568";   // 0xF8000000, 3.875 GiB — widening the IR subset + adding compiler source (most recently the strbuf_* IR ops) pushed the stage-2 x86 self-compile live set past 3.5 GiB (exit-137 alloc trap); 3.875 GiB restores headroom. x86-ONLY: lockstep with asm_ir.fern + the native x86-64 backend. arm64 (asm_arm64.fern) stays at 3.5 GiB (0xE0000000). 0xF8000000 < 0xFFFFFFFF, so the mmap u32 length still fits.
+        var heap_size: string = "4278190080";   // 0xFF000000, 3.984 GiB — widening the IR subset + adding compiler source (most recently the #4351 dyn-payload/array reclaim walkers) pushed the stage-2 x86 self-compile live set past 3.875 GiB (exit-137 alloc trap); 3.984 GiB restores headroom. x86-ONLY: lockstep with asm_ir.fern + the native x86-64 backend. arm64 (asm_arm64.fern) stays at 3.5 GiB (0xE0000000). 0xFF000000 < 0xFFFFFFFF, so the mmap u32 length still fits.
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
@@ -4623,7 +4623,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r10\n");
         s = s.write("    pushq %r11\n");
         s = s.write("    movl $0x10000000, %edi\n");          // addr hint
-        s = s.write("    movl $" + heap_size + ", %esi\n");   // length (u32 zero-extend; 0xF8000000 < 0xFFFFFFFF)
+        s = s.write("    movl $" + heap_size + ", %esi\n");   // length (u32 zero-extend; 0xFF000000 < 0xFFFFFFFF)
         s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
         s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
         s = s.write("    movq $-1, %r8\n");                   // fd

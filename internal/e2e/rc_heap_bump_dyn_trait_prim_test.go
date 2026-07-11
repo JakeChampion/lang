@@ -155,6 +155,90 @@ func TestX86_64DynTraitLocalReturnMove(t *testing.T) {
 	}
 }
 
+// dynArrFnExitBumpGrowthSrc churns a `dyn Show[]` local inside a helper
+// FUNCTION — the exit-sweep path. The loop-var reinit path (covered by the
+// container suite) already walked elements via __drop_arr_dyn_<set>, but the
+// exit sweep's array arm gated on arrElemIsRcTracked (false for dyn) and fell
+// to the buffer-only dec, leaking every element per call (#4351). Bounded now.
+func dynArrFnExitBumpGrowthSrc(n string) string {
+	return `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+struct Dot { r: i32 }
+impl Show for i32 {
+    function show(self: Self): i32 { return self + 1; }
+}
+impl Show for Dot {
+    function show(self: Self): i32 { return self.r * 2; }
+}
+function go(k: i32): i32 { var xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < ` + n + `) {
+        sum = (sum + go(3)) % 251;
+        i = i + 1;
+    }
+    return __heap_bump_bytes() - before;
+}`
+}
+
+// TestWASMDynTraitArrFnExitCorrect: wasm deliberately KEEPS the buffer-only
+// dec for function-exit dyn arrays (its inline two-word elements double-drop
+// when an element was bound out — see the exit-sweep arm's wasm caveat in
+// rc_insert.go), so there is no bounded-growth assertion here. This pins the
+// correctness side only: values stay right across the churn. If wasm later
+// gains a sound element walk, promote this to the bounded shape the native
+// siblings use.
+func TestWASMDynTraitArrFnExitCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	src := `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+struct Dot { r: i32 }
+impl Show for i32 {
+    function show(self: Self): i32 { return self + 1; }
+}
+impl Show for Dot {
+    function show(self: Self): i32 { return self.r * 2; }
+}
+function go(k: i32): i32 { var xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+function main(): i32 {
+    var i: i32 = 0;
+    var bad: i32 = 0;
+    while (i < 500) {
+        if (go(3) != 18) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return bad;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("wasm function-exit dyn array churn = %d, want 0 (1 = wrong dispatch value; 99 = over-release)", got)
+	}
+}
+
+func TestX86_64DynTraitArrFnExitHeapBumpBounded(t *testing.T) {
+	small := mustRunX86_64FreeOn(t, dynArrFnExitBumpGrowthSrc("50"))
+	large := mustRunX86_64FreeOn(t, dynArrFnExitBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("function-exit dyn array growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
+func TestArm64DynTraitArrFnExitHeapBumpBounded(t *testing.T) {
+	small := mustRunArm64FreeOn(t, dynArrFnExitBumpGrowthSrc("50"))
+	large := mustRunArm64FreeOn(t, dynArrFnExitBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("function-exit dyn array growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
 func TestArm64DynTraitPrimHeapBumpBounded(t *testing.T) {
 	small := mustRunArm64FreeOn(t, dynPrimBumpGrowthSrc("50"))
 	large := mustRunArm64FreeOn(t, dynPrimBumpGrowthSrc("5000"))

@@ -29,13 +29,32 @@ func TestSelfHostStrArrElemReclaimIRArm64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
+	// userCodeCalls: a `bl <helper>` counts as a reclaim-set admission only
+	// inside a USER function (`__fn_<name>:` label that isn't a runtime
+	// `__fn___fern_*` body) — the __fn___fern_strarrarr_free runtime body
+	// (#4355 slice 9) itself `bl`s __fn___fern_str_arr_free per inner, so a
+	// whole-asm substring match would misread the runtime as an admission.
+	userCodeCalls := func(asm, helper string) bool {
+		inUser := false
+		for _, ln := range strings.Split(asm, "\n") {
+			if strings.HasPrefix(ln, "__fn_") && strings.HasSuffix(ln, ":") {
+				inUser = !strings.HasPrefix(ln, "__fn___fern_")
+				continue
+			}
+			if inUser && strings.Contains(ln, "bl "+helper) {
+				return true
+			}
+		}
+		return false
+	}
+
 	run := func(t *testing.T, prog, name string, want int, wantCall string) {
 		t.Helper()
 		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
 		}
-		hasCall := strings.Contains(string(asm), "bl __fn___fern_str_arr_free")
+		hasCall := userCodeCalls(string(asm), "__fn___fern_str_arr_free")
 		if wantCall == "yes" && !hasCall {
 			t.Fatalf("%s: emitted arm64 asm has no __fn___fern_str_arr_free call — the string[] was not admitted to the SARR reclaim set", name)
 		}

@@ -13803,7 +13803,16 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // emission-site slot guard enforces this.
                 var is_lit: boolean = false;
                 match (v.init) {
-                    parser.ExprArray(arrl) => { is_lit = all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements); },
+                    // A `dyn T[]` binding is EXCLUDED even when every element is
+                    // a number literal (#4351 slice 3): each element lowers
+                    // through op_dyn_box, so the buffer holds CELL POINTERS —
+                    // the shallow early dec here would strand the cells the
+                    // exit sweep's DARR element walk is supposed to release
+                    // (the drop zeroes the slot, so the walk never runs).
+                    parser.ExprArray(arrl) => {
+                        is_lit = (all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements))
+                            && !(v.type_name.len() > 4 && v.type_name[0:4] == "dyn ");
+                    },
                     parser.ExprCall(c) => {
                         match (c.callee) {
                             parser.ExprIdent(cid) => {
@@ -14039,6 +14048,45 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                         st = st.emit(ir.op_drop());
                     }
                     clkj = clkj + 1;
+                }
+                st = st.emit(ir.op_end());
+            }
+            // dyn Trait[] ELEMENT reclaim (#4351 slice 3): a credited literal
+            // dyn array releases each element box (per-index, kinds recorded
+            // at the credit) BEFORE the buffer dec below. rc==1-gated on the
+            // buffer via __fern_rc_is_unique — which doubles as the null
+            // guard (slots are zeroed at entry) — so an untaken-branch or
+            // shared buffer skips the walk. 'p' decs the rc-headered element
+            // box (prim op_dyn_box cell or scalar-only struct box); 's'
+            // first frees the sole-owned inner string box at cell@8 (its own
+            // rc==1 gate), then decs the cell.
+            var dak: string = darr_kinds_of(st, st.locals[i].slot_name);
+            if (dak.len() > 0) {
+                st = st.emit(ir.op_load_local(i));
+                st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                st = st.emit(ir.op_if(0));
+                var dakj: i32 = 0;
+                while (dakj < dak.len()) {
+                    if (dak[dakj] == 115) {   // 's' = string-payload dyn cell
+                        st = st.emit(ir.op_load_local(i));
+                        st = st.emit(ir.op_const_i32(dakj));
+                        st = st.emit(ir.op_arr_get(32));
+                        st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                        st = st.emit(ir.op_if(0));
+                        st = st.emit(ir.op_load_local(i));
+                        st = st.emit(ir.op_const_i32(dakj));
+                        st = st.emit(ir.op_arr_get(32));
+                        st = st.emit(ir.op_struct_get(0, 0));
+                        st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+                        st = st.emit(ir.op_drop());
+                        st = st.emit(ir.op_end());
+                    }
+                    st = st.emit(ir.op_load_local(i));
+                    st = st.emit(ir.op_const_i32(dakj));
+                    st = st.emit(ir.op_arr_get(32));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                    dakj = dakj + 1;
                 }
                 st = st.emit(ir.op_end());
             }
@@ -16301,6 +16349,312 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[
     }
 }
 
+// --- dyn Trait[] ELEMENT reclaim (#4351 slice 3) ------------------------------
+//
+// A fresh `var xs: dyn T[] = [<literals>]` local owns every element box at
+// rc==1 for its whole life: a prim/string literal element is an rc-headered
+// op_dyn_box cell (slice 2), a scalar-only leak-safe struct literal element is
+// its rc-headered struct box, and array stores are moves (no rc traffic). If
+// no element pointer ever outlives the frame, the exit sweep can release each
+// element (per-index, kinds recorded at the credit) before the buffer dec —
+// the self-host analog of native's __drop_arr_dyn_<set> walk. Kinds: 'p' = a
+// plain cell/box dec (prim cell or scalar-only struct box); 's' = a string
+// cell (free the sole-owned inner string box at cell@8 first, then dec the
+// cell). Any element that doesn't classify uncredits the whole array (sound
+// leak, exactly today's behaviour).
+
+// collect_dyn_arr_names: every `var <n>: dyn <T>[] = [<literal>...]` binding
+// whose EVERY element is a prim/string literal or a leak-safe scalar-only
+// struct literal, as "<name>|<kinds>" entries (kinds[i] = 'p'/'s' for element
+// i). A name bound twice is blanked (shadow — the element lists may differ).
+function collect_dyn_arr_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_dyn_arr_in_stmt(stmts[i], structs, a); i = i + 1; }
+    return a;
+}
+function collect_dyn_arr_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (v.type_name.len() > 6 && v.type_name[0:4] == "dyn " && is_array_type_name(v.type_name)) {
+                var kinds: string = "";
+                var ok: boolean = false;
+                match (v.init) {
+                    parser.ExprArray(darr) => {
+                        ok = darr.elements.len() > 0;
+                        var ei: i32 = 0;
+                        while (ok && ei < darr.elements.len()) {
+                            match (darr.elements[ei]) {
+                                parser.ExprNumber(_) => { kinds = kinds + "p"; },
+                                parser.ExprBool(_) => { kinds = kinds + "p"; },
+                                parser.ExprString(_) => { kinds = kinds + "s"; },
+                                parser.ExprStructLit(slz) => {
+                                    if (!slz.has_base && decl_is_struct(structs, slz.type_name)
+                                        && decl_is_leaksafe(structs, slz.type_name)
+                                        && struct_is_scalar_only(structs, slz.type_name)) { kinds = kinds + "p"; }
+                                    else { ok = false; }
+                                },
+                                _ => { ok = false; }
+                            }
+                            ei = ei + 1;
+                        }
+                    },
+                    _ => {}
+                }
+                if (!ok) { return acc; }
+                // shadow check: a same-named earlier entry blanks both.
+                var pi: i32 = 0;
+                while (pi < acc.len()) {
+                    var e: string = acc[pi];
+                    var b2: i32 = 0;
+                    while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
+                    if (b2 <= e.len() && e[0:b2] == v.name) {
+                        var out: string[] = [];
+                        var oi: i32 = 0;
+                        while (oi < acc.len()) {
+                            if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
+                            oi = oi + 1;
+                        }
+                        return out.append("|");
+                    }
+                    pi = pi + 1;
+                }
+                return acc.append(v.name + "|" + kinds);
+            }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_dyn_arr_names(iff.then_body, structs, acc);
+            return collect_dyn_arr_names(iff.else_body, structs, a);
+        },
+        parser.StmtWhile(w) => { return collect_dyn_arr_names(w.body, structs, acc); },
+        parser.StmtFor(f) => { return collect_dyn_arr_names(f.body, structs, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_dyn_arr_names(m.arms[i].body, structs, a); i = i + 1; }
+            return a;
+        },
+        _ => { return acc; },
+    }
+}
+
+// darr_elem_read: `e` is exactly `name[i]` — an element read of the candidate.
+function darr_elem_read(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(id) => { return id.name == name; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// darr_elem_dispatch: `e` is exactly `name[i].m(args)` — a trait dispatch on
+// an element. The receiver read is a borrow, but the RESULT could alias the
+// element (a method may `return self`), so a dispatch is only admitted in
+// TRANSIENT positions (statement-expression discard, binary operand) — the
+// callers below make that positional choice; this just recognises the shape.
+function darr_elem_dispatch(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => { return darr_elem_read(fa.obj, name); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// darr_dispatch_args_unsafe: the args of an admitted element dispatch still
+// walk the general hazard check (an element or the array itself passed AS an
+// argument escapes).
+function darr_dispatch_args_unsafe(e: parser.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (darr_expr_unsafe(c.args[ai], name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// darr_expr_unsafe: the element-hazard walk for a dyn-array candidate — the
+// dyn sibling of strarr_expr_unsafe, tightened because trait methods are
+// user-defined (no read-only whitelist is possible): an element read is only
+// ever admitted as the receiver of a dispatch in a transient position; the
+// array itself only as `name.len()`'s receiver, an index base, or a
+// borrowable direct call arg. Everything else that touches `name` — a bare
+// alias, a return, a container store, an element binding, a slice, an
+// `append`, an element store (`__set_index`'s bare-ident arg) — is a hazard.
+function darr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprBinary(b) => {
+            var lu: boolean = true;
+            if (darr_elem_dispatch(b.left, name)) { lu = darr_dispatch_args_unsafe(b.left, name, borrowable); }
+            else { lu = darr_expr_unsafe(b.left, name, borrowable); }
+            if (lu) { return true; }
+            if (darr_elem_dispatch(b.right, name)) { return darr_dispatch_args_unsafe(b.right, name, borrowable); }
+            return darr_expr_unsafe(b.right, name, borrowable);
+        },
+        parser.ExprUnary(u) => { return darr_expr_unsafe(u.operand, name, borrowable); },
+        parser.ExprIndex(ix) => {
+            // a bare `name[i]` in a general value position is a lasting alias.
+            if (darr_elem_read(e, name)) { return true; }
+            var base_u: boolean = false;
+            match (ix.array) {
+                parser.ExprIdent(_) => { base_u = false; },
+                _ => { base_u = darr_expr_unsafe(ix.array, name, borrowable); }
+            }
+            if (base_u) { return true; }
+            return darr_expr_unsafe(ix.index, name, borrowable);
+        },
+        parser.ExprSlice(sl) => {
+            if (darr_elem_read(sl.array, name)) { return true; }
+            if (darr_expr_unsafe(sl.array, name, borrowable)) { return true; }
+            if (darr_expr_unsafe(sl.start, name, borrowable)) { return true; }
+            return darr_expr_unsafe(sl.end, name, borrowable);
+        },
+        parser.ExprCall(c) => {
+            var callee_name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    callee_name = cid.name;
+                    if (cid.name == name) { return true; }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (darr_elem_read(fa.obj, name)) {
+                        // element dispatch reaching here is NOT in a transient
+                        // position (those were intercepted by the callers) —
+                        // its result could alias the element. Hazard.
+                        return true;
+                    }
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            if (rid.name == name && fa.field != "len") { return true; }
+                        },
+                        _ => { if (darr_expr_unsafe(fa.obj, name, borrowable)) { return true; } }
+                    }
+                },
+                _ => { if (darr_expr_unsafe(c.callee, name, borrowable)) { return true; } }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                var arg_ok: boolean = false;
+                match (c.args[ai]) {
+                    parser.ExprIdent(aid) => {
+                        if (aid.name == name && callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) { arg_ok = true; }
+                    },
+                    _ => {}
+                }
+                if (!arg_ok && darr_expr_unsafe(c.args[ai], name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => {
+            if (darr_elem_read(fa.obj, name)) { return true; }
+            match (fa.obj) {
+                parser.ExprIdent(_) => { return false; },
+                _ => { return darr_expr_unsafe(fa.obj, name, borrowable); }
+            }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (darr_expr_unsafe(a.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (darr_expr_unsafe(t.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && darr_expr_unsafe(sl.base, name, borrowable)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (darr_expr_unsafe(sl.field_values[i], name, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => {
+            var used: string[] = [];
+            var i: i32 = 0;
+            while (i < lm.body.len()) { used = astwalk.collect_idents_stmt(lm.body[i], used); i = i + 1; }
+            return util.index_of_str(used, name) >= 0;
+        },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// darr_unsafe_for: the statement walk over darr_expr_unsafe. A `for x in
+// name` is a hazard (the loop var is a lasting element binding this slice
+// doesn't track); an element dispatch as a bare statement expression is
+// transient-safe (its result is discarded before the sweep).
+function darr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_darr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_darr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return darr_expr_unsafe(v.init, name, borrowable); },
+        parser.StmtReturn(r) => { return darr_expr_unsafe(r.value, name, borrowable); },
+        parser.StmtExpr(e) => {
+            if (darr_elem_dispatch(e.value, name)) { return darr_dispatch_args_unsafe(e.value, name, borrowable); }
+            return darr_expr_unsafe(e.value, name, borrowable);
+        },
+        parser.StmtAssign(a) => {
+            if (a.target == name) { return true; }   // any reassignment (incl. self-append)
+            if (darr_elem_dispatch(a.value, name)) { return darr_dispatch_args_unsafe(a.value, name, borrowable); }
+            return darr_expr_unsafe(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (darr_expr_unsafe(f.cond, name, borrowable)) { return true; }
+            return darr_unsafe_for(f.then_body, name, borrowable) || darr_unsafe_for(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (darr_expr_unsafe(w.cond, name, borrowable)) { return true; }
+            return darr_unsafe_for(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(fid) => { iter_unsafe = fid.name == name; },   // `for x in name`: element binding
+                _ => { iter_unsafe = darr_expr_unsafe(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return darr_unsafe_for(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (darr_expr_unsafe(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && darr_expr_unsafe(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (darr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_darr_unsafe_for(d.action, name, borrowable); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -16523,6 +16877,25 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             && util.index_of_str(reassigned, dname) < 0
             && !body_unsafe_for(body, dname, borrowable)) { out = out.append("DYN:" + dentry); }
         dyi = dyi + 1;
+    }
+    // dyn-Trait ARRAY locals (#4351 slice 3): `var xs: dyn T[] = [<literals>]`
+    // — every element is an rc-headered box (prim/string op_dyn_box cell or
+    // scalar-only struct box), sole-owned by the buffer when no element
+    // pointer outlives the frame (darr_unsafe_for — dispatch only in
+    // transient positions, no element bindings / for-in / append / stores).
+    // Credited "DARR:<name>|<kinds>" so the exit sweep releases each element
+    // by kind ('s' frees the inner string box first) before the buffer dec.
+    var darrs: string[] = collect_dyn_arr_names(body, structs, []);
+    var dai: i32 = 0;
+    while (dai < darrs.len()) {
+        var daentry: string = darrs[dai];
+        var dabar: i32 = 0;
+        while (dabar < daentry.len() && daentry[dabar] != 124) { dabar = dabar + 1; }   // 124 = '|'
+        var daname: string = daentry[0:dabar];
+        if (daname.len() > 0
+            && util.index_of_str(reassigned, daname) < 0
+            && !darr_unsafe_for(body, daname, borrowable)) { out = out.append("DARR:" + daentry); }
+        dai = dai + 1;
     }
     // Reassigned array-payload ENUM locals: credited "ENUMRE:<E>:<name>" so the StmtAssign
     // deep-drops each superseded box's payload (emit_enum_reclaim_store) instead of the
@@ -18619,6 +18992,25 @@ function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
         var e: string = s.reclaimable_names[i];
         if (e.len() > 4 && e[0:4] == "DYN:") {
             var body: string = e[4 : e.len()];
+            var bar: i32 = 0;
+            while (bar < body.len() && body[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            if (bar < body.len() && body[0:bar] == name) { return body[bar + 1 : body.len()]; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// darr_kinds_of (#4351 slice 3): the element-kind string registered for dyn
+// ARRAY local `name` under the "DARR:<name>|<kinds>" reclaim entry, or "".
+// kinds[i] = 'p' (plain cell/box dec) or 's' (string cell: inner box free
+// then dec) for element i of the credited literal.
+function darr_kinds_of(s: LowerState, name: string): string {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > 5 && e[0:5] == "DARR:") {
+            var body: string = e[5 : e.len()];
             var bar: i32 = 0;
             while (bar < body.len() && body[bar] != 124) { bar = bar + 1; }   // 124 = '|'
             if (bar < body.len() && body[0:bar] == name) { return body[bar + 1 : body.len()]; }
