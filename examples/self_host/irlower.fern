@@ -11243,6 +11243,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (slot_is_reclaimable_arrarr(sb, slot)) {
         return emit_arrarr_reclaim_store(sb, slot);
     }
+    // Reclaimable Option[<arr>][] LOOP-LOCAL (#4365): same shape as the
+    // arr-of-arr rebind above — free the prior iteration's payload buffers +
+    // option boxes + outer buffer before the store, else all three levels
+    // leak per iteration (the shallow emit_arr_store dec frees only the
+    // outer buffer).
+    if (slot_is_reclaimable_optaarr(sb, slot)) {
+        return emit_optaarr_reclaim_store(sb, slot);
+    }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
 }
@@ -14145,6 +14153,12 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 // it only because their retired slot names miss the credit
                 // lookup). One slot, one free.
                 st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, i), 1));
+            } else if (slot_is_reclaimable_optaarr(st, i)) {
+                // Option[<arr>][] WHOLE-structure reclaim (#4365): payload
+                // buffers (uniqueness-gated) + option boxes + outer buffer, all
+                // inside the helper. Same one-slot-one-free placement rationale
+                // as the arrarr branch above.
+                st = st.emit(ir.op_call_direct("__fern_optarrarr_free", 1));
             } else {
                 if (slot_is_reclaimable_strarr(st, i)) {
                     // string[] ELEMENT reclaim (#4355): a proven fresh-element string
@@ -16925,6 +16939,26 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         aai = aai + 1;
     }
+    // Fresh Option[<scalar-arr>][] locals (#4365): `var xs: Option[i32[]][] =
+    // [Some([..]), None]` — credited "OPTAARR:" so slot_is_reclaimable_optaarr
+    // routes the exit sweep / loop-rebind through __fern_optarrarr_free
+    // (uniqueness-gated payload dec + rc-guarded option-box dec per element,
+    // then the outer buffer). Same three gates as the arr-of-arr class: no
+    // escape of xs itself, not reassigned, and no ELEMENT alias
+    // (arrarr_row_escapes — a bound `var o = xs[i]` / `for o in xs` holds an
+    // option box whose payload the free would dangle; a transient
+    // `match (xs[i])` payload borrow is fine).
+    var oaas: string[] = collect_fresh_optaarr_names(body, []);
+    var oai: i32 = 0;
+    while (oai < oaas.len()) {
+        if (!body_unsafe_for(body, oaas[oai], borrowable)
+            && util.index_of_str(reassigned, oaas[oai]) < 0
+            && !arrarr_row_escapes(body, oaas[oai])
+            && !optaarr_elem_payload_escapes(body, oaas[oai])) {
+            out = out.append("OPTAARR:" + oaas[oai]);
+        }
+        oai = oai + 1;
+    }
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
     // concrete's rc-headered box) — credited "DYN:<name>|<Concrete>" so the
@@ -18929,6 +18963,123 @@ function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
 // frees it with __fern_str_arr_free (rc==1-gated element walk via the rc-aware
 // per-element string free, then the buffer) instead of the shallow buffer-only
 // __fern_rc_dec every other array slot gets.
+// optaarr_ann_is (#4365): the annotation spells an array of Options of a
+// leak-safe scalar-element array — "Option[i32[]][]" and siblings. Textual,
+// like the dyn passes: strip the outer "[]", require "Option[<inner>]" with a
+// leak-safe scalar array inner.
+function optaarr_ann_is(type_name: string): boolean {
+    if (type_name.len() < 12) { return false; }
+    if (type_name[type_name.len() - 2 : type_name.len()] != "[]") { return false; }
+    var elem: string = type_name[0 : type_name.len() - 2];
+    if (elem.len() < 10 || elem[0:7] != "Option[") { return false; }
+    if (elem[elem.len() - 1] != 93) { return false; }   // 93 = ']'
+    return is_leaksafe_array_field(elem[7 : elem.len() - 1]);
+}
+
+// optaarr_lit_is_fresh (#4365): a non-empty array literal whose every element
+// is `None` or `Some(<array literal>)` — the option boxes AND the payload
+// buffers are all constructed fresh at the binding, so the three-level
+// structure is sole-owned. Payload element exprs are unconstrained (scalar
+// elements value-copy, like arrarr_lit_is_fresh's rows).
+function optaarr_lit_is_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < arr.elements.len()) {
+                var ok: boolean = false;
+                match (arr.elements[i]) {
+                    parser.ExprIdent(nid) => { if (nid.name == "None") { ok = true; } },
+                    parser.ExprCall(sc) => {
+                        match (sc.callee) {
+                            parser.ExprIdent(scid) => {
+                                if (scid.name == "Some" && sc.args.len() == 1) {
+                                    match (sc.args[0]) {
+                                        parser.ExprArray(_) => { ok = true; },
+                                        _ => {}
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                if (!ok) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optaarr_elem_payload_escapes (#4365): any `match (xs[i])` in the body whose
+// Some-arm BINDING escapes the arm (returned / stored / aliased —
+// binding_escapes_arm via opt_arm_binding_escapes). A borrow-only bind
+// (`Some(p) => p[0]`) is fine: its reads precede the rebind/exit free. The
+// index-scrutinee sibling of opt_body_binding_escapes (which keys on ident
+// scrutinees).
+function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var is_elem: boolean = false;
+                match (m.scrutinee) {
+                    parser.ExprIndex(ix) => {
+                        match (ix.array) {
+                            parser.ExprIdent(aid) => { if (aid.name == name) { is_elem = true; } },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                if (is_elem && opt_arm_binding_escapes(stmts[i], "Some")) { return true; }
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (optaarr_elem_payload_escapes(m.arms[ai].body, name)) { return true; }
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtIf(f) => { if (optaarr_elem_payload_escapes(f.then_body, name) || optaarr_elem_payload_escapes(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (optaarr_elem_payload_escapes(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (optaarr_elem_payload_escapes(fo.body, name)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_fresh_optaarr_names: `var xs: Option[i32[]][] = [Some([..]), None]`
+// bindings, recursing nested blocks. Escape gates applied by
+// reclaimable_names_of (body_unsafe_for + not-reassigned + no element alias
+// via arrarr_row_escapes — a bound `var o = xs[i]` element or `for o in xs`
+// holds an option box the free would dangle).
+function collect_fresh_optaarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (optaarr_ann_is(v.type_name) && optaarr_lit_is_fresh(v.init)) { a = push_str_unique(a, v.name); }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_optaarr_names(f.then_body, a); a = collect_fresh_optaarr_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_optaarr_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_optaarr_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_optaarr_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_fresh_arrarr_names gathers LOCAL names bound from a fresh
 // arr-of-arr literal (`var g = [[..], [..]]`, arrarr_lit_is_fresh) anywhere in
 // the body (#4355 slice 9), or — slice 10 — from a CALL to a function in the
@@ -19113,6 +19264,42 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
 function arrarr_free_helper_of(s: LowerState, i: i32): string {
     if (s.arrarr_elem_of_slot(i) == "string") { return "__fern_strarrarr_free"; }
     return "__fern_arrarr_free";
+}
+
+// slot_is_reclaimable_optaarr (#4365): slot i holds a fresh, non-escaping
+// Option[<scalar-arr>][] local (`var xs: Option[i32[]][] = [Some([..]), None]`)
+// credited "OPTAARR:" by reclaimable_names_of. Deliberately NOT is_arrarr —
+// that flag drives row-indexing dispatch for T[][] shapes; an option-element
+// array stays a plain is_arr slot whose elements are option boxes. The release
+// helper __fern_optarrarr_free walks elements (uniqueness-gated payload dec,
+// rc-guarded box dec) then frees the buffer.
+function slot_is_reclaimable_optaarr(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_arr) { return false; }
+    if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
+    return util.index_of_str(s.reclaimable_names, "OPTAARR:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_optaarr_reclaim_store: the option-element twin of
+// emit_arrarr_reclaim_store — stores `new` into a reclaimable
+// Option[<arr>][] slot, cow-guarded, freeing the PRIOR three-level structure
+// (payload buffers + option boxes + outer buffer) via __fern_optarrarr_free.
+function emit_optaarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$oaar" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_optarrarr_free", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
 }
 
 function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {

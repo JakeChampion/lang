@@ -358,6 +358,7 @@ function wasm_helper_symbol(name: string): string {
     // string blocks then its buffer — then the outer).
     if (name == "__fern_arrarr_free") { return "$__fern_arr_dec_ptr"; }
     if (name == "__fern_strarrarr_free") { return "$__fern_arr_dec_ptr2"; }
+    if (name == "__fern_optarrarr_free") { return "$__fern_optarrarr_free"; }
     // map reclaim (Perceus map-local slice): route to $__fern_map_release, the
     // wasm AST path's full map free — it null-guards, rc-guards (frees only at
     // rc==1), DEEP-releases string keys + string values (a level the asm
@@ -671,6 +672,23 @@ pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
 // heap_alloc_helpers: the $__fern_arr_dec_ptr2 body contains a
 // `call $__fern_arr_dec_ptr`, which would trip the negative WAT-grep
 // contracts (strarr-elem-alias-excluded) in every allocating module.
+// module_calls_optarrarr_free: any function lowers a __fern_optarrarr_free
+// call (#4365 Option[<arr>][] reclaim) — gates the $__fern_optarrarr_free WAT
+// body emission, same pattern as module_calls_strarrarr_free below.
+pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_optarrarr_free") { return true; }  // call_direct
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
