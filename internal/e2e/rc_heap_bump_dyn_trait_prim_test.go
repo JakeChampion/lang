@@ -155,6 +155,56 @@ func TestX86_64DynTraitLocalReturnMove(t *testing.T) {
 	}
 }
 
+// dynEnumPayloadBumpGrowthSrc churns a `dyn Show` over a variant
+// construction — the enum concrete reclaims through its generated
+// __drop_enum_<C> vtable drop (plus the boxed cell on the natives), so the
+// high-water is bounded. Pins the enum-concrete arm of the dyn drop
+// (#4351 slice 4's native counterpart, which already existed — this is
+// the missing coverage).
+func dynEnumPayloadBumpGrowthSrc(n string) string {
+	return `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+enum Op { Add(i32), Neg }
+impl Show for Op {
+    function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } }
+}
+function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < ` + n + `) {
+        sum = (sum + go(3)) % 251;
+        i = i + 1;
+    }
+    return __heap_bump_bytes() - before;
+}`
+}
+
+// No wasm sibling: the wasm dyn drop of an ENUM concrete traps at runtime
+// (an unreachable during the __drop_enum dispatch under RcFreeEnabled) — a
+// pre-existing wasm-backend gap, #4786. Add
+// TestWASMDynTraitEnumPayloadHeapBumpBounded in the shape of the natives
+// below once that drop is fixed.
+
+func TestX86_64DynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
+	small := mustRunX86_64FreeOn(t, dynEnumPayloadBumpGrowthSrc("50"))
+	large := mustRunX86_64FreeOn(t, dynEnumPayloadBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("dyn enum-payload growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
+func TestArm64DynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
+	small := mustRunArm64FreeOn(t, dynEnumPayloadBumpGrowthSrc("50"))
+	large := mustRunArm64FreeOn(t, dynEnumPayloadBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("dyn enum-payload growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+}
+
 // dynArrFnExitBumpGrowthSrc churns a `dyn Show[]` local inside a helper
 // FUNCTION — the exit-sweep path. The loop-var reinit path (covered by the
 // container suite) already walked elements via __drop_arr_dyn_<set>, but the

@@ -14162,7 +14162,13 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 st = st.emit(ir.op_drop());
                 st = st.emit(ir.op_end());
             }
-            if (struct_has_reclaim_array_field(st.structs, dconc)) {
+            // Deep-drop is STRUCT concretes only: an ENUM tag (#4351 slice 4)
+            // must never route through __struct_drop_<T> (enum boxes have a
+            // variant layout the struct field walk would misread — and
+            // struct_has_reclaim_array_field reads an enum decl's variant
+            // payloads as "fields"). Enum tags take the shallow dec below;
+            // their pointer payloads leak with the box (safe-leak).
+            if (decl_is_struct(st.structs, dconc) && struct_has_reclaim_array_field(st.structs, dconc)) {
                 st = st.emit(ir.op_load_local(dj));
                 st = st.emit(ir.op_call_direct("__struct_drop_" + dconc, 1));
                 st = st.emit(ir.op_drop());
@@ -16319,6 +16325,19 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[
                     parser.ExprNumber(nl) => { if (nl.is_float) { cty = "f64"; } else { cty = "i32"; } },
                     parser.ExprBool(_) => { cty = "boolean"; },
                     parser.ExprString(_) => { cty = "string"; },
+                    // A variant CONSTRUCTION init (`var d: dyn T = V(args)`,
+                    // #4351 slice 4): the enum box is a fresh rc-headered
+                    // allocation per construction, so the sweep's shallow dec is
+                    // unconditionally sound — scalar payloads ride inside the
+                    // box; pointer payloads leak with it (safe-leak, same as the
+                    // enum sweep elsewhere). The tag is the ENUM name (the sweep
+                    // decs any non-struct, non-"string" tag). Unit variants
+                    // (bare idents) are NOT credited: they may be static
+                    // sentinels, and a bare ident is otherwise a local alias.
+                    parser.ExprCall(_) => {
+                        var ven: string = variant_ctor_enum_owner(v.init, structs);
+                        if (ven.len() > 0) { cty = ven; }
+                    },
                     _ => {}
                 }
                 if (cty.len() == 0) { return acc; }
@@ -16402,6 +16421,15 @@ function collect_dyn_arr_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], 
                                     if (!slz.has_base && decl_is_struct(structs, slz.type_name)
                                         && decl_is_leaksafe(structs, slz.type_name)
                                         && struct_is_scalar_only(structs, slz.type_name)) { kinds = kinds + "p"; }
+                                    else { ok = false; }
+                                },
+                                // A variant CONSTRUCTION element (#4351 slice 4):
+                                // a fresh rc-headered enum box per element — the
+                                // plain 'p' dec frees it (pointer payloads leak
+                                // with it, safe). Unit variants (bare idents) are
+                                // not literals here and fall to the exclusion arm.
+                                parser.ExprCall(_) => {
+                                    if (variant_ctor_enum_owner(darr.elements[ei], structs).len() > 0) { kinds = kinds + "p"; }
                                     else { ok = false; }
                                 },
                                 _ => { ok = false; }
