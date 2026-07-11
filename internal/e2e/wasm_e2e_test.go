@@ -4143,6 +4143,95 @@ func TestWASMIndirectCallApply(t *testing.T) {
 	}
 }
 
+// #4804: a closure/fn-value whose signature contains a `string`
+// parameter must flow through wasm `call_indirect`. Strings use the
+// two-slot (data, len) ABI on wasm32, and the indirect-call signature
+// seam (addClosureSigType) previously typed each param via valtypeFor,
+// which rejected `string` outright — so any `(string, …) => …`
+// comparator/callback failed to compile for -target wasm. The seam now
+// fans string params through slotValtypes, matching the callee
+// definition (paramValtypes). Exercises the motivating `sort_by`-style
+// string comparator shape end-to-end.
+func TestWASMIndirectCallStringParam(t *testing.T) {
+	src := `
+		function apply(f: (string, string) => i32, a: string, b: string): i32 {
+			return f(a, b);
+		}
+		function main(): i32 {
+			var cmp: (string, string) => i32 = (a: string, b: string) => a.len() + b.len();
+			return apply(cmp, "hi", "world");
+		}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (len(\"hi\")+len(\"world\"))", got)
+	}
+}
+
+// #4804: a single string param through call_indirect (the one-slot-arg
+// count still fans to two wasm slots).
+func TestWASMIndirectCallSingleStringParam(t *testing.T) {
+	src := `
+		function apply(f: (string) => i32, a: string): i32 { return f(a); }
+		function main(): i32 {
+			var g: (string) => i32 = (a: string) => a.len() * 10;
+			return apply(g, "hello");
+		}`
+	if got := runWasm(t, src); got != 50 {
+		t.Errorf("got %d, want 50 (len(\"hello\")*10)", got)
+	}
+}
+
+// #4804: a MIXED (i32, string) signature — the string arg's two-slot
+// fan-out must land at the right callee slot offset alongside the
+// scalar. Guards the slot-offset arithmetic, not just the valtype set.
+func TestWASMIndirectCallMixedScalarStringParam(t *testing.T) {
+	src := `
+		function apply(f: (i32, string) => i32, a: i32, b: string): i32 { return f(a, b); }
+		function main(): i32 {
+			var g: (i32, string) => i32 = (a: i32, b: string) => a + b.len();
+			return apply(g, 3, "hello");
+		}`
+	if got := runWasm(t, src); got != 8 {
+		t.Errorf("got %d, want 8 (3 + len(\"hello\"))", got)
+	}
+}
+
+// #4804 motivating case: a `sort_by`-style generic sort driven by a
+// string comparator passed as a fn-value, invoked through call_indirect
+// in a loop. This is the exact shape #4802's mangler follow-up wanted to
+// collapse std/sort's monomorphic string sorts into — blocked on wasm
+// until the string-param seam here. Single-file (the import-mangling half
+// is #4802); this pins the codegen half runs correctly end-to-end.
+func TestWASMStringComparatorSort(t *testing.T) {
+	src := `
+		function sort_by(xs: string[], cmp: (string, string) => i32): string[] {
+			var out: string[] = xs;
+			var i: i32 = 0;
+			while (i < out.len()) {
+				var j: i32 = i + 1;
+				while (j < out.len()) {
+					if (cmp(out[j], out[i]) < 0) {
+						var t: string = out[i];
+						out = out.with(i, out[j]);
+						out = out.with(j, t);
+					}
+					j = j + 1;
+				}
+				i = i + 1;
+			}
+			return out;
+		}
+		function by_len(a: string, b: string): i32 { return a.len() - b.len(); }
+		function main(): i32 {
+			var xs: string[] = ["ccc", "a", "bb"];
+			var s: string[] = sort_by(xs, by_len);
+			if (s[0] == "a" && s[1] == "bb" && s[2] == "ccc") { return 0; }
+			return 1;
+		}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string comparator sort by length)", got)
+	}
+}
+
 func TestWASMFunctionValueInVar(t *testing.T) {
 	src := `
 		function dbl(x: i32): i32 { return x * 2; }
