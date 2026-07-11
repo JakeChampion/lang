@@ -27734,7 +27734,33 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 }
                 ai = ai + 1;
             }
-            return InlineCloRes { expr: parser.ExprCall { callee: call.callee, args: nargs, line: call.line, col: call.col, type_argc: call.type_argc }, funcs: fs, counter: ct };
+            // Recurse into a NON-IDENT callee — a method callee `recv.m(args)`
+            // whose receiver `recv` is itself an expression. Without this, a
+            // fn-arg-taking call in RECEIVER position (`take_while(c, lt5).len()`)
+            // was never reached: its fn-typed argument stayed a raw const_func
+            // while the callee's fn param (marked a closure local in lower_func)
+            // dispatched it env-first — loading a "box slot 0" from a bare code
+            // pointer and jumping to garbage (SIGSEGV, #4767). Binding the call
+            // to a var first dodged it only because a var-init IS walked. An
+            // ident callee is left alone: a bare callee NAME is a call target,
+            // not a fn VALUE use (mirrors value_use_idents_expr).
+            var ncallee: parser.Expr = call.callee;
+            match (call.callee) {
+                parser.ExprIdent(_) => {},
+                _ => {
+                    var cr: InlineCloRes = lift_inline_closures_expr(call.callee, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = cr.funcs; ct = cr.counter; ncallee = cr.expr;
+                }
+            }
+            return InlineCloRes { expr: parser.ExprCall { callee: ncallee, args: nargs, line: call.line, col: call.col, type_argc: call.type_argc }, funcs: fs, counter: ct };
+        },
+        parser.ExprFieldAccess(fa) => {
+            // A field read / method-callee receiver: recurse into the object so
+            // a call nested under a field access (`f(xs, cb).len()`, chained
+            // `f(xs, cb).m().k()`) still gets its fn-typed arguments env-boxed.
+            // Rebuilds structurally identical when nothing inside changes.
+            var or: InlineCloRes = lift_inline_closures_expr(fa.obj, fd, funcs, counter, gfns, structs, mfuncs);
+            return InlineCloRes { expr: parser.ExprFieldAccess { obj: or.expr, field: fa.field, line: fa.line, col: fa.col }, funcs: or.funcs, counter: or.counter };
         },
         parser.ExprArray(arr) => {
             var fs: parser.FuncDecl[] = funcs;

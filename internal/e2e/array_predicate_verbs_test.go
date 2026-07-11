@@ -37,19 +37,14 @@ function main(): i32 { var b: i32[] = [2, 4, 1, 6, 3]; var tw = take_while(b, lt
 	{"drop-while", `function drop_while[T](xs: T[], pred: (T) => boolean): T[] { var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } var out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
 function main(): i32 { var b: i32[] = [2, 4, 1, 6, 3]; var dw = drop_while(b, lt5); return dw.len() * 10 + dw[0] + dw[1]; }`, 29},
-}
-
-// predVerbEdgeCases pin the empty / full boundaries of take_while / drop_while.
-// Native-only: they run through both generic functions with multiple calls +
-// array-literal bindings — shapes the self-host *single-program* driver mis-
-// compiles for reasons unrelated to these verbs (a `f([lit]).len()` chain on a
-// generic-array-returning call signal-crashes it; the shipped-module path and
-// the core cases above already exercise the verbs on the self-host IR path).
-var predVerbEdgeCases = []struct {
-	name string
-	main string
-	want int
-}{
+	// The natural inline chain `take_while(b, p).len()` — miscompiled to a
+	// signal crash on the self-host IR path until #4767 (the lift pass never
+	// reached a fn-arg call in method-receiver position); these edge and chain
+	// cases were native-only until that fix and now run everywhere.
+	{"take-while-chained-len", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { var out: T[] = []; var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
+function drop_while[T](xs: T[], pred: (T) => boolean): T[] { var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } var out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
+function lt5(x: i32): boolean { return x < 5; }
+function main(): i32 { var b: i32[] = [2, 4, 1, 6, 3]; return take_while(b, lt5).len() * 10 + drop_while(b, lt5).len(); }`, 32},
 	// take_while: first element fails -> empty (0); all pass -> full (3).
 	{"take-while-edges", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { var out: T[] = []; var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
@@ -63,29 +58,6 @@ function main(): i32 { var c: i32[] = [9, 1, 2]; var d: i32[] = [1, 2, 3]; var e
 // TestNativeArrayPredicateVerbs runs the inline programs on interp / x86-64 / wasm.
 func TestNativeArrayPredicateVerbs(t *testing.T) {
 	for _, tc := range predVerbCases {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			p := filepath.Join(dir, "main.fern")
-			if err := os.WriteFile(p, []byte(tc.main+"\n"), 0o644); err != nil {
-				t.Fatalf("write: %v", err)
-			}
-			if _, code := runFixtureInterp(t, p, ""); code != tc.want {
-				t.Errorf("%s interp = %d, want %d", tc.name, code, tc.want)
-			}
-			if _, code := runFixtureX86_64(t, p, ""); code != tc.want {
-				t.Errorf("%s x86-64 = %d, want %d", tc.name, code, tc.want)
-			}
-			if code := runWasm(t, tc.main+"\n"); code != tc.want {
-				t.Errorf("%s wasm = %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestNativeArrayPredicateVerbsEdges pins the empty/full take_while/drop_while
-// boundaries on the native backends (interp / x86-64 / wasm).
-func TestNativeArrayPredicateVerbsEdges(t *testing.T) {
-	for _, tc := range predVerbEdgeCases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			p := filepath.Join(dir, "main.fern")
