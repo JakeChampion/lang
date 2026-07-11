@@ -5775,6 +5775,311 @@ function e021_object_safety_diags(mod: parser.Module): Diag[] {
     return out;
 }
 
+// --- E060 / E062: dyn downcast target + ambiguous dyn method (#4347) --------
+//
+// Both checks key on a local/param whose ANNOTATION is a `dyn` type ("dyn A" /
+// "dyn A + B") — the self-host checker has no dyn-trait Type (a dyn value
+// types `unknown`), so the textual annotation is the authoritative, zero-
+// false-positive source of the trait set, exactly like e021_dyn_target's use
+// for object-safety. A name annotated dyn MORE than once, or re-declared with
+// any other type, is blanked (shadowing could change the set).
+
+// e060_dyn_set_of returns the "A" / "A + B" tail of a dyn annotation, or ""
+// for any non-dyn type (a `dyn T[]` ARRAY is excluded — its element, not the
+// ident, is the dyn value; neither check applies to the array ident).
+function e060_dyn_set_of(type_name: string): string {
+    if (type_name.len() < 5 || type_name[0:4] != "dyn ") { return ""; }
+    var t: string = type_name[4:type_name.len()];
+    if (t.len() >= 2 && t[t.len() - 2] == 91 && t[t.len() - 1] == 93) { return ""; }   // "[]"
+    return t;
+}
+
+// e060_split_traits splits "A + B [+ C…]" into trait names (trimmed on the
+// literal " + " separator the parser's dyn annotation spelling uses).
+function e060_split_traits(set: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i + 3 <= set.len()) {
+        if (set[i:i + 3] == " + ") {
+            out = out.append(set[start:i]);
+            start = i + 3;
+            i = i + 3;
+        } else { i = i + 1; }
+    }
+    return out.append(set[start:set.len()]);
+}
+
+// e060_trait_known: the trait appears in trait_reqs (declared in the merged
+// module) — the gate that keeps both checks silent when any trait in the set
+// is unknown here (an impl could exist beyond what mod records).
+function e060_trait_known(mod: parser.Module, trait_name: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.trait_reqs.len()) {
+        if (mod.trait_reqs[i].trait_name == trait_name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// e060_trait_declares: trait `trait_name` declares method `m` — its ABSTRACT
+// method set only (trait_reqs.methods); a defaulted method isn't recorded, so
+// an ambiguity involving one is conservatively missed, never invented.
+function e060_trait_declares(mod: parser.Module, trait_name: string, m: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.trait_reqs.len()) {
+        if (mod.trait_reqs[i].trait_name == trait_name) { return name_in(m, mod.trait_reqs[i].methods); }
+        i = i + 1;
+    }
+    return false;
+}
+
+// e060_collect_dyn_locals records `name|set` for each param / var whose
+// annotation is a dyn type, recursing nested blocks; a name bound MORE than
+// once anywhere in the function (dyn or not) is blanked to "name|" so
+// shadowing never mislabels a value. Assignment (`d = other`) keeps the
+// declared annotation, matching the type system.
+function e060_collect_dyn_locals(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                var seen: i32 = 0;
+                var k: i32 = 0;
+                while (k < a.len()) {
+                    var e: string = a[k];
+                    var bar: i32 = 0;
+                    while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+                    if (e[0:bar] == v.name) { a = a.with(k, v.name + "|"); seen = 1; }
+                    k = k + 1;
+                }
+                if (seen == 0) { a = a.append(v.name + "|" + e060_dyn_set_of(v.type_name)); }
+            },
+            parser.StmtIf(f) => { a = e060_collect_dyn_locals(f.then_body, a); a = e060_collect_dyn_locals(f.else_body, a); },
+            parser.StmtWhile(w) => { a = e060_collect_dyn_locals(w.body, a); },
+            parser.StmtFor(fo) => { a = e060_collect_dyn_locals(fo.body, a); },
+            parser.StmtMatch(m) => { var mi: i32 = 0; while (mi < m.arms.len()) { a = e060_collect_dyn_locals(m.arms[mi].body, a); mi = mi + 1; } },
+            parser.StmtDefer(d) => { a = e060_collect_dyn_locals([d.action], a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// e060_set_of_name looks `name` up in the collected `name|set` entries.
+function e060_set_of_name(dyns: string[], name: string): string {
+    var i: i32 = 0;
+    while (i < dyns.len()) {
+        var e: string = dyns[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }
+        if (e[0:bar] == name) { return e[bar + 1:e.len()]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// e060_is_primitive_name: a spelling that can NEVER be a struct/enum — the
+// definitely-wrong `as?` targets the target-shape arm flags. Mirrors the
+// zero-false-positive primitive gates of E033/E042/E059.
+function e060_is_primitive_name(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64"
+        || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "usize";
+}
+
+// e060_e062_expr walks one expression, flagging:
+//   E060 — `d as? T` where d is a dyn-annotated ident: T a primitive → the
+//   target-shape arm; T a declared plain struct / enum missing an `impl` for
+//   any trait in d's set (every trait known) → the not-implementing arm, with
+//   the missing traits joined " + " exactly like native's missingDynTraits.
+//   E062 — `d.m(args)` where d's set has 2+ traits and 2+ of them declare m.
+function e060_e062_expr(e: parser.Expr, dyns: string[], mod: parser.Module, acc: Diag[]): Diag[] {
+    var out: Diag[] = acc;
+    match (e) {
+        parser.ExprUnary(u) => {
+            if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+                match (u.operand) {
+                    parser.ExprIdent(id) => {
+                        var set: string = e060_set_of_name(dyns, id.name);
+                        if (set.len() > 0) {
+                            var tgt: string = u.op[4:u.op.len()];
+                            if (e060_is_primitive_name(tgt)) {
+                                out = out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
+                            } else if ((e060_decl_is_plain_struct(mod, tgt) || e060_decl_is_enum(mod, tgt))) {
+                                var trs: string[] = e060_split_traits(set);
+                                var all_known: boolean = true;
+                                var missing: string = "";
+                                var ti: i32 = 0;
+                                while (ti < trs.len()) {
+                                    if (!e060_trait_known(mod, trs[ti])) { all_known = false; }
+                                    else if (!e021_has_impl(mod, trs[ti], tgt)) {
+                                        if (missing.len() > 0) { missing = missing + " + "; }
+                                        missing = missing + trs[ti];
+                                    }
+                                    ti = ti + 1;
+                                }
+                                if (all_known && missing.len() > 0) {
+                                    out = out.append(dg_at("E060", tgt + " does not implement " + missing + ", so a 'dyn " + set + "' cannot downcast to it", u.line, u.col));
+                                }
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            return e060_e062_expr(u.operand, dyns, mod, out);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            var rset: string = e060_set_of_name(dyns, rid.name);
+                            if (rset.len() > 0) {
+                                var rtrs: string[] = e060_split_traits(rset);
+                                if (rtrs.len() >= 2) {
+                                    var declaring: string = "";
+                                    var n_decl: i32 = 0;
+                                    var di: i32 = 0;
+                                    while (di < rtrs.len()) {
+                                        if (e060_trait_declares(mod, rtrs[di], fa.field)) {
+                                            if (n_decl > 0) { declaring = declaring + ", "; }
+                                            declaring = declaring + rtrs[di];
+                                            n_decl = n_decl + 1;
+                                        }
+                                        di = di + 1;
+                                    }
+                                    if (n_decl >= 2) {
+                                        out = out.append(dg_at("E062", "ambiguous method \"" + fa.field + "\" on `dyn " + rset + "`: declared by traits " + declaring, fa.line, fa.col));
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            out = e060_e062_expr(c.callee, dyns, mod, out);
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { out = e060_e062_expr(c.args[ai], dyns, mod, out); ai = ai + 1; }
+            return out;
+        },
+        parser.ExprBinary(b) => {
+            out = e060_e062_expr(b.left, dyns, mod, out);
+            return e060_e062_expr(b.right, dyns, mod, out);
+        },
+        parser.ExprIndex(ix) => {
+            out = e060_e062_expr(ix.array, dyns, mod, out);
+            return e060_e062_expr(ix.index, dyns, mod, out);
+        },
+        parser.ExprFieldAccess(fa2) => { return e060_e062_expr(fa2.obj, dyns, mod, out); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { out = e060_e062_expr(ar.elements[i], dyns, mod, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprTuple(tu) => {
+            var i: i32 = 0;
+            while (i < tu.elements.len()) { out = e060_e062_expr(tu.elements[i], dyns, mod, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { out = e060_e062_expr(sl.field_values[i], dyns, mod, out); i = i + 1; }
+            if (sl.has_base) { out = e060_e062_expr(sl.base, dyns, mod, out); }
+            return out;
+        },
+        _ => { return out; }
+    }
+    return out;
+}
+
+function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Module, acc: Diag[]): Diag[] {
+    var out: Diag[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = e060_e062_expr(v.init, dyns, mod, out); },
+            parser.StmtAssign(a) => { out = e060_e062_expr(a.value, dyns, mod, out); },
+            parser.StmtReturn(r) => { out = e060_e062_expr(r.value, dyns, mod, out); },
+            parser.StmtExpr(ex) => { out = e060_e062_expr(ex.value, dyns, mod, out); },
+            parser.StmtIf(f) => {
+                out = e060_e062_expr(f.cond, dyns, mod, out);
+                out = e060_e062_stmts(f.then_body, dyns, mod, out);
+                out = e060_e062_stmts(f.else_body, dyns, mod, out);
+            },
+            parser.StmtWhile(w) => {
+                out = e060_e062_expr(w.cond, dyns, mod, out);
+                out = e060_e062_stmts(w.body, dyns, mod, out);
+            },
+            parser.StmtFor(fo) => {
+                out = e060_e062_expr(fo.iter, dyns, mod, out);
+                out = e060_e062_stmts(fo.body, dyns, mod, out);
+            },
+            parser.StmtMatch(m) => {
+                out = e060_e062_expr(m.scrutinee, dyns, mod, out);
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (m.arms[mi].has_guard) { out = e060_e062_expr(m.arms[mi].guard, dyns, mod, out); }
+                    out = e060_e062_stmts(m.arms[mi].body, dyns, mod, out);
+                    mi = mi + 1;
+                }
+            },
+            parser.StmtDefer(d) => { out = e060_e062_stmts([d.action], dyns, mod, out); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e060_decl_is_plain_struct: `name` is a declared plain struct (a decl by that
+// name with NO enum_owner — a variant decl records its owner, and must not be
+// admitted as an `as?` target here; native reports variants differently).
+function e060_decl_is_plain_struct(mod: parser.Module, name: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == name && mod.structs[i].enum_owner.len() == 0) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// e060_decl_is_enum: `name` is a declared enum (some decl records it as its
+// enum_owner) — mirrors irlower.decl_is_enum.
+function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
+    if (name.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].enum_owner == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// e060_e062_diags: per function, collect the dyn-annotated params/locals then
+// walk the body for the two expression-level checks.
+function e060_e062_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var fn: parser.FuncDecl = mod.funcs[fi];
+        var dyns: string[] = [];
+        var pi: i32 = 0;
+        while (pi < fn.params.len()) {
+            dyns = dyns.append(fn.params[pi].name + "|" + e060_dyn_set_of(fn.params[pi].type_name));
+            pi = pi + 1;
+        }
+        dyns = e060_collect_dyn_locals(fn.body, dyns);
+        out = e060_e062_stmts(fn.body, dyns, mod, out);
+        fi = fi + 1;
+    }
+    return out;
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -5955,7 +6260,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis.
-    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_object_safety_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_object_safety_diags(mod)), e060_e062_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }
