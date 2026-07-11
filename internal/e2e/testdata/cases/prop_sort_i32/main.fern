@@ -2,7 +2,7 @@ import "std/sort";
 import "std/array";
 import "std/i32";
 
-// Property-based audit for std/sort.sort_i32_asc.
+// Property-based audit for std/sort.sort_i32_asc + sort_i32_desc.
 //
 // Deterministic LCG => identical inputs on every backend. For each of
 // many generated arrays (length 0..31, values 0..99) we assert the
@@ -11,6 +11,9 @@ import "std/i32";
 //   2. permutation — output is a true permutation of the input
 //                    (per-value histogram is preserved)
 //   3. idempotence — sorting an already-sorted array is a no-op
+// plus the descending laws: sort_i32_desc is non-increasing and equals
+// the element-wise reverse of sort_i32_asc (they share tie behavior on
+// duplicate values, so reverse-equality is exact).
 //
 // Properties 1+2 together are the full correctness spec for a sort.
 
@@ -87,6 +90,25 @@ function main(): i32 {
         if (!arrays_equal(sort.sort_i32_asc(sorted), sorted)) {
             print("sort idempotence FAILED at trial " + trial.to_string());
             return 1;
+        }
+
+        var sorted_desc: i32[] = sort.sort_i32_desc(arr);
+        var i2: i32 = 1;
+        while (i2 < sorted_desc.len()) {
+            if (sorted_desc[i2 - 1] < sorted_desc[i2]) {
+                print("desc ordering FAILED at trial " + trial.to_string());
+                return 1;
+            }
+            i2 = i2 + 1;
+        }
+        var m: i32 = sorted.len();
+        i2 = 0;
+        while (i2 < m) {
+            if (sorted_desc[i2] != sorted[m - 1 - i2]) {
+                print("desc/asc reverse FAILED at trial " + trial.to_string());
+                return 1;
+            }
+            i2 = i2 + 1;
         }
         trial = trial + 1;
     }

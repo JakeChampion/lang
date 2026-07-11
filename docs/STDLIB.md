@@ -170,7 +170,9 @@ Free helpers — random, ranges, numeric constants, RGB packing.
 
 ### `std/sort`
 
-Free sort / compare helpers (insertion-sort).
+Free sort / compare helpers. The non-consuming sorts are stable
+bottom-up merge sorts, O(n log n) — safe on large inputs, not just
+the small-list convenience cases.
 
 - `sort_i32_asc(arr)`, `sort_i32_desc(arr)`
 - `sort_i64_asc(arr)`, `sort_i64_desc(arr)`
