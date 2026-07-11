@@ -4111,3 +4111,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   WasmIR (3), IRArm64 (3)}. Remaining nearby: struct[]-of-arrays,
   string[][][] deep free, escaping-read exclusions, map string K/V
   (#4353).
+
+- 2026-07-11: **arm64 arena wall — 3.5 GiB → 8 GiB, 32-bit-pointer ceiling
+  retired.** TestSelfHostStage2FixedPointArm64/self was failing on main:
+  mmc2-arm64 (the self-host-built arm64 compiler, under qemu) exhausted its
+  3.5 GiB arena mid-self-compile — __fern_alloc's exit-137 trap, the arm64
+  twin of the x86 wall. The test skips on BOTH CI lanes (needs a native x86
+  host + arm64 cross tooling together), so the wall was only visible
+  locally. Measured: the live set needs ~4.1 GiB (peak RSS 4185 MB under
+  qemu), which is past ANY arena a 32-bit-safe pointer range can hold — an
+  interim 3.875 GiB cut (hint lowered to 0x04000000, end 0xFC000000) still
+  trapped at the wall. So the historical "arm64 heap pointers stay <4 GiB"
+  guideline is retired: the arena is now 8 GiB (1<<33, mov+lsl — the
+  self-host assembler's literal parser is 32-bit; the native backend's
+  ldr =N pool is int64), hint 0x04000000, lockstep across asm_arm64.fern,
+  asm_arm64_ir.fern's heap_bump_bytes derive, and the native arm64
+  heapBytes. Empirical proof the 64-bit pointer plumbing holds (as
+  arm64-darwin's high heap already suggested): the stage-2 fixpoint is
+  BYTE-IDENTICAL with pointers >4 GiB exercised end-to-end, the slice-9/10
+  arrarr/callret churn suites run flat at detector zero under qemu, and
+  the alloc-trap still exits 137 at the new wall (150k iters ≈ 10.5 GiB).
+  Ops note: reproducing this locally via the go-test harness kept
+  OOM-bouncing the container (cold buildSelfHostBin = Go emit + gcc `as`
+  at ~16 GB); the low-memory path is /tmp/fern's in-process assembler for
+  the stage-1 driver (~4 GB peak) + aarch64-gcc on the emitted stage-2
+  asm + qemu by hand.
+
+- 2026-07-11 (follow-up, same day): **the 0x04000000 hint was WRONG — reverted
+  to 0x10000000 (8 GiB stands).** CI's native aarch64 lanes lit up red (38
+  fixture failures: garbage bytes_writer output, wrong exit codes, hangs) and
+  the corruption reproduced under qemu with the NATIVE backend. Bisection
+  isolated the HINT, not the size: the native arm64 backend's below-heap rc
+  guards (emitRcInc / emitRcDec / the IR rcop) classify `ptr >= 0x10000000`
+  as heap-allocated — with the arena based at 0x04000000, every heap pointer
+  read as "below heap" and rc inc/dec silently no-op'd, breaking COW/alias
+  semantics everywhere. The self-host emitters have no such threshold guards
+  (they null/low-addr/sentinel-guard only), which is why the mmc2 fixpoint
+  was byte-identical at the low hint while every native-built binary was
+  corrupt. Red herring for the record: qemu's -strace prints the 8 GiB mmap
+  length as 0 (32-bit format truncation) — the literal-pool ldr =N was fine
+  (verified in the disassembly: two-word 64-bit literal, correctly resolved).
+  The earlier entry's "hint 0x04000000" details are superseded by this.

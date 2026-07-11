@@ -918,12 +918,17 @@ func (g *generator) emitAllocRuntime() {
 	// same bundle — at 1.75 GiB (which x86 still clears) the arm64 stage-2
 	// fixpoint tipped into the exit-137 alloc trap as the IR subset widened.
 	// Matches asm_arm64.fern's own heap_size so the native (stage-0 mmc) and
-	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. The region base
-	// is 0x10000000, so base+size = 0xF0000000 stays < 4 GiB and 32-bit
-	// pointers round-trip (at the ceiling — no further headroom without
-	// raising the base). Lazy-mapped via a literal-pool load, so the wider
-	// window costs nothing until touched and has no 32-bit-immediate limit.
-	const heapBytes = 3758096384
+	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. Raised to 8 GiB
+	// when the arm64 stage-2 self-compile crossed the 3.5 GiB exit-137 alloc
+	// trap and its ~4.1 GiB live set outgrew every arena a 32-bit-safe
+	// pointer range can hold — the historical "base+size < 4 GiB so 32-bit
+	// pointers round-trip" guideline is retired; the value plumbing is
+	// 64-bit throughout (x-registers, 8-byte slots — arm64-darwin's high
+	// heap already exercises >32-bit heap pointers). The hint stays at
+	// 0x10000000: the below-heap rc guards key on it (see the lsl below).
+	// Lazy-mapped via a literal-pool load, so the wider window costs
+	// nothing until touched and has no 32-bit-immediate limit.
+	const heapBytes = 8589934592 // 0x200000000, 8 GiB
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -998,7 +1003,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	// Lazy mmap. x13 carries the address-hint base (1 or 2).
 	g.emit("mov x9, x0")
-	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 or 0x2000_0000
+	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 — MUST stay 0x10000000: the below-heap guards (emitRcInc/RcDec/rcop) classify `ptr >= 0x10000000` as heap-allocated, so a lower arena base silently no-ops every rc inc/dec (learned the hard way: an 0x04000000 hint corrupted COW/alias semantics across the whole native arm64 fixture suite)
 	g.emit("ldr x1, =%d", heapBytes)
 	g.emit("mov x2, #3")
 	if g.darwin {

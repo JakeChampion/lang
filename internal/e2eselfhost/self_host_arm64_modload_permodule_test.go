@@ -96,7 +96,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	const shardThreshold = 100
 	// Byte-weighted windows, same rationale as the x86 twin (asm_arm64's 32
 	// giant functions crossed the arena trap emitted whole) — and the arm64
-	// arena is tighter still (3.5 GiB vs x86's 3.875 GiB).
+	// arena matches x86's 8 GiB (the 32-bit-pointer ceiling was retired).
 	modBytes := perModuleSourceBytes(t, drive, dir, n)
 
 	// 3. Emit every module as its own arm64 unit (every module emitting proves
