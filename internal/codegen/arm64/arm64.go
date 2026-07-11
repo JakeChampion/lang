@@ -919,11 +919,13 @@ func (g *generator) emitAllocRuntime() {
 	// fixpoint tipped into the exit-137 alloc trap as the IR subset widened.
 	// Matches asm_arm64.fern's own heap_size so the native (stage-0 mmc) and
 	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. The region base
-	// is 0x10000000, so base+size = 0xF0000000 stays < 4 GiB and 32-bit
-	// pointers round-trip (at the ceiling — no further headroom without
-	// raising the base). Lazy-mapped via a literal-pool load, so the wider
-	// window costs nothing until touched and has no 32-bit-immediate limit.
-	const heapBytes = 3758096384
+	// is 0x04000000 (lowered from 0x10000000 when the arm64 stage-2
+	// self-compile crossed the 3.5 GiB exit-137 alloc trap — the base drop
+	// bought the extra window), so base+size = 0xFC000000 stays < 4 GiB and
+	// 32-bit pointers round-trip. Lazy-mapped via a literal-pool load, so
+	// the wider window costs nothing until touched and has no
+	// 32-bit-immediate limit.
+	const heapBytes = 4160749568 // 0xF8000000, 3.875 GiB
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -993,12 +995,12 @@ func (g *generator) emitAllocRuntime() {
 	// Single bump region: x11/x12 = heap cursor/end.
 	g.adrpAdd("x11", "__fern_heap_ptr")
 	g.adrpAdd("x12", "__fern_heap_end")
-	g.emit("mov x13, #1") // mmap hint base = 0x1000_0000 (lsl #28 below)
+	g.emit("mov x13, #1") // mmap hint base = 0x0400_0000 (lsl #26 below — above the binary image, low enough for hint+3.875 GiB < 4 GiB)
 	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	// Lazy mmap. x13 carries the address-hint base (1 or 2).
 	g.emit("mov x9, x0")
-	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 or 0x2000_0000
+	g.emit("lsl x0, x13, #26") // x0 = hint << 26 = 0x0400_0000
 	g.emit("ldr x1, =%d", heapBytes)
 	g.emit("mov x2, #3")
 	if g.darwin {

@@ -243,7 +243,7 @@ per-type struct-drop / field-reclaim slices already landed).
   is an OOM — not a real failure) and can even bounce the whole container.
   **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
   OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
-  the fixed bump arena (x86 8 GiB, arm64 3.5 GiB) is exhausted — a REAL
+  the fixed bump arena (x86 8 GiB, arm64 3.875 GiB) is exhausted — a REAL
   failure, reproducible locally, that masquerades as SIGKILL. The stage-2
   self-compile (gen1/mmc2 in the fixpoint tests) is the usual victim: the
   self-host-built compiler's live set grows with every compiler-source
