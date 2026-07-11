@@ -20,13 +20,18 @@
 // `<` / `>` — no per-element comparator-closure indirection (their
 // allocation profile matches `sort_by`'s: one scratch copy per merge
 // pass, materialized explicitly — see sort_i32_asc's doc comment for
-// why it must not alias). The string sorts are monomorphic too, but only
-// because of a modload mangler gap (see their doc comment) — they
-// should become `sort_by` delegations once module-local functions can
-// be referenced from arg positions / closure bodies in a mangled
-// module. The generic comparator form `sort_by[T](arr, cmp)` (below)
-// covers any element type / custom ordering now that closure args
-// lower on every backend.
+// why it must not alias). The string sorts are monomorphic too, but
+// only because the native wasm backend cannot yet resolve a
+// call_indirect signature with string params (#4804: strings are
+// two-slot on wasm32 — `valtypeFor` in internal/codegen/wasmbin; a
+// `sort_by[string]` instantiation fails to compile for `-target
+// wasm`). Once that seam handles the two-slot string ABI, they should
+// become one-line `sort_by` delegations — the modload mangling of
+// module-local references from arg positions and lambda bodies now
+// works (#4802).
+// The generic comparator form `sort_by[T](arr, cmp)` (below) covers
+// any element type / custom ordering now that closure args lower on
+// every backend.
 //
 // Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md. The prelude was removed in
@@ -333,15 +338,17 @@ pub function string_cmp(a: string, b: string): i32 {
 // CLI flags).
 //
 // These SHOULD be one-line delegations to `sort_by` (a string
-// compare is a call either way, so delegating costs nothing),
-// but modload's import mangling currently rewrites neither
-// bare value-position references (`sort_by(arr, string_cmp)`)
-// nor calls made from inside anonymous-function bodies
-// (`function (a, b) { return string_cmp(a, b); }`) of a
-// mangled module — both fail E001 "undefined identifier" in
-// any importing program. Until that mangler gap is fixed, the
-// merge body is spelled out monomorphically here (mirroring
-// `sort_by`; keep them in sync).
+// compare is a call either way, so delegating costs nothing;
+// the modload mangling of module-local references from arg
+// positions and lambda bodies now supports it — #4802), but a
+// `sort_by[string]` instantiation does not compile for
+// `-target wasm` (#4804): the wasm backend's call_indirect
+// signature seam only handles single-slot types, and strings
+// are two-slot on wasm32 ("unsupported type string" from
+// `valtypeFor`, internal/codegen/wasmbin). Until that seam
+// handles the two-slot string ABI, the merge body is spelled
+// out monomorphically here (mirroring `sort_by`; keep them in
+// sync).
 pub function sort_strings_asc(arr: string[]): string[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
@@ -444,7 +451,8 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 // alphabetical listings where case shouldn't fragment the
 // ordering. Stable (merge sort): strings that compare ci-equal
 // ("Apple" / "apple") keep their input order. (Monomorphic
-// body for the same mangler reason as sort_strings_asc.)
+// body for the same wasm call_indirect reason as
+// sort_strings_asc.)
 pub function sort_strings_asc_ci(arr: string[]): string[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }

@@ -404,6 +404,80 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptLambdaBodyMangling pins the #4802 mangler fix
+// end-to-end: a module whose functions reference module-local
+// declarations from exactly the shapes the rewriter used to miss —
+// a bare fn reference in arg position (`apply(add_one, x)`) and
+// module-local calls/refs from inside lambda bodies — plus the
+// shadow rules (a lambda param / body local / captured enclosing
+// local named like a module decl must stay bound to the local).
+// Before the fix, importing such a module failed E001 on the
+// lambda-body references. Runs through -interp with real files
+// (the file path exercises modload; stdin would skip it). The
+// modload-layer sibling is internal/modload's
+// TestLambdaBodyManglingChecks; the self-host loader sibling is
+// TestSelfHostLambdaMangleX86_64.
+func TestInterpScriptLambdaBodyMangling(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	lib := `pub function add_one(x: i32): i32 { return x + 1; }
+
+pub function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+
+pub function via_bare(x: i32): i32 { return apply(add_one, x); }
+
+pub function via_lambda(x: i32): i32 {
+    return apply(function (v: i32): i32 { return add_one(v) + 10; }, x);
+}
+
+pub function via_lambda_ref(x: i32): i32 {
+    return apply(function (v: i32): i32 { return apply(add_one, v) + 100; }, x);
+}
+
+pub function shadow_param(x: i32): i32 {
+    return apply(function (add_one: i32): i32 { return add_one * 2; }, x);
+}
+
+pub function shadow_local(x: i32): i32 {
+    return apply(function (v: i32): i32 { var add_one: i32 = 7; return v + add_one; }, x);
+}
+
+pub function shadow_capture(x: i32): i32 {
+    var add_one: i32 = 50;
+    return apply(function (v: i32): i32 { return v + add_one; }, x);
+}
+`
+	main := `import "./lamlib";
+function main(): i32 {
+    if (lamlib.via_bare(1) != 2) { return 1; }
+    if (lamlib.via_lambda(1) != 12) { return 2; }
+    if (lamlib.via_lambda_ref(1) != 102) { return 3; }
+    if (lamlib.shadow_param(3) != 6) { return 4; }
+    if (lamlib.shadow_local(3) != 10) { return 5; }
+    if (lamlib.shadow_capture(3) != 53) { return 6; }
+    print("OK");
+    return 0;
+}`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lamlib.fern"), []byte(lib), 0o644); err != nil {
+		t.Fatalf("write lamlib: %v", err)
+	}
+	src := filepath.Join(dir, "lambda_mangle.fern")
+	if err := os.WriteFile(src, []byte(main), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0 (1=via_bare 2=via_lambda 3=via_lambda_ref 4=shadow_param 5=shadow_local 6=shadow_capture)\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "OK") {
+		t.Errorf("expected OK on stdout, got %q\nstderr: %s", out.String(), errb.String())
+	}
+}
+
 // TestInterpScriptHeaderMap pins the HeaderMap surface from
 // `std/headers` — case-insensitive `.get` / `.get_all`,
 // duplicate-preserving `.append`, position-stable `.set` (drops

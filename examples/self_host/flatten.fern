@@ -397,10 +397,31 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             };
         },
         parser.ExprLambda(lm) => {
+            // The lambda's params and body locals shadow module-level
+            // decls inside the body, while the ENCLOSING function's
+            // locals stay visible to it (captures) — so the body
+            // rewrites under ctx.locals EXTENDED with the lambda's own
+            // bindings. Without this a lambda param or body local named
+            // like a module decl was mis-mangled to the decl's flat
+            // name (the lambda-scope sibling of the top-level shadow
+            // fix in rewrite_module_bodies; native fix: #4802).
+            var inner: string[] = ctx.locals;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                inner = inner.append(lm.params[pi].name);
+                pi = pi + 1;
+            }
+            inner = collect_locals_stmts(lm.body, inner);
+            var lctx: RewriteCtx = RewriteCtx {
+                modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
+                declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: inner,
+                ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+                reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
+            };
             return parser.ExprLambda {
                 params: rewrite_params(lm.params, ctx),
                 ret_type: rewrite_type_name(lm.ret_type, ctx),
-                body: rewrite_block(lm.body, ctx)
+                body: rewrite_block(lm.body, lctx)
             };
         },
         _ => { return e; }
