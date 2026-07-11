@@ -287,3 +287,32 @@ negative, x86-64 / arm64 / wasm). Residuals: METHOD callees keep the taint
 needs its `fresh_array_ret_fns` fixpoint — the self-host already reclaims the
 annotated strict-fresh STRUCT shape (probe-verified flat), so its remaining
 gap is array/map/tuple-returning producers and un-annotated bindings.
+
+**2026-07-11 — residual re-survey (post-#4781/#4800).** Re-probed the two
+native residuals above; only one is still live:
+
+- **METHOD-callee taint — NOT a live leak (phantom).** `rhsTainted`'s method
+  arm (`rc_analysis.go`, the `FieldAccess` callee) genuinely never consults
+  `findReturnsNoParamEscape`, but 18 heap-bump probes across every shape
+  (bound-local, straight-line, discarded, escaping-receiver, method-result-
+  as-arg; scalar / rc-field struct / array returns) show every `recv.m(i)`
+  form bounding identically to its `m(recv, i)` free-fn twin. The reason is
+  that `computeFreeEligible`'s taint is *escape*-taint, not blanket
+  borrow-taint: a receiver is only tainted when it independently escapes, and
+  in that case the loop-rebind reclaim (#4733/#4734) and precise-drops already
+  reclaim the fresh result. Consulting the oracle for methods would be a
+  correct parity tidy-up but is not observable — struck from the live-gap
+  list pending a concrete repro.
+- **Map-returning intermediates — real leak, precise root cause.** `var m =
+  mk(i)` and a discarded `mk(i)` both leak on native x86-64 (exit 98 on the
+  `__heap_bump_bytes` fixpoint), while an inline `var m = map_new(8); m =
+  m.insert(..)` loop-local bounds. Root cause: `mk` cow-threads its map
+  (`m = m.insert(1, k); return m`), and `computeFreshLocals` (`ir.go`) admits
+  only single-assignment locals used *only in return position* — the
+  `m.insert(..)` receiver reads taint `m`, so `mk` fails `exprNoParamEscape`
+  and `returnsNoParamEscape[mk]` is false. The sound fix is a cow-aware
+  freshness extension (a local staying fresh through `m = m.<cowmethod>(..)`
+  self-mutations), gated so no mutation stored a param-derived VALUE into the
+  map — the arg-escape tracking that makes it non-trivial, and a wrong map
+  reclaim is a cow-handle use-after-free, so it wants its own test-first
+  change, not a drive-by. Tracked in #4357.
