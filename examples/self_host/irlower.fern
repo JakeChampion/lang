@@ -6229,17 +6229,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // the arg in place) and free it right after the call —
                             // the call-arg sibling of the #2649 concat-operand
                             // anonymous-temp reclaim.
-                            if (sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
-                                var lit_arg: boolean = false;
-                                match (c.args[ai]) { parser.ExprString(_) => { lit_arg = true; }, _ => {} }
-                                if (lit_arg) {
-                                    var latn: string = "$lat" + util.i32_to_string(sc.locals.len());
-                                    sc = sc.add_local(latn);
-                                    var lats: i32 = sc.slot_of(latn);
-                                    sc = sc.emit(ir.op_store_local(lats));
-                                    sc = sc.emit(ir.op_load_local(lats));
-                                    lat_slots = lat_slots.append(lats);
-                                }
+                            var lit_arg: boolean = false;
+                            match (c.args[ai]) { parser.ExprString(_) => { lit_arg = true; }, _ => {} }
+                            if (lit_arg && sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
+                                var latn: string = "$lat" + util.i32_to_string(sc.locals.len());
+                                sc = sc.add_local(latn);
+                                var lats: i32 = sc.slot_of(latn);
+                                sc = sc.emit(ir.op_store_local(lats));
+                                sc = sc.emit(ir.op_load_local(lats));
+                                lat_slots = lat_slots.append(lats);
                             }
                         }
                         if (!sc.ok) { return sc; }
@@ -15095,25 +15093,138 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
 
 // call_arg_borrowable: the callee's param `ai` is BORROWABLE — provably only
 // borrow-read and never escaping (the borrowable_params_of verdict, seeded
-// into reclaimable_names as "BORROW:<name>|<flags>" by lower_func so the
-// expr-lowering can consult it without a LowerState field; the state is
-// pinned at 33). A borrowable position cannot retain, return, or alias its
-// argument, so a fresh anonymous temp passed there is dead after the call.
+// into reclaimable_names as "BORROW:<name>|<flags>" by lower_func — ONLY for
+// callees that appear with a literal string arg in this function's body, so
+// the list stays tiny; the expr-lowering consults it without a LowerState
+// field, which is pinned at 33). A borrowable position cannot retain,
+// return, or alias its argument, so a fresh anonymous temp passed there is
+// dead after the call. ALLOCATION-FREE by construction (char compares, no
+// slicing): this runs inside the per-function emit, whose fixed bump arena
+// never frees — a per-probe slice allocation here OOM-killed the per-module
+// whole-compiler emit.
 function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
     var i: i32 = 0;
     while (i < s.reclaimable_names.len()) {
         var ent: string = s.reclaimable_names[i];
-        if (ent.len() > 7 && ent[0:7] == "BORROW:") {
-            var rest: string = ent[7 : ent.len()];
-            if (rest.len() > callee.len() + 1 && rest[0:callee.len()] == callee && rest[callee.len()] == 124) {
-                var flags: string = rest[callee.len() + 1 : rest.len()];
-                if (ai < flags.len()) { return flags[ai] == 49; }
+        // "BORROW:" prefix (66 79 82 82 79 87 58), then <callee>, then '|' (124).
+        if (ent.len() > 8 + callee.len()
+            && ent[0] == 66 && ent[1] == 79 && ent[2] == 82 && ent[3] == 82
+            && ent[4] == 79 && ent[5] == 87 && ent[6] == 58
+            && ent[7 + callee.len()] == 124) {
+            var m: boolean = true;
+            var k: i32 = 0;
+            while (k < callee.len()) {
+                if (ent[7 + k] != callee[k]) { m = false; k = callee.len(); }
+                else { k = k + 1; }
+            }
+            if (m) {
+                var fi: i32 = 7 + callee.len() + 1 + ai;
+                if (fi < ent.len()) { return ent[fi] == 49; }   // 49 = '1'
                 return false;
             }
         }
         i = i + 1;
     }
     return false;
+}
+
+// lit_arg_callees_expr / _stmt collect the bare-ident CALLEE names of calls
+// carrying at least one direct string-LITERAL argument — the only callees
+// whose "BORROW:" entry lower_func needs to seed for the literal-arg box
+// reclaim. Mirrors astwalk.collect_idents_expr's shape coverage; lambda
+// bodies recurse directly (over-collection just seeds a harmless extra
+// entry).
+function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var has_lit: boolean = false;
+                    var li: i32 = 0;
+                    while (li < c.args.len()) {
+                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, _ => {} }
+                        li = li + 1;
+                    }
+                    if (has_lit) { a = push_str_unique(a, cid.name); }
+                },
+                _ => { a = lit_arg_callees_expr(c.callee, a); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = lit_arg_callees_expr(c.args[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprBinary(b) => { a = lit_arg_callees_expr(b.left, a); return lit_arg_callees_expr(b.right, a); },
+        parser.ExprUnary(u) => { return lit_arg_callees_expr(u.operand, a); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { a = lit_arg_callees_expr(ar.elements[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { a = lit_arg_callees_expr(t.elements[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprIndex(x) => { a = lit_arg_callees_expr(x.array, a); return lit_arg_callees_expr(x.index, a); },
+        parser.ExprSlice(sl) => { a = lit_arg_callees_expr(sl.array, a); a = lit_arg_callees_expr(sl.start, a); return lit_arg_callees_expr(sl.end, a); },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { a = lit_arg_callees_expr(sl.base, a); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { a = lit_arg_callees_expr(sl.field_values[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprFieldAccess(fa) => { return lit_arg_callees_expr(fa.obj, a); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { a = lit_arg_callees_stmt(lm.body[i], a); i = i + 1; }
+            return a;
+        },
+        _ => { return a; }
+    }
+    return a;
+}
+function lit_arg_callees_stmt(st: parser.Stmt, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (st) {
+        parser.StmtDefer(d) => { return lit_arg_callees_stmt(d.action, a); },
+        parser.StmtVar(v) => { return lit_arg_callees_expr(v.init, a); },
+        parser.StmtReturn(r) => { return lit_arg_callees_expr(r.value, a); },
+        parser.StmtExpr(e) => { return lit_arg_callees_expr(e.value, a); },
+        parser.StmtAssign(asg) => { return lit_arg_callees_expr(asg.value, a); },
+        parser.StmtIf(f) => {
+            a = lit_arg_callees_expr(f.cond, a);
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { a = lit_arg_callees_stmt(f.then_body[ti], a); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { a = lit_arg_callees_stmt(f.else_body[ei], a); ei = ei + 1; }
+            return a;
+        },
+        parser.StmtWhile(w) => {
+            a = lit_arg_callees_expr(w.cond, a);
+            var i: i32 = 0;
+            while (i < w.body.len()) { a = lit_arg_callees_stmt(w.body[i], a); i = i + 1; }
+            return a;
+        },
+        parser.StmtFor(f) => {
+            a = lit_arg_callees_expr(f.iter, a);
+            var i: i32 = 0;
+            while (i < f.body.len()) { a = lit_arg_callees_stmt(f.body[i], a); i = i + 1; }
+            return a;
+        },
+        parser.StmtMatch(m) => {
+            a = lit_arg_callees_expr(m.scrutinee, a);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { a = lit_arg_callees_stmt(m.arms[ai].body[bi], a); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return a;
+        },
+        _ => { return a; }
+    }
+    return a;
 }
 
 // rcenum_call_init_owner: `e` is a direct call `mk(args...)` to a fn the
@@ -21639,13 +21750,26 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         reclaim = reclaim.append("STRFLDOK:" + strfld_ok_types[sfo_i]);
         sfo_i = sfo_i + 1;
     }
-    // #4355 slice 6: seed the borrowable-params registry ("name|flags") so the
-    // call lowering's literal-arg box reclaim (call_arg_borrowable) can consult
-    // it from LowerState. Same prefix-tag convention; inert elsewhere.
-    var bpk: i32 = 0;
-    while (bpk < borrowable_params.len()) {
-        reclaim = reclaim.append("BORROW:" + borrowable_params[bpk]);
-        bpk = bpk + 1;
+    // #4355 slice 6: seed the borrowable-params entries ("name|flags") the
+    // call lowering's literal-arg box reclaim (call_arg_borrowable) consults
+    // from LowerState — but ONLY for callees this function actually calls
+    // with a literal string arg (lit_arg_callees_stmt). Seeding the WHOLE
+    // registry (one entry per borrowable function) appended hundreds of
+    // entries per lower_func into an arena that never frees and inflated
+    // every later reclaimable_names scan — the per-module whole-compiler
+    // emit OOM-killed on it. Same prefix-tag convention; inert elsewhere.
+    var lacs: string[] = [];
+    var laci: i32 = 0;
+    while (laci < fn.body.len()) { lacs = lit_arg_callees_stmt(fn.body[laci], lacs); laci = laci + 1; }
+    if (lacs.len() > 0) {
+        var bpk: i32 = 0;
+        while (bpk < borrowable_params.len()) {
+            var bpe: string = borrowable_params[bpk];
+            var bpbar: i32 = 0;
+            while (bpbar < bpe.len() && bpe[bpbar] != 124) { bpbar = bpbar + 1; }   // 124 = '|'
+            if (util.index_of_str(lacs, bpe[0:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + bpe); }
+            bpk = bpk + 1;
+        }
     }
     // #4334: pick up the parse-level defer pass's `?`-edge cleanup markers —
     // the `if (__dfa_tryall) {…}` / `if (__dfa_tryerr) {…}` blocks
