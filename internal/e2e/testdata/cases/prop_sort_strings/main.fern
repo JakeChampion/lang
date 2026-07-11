@@ -1,0 +1,151 @@
+import "std/sort";
+import "std/string";
+
+// Property-based audit for std/sort's string sorts on every compiled
+// backend: sort_strings_asc / sort_strings_desc / sort_strings_asc_ci
+// (which delegate to the generic sort_by merge sort over string_cmp /
+// string_cmp_ci). Deterministic generated corpus => identical inputs
+// everywhere. Asserted laws per trial:
+//   1. ordering    — asc is non-decreasing under string_cmp; desc is
+//                    non-increasing; ci is non-decreasing under
+//                    string_cmp_ci
+//   2. permutation — output lengths match and every input string is
+//                    findable in the output (multiset check via count)
+//   3. n < 2       — empty and singleton inputs round-trip through the
+//                    return-borrowed-param early-out (the RC-sensitive
+//                    path for pointer-element arrays)
+//   4. stability   — ci-equal keys keep input order
+
+function lcg_next(state: i32): i32 {
+    return ((state * 1103515245) + 12345) & 2147483647;
+}
+
+function count_of(xs: string[], target: string): i32 {
+    var c: i32 = 0;
+    for x in xs {
+        if (x == target) { c = c + 1; }
+    }
+    return c;
+}
+
+function is_sorted_str(xs: string[]): boolean {
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (sort.string_cmp(xs[i - 1], xs[i]) > 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function is_sorted_str_desc(xs: string[]): boolean {
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (sort.string_cmp(xs[i - 1], xs[i]) < 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function is_sorted_str_ci(xs: string[]): boolean {
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (sort.string_cmp_ci(xs[i - 1], xs[i]) > 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function permutation_of(a: string[], b: string[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    for x in a {
+        if (count_of(a, x) != count_of(b, x)) { return false; }
+    }
+    return true;
+}
+
+// Deterministic word list; LCG picks indices + case variants so the
+// corpus mixes duplicates, shared prefixes, empty strings, and case.
+function word_at(i: i32): string {
+    var words: string[] = ["apple", "Apple", "APPLE", "banana", "Ban",
+                           "banana-split", "cherry", "", "a", "aa",
+                           "Zebra", "zebra", "date", "Date", "fig"];
+    return words[i % words.len()];
+}
+
+function main(): i32 {
+    var state: i32 = 987654321;
+    var trial: i32 = 0;
+    while (trial < 60) {
+        state = lcg_next(state);
+        var n: i32 = state % 40;
+        var arr: string[] = [];
+        var i: i32 = 0;
+        while (i < n) {
+            state = lcg_next(state);
+            arr = arr.append(word_at((state / 11) % 1000));
+            i = i + 1;
+        }
+
+        var asc: string[] = sort.sort_strings_asc(arr);
+        if (!is_sorted_str(asc)) {
+            print("asc ordering FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (!permutation_of(arr, asc)) {
+            print("asc permutation FAILED at trial " + trial.to_string());
+            return 1;
+        }
+
+        var desc: string[] = sort.sort_strings_desc(arr);
+        if (!is_sorted_str_desc(desc)) {
+            print("desc ordering FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (!permutation_of(arr, desc)) {
+            print("desc permutation FAILED at trial " + trial.to_string());
+            return 1;
+        }
+
+        var ci: string[] = sort.sort_strings_asc_ci(arr);
+        if (!is_sorted_str_ci(ci)) {
+            print("ci ordering FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (!permutation_of(arr, ci)) {
+            print("ci permutation FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        trial = trial + 1;
+    }
+
+    // n < 2: the return-borrowed-param early-out over pointer elements.
+    var empty: string[] = [];
+    if (sort.sort_strings_asc(empty).len() != 0) {
+        print("empty FAILED");
+        return 1;
+    }
+    var one: string[] = ["solo"];
+    var one_sorted: string[] = sort.sort_strings_asc(one);
+    if (one_sorted.len() != 1) {
+        print("singleton len FAILED");
+        return 1;
+    }
+    if (one_sorted[0] != "solo") {
+        print("singleton value FAILED");
+        return 1;
+    }
+    if (one[0] != "solo") {
+        print("singleton input clobbered FAILED");
+        return 1;
+    }
+
+    // ci stability: ci-equal keys keep input order.
+    var s: string[] = sort.sort_strings_asc_ci(["b", "A", "B", "a"]);
+    if (s[0] != "A" || s[1] != "a" || s[2] != "b" || s[3] != "B") {
+        print("ci stability FAILED");
+        return 1;
+    }
+
+    print("OK");
+    return 0;
+}

@@ -840,6 +840,16 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	for name := range b.rc.borrowedAlias {
 		seen[name] = true
 	}
+	// Borrowed `dyn Trait` views (#4787): a dyn local bound from an element /
+	// field / bare-ident read holds another value's cell pointer uncounted
+	// (dyn cells carry no rc header). The sweep's DynTraitType arm drops
+	// UNCONDITIONALLY (__drop_dyn_<set> frees the cell + runs the concrete
+	// dtor), so sweeping a view double-frees against the owner's own drop —
+	// e.g. `var x = xs[0]` swept alongside xs's __drop_arr_dyn walk. Skip
+	// them; the owner releases the cell.
+	for name := range b.rc.dynBorrowedViews {
+		seen[name] = true
+	}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
 			continue
@@ -997,6 +1007,15 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 		return
 	}
 	if !b.localNameUnique(name) || b.rc.movedLocals[name] {
+		return
+	}
+	// A borrowed `dyn Trait` view (#4787 — e.g. a for-in loop var
+	// re-declared per iteration from `iter[idx]`) owns no cell to release;
+	// dropping the previous iteration's value would free the array's cell.
+	// A dyn array that received a bare dyn LOCAL as a literal element
+	// (dynAliasElemArrays) likewise skips the reinit drop — freeing the
+	// prior iteration's walk would free the still-live source's cell.
+	if b.rc.dynBorrowedViews[name] || b.rc.dynAliasElemArrays[name] {
 		return
 	}
 	t, ok := b.localDeclType(name)

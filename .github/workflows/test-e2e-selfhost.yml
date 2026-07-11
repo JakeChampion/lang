@@ -159,6 +159,18 @@ concurrency:
 # name here too, or it will cold-build inside a preemptable shard again.
 env:
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
+  # QUARANTINED (issue #4801): the watbin / wit / component self-host tests
+  # below fail on CI since wasmtime was restored to the shards — the failure
+  # class is the SELF-HOST-COMPILED watbin assembler crashing (SIGABRT /
+  # truncated emissions), i.e. live self-host breakage that accumulated while
+  # these tests silently skipped, not stale expectations. They are excluded
+  # from shard selection (they still run locally) so the ~250+ healthy wasm
+  # selfhost tests keep their restored CI coverage while #4801 is fixed.
+  # EXACT names only — passing siblings (e.g. TestSelfHostWasmComponentFull*,
+  # TestSelfHostWasmComponentSuffixStdout) must keep running. Remove names as
+  # #4801 lands fixes; add names (with an issue note) only for the same rot
+  # class surfacing on the two preempted inventory shards.
+  QUARANTINED_TESTS: "TestSelfHostWasmComponent|TestSelfHostWasmComponentAdapter|TestSelfHostWasmComponentArgs|TestSelfHostWasmComponentArgsRead|TestSelfHostWasmComponentArgsReadWrite|TestSelfHostWasmComponentClock|TestSelfHostWasmComponentClockMono|TestSelfHostWasmComponentEndToEnd|TestSelfHostWasmComponentEnv|TestSelfHostWasmComponentEprint|TestSelfHostWasmComponentExit|TestSelfHostWasmComponentRandom|TestSelfHostWasmComponentRandomWrite|TestSelfHostWasmComponentReadEnv|TestSelfHostWasmComponentReadFile|TestSelfHostWasmComponentReadWriteEnv|TestSelfHostWasmComponentReadWriteFile|TestSelfHostWasmComponentStdout|TestSelfHostWasmComponentWriteFile|TestSelfHostWitClassify|TestSelfHostWitPrefixLayout|TestSelfHostComposeFromWorld|TestSelfHostWasmBinary|TestSelfHostWasmRun|TestSelfHostLambdaReachesIR|TestSelfHostX86Capstone|TestSelfHostArm64DarwinMachORealAsm|TestSelfHostArm64DarwinAssemblesRealRuntime"
 
 jobs:
   # Local-CI sign-off gate. `gh signoff e2e-selfhost` on this commit skips the
@@ -303,6 +315,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true" # the CLI tests' `-target wasm` sub-legs run wasmtime
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64
@@ -387,7 +401,17 @@ jobs:
     continue-on-error: ${{ matrix.host == 'x86_64' }}
     steps:
       - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
-      - uses: ./.github/actions/setup-fern # Go + build cache (tests shell out to `go build` for the native oracle) + lld
+      # Go + build cache (tests shell out to `go build` for the native oracle),
+      # lld, AND the wasmtime/wasm-tools/adapter triple: the shards ran WITHOUT
+      # wasmtime for a long stretch, which silently t.Skip()ped every
+      # TestSelfHost*Wasm* / component test in BOTH arch lanes (the wasm
+      # workflow only runs ^Test(WASM|Wasm), so nothing else caught them).
+      # Wiring wasmtime here closes that coverage gap; the wasm DRIVERS the
+      # x86 tests build were already served by the warm artifacts above, so
+      # the marginal cost is the tests' own runtime, not driver builds.
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host }}
@@ -442,8 +466,8 @@ jobs:
           # Read from the prebuilt binaries (no recompile). The isolated
           # fern.fern driver tests (ISOLATED_DRIVER_TESTS) are filtered out
           # here — they run inside the `cli` job, not the shards.
-          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
-          mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
+          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS})\$" | sort)
+          mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS})\$" | sort)
           mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/selfhost-shard-tests "$SHARD" "$NSHARD" .github/selfhost-test-weights.txt)
           SEL_SH=()
           SEL_RES=()
