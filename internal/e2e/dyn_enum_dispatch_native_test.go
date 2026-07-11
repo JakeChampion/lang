@@ -4,8 +4,9 @@
 // dyn slot dispatches through its vtable — these pin that the shapes fixed
 // on the self-host IR path (internal/e2eselfhost/self_host_dyn_enum_ir_test.go,
 // same case sources) keep working natively. The heterogeneous struct+enum
-// `dyn Trait[]` LOCAL-element shape is deliberately absent here: the native
-// x86-64 backend segfaults on it today — tracked as #4787.
+// `dyn Trait[]` LOCAL-element shape lives in rc_dyn_arr_view_test.go — it
+// needed the #4787 dyn element-view drop fixes and is pinned there on both
+// natives.
 package e2e
 
 import "testing"
