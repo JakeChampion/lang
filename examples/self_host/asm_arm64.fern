@@ -4990,18 +4990,20 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        // 3.875 GiB heap arena, lazily mmap'd at hint 0x04000000 on the first
+        // 8 GiB heap arena, lazily mmap'd at hint 0x04000000 on the first
         // allocation (mirrors the native arm64 emitAllocRuntime) rather than
         // reserved as a huge `.bss` in the loaded image. Two payoffs: the
         // R+W data segment stays tiny (so the binary can be a position-
         // independent ET_DYN loaded at any base — `-target arm64-android`),
-        // and the arena lives at the low hint regardless of where the binary
-        // itself loads, so base + 3.875 GiB = 0xFC000000 < 4 GiB and heap
-        // pointers round-trip through 32-bit-safe ranges. Matches the native
-        // arm64 backend's heapBytes (lockstep). The size (3.875 GiB =
-        // 0xF8000000) is built in-asm via `mov #31; lsl #27` below, not a
-        // `ldr =N` literal — the in-process assembler's literal parser is
-        // 32-bit and would sign-extend a >2^31 constant.
+        // and the mapping is lazy so untouched pages cost nothing. Heap
+        // pointers may now exceed 4 GiB (the historical 32-bit-safe-range
+        // guideline was retired when the stage-2 self-compile's ~3.95 GiB
+        // live set outgrew every arena a 32-bit range can hold — the value
+        // plumbing is 64-bit throughout, as arm64-darwin's high heap already
+        // exercises). Matches the native arm64 backend's heapBytes
+        // (lockstep). The size (8 GiB = 1 << 33) is built in-asm via
+        // `mov #1; lsl #33` below, not a `ldr =N` literal — the in-process
+        // assembler's literal parser is 32-bit and would sign-extend.
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
@@ -5061,17 +5063,20 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x9, x0\n");                  // save rounded size
         s = s.write("    mov x0, #1\n");
         s = s.write("    lsl x0, x0, #26\n");             // hint = 0x04000000 (64 MB — above the ~45 MB binary image, low enough that hint+size stays under 4 GiB)
-        // length = 3.875 GiB = 0xF8000000 = 31 << 27. Built with mov+lsl, not a
+        // length = 8 GiB = 0x200000000 = 1 << 33. Built with mov+lsl, not a
         // `ldr =N` literal: the in-process assembler's literal parser is
-        // 32-bit (arm64_gas_atoi), so a >2^31 constant would sign-extend to a
-        // negative length and mmap would fail with ENOMEM. Raised from
-        // 3.5 GiB when the arm64 stage-2 self-compile crossed the exit-137
-        // alloc trap (the arm64 twin of the x86 wall — see asm.fern's
-        // heap_size history); the hint moved 0x10000000 → 0x04000000 at the
-        // same time so end = 0xFC000000 keeps every heap POINTER (and the
-        // end itself) 32-bit-safe, the arm64 backend's standing constraint.
-        s = s.write("    mov x1, #31\n");
-        s = s.write("    lsl x1, x1, #27\n");             // length = 0xF8000000 (3.875 GiB)
+        // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
+        // mmap would fail with ENOMEM. Raised from 3.5 GiB when the arm64
+        // stage-2 self-compile crossed the exit-137 alloc trap (the arm64
+        // twin of the x86 wall — see asm.fern's heap_size history): the
+        // live set measured ~3.95 GiB, past ANY arena a 32-bit-safe range
+        // can hold, so the historical "heap pointers stay < 4 GiB"
+        // guideline is retired here — the emit's pointer paths are 64-bit
+        // (x-registers, 8-byte slots; arm64-darwin's high heap already
+        // exercises >32-bit heap pointers through the same value plumbing),
+        // and the stage-2 fixpoint + the arm64 e2e matrix gate the change.
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    lsl x1, x1, #33\n");             // length = 0x200000000 (8 GiB)
         s = s.write("    mov x2, #3\n");                  // PROT_READ | PROT_WRITE
         s = s.write("    mov x3, #0x22\n");               // MAP_PRIVATE | MAP_ANONYMOUS
         s = s.write("    mov x4, #0\n");
@@ -5087,8 +5092,8 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    adrp x1, __fern_heap_base\n");   // record arena base (freeable-range lower bound)
         s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
         s = s.write("    str x0, [x1]\n");
-        s = s.write("    mov x2, #31\n");
-        s = s.write("    lsl x2, x2, #27\n");             // 3.875 GiB
+        s = s.write("    mov x2, #1\n");
+        s = s.write("    lsl x2, x2, #33\n");             // 8 GiB
         s = s.write("    add x2, x0, x2\n");              // arena end
         s = s.write("    adrp x3, __fern_heap_end\n");
         s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");

@@ -918,14 +918,16 @@ func (g *generator) emitAllocRuntime() {
 	// same bundle — at 1.75 GiB (which x86 still clears) the arm64 stage-2
 	// fixpoint tipped into the exit-137 alloc trap as the IR subset widened.
 	// Matches asm_arm64.fern's own heap_size so the native (stage-0 mmc) and
-	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. The region base
-	// is 0x04000000 (lowered from 0x10000000 when the arm64 stage-2
-	// self-compile crossed the 3.5 GiB exit-137 alloc trap — the base drop
-	// bought the extra window), so base+size = 0xFC000000 stays < 4 GiB and
-	// 32-bit pointers round-trip. Lazy-mapped via a literal-pool load, so
-	// the wider window costs nothing until touched and has no
-	// 32-bit-immediate limit.
-	const heapBytes = 4160749568 // 0xF8000000, 3.875 GiB
+	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. Raised to 8 GiB
+	// when the arm64 stage-2 self-compile crossed the 3.5 GiB exit-137 alloc
+	// trap and its ~3.95 GiB live set outgrew every arena a 32-bit-safe
+	// pointer range can hold — the historical "base+size < 4 GiB so 32-bit
+	// pointers round-trip" guideline is retired; the value plumbing is
+	// 64-bit throughout (x-registers, 8-byte slots — arm64-darwin's high
+	// heap already exercises >32-bit heap pointers). Lazy-mapped via a
+	// literal-pool load, so the wider window costs nothing until touched
+	// and has no 32-bit-immediate limit.
+	const heapBytes = 8589934592 // 0x200000000, 8 GiB
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -995,7 +997,7 @@ func (g *generator) emitAllocRuntime() {
 	// Single bump region: x11/x12 = heap cursor/end.
 	g.adrpAdd("x11", "__fern_heap_ptr")
 	g.adrpAdd("x12", "__fern_heap_end")
-	g.emit("mov x13, #1") // mmap hint base = 0x0400_0000 (lsl #26 below — above the binary image, low enough for hint+3.875 GiB < 4 GiB)
+	g.emit("mov x13, #1") // mmap hint base = 0x0400_0000 (lsl #26 below — above the binary image)
 	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	// Lazy mmap. x13 carries the address-hint base (1 or 2).
