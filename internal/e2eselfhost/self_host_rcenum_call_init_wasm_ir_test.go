@@ -45,17 +45,18 @@ func TestSelfHostRcEnumCallInitWasmIR(t *testing.T) {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
+    var base: string = "a";
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) {
-        var e: E = mk("a", i);
+        var e: E = mk(base, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
     var b1: i32 = __heap_bump_bytes();
     var j: i32 = 0;
     while (j < 1500) {
-        var e2: E = mk("a", j);
+        var e2: E = mk(base, j);
         match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         j = j + 1;
     }
