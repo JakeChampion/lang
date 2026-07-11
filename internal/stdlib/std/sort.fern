@@ -10,7 +10,10 @@
 // run when it compares *strictly* less), so equal keys keep their
 // input order. The `own`-consuming in-place variants remain insertion
 // sorts: `fip` functions must not allocate, and a merge sort needs a
-// scratch buffer.
+// scratch buffer. (Like `sort_by`, the i32 pass arithmetic assumes
+// n <= 2^30 — beyond that `lo + width + width` would wrap. Unreachable
+// today: no target's heap arena can hold such an array plus its merge
+// scratch.)
 //
 // The monomorphic `sort_i32_*` / `sort_strings_*` entry points stay as
 // the allocation-light common cases; the generic comparator form
