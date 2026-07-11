@@ -3863,3 +3863,39 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   full CI matrix. Remaining nearby (unchanged): escaping-read exclusions
   (read-side counting), string fields of enum-payload structs, string[][],
   map string K/V deep reclaim (#4353), wasm pair-form `?` string payloads.
+- 2026-07-11: **Landed the NATIVE half of #4355 slice 4 — exprNoParamEscape
+  string-freshness cases (enum-payload-struct string fields; PR #4771).**
+  On the natives, `var e: E = mk(i); match (e)` with
+  `enum E { A(S), B }` / `struct S { name: string, n: i32 }` leaked the
+  WHOLE chain (enum box + payload struct box + string) per iteration while
+  the scalar-/array-field sibling reclaimed fine. NOT a drop-machinery gap —
+  an ANALYSIS one: exprNoParamEscape had no case for string literals or
+  concats, so any constructor embedding a string field lost its
+  returnsNoParamEscape verdict; rhsTainted's call case then fell past its
+  escape-free short-circuit to the generic any-arg-tainted rule, a
+  noise-tainted scalar arg poisoned the call result, and the local was never
+  swept (probe methodology: identical programs with scalar vs array vs
+  string struct fields — drops emitted for scalar/array, ZERO drop calls in
+  the whole binary for string). Fix: three provenance-free-fresh cases —
+  literal (static sentinel), concat (BYTE-COPIES operands into a fresh
+  buffer, so param operands don't escape through it; rhsTainted's
+  IsStringConcat case already encoded this rule), string slice (fresh copy,
+  not a view). A param-EMBEDDING ctor (`S { name: nm }`) still fails the
+  verdict (pinned). isOwnedByDefaultType is untouched — string-bearing enum
+  PARAMS stay borrowed; blast radius is locals bound to fresh call results,
+  riding the proven freeEligible → emitVarReinitDropOld → __drop_enum_<E> →
+  __drop_struct_<S> route. Wasm32: boxes reclaim, literal-field shape fully
+  bounded; the two-word concat string field keeps a documented sound leak
+  (pinned detector-zero). Also documented-but-unfixed: the pair-form
+  DIRECT-CALL match scrutinee with struct payload (`match (mk(i)) {...}`)
+  leaks on ALL backends (reclaimableMatchScrutinee rejects pointer
+  bindings) — a separate slice. **SELF-HOST STATUS (the port half, still
+  open): the self-host IR path reclaims NEITHER shape — even the
+  scalar-struct-payload enum local leaks (no enum-local consume-rebind
+  reclaim exists there at all). The port is the next slice: a per-type
+  __enum_drop_<E> helper on all three backends (tag dispatch → payload
+  __struct_drop_<S>/str_free → exact-size box free), StmtVar loop-rebind /
+  StmtAssign routing for enum slots (the enum sibling of
+  struct_routes_field_reclaim), an OPTFRESH-style whole-program freshness
+  scan for ctor functions, and construction-side payload retain balance.**
+  Native-only surface referenced against the #4451 convergence tracker.
