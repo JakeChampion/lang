@@ -9289,6 +9289,35 @@ function discardable_fresh_strarr_lit(arr: parser.ExprArray, s: LowerState): boo
     return true;
 }
 
+// discardable_scalar_arrarr_lit reports whether a discarded `[[e..], [e..], …];`
+// is a FRESH array-of-arrays literal whose every element is itself a DIRECT
+// scalar-element array LITERAL (`[i, i+1]` — each inner buffer sole-owned at
+// rc=1, its elements value-copied scalars). Such a shape (the outer buffer
+// holds rc-headered inner buffers) leaks the inner buffers AND the outer on a
+// plain drop — the shallow scalar path frees only the outer box, orphaning
+// every inner (unbounded in a hot loop; native bounds it). __fern_arrarr_free
+// releases it whole: one rc-guarded arr_dec per inner buffer (scalar inners are
+// fully reclaimed by a single dec — elements ride the freed buffer), then the
+// outer buffer. A bare-ident inner (`[[9], row]`) is EXCLUDED — it aliases a
+// live local the exit sweep also frees, so a deep free here would double-free;
+// such a literal keeps leaking-safe on the plain drop. String / struct / nested
+// deeper inners are excluded too (a first cut to scalar-element inners) — the
+// discarded-statement sibling of the ARRARR: loop-local reclaim.
+function discardable_scalar_arrarr_lit(arr: parser.ExprArray, s: LowerState): boolean {
+    if (arr.elements.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < arr.elements.len()) {
+        match (arr.elements[i]) {
+            parser.ExprArray(inner) => {
+                if (!discardable_scalar_arr_lit(inner, s)) { return false; }
+            },
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // expr_scalar_leaf reports whether `e` produces a flat SCALAR value (i32 / i64 /
 // f64 / boolean) rather than a heap pointer — not a string, string-array, array,
 // or struct. Gates a discarded array / tuple literal's in-place box release: a
@@ -9670,6 +9699,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprArray(dae) => {
                     if (discardable_scalar_arr_lit(dae, s)) {
                         se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    } else if (discardable_scalar_arrarr_lit(dae, s)) {
+                        // A discarded fresh scalar-inner array-of-arrays literal
+                        // (`[[i, i+1], [i]];`, #4365): __fern_arrarr_free frees
+                        // each inner buffer (one rc-guarded arr_dec — scalar
+                        // inners fully reclaim) then the outer buffer, the same
+                        // whole release the exit sweep gives a reclaimable ARRARR:
+                        // LOCAL. Every inner is a fresh sole-owned literal, so the
+                        // deep free is complete and double-free-free.
+                        se = se.emit(ir.op_call_direct("__fern_arrarr_free", 1));
                     } else if (discardable_fresh_strarr_lit(dae, s)) {
                         // A discarded fresh string[] literal deep-frees its element
                         // boxes and buffer via __fern_str_arr_free — the same release
