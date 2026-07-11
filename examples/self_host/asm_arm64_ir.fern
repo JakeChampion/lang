@@ -961,6 +961,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
             if (o.str == "__fern_arrarr_free") { s = s.need("arrarr_free"); }
             if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
+            if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
             // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
             // emits a per-type pass-through body. arm64 does NOT deep-drop struct
             // fields yet (leak-safe pass-through); still needs the heap runtime.

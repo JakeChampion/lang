@@ -6804,6 +6804,43 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
 // inner `call $__fern_arr_dec_ptr` text would otherwise appear in every
 // allocating module and trip the negative WAT-grep contracts
 // (strarr-elem-alias-excluded).
+
+// optarrarr_free_func: the $__fern_optarrarr_free WAT body (#4365) — the
+// Option[<scalar-arr>][] reclaim, wasm sibling of the x86/arm64
+// __fn___fern_optarrarr_free bodies. Per element (an 8-byte rc-headered
+// [tag@0, payload@4] option box from opt_make/opt_none): a UNIQUELY-owned box
+// (rc@e-8 == 1) with tag 0 (Some/Ok) first decs its payload buffer, then the
+// box itself is $__fern_arr_dec'd (rc-guarded), then the outer buffer. Only
+// emitted when the module lowers a __fern_optarrarr_free call
+// (module_calls_optarrarr_free), matching the arr_dec_ptr2 gating.
+pub function optarrarr_free_func(heap_base: i32): string {
+    var hb: string = util.i32_to_string(heap_base);
+    var o: string = "";
+    o = o + "  (func $__fern_optarrarr_free (param $a i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
+    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "      (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $oaf_done (loop $oaf_lp\n";
+    o = o + "        (br_if $oaf_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "        (block $oaf_skip\n";
+    o = o + "          (br_if $oaf_skip (i32.eqz (local.get $e)))\n";
+    o = o + "          (br_if $oaf_skip (i32.and (local.get $e) (i32.const 1)))\n";
+    o = o + "          (br_if $oaf_skip (i32.lt_u (local.get $e) (i32.const " + hb + ")))\n";
+    o = o + "          (if (i32.and (i32.eq (i32.load (i32.sub (local.get $e) (i32.const 8))) (i32.const 1))\n";
+    o = o + "                       (i32.eqz (i32.load (local.get $e))))\n";
+    o = o + "            (then (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $e) (i32.const 4)))))))\n";
+    o = o + "          (drop (call $__fern_arr_dec (local.get $e))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $oaf_lp))))) \n";
+    o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
+    return o;
+}
+
 pub function arr_dec_ptr2_func(heap_base: i32): string {
     var hb: string = util.i32_to_string(heap_base);
     var o: string = "";
@@ -12327,6 +12364,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // when the module lowers a __fern_strarrarr_free call — see
         // arr_dec_ptr2_func for why it must not ride along unconditionally.
         if (wasm_ir.module_calls_strarrarr_free(ir_cache)) { ir_out = ir_out + arr_dec_ptr2_func(wasm_ir.heap_base_for(ir_cache)); }
+        if (wasm_ir.module_calls_optarrarr_free(ir_cache)) { ir_out = ir_out + optarrarr_free_func(wasm_ir.heap_base_for(ir_cache)); }
         // $__fern_strbuf_* (global string-builder): growable bump-heap buffer +
         // reset/append/take. Heap-backed (str_box / alloc), emitted above.
         if (wasm_ir.module_uses_strbuf(ir_cache)) { ir_out = ir_out + strbuf_helpers(); }
