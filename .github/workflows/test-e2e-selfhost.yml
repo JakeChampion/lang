@@ -247,7 +247,15 @@ jobs:
           - { key: modload,   drivers: "asm_modload_run.fern" }
           - { key: checker,   drivers: "checker_modload_run.fern" }
           - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern,ssa_lift_scan_run.fern" }
-          - { key: wasm,      drivers: "wasm_run.fern,wasm_ir_run.fern,wasm_runio_run.fern" }
+          # One warm job PER wasm driver: warming all three in one job made
+          # that job the slowest in the matrix (~234s measured) and `needs:
+          # warm` gates every shard on the slowest warm job — exactly the
+          # coupling the standalone `cli` job exists to avoid. (The ssa trio
+          # above stays fused because those drivers are small enough that the
+          # fused job still finishes under the ~110s matrix barrier.)
+          - { key: wasmrun,   drivers: "wasm_run.fern" }
+          - { key: wasmir,    drivers: "wasm_ir_run.fern" }
+          - { key: wasmio,    drivers: "wasm_runio_run.fern" }
           - { key: irx86,     drivers: "irlower_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
