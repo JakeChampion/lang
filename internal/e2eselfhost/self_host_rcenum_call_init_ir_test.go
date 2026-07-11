@@ -118,6 +118,56 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-arr-flat", 0)
 
+	// SCALAR-ONLY struct payload (#4355 slice 8): S { m, n } has no reclaimable
+	// leaf, so nested_field_deep_drop_ok rejected it and the chain leaked; the
+	// widened enum_field_rc_droppable admits it and the consume releases the
+	// payload box with a single rc_dec. Churn flat at detector zero.
+	run(t, `struct S { m: i32, n: i32 }
+enum E { A(S, i32), B(i32, i32) }
+function mk(n: i32): E { return A(S { m: n, n: n + 1 }, n); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var e: E = mk(i);
+        match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
+        i = i + 1;
+    }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) {
+        var e2: E = mk(j);
+        match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
+        j = j + 1;
+    }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "rcenum-scalar-struct-payload-flat", 0)
+
+	// SCALAR-ONLY struct payload, ALIASED (bare-ident) — the fresh-literal gate
+	// (variant_struct_payloads_fresh) must reject it: s0's box is swept by its
+	// own local reclaim, so a consume-site free would double-free. s0 stays
+	// readable at detector zero (the chain keeps the sound leak).
+	run(t, `struct S { m: i32, n: i32 }
+enum E { A(S, i32), B(i32, i32) }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var s0: S = S { m: 7, n: 8 };
+        var e: E = A(s0, i);
+        match (e) { A(s, k) => { if (s.m != 7) { bad = 1; } }, B(x, y) => { bad = 1; } }
+        if (s0.n != 8) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "rcenum-scalar-struct-aliased-payload-safe", 0)
+
 	// PARAM-EMBED exclusion: mk stores its param string into the payload field
 	// (`S { name: nm }`) — the RCE scan must reject it (freeing would dangle
 	// the caller's string). keep stays readable, detector zero, chain leaks
