@@ -2101,6 +2101,23 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 	return false
 }
 
+// localIsDynTrait reports whether `name` is a declared local of `dyn Trait`
+// type. The exit sweep drops those through __drop_dyn_<set> when the backend
+// reclaims dyn (dynReclaim), so a returned one must be excluded from the
+// sweep (move-on-return in the Return lowering) or the caller receives a
+// freed cell. Deliberately NOT folded into isOwnedRcLocal: dyn values carry
+// no rc header, so they must never take the __fern_rc_inc/dec traffic the
+// isOwnedRcLocal/needsRcIncOnAlias pairing implies.
+func (b *builder) localIsDynTrait(name string) bool {
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			_, isDyn := v.Type.(ast.DynTraitType)
+			return isDyn
+		}
+	}
+	return false
+}
+
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	switch e.(type) {
 	case *ast.Ident, *ast.FieldAccess, *ast.Index:

@@ -14046,6 +14046,22 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     while (dj < st.locals.len()) {
         if (!slot_list_has(keeps, dj) && slot_is_reclaimable_dyn(st, dj)) {
             var dconc: string = dyn_reclaim_concrete_of(st, st.locals[dj].slot_name);
+            if (dconc == "string") {
+                // Prim dyn cell with a STRING payload (#4351 slice 2): free the
+                // sole-owned inner string box (value@8 — read as "field 0", the
+                // same offset on all three backends) BEFORE the cell dec below.
+                // Gated on __fern_rc_is_unique, which doubles as the null guard
+                // (an untaken-branch slot is zeroed at entry): a null or shared
+                // cell skips the inner free; the null-guarded dec handles it.
+                st = st.emit(ir.op_load_local(dj));
+                st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                st = st.emit(ir.op_if(0));
+                st = st.emit(ir.op_load_local(dj));
+                st = st.emit(ir.op_struct_get(0, 0));
+                st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+                st = st.emit(ir.op_drop());
+                st = st.emit(ir.op_end());
+            }
             if (struct_has_reclaim_array_field(st.structs, dconc)) {
                 st = st.emit(ir.op_load_local(dj));
                 st = st.emit(ir.op_call_direct("__struct_drop_" + dconc, 1));
@@ -16062,10 +16078,17 @@ function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
 }
 
-// collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <C literal>`
-// binding whose concrete struct is leak-safe and scalar-only / deep-drop-ok,
-// as "<name>|<Concrete>" entries (recursing through nested blocks). A name
-// bound twice is blanked (shadow — the concretes may differ).
+// collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <literal>`
+// binding whose payload is statically reclaimable, as "<name>|<tag>" entries
+// (recursing through nested blocks). The tag is either the concrete STRUCT
+// type name (a leak-safe, scalar-only / deep-drop-ok struct literal — the
+// struct flows unboxed behind the coercion, so the local holds its rc-headered
+// box) or a PRIMITIVE type name for a prim/string LITERAL init (#4351 slice 2
+// — op_dyn_box's cell is rc-headered via __fern_arr_box, so the exit sweep can
+// dec it; the "string" tag additionally frees the sole-owned inner string box
+// at cell@8). Non-literal inits (idents, calls, …) stay uncredited: the
+// payload could alias a longer-lived value. A name bound twice is blanked
+// (shadow — the payloads may differ).
 function collect_dyn_struct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -16076,34 +16099,42 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[
     match (st) {
         parser.StmtVar(v) => {
             if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn ") {
+                var cty: string = "";
                 match (v.init) {
                     parser.ExprStructLit(slz) => {
-                        var cty: string = slz.type_name;
-                        if (!slz.has_base && decl_is_struct(structs, cty) && decl_is_leaksafe(structs, cty)
-                            && (struct_is_scalar_only(structs, cty) || nested_field_deep_drop_ok(structs, cty))) {
-                            // shadow check: a same-named earlier entry blanks both.
-                            var pi: i32 = 0;
-                            while (pi < acc.len()) {
-                                var e: string = acc[pi];
-                                var b2: i32 = 0;
-                                while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
-                                if (b2 <= e.len() && e[0:b2] == v.name) {
-                                    var out: string[] = [];
-                                    var oi: i32 = 0;
-                                    while (oi < acc.len()) {
-                                        if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
-                                        oi = oi + 1;
-                                    }
-                                    return out.append("|");
-                                }
-                                pi = pi + 1;
-                            }
-                            return acc.append(v.name + "|" + cty);
+                        if (!slz.has_base && decl_is_struct(structs, slz.type_name) && decl_is_leaksafe(structs, slz.type_name)
+                            && (struct_is_scalar_only(structs, slz.type_name) || nested_field_deep_drop_ok(structs, slz.type_name))) {
+                            cty = slz.type_name;
                         }
-                        return acc;
                     },
-                    _ => { return acc; }
+                    // A scalar literal's exact prim name doesn't matter to the
+                    // sweep (any non-"string" tag is a plain cell dec) — it only
+                    // needs to be a name no struct decl can carry. An i64/u64-
+                    // suffixed or f64 literal decs the same rc-headered cell.
+                    parser.ExprNumber(nl) => { if (nl.is_float) { cty = "f64"; } else { cty = "i32"; } },
+                    parser.ExprBool(_) => { cty = "boolean"; },
+                    parser.ExprString(_) => { cty = "string"; },
+                    _ => {}
                 }
+                if (cty.len() == 0) { return acc; }
+                // shadow check: a same-named earlier entry blanks both.
+                var pi: i32 = 0;
+                while (pi < acc.len()) {
+                    var e: string = acc[pi];
+                    var b2: i32 = 0;
+                    while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
+                    if (b2 <= e.len() && e[0:b2] == v.name) {
+                        var out: string[] = [];
+                        var oi: i32 = 0;
+                        while (oi < acc.len()) {
+                            if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
+                            oi = oi + 1;
+                        }
+                        return out.append("|");
+                    }
+                    pi = pi + 1;
+                }
+                return acc.append(v.name + "|" + cty);
             }
             return acc;
         },
@@ -16288,17 +16319,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (!strarr_unsafe_for(body, sarrs[sri], borrowable)) { out = out.append("SARR:" + sarrs[sri]); }
         sri = sri + 1;
     }
-    // dyn-Trait STRUCT-payload locals (#4351): `var d: dyn T = C { ... }` — the
-    // struct flows UNBOXED behind the dyn coercion (the local holds the concrete's
-    // rc-headered box), but the coarse "dyn T" slot type kept it out of every
-    // reclaim class, so it leaked. Credited "DYN:<name>|<Concrete>" so the exit
-    // sweep deep-drops the concrete's rc fields (__struct_drop_<Concrete>) and
-    // frees the box. Gates mirror the enum struct-payload path: a FRESH struct
-    // LITERAL init (sole owner, rc==1) of a leak-safe scalar-only or
-    // deep-drop-ok struct, single-bind, never reassigned, non-escaping
-    // (body_unsafe_for — a `d.show()` dispatch is a receiver borrow, safe).
-    // Primitive/string dyn payloads ride a separate HEADERLESS 16-byte cell
-    // (op_dyn_box) that the asm no-op __free can't reclaim — a later slice.
+    // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
+    // literal flows UNBOXED behind the dyn coercion (the local holds the
+    // concrete's rc-headered box) — credited "DYN:<name>|<Concrete>" so the
+    // exit sweep deep-drops the concrete's rc fields (__struct_drop_<Concrete>)
+    // and frees the box. A PRIMITIVE/STRING literal is heap-boxed into an
+    // op_dyn_box cell — now rc-headered via __fern_arr_box (#4351 slice 2) —
+    // credited "DYN:<name>|<prim>" so the sweep decs the cell (and for a
+    // "string" tag first frees the sole-owned inner string box at cell@8).
+    // Gates mirror the enum struct-payload path: a FRESH LITERAL init (sole
+    // owner, rc==1), single-bind, never reassigned, non-escaping
+    // (body_unsafe_for — a `d.show()` dispatch is a receiver borrow, safe; a
+    // bare-ident alias, call arg, return, or `as?` downcast excludes).
     var dyns: string[] = collect_dyn_struct_names(body, structs, []);
     var dyi: i32 = 0;
     while (dyi < dyns.len()) {
@@ -18216,8 +18248,10 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     return util.index_of_str(s.reclaimable_names, "SARR:" + s.locals[i].slot_name) >= 0;
 }
 
-// dyn_reclaim_concrete_of (#4351): the concrete struct type registered for
-// dyn local `name` under the "DYN:<name>|<Concrete>" reclaim entry, or "".
+// dyn_reclaim_concrete_of (#4351): the payload tag registered for dyn local
+// `name` under the "DYN:<name>|<tag>" reclaim entry, or "". The tag is the
+// concrete STRUCT type name for an unboxed struct payload, or a primitive
+// type name ("i32"/"f64"/"boolean"/"string") for an op_dyn_box'd cell.
 function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
     var i: i32 = 0;
     while (i < s.reclaimable_names.len()) {
@@ -18234,10 +18268,12 @@ function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
 }
 
 // slot_is_reclaimable_dyn: slot `i` is a fresh, non-escaping dyn-Trait local
-// holding a statically-known STRUCT payload (#4351) — credited "DYN:" by
-// reclaimable_names_of. The payload box is the concrete's rc-headered struct
+// holding a statically-known payload (#4351) — credited "DYN:" by
+// reclaimable_names_of. A STRUCT payload is the concrete's rc-headered struct
 // box (structs flow unboxed behind dyn), released by the exit sweep like a
 // reclaimable struct: deep-drop the concrete's rc fields, then dec the box.
+// A PRIM/STRING payload is an rc-headered op_dyn_box cell: the sweep decs it
+// ("string" first frees the sole-owned inner string box at cell@8).
 function slot_is_reclaimable_dyn(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }

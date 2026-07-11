@@ -120,10 +120,12 @@ function main(): i32 { return 0; }`
 	if got := byName["Flat"].Drop; got != "__drop_struct_Flat" {
 		t.Errorf("Flat drop slot = %q, want __drop_struct_Flat", got)
 	}
-	// A primitive concrete carries its value inline behind `data` — no
-	// box, so the null sentinel.
-	if got := byName["i32"].Drop; got != "" {
-		t.Errorf("i32 (primitive) drop slot = %q, want \"\" (null sentinel)", got)
+	// A primitive concrete's `data` is a heap-boxed VALUE CELL
+	// (boxPrimitiveDynValue), reclaimed through the generated
+	// __drop_dynprim_<prim> cell free (#4351 — the null sentinel here
+	// leaked the cell on every prim coercion).
+	if got := byName["i32"].Drop; got != "__drop_dynprim_i32" {
+		t.Errorf("i32 (primitive) drop slot = %q, want __drop_dynprim_i32", got)
 	}
 }
 

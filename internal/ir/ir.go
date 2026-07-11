@@ -2129,9 +2129,11 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 				methods = append(methods, traitVtableSlots(info, info.Traits[tr], concrete, prim)...)
 			}
 			// Record the concrete type's drop fn for the trailing drop slot
-			// (docs/DYN-TRAITS.md §4.4). A primitive concrete carries its
-			// value inline (no separate heap box behind `data`), so it has
-			// no destructor — leave Drop empty (null sentinel). For a
+			// (docs/DYN-TRAITS.md §4.4). A primitive concrete's `data` is a
+			// heap-boxed VALUE CELL (boxPrimitiveDynValue), so its dtor is the
+			// generated __drop_dynprim_<prim>, which frees that cell (#4351 —
+			// before this the slot was the null sentinel and every prim
+			// coercion leaked its cell). For a
 			// struct/enum concrete, dropFnNameFor names its recursive drop
 			// (or returns "" for a flat scalar struct that needs none); nil
 			// registries are fine here — a `dyn` concrete is always a
@@ -2139,6 +2141,9 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 			// generic-enum / tuple registry, and the worklist regenerates
 			// the body from info.Structs / info.Enums by name.
 			drop := ""
+			if prim {
+				drop = "__drop_dynprim_" + concrete
+			}
 			if !prim {
 				var ct ast.Type
 				if _, ok := info.Structs[concrete]; ok {
@@ -2824,6 +2829,15 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				// env (generically, through the embedded drop-fn pointer) +
 				// the pair block, then free the outer buffer.
 				fn = genArrClosureDropFn(ptrW)
+			} else if prim := strings.TrimPrefix(name, "__drop_dynprim_"); prim != name {
+				// Primitive/string-concrete `dyn` value-cell drop (#4351):
+				// frees the boxPrimitiveDynValue cell the fat pointer's `data`
+				// word points at. Only ever referenced from a vtable drop slot
+				// (seeded above when dynRcSupported).
+				fn = genDynPrimDropFn(prim, ptrW)
+				if fn == nil {
+					continue
+				}
 			} else if dynDrop := strings.TrimPrefix(name, "__drop_arr_dyn_"); dynDrop != name {
 				// `dyn Trait[]` outer drop (docs/DYN-TRAITS.md §7.8): per
 				// element run the per-set `__drop_dyn_<set>` destructor
@@ -6461,6 +6475,24 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// index loads) still take the inc; fresh values aren't locals.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			needsRcIncOnAlias(n.Value, b) && b.isOwnedRcLocal(id.Name) {
+			b.emitRcDecLocalsAtExitExcept(id.Name)
+			b.emit(Op{Kind: OpReturn})
+			return nil
+		}
+		// Move-on-return for a swept `dyn Trait` local (#4351): the exit
+		// sweep's DynTraitType arm drops unconditionally — __drop_dyn_<set>
+		// runs the concrete dtor and, on the natives, frees the {data,vtable}
+		// cell outright; there is no rc header to net against a transfer inc.
+		// Returning a bare dyn local MOVES the value to the caller, so
+		// sweeping it here handed back a freed cell — the caller's next
+		// dispatch read reclaimed memory (segfault on the natives, a garbage
+		// dispatch on wasm). Exclude it from the sweep; no inc is emitted
+		// (dyn values are not rc-counted), so this is a pure move. dyn locals
+		// sit outside isOwnedRcLocal / needsRcIncOnAlias (dyn cells must
+		// never see __fern_rc_inc — they carry no header), hence the
+		// dedicated branch rather than widening those predicates.
+		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
+			b.dynReclaim() && b.localIsDynTrait(id.Name) {
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
