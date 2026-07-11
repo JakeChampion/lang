@@ -1,0 +1,98 @@
+package e2eselfhost
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// TestSelfHostLiteralArgReclaimWasmIR is the wasm port of
+// TestSelfHostLiteralArgReclaimIRX86_64 (#4355 slice 6). On wasm a string
+// literal is DATA-SECTION (no per-call box), so there was never a leak here —
+// but the reclaim is emitted at the IR layer for every backend, so this pins
+// that the wasm $__fern_str_free mapping ($__fern_arr_dec, heap-base-guarded)
+// no-ops safely on the data-section pointer: boundedness + detector zero +
+// the retained-value safety.
+func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host literal-arg-reclaim wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	cases := []struct {
+		name     string
+		src      string
+		expected int
+	}{
+		{"literal-arg-borrowable-flat-wasm", `function readit(nm: string): i32 { return nm.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + readit("ab"); i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 1500) { acc = acc + readit("ab"); j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 3400) { return 97; }
+    return 0;
+}`, 0},
+		{"literal-arg-retained-safe-wasm", `function keepit(nm: string): string { return nm; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var got: string = keepit("xy");
+        if (got.len() != 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			}
+			watFile := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			rcmd := exec.Command("wasmtime", "run", watFile)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != tc.expected {
+				t.Errorf("literal-arg-reclaim wasm IR %q = %d, want %d (98 = leaked; 99 = over-release; 88 = live value freed; 97 = value corrupted)", tc.name, got, tc.expected)
+			}
+		})
+	}
+}
