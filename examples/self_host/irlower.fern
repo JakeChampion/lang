@@ -9595,14 +9595,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         // false, so a struct carrying one still leaks whole (safe-leak
                         // floor).
                         //
-                        // __struct_drop_<T> returns the box in its return register but its
-                        // inner __fern_arr_dec calls CLOBBER that register, so the box
-                        // cannot be threaded box→drop→box on the operand stack (the exit
-                        // sweep sidesteps this by re-loading the box from its SLOT for both
-                        // the drop and the free, discarding the return). A discarded temp
-                        // has no slot, so stash the box in a fresh scratch local and re-load
-                        // it for each step — the scratch is never mark_arr'd, so the exit
-                        // dec-sweep (is_arr_slot-gated) skips it (no double-free).
+                        // __struct_drop_<T> returns the box in its return register (the
+                        // x86/arm64 bodies reload it from the stack arg before ret — the
+                        // inner field-release calls clobber the register copies; #4355
+                        // slice 5 fixed the reload). This site predates that fix and
+                        // threads the box through a scratch local instead of the return —
+                        // still correct, kept as-is: stash the box in a fresh scratch
+                        // local and re-load it for each step — the scratch is never
+                        // mark_arr'd, so the exit dec-sweep (is_arr_slot-gated) skips it
+                        // (no double-free).
                         if (struct_has_reclaim_array_field(s.structs, dse.type_name)) {
                             var sdtmp: string = "$sdrop" + util.i32_to_string(se.locals.len());
                             se = se.add_local(sdtmp);

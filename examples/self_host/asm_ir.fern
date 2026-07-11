@@ -5269,6 +5269,14 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         k = k + 1;
     }
     s = s.write(".Lstd_" + san + "_ret:\n");
+    // Return the BOX (the documented contract): the field-release calls above
+    // (__fern_arr_dec / __fern_str_free / nested __struct_drop_*) all return in
+    // %rax, so the entry-time copy is clobbered by the time we get here — the
+    // enum-payload deep-drop (emit_enum_variant_drops) CONSUMES this return for
+    // its payload-box free, and the clobber made it dec the LAST-FREED FIELD a
+    // second time (rc-underflow tick per consume; heap corruption for a string
+    // field via the wrong-size-class free) while the payload box itself leaked.
+    s = s.write("    movq 8(%rsp), %rax\n");
     s = s.write("    ret\n");
     return s;
 }
