@@ -303,6 +303,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true" # the CLI tests' `-target wasm` sub-legs run wasmtime
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64
@@ -387,7 +389,17 @@ jobs:
     continue-on-error: ${{ matrix.host == 'x86_64' }}
     steps:
       - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
-      - uses: ./.github/actions/setup-fern # Go + build cache (tests shell out to `go build` for the native oracle) + lld
+      # Go + build cache (tests shell out to `go build` for the native oracle),
+      # lld, AND the wasmtime/wasm-tools/adapter triple: the shards ran WITHOUT
+      # wasmtime for a long stretch, which silently t.Skip()ped every
+      # TestSelfHost*Wasm* / component test in BOTH arch lanes (the wasm
+      # workflow only runs ^Test(WASM|Wasm), so nothing else caught them).
+      # Wiring wasmtime here closes that coverage gap; the wasm DRIVERS the
+      # x86 tests build were already served by the warm artifacts above, so
+      # the marginal cost is the tests' own runtime, not driver builds.
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host }}
