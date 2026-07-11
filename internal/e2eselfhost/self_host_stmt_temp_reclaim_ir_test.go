@@ -116,6 +116,43 @@ function main(): i32 {
 }`
 }
 
+// A discarded ARRAY-fresh-ret call (`mk(i) -> i32[]`, every return a direct
+// scalar-element array literal — the "ARR:" entries of the strict-fresh
+// registry, #4365): the returned rc=1 buffer is released with the shallow
+// rc-guarded __fern_rc_dec at the statement boundary (element-blind, scalar
+// elements ride the freed buffer). Native bounds this shape
+// (rc_heap_bump_discarded_call); the self-host leaked it until the ARR: arm.
+func stmtTempFreshCallArrBumpSrc(n string) string {
+	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { mk(i); i = i + 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
+// A FRESH string-concat RECEIVER (`(s1 + s2).len()`) — the value-consuming-op
+// sibling of the discarded-statement concat (#4365; native's
+// rc_heap_bump_len_receiver arc). The `.len()` intercept stashes the fresh
+// temp box in an unmarked scratch, reads the length, then releases the box
+// with the rc-aware __fern_str_free. No warmup: the fixpoint harness requires
+// a NON-ZERO bounded high-water (a zero reads as "nothing measured"), and the
+// cold first iteration allocates exactly one concat box before the freelist
+// recycles it — the same small constant at every N.
+func stmtTempLenReceiverBumpSrc(n string) string {
+	return `function main(): i32 {
+    var s1: string = "ab";
+    var s2: string = "cd";
+    var acc: i32 = 0;
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { acc = (acc + (s1 + s2).len()) % 251; i = i + 1; }
+    if (acc < 0) { return 0 - 1; }
+    return __heap_bump_bytes() - before;
+}`
+}
+
 // A discarded STRICT fresh-struct-returning call whose return type carries an
 // rc-ARRAY field (`mk(i) -> H { id, xs: [..] };`) sole-owns every field buffer
 // (the strict-fresh registry guarantees no aliased inner buffers), so the ExprCall
@@ -233,6 +270,39 @@ function main(): i32 {
 // mk(i+1) has id=i+1, xs=[i+1,i+2,i+3]; acc += (i+1)+(i+1)+(i+2)+(i+3) = 4i+7
 // over 0..199 = 4*19900 + 1400 = 81000. The box-return-register clobber this
 // guards would double-free xs and trip __rc_underflow (> 0), not the sum.
+// The len-receiver release frees only the fresh CONCAT temp: the operands
+// s1/s2 stay readable after (their own boxes untouched), the length value is
+// exact, and the detector stays zero.
+const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
+    var s1: string = "ab" + "c";
+    var s2: string = "de";
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        acc = acc + (s1 + s2).len();
+        i = i + 1;
+    }
+    if (acc != 1000) { return 999; }
+    if (s1.len() != 3 || s2.len() != 2) { return 998; }
+    return __rc_underflow();
+}`
+
+// The discarded array-returning call `mk(i);` frees only its OWN buffer while
+// the live `v = mk(i + 1)` stays intact: v = [i+1, i+2, i+3], acc += 3i + 6
+// over 0..199 = 3*19900 + 1200 = 60900. A wrong dec of the live buffer would
+// corrupt the sum (999) or trip __rc_underflow (> 0).
+const stmtTempFreshCallArrDetectorSrc = `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
+function main(): i32 {
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        mk(i);
+        var v = mk(i + 1);
+        acc = acc + v[0] + v[1] + v[2];
+        i = i + 1;
+    }
+    if (acc != 60900) { return 999; }
+    return __rc_underflow();
+}`
+
 const stmtTempFreshCallRcFieldDetectorSrc = `struct H { id: i32, xs: i32[] }
 function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
 function main(): i32 {
@@ -327,6 +397,8 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"string-concat", stmtTempStrConcatBumpSrc},
 		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
 		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldBumpSrc},
+		{"fresh-call-array", stmtTempFreshCallArrBumpSrc},
+		{"len-receiver-concat", stmtTempLenReceiverBumpSrc},
 		{"fresh-strarr", stmtTempFreshStrArrBumpSrc},
 	}
 	for _, sh := range fixpointShapes {
@@ -353,6 +425,8 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 		{"string-concat", stmtTempStrConcatDetectorSrc},
 		{"fresh-call-struct", stmtTempFreshCallDetectorSrc},
 		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldDetectorSrc},
+		{"fresh-call-array", stmtTempFreshCallArrDetectorSrc},
+		{"len-receiver-concat", stmtTempLenReceiverDetectorSrc},
 		{"fresh-strarr", stmtTempFreshStrArrDetectorSrc},
 		{"borrowed-strarr", stmtTempBorrowedStrArrDetectorSrc},
 	}

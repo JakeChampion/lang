@@ -2,12 +2,15 @@ package e2eselfhost
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestSelfHostModloadPerModuleWholeCompilerX86_64 drives the builtins-aware
@@ -152,21 +155,25 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		var ee *exec.ExitError
 		return errors.As(err, &ee) && ee.ExitCode() == 137
 	}
-	// emitRange emits module modIdx over [lo,hi) of its `count` functions. The
-	// initial window is chosen deterministically by emitWindowSize (function
-	// count + source bytes); emitRange is the SAFETY NET underneath it — if a
-	// window still OOM-kills (the byte/count heuristic under-sharded a module
-	// heavier than 300 KB / 100 funcs predicted), it recursively halves down to
-	// a single function rather than failing the run. When nothing OOMs it splits
-	// nothing, so the emitted unit set is byte-identical to the heuristic's. The
-	// full [0,count) range emits with NO -func-range (byte-identical to the
-	// unsharded emit); any split emits a non-entry sub-unit via -func-range,
-	// linking exactly like the heuristic windows.
-	var emitRange func(t *testing.T, modIdx, lo, hi, count int)
-	emitRange = func(t *testing.T, modIdx, lo, hi, count int) {
-		t.Helper()
-		whole := lo == 0 && hi == count
-		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(modIdx)}, needArgs...)
+	// emitWindow emits module j.modIdx over [lo,hi) of its functions into j.
+	// The initial window is chosen deterministically by emitWindowSize
+	// (function count + source bytes); emitWindow is the SAFETY NET underneath
+	// it — if a window still OOM-kills (the byte/count heuristic under-sharded
+	// a module heavier than 300 KB / 100 funcs predicted), it recursively
+	// halves down to a single function rather than failing the run. When
+	// nothing OOMs it splits nothing, so the emitted unit set is byte-identical
+	// to the heuristic's. The full [0,count) range emits with NO -func-range
+	// (byte-identical to the unsharded emit); any split emits a non-entry
+	// sub-unit via -func-range, linking exactly like the heuristic windows.
+	// Errors are recorded on the job (not t.Fatalf) because jobs run on worker
+	// goroutines; the main goroutine fails the test after the joins.
+	var emitWindow func(j *pmEmitJob, lo, hi int)
+	emitWindow = func(j *pmEmitJob, lo, hi int) {
+		if j.err != nil {
+			return
+		}
+		whole := lo == 0 && hi == j.count
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(j.modIdx)}, needArgs...)
 		tag := ""
 		if !whole {
 			emitArgs = append(emitArgs, "-func-range", strconv.Itoa(lo)+":"+strconv.Itoa(hi))
@@ -175,33 +182,32 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		unit, err := drive(t, emitArgs...)
 		if isEmitOOM(err) && hi-lo > 1 {
 			mid := (lo + hi) / 2
-			t.Logf("module %d [%d:%d): emit OOM-killed (exit 137) — window under-sharded, splitting into [%d:%d)+[%d:%d)", modIdx, lo, hi, lo, mid, mid, hi)
-			emitRange(t, modIdx, lo, mid, count)
-			emitRange(t, modIdx, mid, hi, count)
+			t.Logf("module %d [%d:%d): emit OOM-killed (exit 137) — window under-sharded, splitting into [%d:%d)+[%d:%d)", j.modIdx, lo, hi, lo, mid, mid, hi)
+			emitWindow(j, lo, mid)
+			emitWindow(j, mid, hi)
 			return
 		}
 		if err != nil || len(unit) == 0 {
-			t.Fatalf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", modIdx, tag, err, len(unit))
+			j.err = fmt.Errorf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", j.modIdx, tag, err, len(unit))
+			return
 		}
-		writeUnit(t, modIdx, tag, unit)
+		j.units = append(j.units, pmEmittedUnit{tag: tag, unit: unit})
 	}
-	for i := 0; i < n; i++ {
-		window := emitWindowSize(funcCounts[i], modBytes[i], shardThreshold)
-		if funcCounts[i] <= window {
-			// Emit whole; emitRange self-shards only if this module still OOMs.
-			emitRange(t, i, 0, funcCounts[i], funcCounts[i])
-			continue
+	// Each planned window is an independent driver sub-process, so the plan
+	// runs on a small worker pool instead of serially — this loop is most of
+	// the test's multi-minute runtime. See runPmEmitJobs for the width bound.
+	emitStart := time.Now()
+	jobs := planPmEmitWindows(funcCounts, modBytes, shardThreshold)
+	runPmEmitJobs(jobs, func(j *pmEmitJob) { emitWindow(j, j.lo, j.hi) })
+	for _, j := range jobs {
+		if j.err != nil {
+			t.Fatal(j.err)
 		}
-		// Oversized module: emit in window-sized [lo,hi) function windows; each
-		// window still self-splits further on OOM.
-		for lo := 0; lo < funcCounts[i]; lo += window {
-			hi := lo + window
-			if hi > funcCounts[i] {
-				hi = funcCounts[i]
-			}
-			emitRange(t, i, lo, hi, funcCounts[i])
+		for _, u := range j.units {
+			writeUnit(t, j.modIdx, u.tag, u.unit)
 		}
 	}
+	t.Logf("per-module emit phase: %d units in %.1fs", len(objs), time.Since(emitStart).Seconds())
 	if entryUnits == 0 {
 		t.Fatalf("no entry unit (_start) among the per-module units")
 	}
@@ -214,11 +220,13 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// 4. Link all units — no undefined symbols proves the runtime-need union is
 	// complete (the entry's single shared runtime covers every helper any module
 	// uses).
+	linkStart := time.Now()
 	binPath := filepath.Join(dir, "selfcompiler_pm")
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", binPath)...)
 	if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("link per-module whole-compiler units failed (undefined runtime symbol = needs-union gap): %v\n%s", err, lout)
 	}
+	t.Logf("link phase: %.1fs", time.Since(linkStart).Seconds())
 
 	// 5. The linked binary runs as a compiler: emit non-empty asm for a trivial
 	// program and exit 0.
@@ -299,6 +307,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// of bounds → NULL Ty → SIGSEGV in the checker). Small programs (steps 5-6) never
 	// hit it; only the whole-compiler self-compile does. Asserting it compiles + emits
 	// a real `call __fn_main` (not the no-main fallback) guards the fix.
+	selfCompileStart := time.Now()
 	var scmd *exec.Cmd
 	if len(runner) == 0 {
 		scmd = exec.Command(binPath, entry)
@@ -309,6 +318,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("per-module-built compiler crashed self-compiling the whole compiler (#3561 regression): %v", err)
 	}
+	t.Logf("whole-compiler self-compile phase: %.1fs", time.Since(selfCompileStart).Seconds())
 	if !strings.Contains(string(gen2), "call __fn_main") {
 		t.Errorf("self-compiled whole compiler missing `call __fn_main` — has_main misread (no-main fallback)")
 	}
@@ -342,6 +352,71 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 			t.Errorf("self-driven -per-module-needs missing root %q (got %q)", root, strings.TrimSpace(string(selfNeeds)))
 		}
 	}
+}
+
+// pmEmittedUnit is one emitted translation unit: the filename tag ("" for a
+// whole-module emit, "_s<lo>" for a function window) plus the asm text.
+type pmEmittedUnit struct {
+	tag  string
+	unit string
+}
+
+// pmEmitJob is one heuristic emit window of the per-module whole-compiler
+// build plan. A job may yield several units when its worker self-splits an
+// OOM-killed window; units stay ordered within the job, and jobs are written
+// out in plan order, so the final unit list is deterministic regardless of
+// worker interleaving.
+type pmEmitJob struct {
+	modIdx, lo, hi, count int
+	units                 []pmEmittedUnit
+	err                   error
+}
+
+// planPmEmitWindows expands per-module function counts + source bytes into
+// the ordered window plan (the same windows the old sequential loop emitted).
+func planPmEmitWindows(funcCounts, modBytes []int, funcBudget int) []*pmEmitJob {
+	var jobs []*pmEmitJob
+	for i := range funcCounts {
+		window := emitWindowSize(funcCounts[i], modBytes[i], funcBudget)
+		if funcCounts[i] <= window {
+			jobs = append(jobs, &pmEmitJob{modIdx: i, lo: 0, hi: funcCounts[i], count: funcCounts[i]})
+			continue
+		}
+		for lo := 0; lo < funcCounts[i]; lo += window {
+			hi := lo + window
+			if hi > funcCounts[i] {
+				hi = funcCounts[i]
+			}
+			jobs = append(jobs, &pmEmitJob{modIdx: i, lo: lo, hi: hi, count: funcCounts[i]})
+		}
+	}
+	return jobs
+}
+
+// runPmEmitJobs runs one worker per job through `run`, at most pmEmitWorkers
+// at a time. Each job is an independent driver sub-process whose cost is
+// dominated by the ~1.9 GB whole-program parse floor; 3 workers overlap those
+// serial floors (≈3x on the 4-vCPU runners) while capping concurrent RSS at
+// roughly 3 × the ~2.6 GB worst measured window — well clear of the 16 GB
+// runner and of the per-process bump-arena trap, which is unaffected by
+// concurrency (it is per-process virtual, not machine-wide). A kernel-level
+// squeeze would surface as exit 137 and be absorbed by the same
+// split-and-retry safety net as an arena OOM.
+const pmEmitWorkers = 3
+
+func runPmEmitJobs(jobs []*pmEmitJob, run func(*pmEmitJob)) {
+	sem := make(chan struct{}, pmEmitWorkers)
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j *pmEmitJob) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			run(j)
+		}(j)
+	}
+	wg.Wait()
 }
 
 // perModuleSourceBytes maps each module (manifest order) to its staged source
