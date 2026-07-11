@@ -14,33 +14,40 @@ import (
 // dead the instant the concat has read it, so emit_str_concat_reclaim frees it via
 // __fern_str_free right after. A bare-ident / field operand (an ALIAS) is excluded.
 var strConcatTempIRCases = []struct {
-	name        string
-	src         string
-	expected    int
-	mustReclaim bool
+	name     string
+	src      string
+	expected int
+	// wantReclaims: -1 = at least one __fern_str_free reclaim site must be
+	// emitted; N >= 0 = EXACTLY N sites (the ident-operand case pins 1: the
+	// fresh RESULT temp's release — 3 would mean the aliased operands were
+	// mis-freed too, the over-release this table exists to catch).
+	wantReclaims int
 }{
 	// Two literal operands: both freed after the concat. len 3.
 	{"two-literals",
 		`function main(): i32 { var r: string = "hi" + "!"; return r.len(); }`,
-		3, true},
+		3, -1},
 	// Concat chain: the intermediate (a + b) is a fresh temp freed after the outer
 	// concat consumes it; a/b/c (idents) are aliases, not freed as operands. len 6.
 	{"chain-intermediate",
 		`function main(): i32 { var a: string = "x"; var b: string = "yy"; var c: string = "zzz"; var r: string = a + b + c; return r.len(); }`,
-		6, true},
+		6, -1},
 	// Memory-safety at scale: a concat-chain temporary in a 5,000,000-iteration loop,
 	// non-escaping — the intermediate, the literal, and the final are all reclaimed,
 	// so the heap stays FLAT (a leak would explode it; a double-free would corrupt the
 	// freelist and crash / return garbage). exit 0.
 	{"chain-churn-safe",
 		`function main(): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var k: i32 = 0; while (k < 5000000) { var r: string = pre + "x" + suf; t = (t + r.len()) % 7; k = k + 1; } return 0; }`,
-		0, true},
-	// NEGATIVE: both operands are bare idents (aliases of live locals) and the concat
-	// result is consumed inline (not bound to a reclaimable local), so NOTHING is
-	// freed — an aliased operand must never be mis-freed. "ab"+"cde" = len 5.
-	{"ident-operands-not-freed",
+		0, -1},
+	// Ident operands, result consumed inline by .len(): the fresh RESULT temp
+	// is released (the #4365 value-consuming-receiver reclaim — exactly ONE
+	// __fern_str_free site), while the aliased operands a/b are never freed
+	// (a count of 3 — result + both operands — would be the over-release this
+	// case exists to catch; the exit code proves the values survive).
+	// "ab"+"cde" = len 5.
+	{"ident-operands-result-only",
 		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; return (a + b).len(); }`,
-		5, false},
+		5, 1},
 }
 
 // TestSelfHostStrConcatTempIRX86_64 compiles each case through the self-hosted
@@ -66,11 +73,11 @@ func TestSelfHostStrConcatTempIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			reclaims := countUserStrFreeReclaims(asm)
-			if tc.mustReclaim && reclaims == 0 {
+			if tc.wantReclaims < 0 && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-operand reclaim (call __fn___fern_str_free), found none — the temp leaks", tc.name)
 			}
-			if !tc.mustReclaim && reclaims != 0 {
-				t.Errorf("%s: expected NO reclaim (ident operands are aliases), found %d — an over-release / UAF risk", tc.name, reclaims)
+			if tc.wantReclaims >= 0 && reclaims != tc.wantReclaims {
+				t.Errorf("%s: expected exactly %d reclaim site(s), found %d — extra sites mean an aliased operand was mis-freed (over-release / UAF risk)", tc.name, tc.wantReclaims, reclaims)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

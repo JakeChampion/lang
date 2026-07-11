@@ -136,15 +136,15 @@ function main(): i32 {
 // sibling of the discarded-statement concat (#4365; native's
 // rc_heap_bump_len_receiver arc). The `.len()` intercept stashes the fresh
 // temp box in an unmarked scratch, reads the length, then releases the box
-// with the rc-aware __fern_str_free. A 200-iteration warmup settles the
-// freelist before the measured window so the fixpoint compares cleanly.
+// with the rc-aware __fern_str_free. No warmup: the fixpoint harness requires
+// a NON-ZERO bounded high-water (a zero reads as "nothing measured"), and the
+// cold first iteration allocates exactly one concat box before the freelist
+// recycles it — the same small constant at every N.
 func stmtTempLenReceiverBumpSrc(n string) string {
 	return `function main(): i32 {
     var s1: string = "ab";
     var s2: string = "cd";
     var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { acc = (acc + (s1 + s2).len()) % 251; w = w + 1; }
     var before: i32 = __heap_bump_bytes();
     var i: i32 = 0;
     while (i < ` + n + `) { acc = (acc + (s1 + s2).len()) % 251; i = i + 1; }
