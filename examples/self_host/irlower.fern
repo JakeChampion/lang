@@ -9685,6 +9685,36 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
                 parser.ExprTuple(dte) => {
                     if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                    else if (tuple_lit_rc_reclaimable(es.value)) {
+                        // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);`,
+                        // #4365): every element scalar-shaped or a DIRECT array
+                        // literal — the box sole-owns each fresh array buffer, so
+                        // deep-drop exactly like the loop-rebind sibling
+                        // (emit_tuple_deep_reinit_store): dec each ExprArray
+                        // position, then the box. A bare-ident pointer element
+                        // aliases a live local and is skipped (leak-safe), same
+                        // admission as the TUPRC: class. The scratch is never
+                        // mark_arr'd, so the exit sweep skips it.
+                        var dtt: string = "$tldrop" + util.i32_to_string(se.locals.len());
+                        se = se.add_local(dtt);
+                        var dtslot: i32 = se.slot_of(dtt);
+                        se = se.emit(ir.op_store_local(dtslot));                     // stash box
+                        var dtk: i32 = 0;
+                        while (dtk < dte.elements.len()) {
+                            match (dte.elements[dtk]) {
+                                parser.ExprArray(_) => {
+                                    se = se.emit(ir.op_load_local(dtslot));                  // box
+                                    se = se.emit(ir.op_tuple_get(dtk));                      // element (array ptr)
+                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));     // free the fresh buffer
+                                    se = se.emit(ir.op_drop());
+                                },
+                                _ => {}
+                            }
+                            dtk = dtk + 1;
+                        }
+                        se = se.emit(ir.op_load_local(dtslot));                      // box again
+                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));         // free the box
+                    }
                 },
                 parser.ExprStructLit(dse) => {
                     if (!dse.has_base && struct_lit_all_scalar(s.structs, dse.type_name)) {
@@ -9778,6 +9808,35 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // blind, so the scalar elements ride the freed buffer
                                 // and nothing can dangle.
                                 se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                            } else {
+                                // A discarded call to a TUPLE-fresh-ret free function
+                                // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
+                                // tuple temps): every return is a direct tuple literal,
+                                // so the result is a fresh sole-owner box. Deep-drop
+                                // the '1'-flagged positions (a fresh scalar-element
+                                // array buffer in EVERY return — tuple_ret_arrfree_
+                                // flags) then free the box; '0' positions (scalars,
+                                // aliased idents, pointer elements) are left to their
+                                // owners / the safe-leak floor.
+                                var dtrf: string = discarded_tuple_ret_flags(s, dcid.name);
+                                if (dtrf.len() > 0) {
+                                    var tcd: string = "$tcdrop" + util.i32_to_string(se.locals.len());
+                                    se = se.add_local(tcd);
+                                    var tcslot: i32 = se.slot_of(tcd);
+                                    se = se.emit(ir.op_store_local(tcslot));                     // stash box
+                                    var tck: i32 = 0;
+                                    while (tck < dtrf.len()) {
+                                        if (dtrf[tck] == 49) {                                   // 49 = '1'
+                                            se = se.emit(ir.op_load_local(tcslot));              // box
+                                            se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
+                                            se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); // free the fresh buffer
+                                            se = se.emit(ir.op_drop());
+                                        }
+                                        tck = tck + 1;
+                                    }
+                                    se = se.emit(ir.op_load_local(tcslot));                      // box again
+                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));         // free the box
+                                }
                             }
                         },
                         _ => {}
@@ -15357,6 +15416,75 @@ function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
     return false;
 }
 
+// discarded_call_callees_stmt collects the bare-ident CALLEE names of DISCARDED
+// call statements (`mk(i);` — a StmtExpr whose value is a direct free call),
+// recursing into control-flow bodies. Only these callees need a "TUPRET:" seed.
+function discarded_call_callees_stmt(st: parser.Stmt, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (st) {
+        parser.StmtExpr(e) => {
+            match (e.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) { parser.ExprIdent(cid) => { a = push_str_unique(a, cid.name); }, _ => {} }
+                },
+                _ => {}
+            }
+        },
+        parser.StmtDefer(d) => { return discarded_call_callees_stmt(d.action, a); },
+        parser.StmtIf(f) => {
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { a = discarded_call_callees_stmt(f.then_body[ti], a); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { a = discarded_call_callees_stmt(f.else_body[ei], a); ei = ei + 1; }
+        },
+        parser.StmtWhile(w) => {
+            var i: i32 = 0;
+            while (i < w.body.len()) { a = discarded_call_callees_stmt(w.body[i], a); i = i + 1; }
+        },
+        parser.StmtFor(fo) => {
+            var i: i32 = 0;
+            while (i < fo.body.len()) { a = discarded_call_callees_stmt(fo.body[i], a); i = i + 1; }
+        },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { a = discarded_call_callees_stmt(m.arms[ai].body[bi], a); bi = bi + 1; }
+                ai = ai + 1;
+            }
+        },
+        _ => {}
+    }
+    return a;
+}
+
+// discarded_tuple_ret_flags: the "TUPRET:<callee>|<flags>" entry's flags for a
+// discarded call to `callee`, "" when none. Flag k = '1' means tuple element k
+// is a fresh scalar-element array buffer the StmtExpr deep-drop releases before
+// the box. Char-compare lookup like call_arg_borrowable (runs per discarded
+// call statement — rare — so the one flags slice is cheap).
+function discarded_tuple_ret_flags(s: LowerState, callee: string): string {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var ent: string = s.reclaimable_names[i];
+        // "TUPRET:" prefix (84 85 80 82 69 84 58), then <callee>, then '|' (124).
+        if (ent.len() > 8 + callee.len()
+            && ent[0] == 84 && ent[1] == 85 && ent[2] == 80 && ent[3] == 82
+            && ent[4] == 69 && ent[5] == 84 && ent[6] == 58
+            && ent[7 + callee.len()] == 124) {
+            var m: boolean = true;
+            var k: i32 = 0;
+            while (k < callee.len()) {
+                if (ent[7 + k] != callee[k]) { m = false; k = callee.len(); }
+                else { k = k + 1; }
+            }
+            if (m) { return ent[7 + callee.len() + 1 : ent.len()]; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // lit_arg_callees_expr / _stmt collect the bare-ident CALLEE names of calls
 // carrying at least one direct string-LITERAL or fresh-anonymous-temp-shaped
 // argument (a concat / producer / copying method — the syntactic half of
@@ -15763,10 +15891,98 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                 && funcs[k].receiver_type.len() == 0
                 && body_has_return(funcs[k].body) && !body_has_nonfresh_tuple_return(funcs[k].body)) {
             out = out.append(funcs[k].name);
+            // #4365 (discarded rc-field tuple temps): also record the per-position
+            // deep-drop flags as an "ARRF:<name>|<flags>" entry riding the same
+            // list (a ':' can't appear in an identifier, so these never collide
+            // with the bare-name membership checks above). lower_func re-seeds
+            // them as "TUPRET:" reclaim entries for callees the body DISCARDS,
+            // and the StmtExpr lowering deep-drops flagged positions.
+            var arrf: string = tuple_ret_arrfree_flags(funcs[k]);
+            if (arrf.len() > 0) { out = out.append("ARRF:" + funcs[k].name + "|" + arrf); }
         }
         k = k + 1;
     }
     return out;
+}
+
+// collect_tuple_ret_shapes: one shape string per `return (…)` tuple literal in
+// the body — 'a' at position k for a direct ExprArray element (a fresh buffer
+// the returned box sole-owns), 's' for anything else. Feeds the ARRF: flags.
+function collect_tuple_ret_shapes(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprTuple(tl) => {
+                        var sh: string = "";
+                        var k: i32 = 0;
+                        while (k < tl.elements.len()) {
+                            match (tl.elements[k]) {
+                                parser.ExprArray(_) => { sh = sh + "a"; },
+                                _ => { sh = sh + "s"; }
+                            }
+                            k = k + 1;
+                        }
+                        a = a.append(sh);
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = collect_tuple_ret_shapes(f.then_body, a); a = collect_tuple_ret_shapes(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_tuple_ret_shapes(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_tuple_ret_shapes(fo.body, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_tuple_ret_shapes(m.arms[ai].body, a); ai = ai + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// tag_is_scalar_elem_array: a single-level array of by-value scalars
+// ("i32[]" / "u32[]" / "boolean[]" / "i64[]" / "u64[]" / "f64[]") — a buffer
+// one rc-guarded dec fully reclaims (elements ride the freed buffer). A
+// nested "[][]" or pointer-element array (string[]) is NOT (its elements
+// would leak on a shallow free — those positions stay '0' / leak-mode).
+function tag_is_scalar_elem_array(tag: string): boolean {
+    var n: i32 = tag.len();
+    if (n < 4 || tag[n - 2 : n] != "[]") { return false; }
+    var base: string = tag[0 : n - 2];
+    return base == "i32" || base == "u32" || base == "boolean" || base == "i64" || base == "u64" || base == "f64";
+}
+
+// tuple_ret_arrfree_flags: the ARRF: per-position flags for a tuple-fresh-ret
+// function — flag k is '1' iff EVERY return literal has a direct array literal
+// at k (fresh, so the discarded box sole-owns it — an IDENT there in any
+// return aliases a live local and keeps the position '0') AND the return-type
+// annotation types k a scalar-element array. Any 8-byte SCALAR element (i64 /
+// u64 / f64) declines the whole entry: op_tuple_get is offset-uniform, and a
+// wide scalar would shift the later positions on wasm's 4-byte slots. Pointer
+// elements (string / struct / nested tuple / Option) ride uniform slots, so
+// they are safe as '0' (leak-mode) positions — only their own boxes leak,
+// exactly today's floor.
+function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
+    var shapes: string[] = collect_tuple_ret_shapes(fn.body, []);
+    if (shapes.len() == 0) { return ""; }
+    var n: i32 = shapes[0].len();
+    var si: i32 = 1;
+    while (si < shapes.len()) { if (shapes[si].len() != n) { return ""; } si = si + 1; }
+    if (n == 0) { return ""; }
+    var flags: string = "";
+    var k: i32 = 0;
+    while (k < n) {
+        var tag: string = tuple_type_elem_tag(fn.ret_type, k);
+        if (tag == "" || tag == "i64" || tag == "u64" || tag == "f64" || tag == "f32") { return ""; }
+        var all_arr: boolean = true;
+        var sj: i32 = 0;
+        while (sj < shapes.len()) { if (shapes[sj][k] != 97) { all_arr = false; } sj = sj + 1; }   // 97 = 'a'
+        if (all_arr && tag_is_scalar_elem_array(tag)) { flags = flags + "1"; }
+        else { flags = flags + "0"; }
+        k = k + 1;
+    }
+    return flags;
 }
 
 // collect_fresh_tuple_ret_call_names: tuple LOCALS bound from a tuple-fresh-ret
@@ -22936,6 +23152,27 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             while (bpbar < bpe.len() && bpe[bpbar] != 124) { bpbar = bpbar + 1; }   // 124 = '|'
             if (util.index_of_str(lacs, bpe[0:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + bpe); }
             bpk = bpk + 1;
+        }
+    }
+    // #4365 (discarded rc-field tuple temps): seed "TUPRET:<name>|<flags>" from
+    // the tuple_fresh_ret_fns "ARRF:" entries, but ONLY for callees this body
+    // DISCARDS as a bare call statement (`mk(i);`) — the same narrow-seeding
+    // rule as BORROW: above, so the arena stays flat. The StmtExpr lowering
+    // consults the entry (discarded_tuple_ret_flags) to deep-drop the flagged
+    // array positions and free the box.
+    var dccs: string[] = [];
+    var dcci: i32 = 0;
+    while (dcci < fn.body.len()) { dccs = discarded_call_callees_stmt(fn.body[dcci], dccs); dcci = dcci + 1; }
+    if (dccs.len() > 0) {
+        var tfk: i32 = 0;
+        while (tfk < tuple_fresh_ret_fns.len()) {
+            var tfe: string = tuple_fresh_ret_fns[tfk];
+            if (tfe.len() > 6 && tfe[0:5] == "ARRF:") {
+                var tfbar: i32 = 5;
+                while (tfbar < tfe.len() && tfe[tfbar] != 124) { tfbar = tfbar + 1; }   // 124 = '|'
+                if (util.index_of_str(dccs, tfe[5:tfbar]) >= 0) { reclaim = reclaim.append("TUPRET:" + tfe[5:tfe.len()]); }
+            }
+            tfk = tfk + 1;
         }
     }
     // #4334: pick up the parse-level defer pass's `?`-edge cleanup markers —
