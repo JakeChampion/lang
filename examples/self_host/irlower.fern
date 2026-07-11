@@ -4370,10 +4370,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // the hot per-field path below reads only scalars, never re-reading a
             // field-value expression (which would taint lower_expr's locals → the
             // documented emit runaway). slit_own[found] is the field's ownership;
-            // slit_reclaim gates the string-field retain on the struct being
-            // reclaimable at all (has an rc-array / nested-struct field — the k_str
-            // drop only fires for those; a string-only struct is left leak-only to
-            // avoid broadening slot_is_reclaimable_struct).
+            // slit_reclaim gates the string-field retain on the struct routing
+            // through the field-reclaim/struct-drop path at all (rc-array /
+            // nested-struct / enum field, or a STRFLDOK-admitted string-fielded
+            // type — the same struct_routes_field_reclaim predicate the
+            // consume-rebind AND the exit sweep's emit_struct_field_drops use,
+            // so the k_str decs those emit stay balanced with this retain).
             var slit_own: i32[] = field_ownerships(slit, s);
             // #4355 slice 3: the retain widens in lockstep with the reclaim
             // routing — a STRFLDOK-admitted string-only struct now retains
@@ -13258,7 +13260,16 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var sty: string = s.struct_type_of_slot(slot);
     if (sty.len() == 0) { return s; }
-    if (!struct_has_reclaim_array_field(s.structs, sty)) { return s; }
+    // Route on the SAME predicate the construction-side retain (slit_reclaim in
+    // the ExprStructLit lowering) uses: rc-array / nested-struct / enum field,
+    // OR a STRFLDOK-admitted string-fielded type (#4355 slice 3). Before this,
+    // a string-ONLY struct local (`P { s: string, n: i32 }`) fell through to the
+    // box-only dec at scope exit and its fresh string field leaked per bind —
+    // even though __struct_drop_<T>'s k_str arm (all three backends) frees it
+    // rc-aware, and the retain already inc'd non-fresh string fields under this
+    // exact predicate (so the k_str dec is balanced by construction). Native
+    // reclaims this shape; the sweep was the last unwidened consumer.
+    if (!s.struct_routes_field_reclaim(sty)) { return s; }
     var st: LowerState = s.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
