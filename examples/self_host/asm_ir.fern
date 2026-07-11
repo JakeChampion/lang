@@ -921,7 +921,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r10\n");
     s = s.write("    pushq %r11\n");
     s = s.write("    movl $0x10000000, %edi\n");          // addr hint
-    s = s.write("    movl $4278190080, %esi\n");          // length = 0xFF000000 (u32 zero-extend)
+    s = s.write("    movabs $8589934592, %rsi\n");        // length = 0x200000000, 8 GiB (64-bit imm; lockstep with asm.fern + native x86-64 — see heap_size there)
     s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
     s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
     s = s.write("    movq $-1, %r8\n");                   // fd
@@ -932,7 +932,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jl .Lalloc_oom\n");
     s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
     s = s.write("    movq %rax, __fern_heap_base(%rip)\n"); // record arena base (freeable-range lower bound)
-    s = s.write("    movl $4278190080, %ecx\n");          // heap_size (u32)
+    s = s.write("    movabs $8589934592, %rcx\n");        // heap_size (64-bit imm)
     s = s.write("    addq %rax, %rcx\n");                 // %rcx = base + heap_size (END)
     s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
     s = s.write("    popq %r11\n");
@@ -1220,6 +1220,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fn___fern_arr_dec (rc-guarded: a shared inner decs, null no-ops).
     // Called ONLY on compile-time-proven fresh, non-escaping arr-of-arr
     // locals with fresh array-literal elements (slot_is_reclaimable_arrarr).
+    // Gated on need (seeded at the helper-call emit): a binary without
+    // arr-of-arr reclaim must not carry these bodies — the strarrarr one's
+    // inner `call __fn___fern_str_arr_free` text trips the negative asm-grep
+    // contracts (strarr-elem-alias-excluded) in every unrelated program.
+    if (s.has_need("arrarr_free")) {
     s = s.write("__fn___fern_arrarr_free:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // arr
     s = s.write("    testq %rax, %rax\n");
@@ -1271,10 +1276,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Laaf_ret:\n");
     s = s.write("    ret\n");
+    }
     // __fern_strarrarr_free(arr) — STRING-array-of-arrays reclaim (#4355
     // slice 9): each element is a string[] INNER buffer released fully by
     // __fn___fern_str_arr_free (its string boxes + the inner buffer, all
-    // rc-guarded). Same shell as __fn___fern_arrarr_free above.
+    // rc-guarded). Same shell as __fn___fern_arrarr_free above; same
+    // need-gating rationale.
+    if (s.has_need("strarrarr_free")) {
     s = s.write("__fn___fern_strarrarr_free:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // arr
     s = s.write("    testq %rax, %rax\n");
@@ -1326,6 +1334,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Lssaf_ret:\n");
     s = s.write("    ret\n");
+    }
     // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
     // map-local slice). The self-host asm map box is a RAW 16-byte __fern_alloc(16)
     // {keys@0, vals@8}; keys/vals are rc-headered __fern_arr_box buffers. Frees
@@ -4450,7 +4459,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // that case to report 0 (matching native's __fern_heap_bump_bytes).
             s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");   // cursor (0 if uninit)
             s = s.write("    movq __fern_heap_end(%rip), %rcx\n");   // arena end = base + heap_size (0 if uninit)
-            s = s.write("    movabs $4278190080, %rdx\n");           // heap_size (0xFF000000)
+            s = s.write("    movabs $8589934592, %rdx\n");           // heap_size (0x200000000)
             s = s.write("    subq %rdx, %rcx\n");                    // %rcx = base = end − heap_size
             s = s.write("    movq %rax, %rdx\n");
             s = s.write("    subq %rcx, %rdx\n");                    // ptr − base
@@ -4775,6 +4784,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
             // chr allocates its 1-char box, so pull in the heap runtime too.
             if (o.str == "__fern_chr") { s = s.need("heap").need("chr"); }
+            // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
+            // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
+            // must not carry them, since the strarrarr body's inner
+            // `call __fn___fern_str_arr_free` text would trip the negative
+            // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
+            // through the freelist, so they need the heap runtime.
+            if (o.str == "__fern_arrarr_free") { s = s.need("heap").need("arrarr_free"); }
+            if (o.str == "__fern_strarrarr_free") { s = s.need("heap").need("strarrarr_free"); }
             // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
             // emits exactly the per-type bodies actually called; needs the heap
             // runtime (the freelist + __fn___fern_arr_dec it frees through).
@@ -5661,14 +5678,14 @@ pub function all_runtime_need_roots(): string[] {
     return [
         "alloc_u8", "args", "arr_concat", "arr_i32_index_of", "arr_i32_min_max",
         "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_reverse", "arr_slice",
-        "arr_str_index_of", "arr_str_join", "chr", "env", "eprint", "heap", "i32_gcd",
+        "arr_str_index_of", "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         "print_int", "putchar", "random_bytes", "random_i32", "read_file",
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
-        "str_split", "str_to_i32", "str_trim", "strbuf"
+        "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf"
     ];
 }
 

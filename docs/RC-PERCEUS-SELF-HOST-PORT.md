@@ -4045,3 +4045,36 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   self-run. Remaining nearby: struct[]-of-arrays and deeper nesting
   (string[][][]) keep the sound leak; arr-of-arr via call results
   (`var g = mk()`) needs an OPTFRESH-style fn scan.
+
+- 2026-07-11: **Slice-9 CI follow-up — two real fixes, one big diagnosis.**
+  (1) HELPER BODIES NEED-GATED on all three backends. The first cut emitted
+  __fn___fern_arrarr_free / __fn___fern_strarrarr_free unconditionally in
+  asm_ir's emit_ir_runtime (+ the asm_arm64 heap block, + wasm's
+  heap_alloc_helpers), so EVERY binary carried the strarrarr body's inner
+  `call __fn___fern_str_arr_free` / `bl …` / `(call $__fern_arr_dec_ptr)`
+  text — tripping the shipped negative asm-grep contracts
+  (strarr-elem-alias-excluded: "the element-hazard walk failed to exclude
+  an aliased element") on programs with no arr-of-arr reclaim at all.
+  Now: x86 seeds need("arrarr_free")/need("strarrarr_free") at the
+  helper-call emit (the chr pattern) and the bodies sit behind has_need;
+  arm64 mirrors it (seeded in asm_arm64_ir, gated in asm_arm64's runtime
+  writer); wasm moves $__fern_arr_dec_ptr2 out of heap_alloc_helpers into
+  arr_dec_ptr2_func gated on the new module_calls_strarrarr_free scan.
+  Both new roots are in all_runtime_need_roots so per-module entry units
+  still cover library callers. (2) X86 BUMP ARENA 3.875 GiB → 8 GiB
+  (asm.fern heap_size / asm_ir mmap + heap_bump_bytes / native x86-64
+  heapBytes, in lockstep; mmap length now a movabs 64-bit imm — the old
+  movl u32 form was the sub-4 GiB ceiling). DIAGNOSIS worth remembering:
+  the "shard8 OOM / runner preemption" CI failures on the slice-9 PR were
+  NEITHER. LoadFixpoint stage-2 + Stage2FixedPoint mmc2 exited 137 because
+  __fern_alloc's bounds check EXITS 137 BY DESIGN on arena exhaustion —
+  it reads exactly like a SIGKILL/OOM-kill but is the Fern runtime's own
+  trap. Measured: the merge-base self-host-built gen1 self-compile peaked
+  at 3944 MB of the 3968 MB arena (99.4% full — every RC slice has been
+  creeping toward this wall); slice 9's additions tipped it over. The
+  native-Go-built stage-1 compiles the same source at ~2.9 GiB; the
+  self-host-built binary allocates ~1 GiB more garbage for the same work
+  (emit-quality gap). With 8 GiB: gen1 self-compile exits 0 at 3961 MB
+  peak, gen1==gen2 byte-identical. The alloc-trap e2e grew 100000 →
+  150000 iterations (~10.5 GiB cumulative) so it still overflows the
+  bigger arena.

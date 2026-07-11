@@ -241,6 +241,17 @@ per-type struct-drop / field-reclaim slices already landed).
   container with **no swap** this trips the kernel OOM-killer: the build
   dies with `signal: killed` / **exit 137** (reads like a test failure but
   is an OOM — not a real failure) and can even bounce the whole container.
+  **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
+  OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
+  the fixed bump arena (x86 8 GiB, arm64 3.5 GiB) is exhausted — a REAL
+  failure, reproducible locally, that masquerades as SIGKILL. The stage-2
+  self-compile (gen1/mmc2 in the fixpoint tests) is the usual victim: the
+  self-host-built compiler's live set grows with every compiler-source
+  addition, and when it hits the arena wall the test "OOMs" on CI with no
+  kernel OOM anywhere. Before writing off a 137 as infra, check WHICH
+  process died: `as`/gcc during a build = OOM (rerun/swap); a Fern binary
+  mid-run = arena exhaustion (measure with /proc RSS vs the arena size —
+  see docs/RC-PERCEUS-SELF-HOST-PORT.md, 2026-07-11 entry).
   It is *total-RAM* pressure, not a cgroup cap (`memory.limit_in_bytes` is
   effectively unlimited), so swap fixes it. Re-create swap each session if
   self-host builds start OOM-ing (it's ephemeral — a container restart

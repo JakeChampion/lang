@@ -178,6 +178,10 @@ function main(): i32 {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
         }
+        // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
+        // when the module lowers a __fern_strarrarr_free call — see
+        // wasm.arr_dec_ptr2_func for why it must not ride along unconditionally.
+        if (wasm_ir.module_calls_strarrarr_free(ir_cache)) { o = o + wasm.arr_dec_ptr2_func(wasm_ir.heap_base_for(ir_cache)); }
         // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
         // reset/append/take. Heap-backed (str_box / alloc), emitted above.
         if (wasm_ir.module_uses_strbuf(ir_cache)) { o = o + wasm.strbuf_helpers(); }

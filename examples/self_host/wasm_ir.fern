@@ -665,6 +665,26 @@ pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
     return false;
 }
 
+// module_calls_strarrarr_free reports whether any function lowers a
+// __fern_strarrarr_free call (string[][] whole-structure reclaim, #4355
+// slice 9) — so wasm.arr_dec_ptr2_func is emitted. Kept OUT of
+// heap_alloc_helpers: the $__fern_arr_dec_ptr2 body contains a
+// `call $__fern_arr_dec_ptr`, which would trip the negative WAT-grep
+// contracts (strarr-elem-alias-excluded) in every allocating module.
+pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_strarrarr_free") { return true; }  // call_direct
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // module_uses_random reports whether the module calls random_bytes or random_i32
 // (so the wasi random_get import is emitted).
 pub function module_uses_random(cache: irlower.LowerResult[]): boolean {

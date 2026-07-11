@@ -6790,12 +6790,23 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "        (br $adp_lp))))) \n";
     o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
-    // $__fern_arr_dec_ptr2(a) -> a: the TWO-LEVEL sibling (#4355 slice 9 —
-    // string[][] / arr-of-arr-of-pointers reclaim): identical shell, but each
-    // element is itself a POINTER-element array released fully by
-    // $__fern_arr_dec_ptr (its elements — wasm strings are single inline
-    // blocks — then its buffer), before the outer buffer frees. Same rc==1
-    // gate, so a shared outer just decs and elements live on.
+    return o;
+}
+
+// arr_dec_ptr2_func emits $__fern_arr_dec_ptr2(a) -> a: the TWO-LEVEL sibling
+// of $__fern_arr_dec_ptr (#4355 slice 9 — string[][] / arr-of-arr-of-pointers
+// reclaim): identical shell, but each element is itself a POINTER-element
+// array released fully by $__fern_arr_dec_ptr (its elements — wasm strings are
+// single inline blocks — then its buffer), before the outer buffer frees. Same
+// rc==1 gate, so a shared outer just decs and elements live on. Emitted
+// SEPARATELY from heap_alloc_helpers, gated on the module actually lowering a
+// __fern_strarrarr_free call (wasm_ir.module_calls_strarrarr_free): its body's
+// inner `call $__fern_arr_dec_ptr` text would otherwise appear in every
+// allocating module and trip the negative WAT-grep contracts
+// (strarr-elem-alias-excluded).
+pub function arr_dec_ptr2_func(heap_base: i32): string {
+    var hb: string = util.i32_to_string(heap_base);
+    var o: string = "";
     o = o + "  (func $__fern_arr_dec_ptr2 (param $a i32) (result i32)\n";
     o = o + "    (local $i i32) (local $n i32)\n";
     o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
@@ -12312,6 +12323,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
             ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
         }
+        // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
+        // when the module lowers a __fern_strarrarr_free call — see
+        // arr_dec_ptr2_func for why it must not ride along unconditionally.
+        if (wasm_ir.module_calls_strarrarr_free(ir_cache)) { ir_out = ir_out + arr_dec_ptr2_func(wasm_ir.heap_base_for(ir_cache)); }
         // $__fern_strbuf_* (global string-builder): growable bump-heap buffer +
         // reset/append/take. Heap-backed (str_box / alloc), emitted above.
         if (wasm_ir.module_uses_strbuf(ir_cache)) { ir_out = ir_out + strbuf_helpers(); }
