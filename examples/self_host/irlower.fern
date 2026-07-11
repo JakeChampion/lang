@@ -6220,17 +6220,24 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             sc = lower_i64(c.args[ai], sc);
                         } else {
                             sc = lower_expr(c.args[ai], sc);
-                            // #4355 slice 6: a string-LITERAL arg allocates a fresh
-                            // 16-byte rc-headered box per evaluation (const_str; the
-                            // .rodata data is heap-guard-skipped). At a BORROWABLE
-                            // param position of a known free function the callee
-                            // cannot retain or return it, so the box is dead the
-                            // moment the call returns: stash it (store+reload keeps
-                            // the arg in place) and free it right after the call —
-                            // the call-arg sibling of the #2649 concat-operand
-                            // anonymous-temp reclaim.
+                            // #4355 slices 6+7: a string-LITERAL arg allocates a
+                            // fresh 16-byte rc-headered box per evaluation
+                            // (const_str; the .rodata data is heap-guard-skipped),
+                            // and a fresh ANONYMOUS string temp arg — a concat
+                            // `f(a + "x")`, a producer `f(chr(n))`, a copying
+                            // method `f(s.to_upper())` (is_fresh_str_temp, which
+                            // type-gates via expr_is_str and excludes aliasing
+                            // shapes: bare idents / fields / .trim() views) —
+                            // allocates a fresh buffer + box nothing frees. At a
+                            // BORROWABLE param position of a known free function
+                            // the callee cannot retain or return it, so the box is
+                            // dead the moment the call returns: stash it
+                            // (store+reload keeps the arg in place) and free it
+                            // right after the call — the call-arg sibling of the
+                            // #2649 concat-operand anonymous-temp reclaim.
                             var lit_arg: boolean = false;
                             match (c.args[ai]) { parser.ExprString(_) => { lit_arg = true; }, _ => {} }
+                            if (!lit_arg && sc.ok) { lit_arg = is_fresh_str_temp(c.args[ai], sc); }
                             if (lit_arg && sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
                                 var latn: string = "$lat" + util.i32_to_string(sc.locals.len());
                                 sc = sc.add_local(latn);
@@ -15129,8 +15136,10 @@ function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
 }
 
 // lit_arg_callees_expr / _stmt collect the bare-ident CALLEE names of calls
-// carrying at least one direct string-LITERAL argument — the only callees
-// whose "BORROW:" entry lower_func needs to seed for the literal-arg box
+// carrying at least one direct string-LITERAL or fresh-anonymous-temp-shaped
+// argument (a concat / producer / copying method — the syntactic half of
+// is_fresh_str_temp; the type gate runs at the lowering) — the only callees
+// whose "BORROW:" entry lower_func needs to seed for the fresh-arg box
 // reclaim. Mirrors astwalk.collect_idents_expr's shape coverage; lambda
 // bodies recurse directly (over-collection just seeds a harmless extra
 // entry).
@@ -15143,7 +15152,9 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                     var has_lit: boolean = false;
                     var li: i32 = 0;
                     while (li < c.args.len()) {
-                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, _ => {} }
+                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, _ => {
+                            if (str_local_binding_is_fresh(c.args[li])) { has_lit = true; }
+                        } }
                         li = li + 1;
                     }
                     if (has_lit) { a = push_str_unique(a, cid.name); }
