@@ -38,6 +38,28 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
+	// userCodeCalls reports whether a `call <helper>` appears inside a USER
+	// function — i.e. under a `__fn_<name>:` label that is not itself a
+	// runtime helper (`__fn___fern_*`). The runtime block emits helper
+	// BODIES unconditionally, and since #4355 slice 9 the
+	// __fn___fern_strarrarr_free body itself contains a
+	// `call __fn___fern_str_arr_free` (its per-element inner walk), so a
+	// naive whole-asm substring match reads every compile as "admitted".
+	// Only a call site in user code is a reclaim-set admission.
+	userCodeCalls := func(asm, helper string) bool {
+		inUser := false
+		for _, ln := range strings.Split(asm, "\n") {
+			if strings.HasPrefix(ln, "__fn_") && strings.HasSuffix(ln, ":") {
+				inUser = !strings.HasPrefix(ln, "__fn___fern_")
+				continue
+			}
+			if inUser && strings.Contains(ln, "call "+helper) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// wantCall: "yes" asserts the element-walk call IS emitted (the array was
 	// admitted to the SARR set); "no" asserts it is NOT (the hazard walk
 	// excluded it — the shallow dec still runs).
@@ -47,7 +69,7 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		hasCall := strings.Contains(string(asm), "call __fn___fern_str_arr_free")
+		hasCall := userCodeCalls(string(asm), "__fn___fern_str_arr_free")
 		if wantCall == "yes" && !hasCall {
 			t.Fatalf("%s: emitted asm has no __fn___fern_str_arr_free call — the string[] was not admitted to the SARR reclaim set", name)
 		}

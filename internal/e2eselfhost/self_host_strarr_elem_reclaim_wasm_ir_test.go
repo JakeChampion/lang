@@ -77,7 +77,31 @@ function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { re
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			hasCall := strings.Contains(string(wat), "call $__fern_arr_dec_ptr")
+			// Count a $__fern_arr_dec_ptr call only inside a USER function:
+			// since #4355 slice 9 the runtime's $__fern_arr_dec_ptr2 body
+			// itself calls $__fern_arr_dec_ptr per inner (and the name is a
+			// substring match too), so a whole-WAT Contains misreads every
+			// compile as "admitted". Track the enclosing (func $name ...)
+			// and skip runtime ($__*) bodies; require a non-ident char after
+			// the helper name so $__fern_arr_dec_ptr2 never matches.
+			hasCall := false
+			inUser := false
+			for _, ln := range strings.Split(string(wat), "\n") {
+				if i := strings.Index(ln, "(func $"); i >= 0 {
+					inUser = !strings.HasPrefix(ln[i+len("(func $"):], "__")
+					continue
+				}
+				if !inUser {
+					continue
+				}
+				if j := strings.Index(ln, "call $__fern_arr_dec_ptr"); j >= 0 {
+					rest := ln[j+len("call $__fern_arr_dec_ptr"):]
+					if rest == "" || (rest[0] != '2' && rest[0] != '_') {
+						hasCall = true
+						break
+					}
+				}
+			}
 			if tc.wantCall == "yes" && !hasCall {
 				t.Fatalf("%s: emitted WAT has no $__fern_arr_dec_ptr call — the string[] was not admitted to the SARR reclaim set", tc.name)
 			}
