@@ -49,15 +49,18 @@ func TestSelfHostDynArrReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// MIXED literal elements (prim + string + scalar-only struct), RECLAIM,
-	// BOUNDED HIGH-WATER: every element box + the string's inner box + the
-	// buffer free per call — a second 3000-iteration churn stays flat.
+	// MIXED literal elements (prim + string + scalar-only struct + a variant
+	// construction, #4351 slice 4), RECLAIM, BOUNDED HIGH-WATER: every element
+	// box + the string's inner box + the buffer free per call — a second
+	// 3000-iteration churn stays flat.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
+enum Op { Add(i32), Neg }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
+function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }, Add(7)]; return xs[0].show() + xs[1].show() + xs[2].show() + xs[3].show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-mixed-reclaim-flat", 0)
