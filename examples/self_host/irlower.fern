@@ -9700,6 +9700,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 } else {
                                     se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
                                 }
+                            } else if (util.index_of_str(s.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0) {
+                                // A discarded call to an ARRAY-fresh-ret free function
+                                // (`mk(i);`, every return a direct scalar-element array
+                                // literal — the "ARR:" entries of the strict-fresh
+                                // registry, #4365): the returned rc=1 buffer leaks if
+                                // merely dropped (native bounds this shape). Release it
+                                // with the shallow rc-guarded __fern_rc_dec — element-
+                                // blind, so the scalar elements ride the freed buffer
+                                // and nothing can dangle.
+                                se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
                             }
                         },
                         _ => {}
@@ -17069,6 +17079,34 @@ function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.St
     }
     return false;
 }
+// body_has_nonfresh_arrlit_return: any return whose value is NOT a direct,
+// non-empty array LITERAL. The array sibling of body_has_nonstrictfresh_return
+// / body_has_nonfresh_tuple_return: a literal in return position constructs a
+// fresh rc-headered box the callee never binds, so the CALLER'S shallow box
+// dec (which never reads elements) is balanced against it. A bare `return out`
+// of a local declines (could alias / be swept by the callee).
+function body_has_nonfresh_arrlit_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var fresh: boolean = false;
+                match (r.value) {
+                    parser.ExprArray(ae) => { fresh = ae.elements.len() > 0; },
+                    _ => {}
+                }
+                if (!fresh) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrlit_return(f.then_body) || body_has_nonfresh_arrlit_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrlit_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrlit_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrlit_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -17078,6 +17116,20 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);
+        }
+        // "ARR:<name>" entries (#4365): FREE functions returning a SCALAR-element
+        // array (is_leaksafe_array_field ret type) whose every return is a direct
+        // array literal. Rides this registry (prefix-multiplexed, the reclaimable_
+        // names convention) so the discarded-call reclaim in lower_stmt reads it
+        // off LowerState with no new threading; every other consumer looks up bare
+        // names / "<Base>.<method>" keys, which an "ARR:"-prefixed entry can never
+        // match. Consumed ONLY by the discarded `mk(i);` statement reclaim — the
+        // caller-side shallow __fern_rc_dec of the returned rc=1 buffer (native's
+        // ownedCallResultType arc; the box is fresh-by-construction in return
+        // position, so the dec is balanced and element-blind).
+        if (funcs[k].receiver_type.len() == 0 && is_leaksafe_array_field(funcs[k].ret_type)
+                && body_has_return(funcs[k].body) && !body_has_nonfresh_arrlit_return(funcs[k].body)) {
+            out = out.append("ARR:" + funcs[k].name);
         }
         k = k + 1;
     }
