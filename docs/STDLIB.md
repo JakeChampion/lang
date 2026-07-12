@@ -406,6 +406,10 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
   the first non-base32 / non-`=` byte). Round-trips any content; the
   case-insensitive, digit-safe alphabet suits TOTP secrets, filenames,
   and DNS labels.
+- `base32_decode_strict(s): Option[string]` — `None` on malformed input
+  (bad char, wrong padding, impossible group) instead of truncating;
+  the strict variant to use for a security-sensitive secret / token,
+  matching `base64_decode_strict` / `hex_decode_strict`.
 
 ### `std/hex`
 
