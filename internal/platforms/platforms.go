@@ -78,14 +78,18 @@ var table = map[string]Descriptor{
 		// codegen backend lowers it), so no compiled target
 		// grants it and E066 rejects it up front instead of the
 		// old "undefined label" assembler failure.
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
+		//
+		// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md
+		// D2') is native-only: wasm worlds have no processes, so only
+		// the four native targets grant it.
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"arm64-darwin": {
 		Name:         "arm64-darwin",
 		Description:  "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
@@ -94,14 +98,14 @@ var table = map[string]Descriptor{
 		Description: "ARM64 Android — Linux ELF as a static position-independent " +
 			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
 			"Android's loader. Same syscalls / AAPCS64 as the arm64 target.",
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"x86-64": {
 		Name:         "x86-64",
 		Description:  "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},

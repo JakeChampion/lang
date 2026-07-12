@@ -569,6 +569,8 @@ func New() *Interp {
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
+	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
+	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -1528,6 +1530,35 @@ func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
 		time.Sleep(time.Duration(int64(ms)) * time.Millisecond)
 	}
 	return Void{}, nil
+}
+
+// builtinProcFork mirrors the native `proc_fork()` builtin
+// (docs/CRASH-ONLY-SERVE.md D2') — except the interpreter can
+// never actually fork: the Go runtime is threaded, and a raw
+// fork(2) in a multithreaded process leaves the child with every
+// lock/state snapshot but only one thread — undefined behaviour.
+// So the interp's answer is a permanent -38 (ENOSYS). Callers
+// (std/tcp's tcp_serve_supervised) detect it and degrade to
+// plain single-process serving, keeping the function runnable
+// under `fern -interp` and on any future fork-less target.
+func builtinProcFork(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("proc_fork: expected 0 args, got %d", len(args))
+	}
+	return Number(-38), nil // -ENOSYS
+}
+
+// builtinProcWaitpid mirrors the native `proc_waitpid(pid)`. The
+// interp's proc_fork never creates children, so there is never a
+// child to reap: -10 (ECHILD) unconditionally.
+func builtinProcWaitpid(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("proc_waitpid: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("proc_waitpid: expected number arg, got %T", args[0])
+	}
+	return Number(-10), nil // -ECHILD
 }
 
 // builtinTempDir creates a fresh temporary directory and

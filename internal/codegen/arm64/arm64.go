@@ -59,6 +59,13 @@ const (
 	// nanosleep(2): asm-generic table syscall 101. Backs
 	// `__fern_sleep_ms`.
 	sysNanosleep = 101
+	// clone(2) / wait4(2): asm-generic table syscalls 220 / 260.
+	// Back `__fern_proc_fork` / `__fern_proc_waitpid` — the
+	// crash-only supervision primitives (docs/CRASH-ONLY-SERVE.md
+	// D2'). arm64 Linux has no bare fork(2) syscall; fork is
+	// `clone(SIGCHLD, 0, 0, 0, 0)`.
+	sysClone = 220
+	sysWait4 = 260
 	// ppoll(2): asm-generic table syscall 73 (arm64 has no bare
 	// `poll`). Backs `__fern_poll` — the std/task reactor's readiness
 	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
@@ -98,6 +105,15 @@ const (
 	// `__fern_sleep_ms` sleeps via select(0, NULL, NULL, NULL,
 	// &timeout) with a `struct timeval {i64 tv_sec @0, i64 tv_usec @8}`.
 	darSelect = 93
+	// fork (BSD 2) / wait4 (BSD 7): back `__fern_proc_fork` /
+	// `__fern_proc_waitpid` on Darwin. XNU's fork returns the
+	// pid in x0 with x1 = 0 in the parent / 1 in the child (the
+	// libsyscall __fork stub folds x1 into the 0-in-child
+	// convention; our helper does the same). wait4's status-word
+	// layout matches Linux's (low 7 bits = signal, bits 8..15 =
+	// exit code), so the decode is shared.
+	darFork  = 2
+	darWait4 = 7
 )
 
 // linuxDarwinSysno maps a logical syscall name to (Linux, Darwin)
@@ -539,6 +555,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
+	}
+	if g.usesProcFork {
+		g.emitProcForkRuntime()
+	}
+	if g.usesProcWaitpid {
+		g.emitProcWaitpidRuntime()
 	}
 	if g.usesArgs {
 		g.emitArgsRuntime()
@@ -4339,6 +4361,103 @@ func (g *generator) emitSleepMsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitProcForkRuntime emits `__fern_proc_fork()` — fork the
+// process, returning 0 in the child, the child's pid in the
+// parent, or -errno on failure (docs/CRASH-ONLY-SERVE.md D2').
+//
+// Linux: arm64 has no bare fork(2) syscall — fork is
+// `clone(SIGCHLD, 0, 0, 0, 0)` (asm-generic #220; arg order
+// flags, newsp, parent_tid, tls, child_tid). The kernel's return
+// shape is already the contract, so nothing to normalise.
+//
+// Darwin: fork (BSD 2) returns the pid in x0 with x1 = 0 in the
+// parent / 1 in the child (plus the usual carry-set +errno error
+// convention) — mirror libsyscall's __fork stub: negate on
+// error, fold x1 into the 0-in-child shape.
+func (g *generator) emitProcForkRuntime() {
+	g.line("")
+	g.line(".global __fern_proc_fork")
+	g.typeDirective("__fern_proc_fork")
+	g.label("__fern_proc_fork")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	if g.darwin {
+		g.emit("mov x16, #%d", darFork)
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lproc_fork_ok")
+		g.emit("neg x0, x0") // carry set: +errno → -errno
+		g.emit("b .Lproc_fork_done")
+		g.label(".Lproc_fork_ok")
+		g.emit("cbz x1, .Lproc_fork_done") // parent: x0 = child pid
+		g.emit("mov x0, #0")               // child
+		g.label(".Lproc_fork_done")
+	} else {
+		g.emit("mov x0, #17") // flags = SIGCHLD
+		g.emit("mov x1, #0")  // newsp = 0 (share parent's, CoW)
+		g.emit("mov x2, #0")  // parent_tid
+		g.emit("mov x3, #0")  // tls
+		g.emit("mov x4, #0")  // child_tid
+		g.emit("mov x8, #%d", sysClone)
+		g.emit("svc #0")
+	}
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_proc_fork")
+}
+
+// emitProcWaitpidRuntime emits `__fern_proc_waitpid(pid)` —
+// blocking wait4 (Linux asm-generic #260 / Darwin BSD 7: pid,
+// &status, options=0, rusage=NULL; status on the stack) plus the
+// status-word decode, identical on both kernels:
+//
+//	WIFEXITED  ((status & 0x7f) == 0) → (status >> 8) & 0xff
+//	else (signal death)               → 128 + (status & 0x7f)
+//
+// (the shell convention — a bounds-trap worker surfaces as its
+// raw exit code, e.g. 134). A failing syscall returns -errno
+// as-is (Darwin's carry-set +errno is negated first).
+func (g *generator) emitProcWaitpidRuntime() {
+	g.line("")
+	g.line(".global __fern_proc_waitpid")
+	g.typeDirective("__fern_proc_waitpid")
+	g.label("__fern_proc_waitpid")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #16") // status slot
+	g.emit("sxtw x0, w0")     // pid
+	g.emit("mov x1, sp")      // &status
+	g.emit("mov x2, #0")      // options = 0
+	g.emit("mov x3, #0")      // rusage = NULL
+	if g.darwin {
+		g.emit("mov x16, #%d", darWait4)
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lproc_wait_decode")
+		g.emit("neg x0, x0") // carry set: +errno → -errno
+		g.emit("b .Lproc_wait_done")
+		g.label(".Lproc_wait_decode")
+	} else {
+		g.emit("mov x8, #%d", sysWait4)
+		g.emit("svc #0")
+		g.emit("cmp x0, #0")
+		g.emit("b.lt .Lproc_wait_done") // -errno → return as-is
+	}
+	g.emit("ldr w9, [sp]")       // status word
+	g.emit("and w10, w9, #0x7f") // termination signal (0 = exited)
+	g.emit("cbnz w10, .Lproc_wait_sig")
+	// Normal exit: (status >> 8) & 0xff.
+	g.emit("lsr w0, w9, #8")
+	g.emit("and w0, w0, #0xff")
+	g.emit("b .Lproc_wait_done")
+	g.label(".Lproc_wait_sig")
+	// Signal death: 128 + signal.
+	g.emit("add w0, w10, #128")
+	g.label(".Lproc_wait_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_proc_waitpid")
+}
+
 // emitArgsRuntime emits `__fern_args()` — returns a length-
 // prefixed `string[]` materialised from the argc/argv pair
 // captured by emitStartRuntime. Each entry is a fresh
@@ -6843,6 +6962,16 @@ type generator struct {
 	// Linux, or `select(0,…,&timeout)` (BSD 93) on Darwin; ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
+	// clone(SIGCHLD,0,0,0,0) (#220) on Linux (arm64 has no bare fork
+	// syscall) or fork (BSD 2, x1-flag normalised) on Darwin: 0 in
+	// child, pid in parent, -errno on failure — and
+	// `__fern_proc_waitpid(pid)` — wait4 (#260 Linux / BSD 7 Darwin)
+	// + status-word decode: exit code 0..255 for a normal exit,
+	// 128+signal for a signal death, -errno passthrough. The
+	// crash-only supervision primitives (docs/CRASH-ONLY-SERVE.md D2').
+	usesProcFork    bool
+	usesProcWaitpid bool
 	// usesFloatTranscendentals pulls in the f64 transcendental
 	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus their
 	// shared .rodata polynomial-coefficient table. arm64 has no
@@ -9818,6 +9947,19 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// or select (Darwin). Void.
 			target = "__fern_sleep_ms"
 			g.usesSleepMs = true
+		case "proc_fork":
+			// proc_fork(): fork the process via clone(SIGCHLD,0,0,0,0)
+			// (Linux — arm64 has no bare fork syscall) or fork (Darwin
+			// BSD 2, x1-flag normalised). 0 in child, pid in parent,
+			// -errno on failure (docs/CRASH-ONLY-SERVE.md D2').
+			target = "__fern_proc_fork"
+			g.usesProcFork = true
+		case "proc_waitpid":
+			// proc_waitpid(pid): blocking wait4 + status decode —
+			// exit code 0..255, or 128+signal for a signal death,
+			// or -errno.
+			target = "__fern_proc_waitpid"
+			g.usesProcWaitpid = true
 		case "args":
 			// args(): returns a length-prefixed string[] of
 			// argv. Caches the result so repeat calls are O(1).

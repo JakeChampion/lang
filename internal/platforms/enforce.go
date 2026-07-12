@@ -36,6 +36,13 @@ var gatedBuiltins = map[string]string{
 	// Process spawning.
 	"subprocess": "subprocess",
 
+	// Process supervision (fork/waitpid — docs/CRASH-ONLY-SERVE.md
+	// D2'). Native targets only; wasm worlds have no processes. The
+	// interp is deliberately ungated: its proc_fork answers -38
+	// (ENOSYS) so callers can degrade at runtime instead.
+	"proc_fork":    "proc",
+	"proc_waitpid": "proc",
+
 	// Blocking stdin reads (a webserver target has no stdin).
 	"read_line": "stdin",
 	"stdin":     "stdin",

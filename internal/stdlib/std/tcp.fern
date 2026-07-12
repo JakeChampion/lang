@@ -40,12 +40,28 @@ import "std/http";
 // std/headers — the placeholder HttpRequest before parse-success
 // uses header_map_new for the headers field.
 import "std/headers";
+// core/int — int_to_string for the supervisor's worker-death log
+// lines (the raw exit code, straight to stderr).
+import "core/int";
 
 pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     var listener: i32 = tcp_listen(port);
     if (listener < 0) {
         return listener;
     }
+    return __serve_loop(listener, handler);
+}
+
+// __serve_loop — the HTTP/1.1 accept loop factored out of
+// `tcp_serve` so `tcp_serve_supervised` can run the same loop
+// against a listener fd it does NOT create: the supervising
+// parent owns the listening socket (created before the first
+// fork, inherited by every worker), so the kernel backlog —
+// and any pending connections in it — survives a worker death.
+// Loops forever under normal operation; the i32 return only
+// materialises for the type system (no clean-shutdown channel
+// exposed yet).
+function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     while (true) {
         var fd: i32 = tcp_accept(listener);
         if (fd < 0) {
@@ -121,6 +137,88 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
             tcp_send(fd, wire);
         }
         tcp_close(fd);
+    }
+    return 0;
+}
+
+// tcp_serve_supervised(port, handler) — crash-only supervised
+// serving (docs/CRASH-ONLY-SERVE.md, plan item D2'). Same
+// signature as `tcp_serve`, different blast radius: the accept
+// loop runs in a forked WORKER process while the parent does
+// nothing but supervise — `proc_waitpid` on the worker, log the
+// death to stderr (the raw exit code: 134 = trap, 137 = arena
+// exhaustion, 101 = todo, 1 = assert), and refork. A handler
+// trap kills one worker's in-flight connections, not the
+// service: the parent-owned listener keeps its backlog, and the
+// next worker inherits the same fd. A refork also resets the
+// worker heap, reclaiming the cycle-leak class RC cannot collect.
+//
+// Restart policy (TigerStyle — bounded everything):
+//   - backoff 100ms doubling to a 5s cap between reforks;
+//     a worker that lived >= 100ms resets the backoff.
+//   - 8 CONSECUTIVE deaths within 100ms of spawn is a crash
+//     loop (the handler traps on startup / first request):
+//     give up and return the last worker's exit code — an
+//     operator problem, not a retry problem.
+//
+// Where fork doesn't exist, degrade instead of failing:
+// `proc_fork() == -38` (ENOSYS — the interpreter's Go runtime
+// is threaded and cannot bare-fork; ditto any future fork-less
+// target) logs one line and serves single-process via the same
+// accept loop, so the function stays runnable under `-interp`.
+// Other fork/waitpid failures (-errno) return the errno like
+// `tcp_serve` returns a failed bind.
+pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    // Listener FIRST, in the parent — the whole design hinges on
+    // workers inheriting this fd rather than owning it.
+    var listener: i32 = tcp_listen(port);
+    if (listener < 0) {
+        return listener;
+    }
+    var backoff_ms: i64 = 100 as i64;
+    var fast_deaths: i32 = 0;
+    while (true) {
+        var spawned_at: i64 = now_unix_ms();
+        var pid: i32 = proc_fork();
+        if (pid == -38) {
+            // ENOSYS: no fork on this host. Graceful degradation.
+            eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
+            return __serve_loop(listener, handler);
+        }
+        if (pid < 0) {
+            return pid;
+        }
+        if (pid == 0) {
+            // Worker child: run the accept loop against the
+            // inherited listener. It never returns under normal
+            // operation; if it somehow does, exit with its code
+            // rather than falling into a second supervision loop.
+            var rc: i32 = __serve_loop(listener, handler);
+            exit(rc);
+            return rc;
+        }
+        // Parent: supervise.
+        var code: i32 = proc_waitpid(pid);
+        if (code < 0) {
+            return code;
+        }
+        eprint("tcp_serve_supervised: worker died with exit code " + int.int_to_string(code) + "; restarting");
+        var lived_ms: i64 = now_unix_ms() - spawned_at;
+        if (lived_ms < (100 as i64)) {
+            fast_deaths = fast_deaths + 1;
+            if (fast_deaths >= 8) {
+                eprint("tcp_serve_supervised: giving up after 8 consecutive fast worker deaths");
+                return code;
+            }
+        } else {
+            fast_deaths = 0;
+            backoff_ms = 100 as i64;
+        }
+        sleep_ms(backoff_ms);
+        backoff_ms = backoff_ms * (2 as i64);
+        if (backoff_ms > (5000 as i64)) {
+            backoff_ms = 5000 as i64;
+        }
     }
     return 0;
 }
