@@ -3,9 +3,10 @@ import "std/math" as math;
 // examples/tests/math_test.fern — pure-Fern coverage of the deterministic
 // std/math surface: range / range_step (half-open i32 ranges), the numeric-
 // width constants (i32_max/min, i64_max/min) and the pack_rgb bit-packer.
-// random_int is intentionally omitted (non-deterministic CSPRNG draw). The
-// Go-side suites unit-test the prelude origins; this is the migration-shaped
-// (pure-Fern, std/test-driven) companion.
+// random_int's SPECIFIC draw is non-deterministic, but its CONTRACT is
+// deterministic and is asserted below (in-bounds, full range reachable,
+// empty-range fallback). The Go-side suites unit-test the prelude origins;
+// this is the migration-shaped (pure-Fern, std/test-driven) companion.
 
 function test_range(): test.TestOutcome {
     return test.assert_eq_array(math.range(2, 5), [2, 3, 4]);
@@ -53,6 +54,47 @@ function test_pack_rgb_wraps(): test.TestOutcome {
     return test.assert_eq(math.pack_rgb(256, 256, 256), 0);
 }
 
+// random_int's contract — deterministic even though the draw isn't.
+// Regression guard for the 24-bit truncation bug: before random_int
+// drew a full 32 bits, any range > 2^24 was silently capped to the
+// low ~16M (`u % range == u` when `u < 2^24 <= range`), so a large
+// range never yielded a value above 2^24. Over 4000 draws from
+// [0, 2e9) a correct impl exceeds 2^24 with probability ~1 (each draw
+// does so with p ~ 0.9916); the truncating impl NEVER does. We also
+// assert every draw is in-bounds and small ranges stay in-range.
+function test_random_int_range(): test.TestOutcome {
+    var i: i32 = 0;
+    var over: i32 = 0;
+    while (i < 4000) {
+        var v: i32 = math.random_int(0, 2000000000);
+        if (v < 0 || v >= 2000000000) {
+            return test.fail("random_int(0, 2e9) out of range: " + v.to_string());
+        }
+        if (v > 16777215) { over = over + 1; }   // above 2^24 - 1
+        i = i + 1;
+    }
+    // Full 32-bit draw ⇒ the upper range is reachable (truncating impl: over == 0).
+    if (over == 0) {
+        return test.fail("random_int never exceeded 2^24 over 4000 draws (24-bit truncation)");
+    }
+    // Small range stays strictly in [5, 8).
+    i = 0;
+    while (i < 500) {
+        var w: i32 = math.random_int(5, 8);
+        if (w < 5 || w >= 8) {
+            return test.fail("random_int(5, 8) out of range: " + w.to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function test_random_int_empty(): test.TestOutcome {
+    // hi <= lo returns lo (empty-range fallback), deterministic.
+    return test.assert_true(math.random_int(4, 4) == 4 &&
+                            math.random_int(9, 2) == 9);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/math");
     r = r.it("range",                   test_range());
@@ -65,5 +107,7 @@ function main(): i32 {
     r = r.it("i64 bounds",              test_i64_bounds());
     r = r.it("pack_rgb",                test_pack_rgb());
     r = r.it("pack_rgb wraps",          test_pack_rgb_wraps());
+    r = r.it("random_int range",        test_random_int_range());
+    r = r.it("random_int empty",        test_random_int_empty());
     return r.finish();
 }

@@ -5,12 +5,27 @@
 // docs/PRELUDE-TO-MODULES.md.
 
 // `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
-// when hi <= lo (empty range fallback). Pulls 3 bytes from
+// when hi <= lo (empty range fallback). Pulls 4 bytes from
 // random_bytes (kernel CSPRNG on natives, wasi_random on
-// wasm), combines into a 24-bit value, and modulo-maps to
-// the range width. 24 bits caps the maximum bias-free range
-// at ~16M which covers the common short-range use cases
-// (port pick, ID generation, jitter).
+// wasm), combines into a full 32-bit value, and modulo-maps
+// to the range width `(hi - lo) as u32` — so the WHOLE
+// requested range is reachable, including ranges wider than
+// 2^24 up to the full u32 span (`INT_MIN..INT_MAX` → width
+// 2^32-1). The `hi - lo` width is computed in wrapping i32
+// then read as u32: for the widest range it wraps to -1 =
+// 2^32-1, which is the correct unsigned width.
+//
+// (Previously this drew only 3 bytes / 24 bits, which silently
+// TRUNCATED any range > 2^24: since `u < 2^24 <= range`, `u %
+// range == u`, so `random_int(0, 2e9)` only ever returned the
+// low ~16M. The u32-modulo codegen bug that motivated the cap
+// is fixed — full 32-bit `u % range` is differential-verified
+// across interp / x86-64 / wasm — so the draw is widened here.)
+//
+// The residual modulo bias (values in `[0, 2^32 mod range)`
+// are marginally more likely) is unchanged from before and
+// negligible for `range << 2^32`; rejection sampling to
+// eliminate it entirely is a separate follow-up.
 //
 // The `range` local intentionally shares its name with the
 // module-level `range()` function below — a deliberate regression
@@ -21,10 +36,11 @@
 // the shadow correctly, so the natural name is restored.
 pub function random_int(lo: i32, hi: i32): i32 {
     if (hi <= lo) { return lo; }
-    var b: string = random_bytes(3);
-    var u: u32 = ((b[0] as u32) << (16 as u32)) |
-                 ((b[1] as u32) << (8 as u32)) |
-                 (b[2] as u32);
+    var b: string = random_bytes(4);
+    var u: u32 = ((b[0] as u32) << (24 as u32)) |
+                 ((b[1] as u32) << (16 as u32)) |
+                 ((b[2] as u32) << (8 as u32)) |
+                 (b[3] as u32);
     var range: u32 = (hi - lo) as u32;
     return lo + ((u % range) as i32);
 }
