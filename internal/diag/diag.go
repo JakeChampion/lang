@@ -240,7 +240,7 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 			prefix = "error[" + code + "]"
 		}
 	}
-	header := fmt.Sprintf("%d:%d: %s: %s", pos.Line, pos.Col, prefix, stripPrefix(pe.Error()))
+	header := fmt.Sprintf("%d:%d: %s: %s", pos.Line, pos.Col, paint(ansiRedBld, prefix), stripPrefix(pe.Error()))
 	if filename != "" {
 		header = filename + ":" + header
 	}
@@ -260,10 +260,10 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 		mark = "^" + strings.Repeat("~", span-1)
 	}
 
-	out := fmt.Sprintf("%s\n    %s\n    %s%s", header, line, pad, mark)
+	out := fmt.Sprintf("%s\n    %s\n    %s%s", header, line, pad, paint(ansiRed, mark))
 	if h, ok := err.(Hinted); ok {
 		if hint := h.Hint(); hint != "" {
-			out += "\n    note: " + hint
+			out += "\n    " + paint(ansiBlue, "note:") + " " + hint
 		}
 	}
 	// Multi-label diagnostic (docs/DIAGNOSTIC-UX-RESEARCH.md
@@ -293,10 +293,13 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 // to visually distinguish secondaries from the primary's
 // caret.
 func renderSecondaryLabel(filename, src string, l Label) string {
-	tag := "note: "
+	word := "note:"
+	markColor := ansiBlue
 	if l.Kind == LabelHelp {
-		tag = "help: "
+		word = "help:"
+		markColor = ansiGreen
 	}
+	tag := paint(markColor, word) + " "
 	line := pickLine(src, l.Pos.Line)
 	header := fmt.Sprintf("    %d:%d: %s%s", l.Pos.Line, l.Pos.Col, tag, l.Message)
 	if filename != "" {
@@ -321,7 +324,7 @@ func renderSecondaryLabel(filename, src string, l Label) string {
 	if mark == "" {
 		mark = "-"
 	}
-	return fmt.Sprintf("%s\n        %s\n        %s%s", header, line, pad, mark)
+	return fmt.Sprintf("%s\n        %s\n        %s%s", header, line, pad, paint(markColor, mark))
 }
 
 // stripPrefix removes any "<kind> error at L:C: " prefix that the
