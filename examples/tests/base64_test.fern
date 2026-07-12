@@ -92,6 +92,28 @@ function test_url_roundtrip(): test.TestOutcome {
                             base64.base64url_decode("SGk=") == "Hi");  // padded input tolerated
 }
 
+// base64url_decode_strict: url round-trips; malformed / non-url-safe rejects.
+function b64url_opt(o: Option[string], fb: string): string {
+    match (o) { Some(v) => { return v; }, None => { return fb; } }
+}
+function b64url_is_none(s: string): boolean {
+    match (base64.base64url_decode_strict(s)) { Some(v) => { return false; }, None => { return true; } }
+}
+
+function test_url_decode_strict_valid(): test.TestOutcome {
+    // Unpadded "Hi" → "SGk"; empty → Some("").
+    if (b64url_opt(base64.base64url_decode_strict("SGk"), "X") != "Hi") { return test.fail("SGk"); }
+    if (b64url_opt(base64.base64url_decode_strict(base64.base64url_encode("Hello")), "X") != "Hello") { return test.fail("roundtrip"); }
+    return test.assert_eq(b64url_opt(base64.base64url_decode_strict(""), "X"), "");
+}
+
+function test_url_decode_strict_rejects(): test.TestOutcome {
+    // The non-url-safe +// chars reject, and so does junk / bad padding.
+    if (!b64url_is_none("SGVsbG8+")) { return test.fail("plus"); }
+    if (!b64url_is_none("SGVs/bG8")) { return test.fail("slash"); }
+    return test.assert_true(b64url_is_none("SG!k") && b64url_is_none("A"));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/base64");
     r = r.it("encode (no pad)", test_encode_no_pad());
@@ -109,5 +131,7 @@ function main(): i32 {
     r = r.it("url alphabet", test_url_alphabet());
     r = r.it("url no padding", test_url_no_padding());
     r = r.it("url roundtrip", test_url_roundtrip());
+    r = r.it("url decode_strict valid", test_url_decode_strict_valid());
+    r = r.it("url decode_strict rejects", test_url_decode_strict_rejects());
     return r.finish();
 }

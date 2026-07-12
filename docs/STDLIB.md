@@ -396,7 +396,7 @@ POSIX path manipulation (string-level only).
 ### `std/base64`
 
 - `base64_encode(s)` / `base64_decode(s)` / `base64_decode_strict(s)` — standard RFC 4648 alphabet, `=` padding.
-- `base64url_encode(s)` / `base64url_decode(s)` — URL-safe variant (`-`/`_` alphabet, no padding; decode tolerates padded input). The JWT / URL-token encoding.
+- `base64url_encode(s)` / `base64url_decode(s)` / `base64url_decode_strict(s)` — URL-safe variant (`-`/`_` alphabet, no padding; decode tolerates padded input). The JWT / URL-token encoding; the strict decoder returns `Option` (`None` on malformed input or a non-url-safe `+`/`/`).
 
 ### `std/base32`
 

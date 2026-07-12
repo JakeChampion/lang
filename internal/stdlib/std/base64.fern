@@ -203,3 +203,26 @@ pub function base64url_encode(s: string): string {
 pub function base64url_decode(s: string): string {
     return base64_decode(__b64_url_to_std(s));
 }
+
+// `base64url_decode_strict(s)` — the strict URL-safe decoder: `None` on
+// malformed input instead of truncating, the url-safe counterpart of
+// `base64_decode_strict`. This is the one to use on a JWT segment or a
+// URL token, where a tampered byte must be observable rather than
+// silently dropped (#4384).
+//
+// Stricter than `base64url_decode` in two ways: it rejects the standard-
+// alphabet `+` / `/` (only `-` / `_` are URL-safe), and it applies the
+// full `base64_decode_strict` structural rules (valid chars, `=` only at
+// the end aligning to a 4-char group, no `n%4==1` run). Padding stays
+// optional — canonical base64url is unpadded. `""` decodes to `Some("")`.
+pub function base64url_decode_strict(s: string): Option[string] {
+    // Reject the non-URL-safe standard-alphabet characters up front:
+    // `__b64_url_to_std` leaves `+` / `/` untouched, so base64_decode_strict
+    // would otherwise accept them.
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 43 || s[i] == 47) { return None; }   // '+' or '/'
+        i = i + 1;
+    }
+    return base64_decode_strict(__b64_url_to_std(s));
+}
