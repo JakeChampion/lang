@@ -1,11 +1,12 @@
-# Packages: the `fern.toml` manifest (slices 1–4 — path, hash-addressed, vendored, workspaces)
+# Packages: the `fern.toml` manifest (slices 1–5)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
 RESEARCH.md` Rec §1): local `path` dependencies, hash-addressed `url`
 dependencies fetched by an explicit `fern -fetch` into a
 content-addressed store, `fern -vendor` for fully-offline vendored
-builds, and workspaces. No registry, no version resolution, no lockfile
+builds, workspaces, and `fern -add` to declare a dependency (auto-
+hashing url sources). No registry, no version resolution, no lockfile
 yet — those layer on later per the research docs. Everything is opt-in:
 a program with no `fern.toml` anywhere up its directory tree loads
 exactly as before.
@@ -117,6 +118,28 @@ the usual undeclared-dependency error. This is the shape the eventual
 self-hosted compiler wants (lexer / parser / checker / codegen as
 sibling members).
 
+## Adding a dependency — `fern -add` (slice 5)
+
+`fern -add NAME SPEC [DIR]` appends a declared dependency to the
+`fern.toml` governing `DIR` (default `.`), editing the file textually
+so comments and formatting survive:
+
+```
+fern -add helper path:../helper                          # { path = "../helper" }
+fern -add webkit url:https://example.com/webkit.tar.gz   # fetches, records the hash
+fern -add lexer  workspace                               # { workspace = true }
+```
+
+The `url:` form is the ergonomic payoff: you never hand-compute a
+`sha256`. `add` downloads the archive, records the hash it observed
+(the Zig "write the url, the tool tells you the hash" flow), and leaves
+it verified in the content-addressed store — so the immediately
+following build works offline and every later `fern -fetch` verifies
+against that recorded hash. Adding an already-declared dependency is an
+error (edit it by hand to change a source), and the edited manifest is
+re-parsed before it's written so a bad edit can never leave a broken
+`fern.toml` on disk.
+
 ## Resolution + isolation rules
 
 Inside a manifest-governed package, an import resolves in this order:
@@ -148,8 +171,8 @@ only declared deps resolve.
 
 Version constraints + MVS resolution, `fern.lock` (for url deps the
 manifest hash already pins content; the lockfile matters once version
-deps resolve transitively), workspace-wide `fern -check`/`-vendor`
-iteration over members, and `fern add`. See `PACKAGE-MANAGEMENT-SOTA.md`
+deps resolve transitively) and workspace-wide `fern -check`/`-vendor`
+iteration over members. See `PACKAGE-MANAGEMENT-SOTA.md`
 for the design each of these follows.
 
 **MVS / version deps — the open design fork.** Minimum Version
