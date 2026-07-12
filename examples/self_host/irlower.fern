@@ -787,6 +787,25 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
             if (oty == "") { return ""; }
             return tuple_type_elem_tag(decl_field_type(s.structs, oty, fa.field), n);
         },
+        parser.ExprIndex(ix) => {
+            // `arr[i].N` where arr is a `(tuple)[]` array-of-tuples local: the element
+            // TUPLE TYPE is recorded on the (is_arr) slot's arrarr_elem (set at binding
+            // for a reclaim-eligible tuple array, #4365). Read element n's tag out of it,
+            // so `arr[i].N.field` (struct field of a tuple element) and a wide `arr[i].N`
+            // read resolve on the IR path instead of bailing to the AST fallback (which
+            // fired because expr_struct_type(arr[i].N) had no tag here → lower_expr fail).
+            match (ix.array) {
+                parser.ExprIdent(aid) => {
+                    var asl: i32 = s.slot_of(aid.name);
+                    if (asl >= 0 && s.is_arr_slot(asl)) {
+                        var et: string = s.arrarr_elem_of_slot(asl);
+                        if (et.len() >= 2 && et[0:1] == "(") { return tuple_type_elem_tag(et, n); }
+                    }
+                },
+                _ => {}
+            }
+            return "";
+        },
         _ => { return ""; }
     }
     return "";
@@ -18295,7 +18314,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (!body_unsafe_for(body, ats[ati], borrowable)
             && util.index_of_str(reassigned, ats[ati]) < 0
             && !arrarr_row_escapes(body, ats[ati])
-            && !arrtup_elem_payload_escapes(body, ats[ati], arrtup_elem_type_of_decl(body, structs, ats[ati]))) {
+            && !arrtup_elem_payload_escapes(body, ats[ati], arrtup_elem_type_of_decl(body, structs, ats[ati]), structs)) {
             out = out.append("ARRTUP:" + ats[ati]);
         }
         ati = ati + 1;
@@ -20507,7 +20526,7 @@ function opttup_init_is_fresh(inner: string, e: parser.Expr, structs: parser.Str
 // returned / passed / aliased / sliced), a non-`len` method on an array field, a
 // nested-tuple sub-field — is an ESCAPE (rejected). Erring toward rejection is a
 // safe LEAK, never an over-release.
-function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string): boolean {
+function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == p; },   // bare tuple escapes
         parser.ExprNumber(_) => { return false; },
@@ -20515,7 +20534,7 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string): bool
         parser.ExprBool(_) => { return false; },
         parser.ExprFieldAccess(fa) => {
             // `p.N` bare: a scalar field is a safe value copy; an array / nested /
-            // other field extracted bare escapes.
+            // struct field extracted bare escapes.
             match (fa.obj) {
                 parser.ExprIdent(oid) => {
                     if (oid.name == p && util.is_all_digits(fa.field)) {
@@ -20524,7 +20543,25 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string): bool
                     }
                     return false;
                 },
-                _ => { return opttup_arm_expr_escapes(fa.obj, p, inner); }
+                parser.ExprFieldAccess(ofa) => {
+                    // `p.N.field`: struct-field read of a struct tuple element. A SCALAR
+                    // field is a borrow (safe); a struct ARRAY/pointer field extracted bare
+                    // escapes (its buffer the reclaim would free). #4365.
+                    match (ofa.obj) {
+                        parser.ExprIdent(oid2) => {
+                            if (oid2.name == p && util.is_all_digits(ofa.field)) {
+                                var stag: string = tuple_type_elem_tag(inner, util.digits_to_i32(ofa.field));
+                                if (decl_is_struct(structs, stag)) {
+                                    var sft: string = decl_field_type(structs, stag, fa.field);
+                                    return !is_scalar_type_name(sft);
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                    return opttup_arm_expr_escapes(fa.obj, p, inner, structs);
+                },
+                _ => { return opttup_arm_expr_escapes(fa.obj, p, inner, structs); }
             }
         },
         parser.ExprIndex(ix) => {
@@ -20534,29 +20571,13 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string): bool
                 parser.ExprFieldAccess(bfa) => {
                     match (bfa.obj) {
                         parser.ExprIdent(bid) => {
-                            if (bid.name == p && util.is_all_digits(bfa.field)) { return opttup_arm_expr_escapes(ix.index, p, inner); }
+                            if (bid.name == p && util.is_all_digits(bfa.field)) { return opttup_arm_expr_escapes(ix.index, p, inner, structs); }
                         },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            return opttup_arm_expr_escapes(ix.array, p, inner) || opttup_arm_expr_escapes(ix.index, p, inner);
-        },
-        parser.ExprCall(c) => {
-            // `p.N.len()`: the one whitelisted borrow method on an array field —
-            // safe receiver, check the args. Any other call touching p escapes.
-            match (c.callee) {
-                parser.ExprFieldAccess(cfa) => {
-                    match (cfa.obj) {
-                        parser.ExprFieldAccess(pfa) => {
-                            match (pfa.obj) {
-                                parser.ExprIdent(pid) => {
-                                    if (pid.name == p && util.is_all_digits(pfa.field) && cfa.field == "len") {
-                                        var ai: i32 = 0;
-                                        while (ai < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ai], p, inner)) { return true; } ai = ai + 1; }
-                                        return false;
-                                    }
+                        // `p.N.field[i]`: indexed struct ARRAY-field read — safe; check the index.
+                        parser.ExprFieldAccess(bofa) => {
+                            match (bofa.obj) {
+                                parser.ExprIdent(bid2) => {
+                                    if (bid2.name == p && util.is_all_digits(bofa.field)) { return opttup_arm_expr_escapes(ix.index, p, inner, structs); }
                                 },
                                 _ => {}
                             }
@@ -20566,72 +20587,113 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string): bool
                 },
                 _ => {}
             }
-            if (opttup_arm_expr_escapes(c.callee, p, inner)) { return true; }
+            return opttup_arm_expr_escapes(ix.array, p, inner, structs) || opttup_arm_expr_escapes(ix.index, p, inner, structs);
+        },
+        parser.ExprCall(c) => {
+            // `p.N.len()` and `p.N.field.len()`: whitelisted borrow methods on an array
+            // field — safe receiver, check the args. Any other call touching p escapes.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprFieldAccess(pfa) => {
+                                match (pfa.obj) {
+                                    // `p.N.len()`: array tuple-element length.
+                                    parser.ExprIdent(pid) => {
+                                        if (pid.name == p && util.is_all_digits(pfa.field)) {
+                                            var ai: i32 = 0;
+                                            while (ai < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ai], p, inner, structs)) { return true; } ai = ai + 1; }
+                                            return false;
+                                        }
+                                    },
+                                    // `p.N.field.len()`: struct array-field length.
+                                    parser.ExprFieldAccess(ppfa) => {
+                                        match (ppfa.obj) {
+                                            parser.ExprIdent(ppid) => {
+                                                if (ppid.name == p && util.is_all_digits(ppfa.field)) {
+                                                    var aj: i32 = 0;
+                                                    while (aj < c.args.len()) { if (opttup_arm_expr_escapes(c.args[aj], p, inner, structs)) { return true; } aj = aj + 1; }
+                                                    return false;
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (opttup_arm_expr_escapes(c.callee, p, inner, structs)) { return true; }
             var ci: i32 = 0;
-            while (ci < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ci], p, inner)) { return true; } ci = ci + 1; }
+            while (ci < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ci], p, inner, structs)) { return true; } ci = ci + 1; }
             return false;
         },
-        parser.ExprBinary(b) => { return opttup_arm_expr_escapes(b.left, p, inner) || opttup_arm_expr_escapes(b.right, p, inner); },
-        parser.ExprUnary(u) => { return opttup_arm_expr_escapes(u.operand, p, inner); },
-        parser.ExprSlice(sl) => { return opttup_arm_expr_escapes(sl.array, p, inner) || opttup_arm_expr_escapes(sl.start, p, inner) || opttup_arm_expr_escapes(sl.end, p, inner); },
+        parser.ExprBinary(b) => { return opttup_arm_expr_escapes(b.left, p, inner, structs) || opttup_arm_expr_escapes(b.right, p, inner, structs); },
+        parser.ExprUnary(u) => { return opttup_arm_expr_escapes(u.operand, p, inner, structs); },
+        parser.ExprSlice(sl) => { return opttup_arm_expr_escapes(sl.array, p, inner, structs) || opttup_arm_expr_escapes(sl.start, p, inner, structs) || opttup_arm_expr_escapes(sl.end, p, inner, structs); },
         parser.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { if (opttup_arm_expr_escapes(ar.elements[i], p, inner)) { return true; } i = i + 1; }
+            while (i < ar.elements.len()) { if (opttup_arm_expr_escapes(ar.elements[i], p, inner, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (opttup_arm_expr_escapes(t.elements[i], p, inner)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (opttup_arm_expr_escapes(t.elements[i], p, inner, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && opttup_arm_expr_escapes(sl.base, p, inner)) { return true; }
+            if (sl.has_base && opttup_arm_expr_escapes(sl.base, p, inner, structs)) { return true; }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (opttup_arm_expr_escapes(sl.field_values[i], p, inner)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (opttup_arm_expr_escapes(sl.field_values[i], p, inner, structs)) { return true; } i = i + 1; }
             return false;
         },
         _ => { return false; }
     }
     return false;
 }
-function opttup_arm_stmt_escapes(st: parser.Stmt, p: string, inner: string): boolean {
+function opttup_arm_stmt_escapes(st: parser.Stmt, p: string, inner: string, structs: parser.StructDecl[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return opttup_arm_expr_escapes(v.init, p, inner); },
-        parser.StmtReturn(r) => { return opttup_arm_expr_escapes(r.value, p, inner); },
-        parser.StmtExpr(e) => { return opttup_arm_expr_escapes(e.value, p, inner); },
-        parser.StmtAssign(a) => { return opttup_arm_expr_escapes(a.value, p, inner); },
+        parser.StmtVar(v) => { return opttup_arm_expr_escapes(v.init, p, inner, structs); },
+        parser.StmtReturn(r) => { return opttup_arm_expr_escapes(r.value, p, inner, structs); },
+        parser.StmtExpr(e) => { return opttup_arm_expr_escapes(e.value, p, inner, structs); },
+        parser.StmtAssign(a) => { return opttup_arm_expr_escapes(a.value, p, inner, structs); },
         parser.StmtIf(f) => {
-            if (opttup_arm_expr_escapes(f.cond, p, inner)) { return true; }
+            if (opttup_arm_expr_escapes(f.cond, p, inner, structs)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (opttup_arm_stmt_escapes(f.then_body[ti], p, inner)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (opttup_arm_stmt_escapes(f.then_body[ti], p, inner, structs)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (opttup_arm_stmt_escapes(f.else_body[ei], p, inner)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (opttup_arm_stmt_escapes(f.else_body[ei], p, inner, structs)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
-            if (opttup_arm_expr_escapes(w.cond, p, inner)) { return true; }
+            if (opttup_arm_expr_escapes(w.cond, p, inner, structs)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (opttup_arm_stmt_escapes(w.body[i], p, inner)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (opttup_arm_stmt_escapes(w.body[i], p, inner, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
-            if (opttup_arm_expr_escapes(fo.iter, p, inner)) { return true; }
+            if (opttup_arm_expr_escapes(fo.iter, p, inner, structs)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (opttup_arm_stmt_escapes(fo.body[i], p, inner)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (opttup_arm_stmt_escapes(fo.body[i], p, inner, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
-            if (opttup_arm_expr_escapes(m.scrutinee, p, inner)) { return true; }
+            if (opttup_arm_expr_escapes(m.scrutinee, p, inner, structs)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, p, inner)) { return true; }
+                if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, p, inner, structs)) { return true; }
                 var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { if (opttup_arm_stmt_escapes(m.arms[ai].body[bi], p, inner)) { return true; } bi = bi + 1; }
+                while (bi < m.arms[ai].body.len()) { if (opttup_arm_stmt_escapes(m.arms[ai].body[bi], p, inner, structs)) { return true; } bi = bi + 1; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return opttup_arm_stmt_escapes(d.action, p, inner); },
+        parser.StmtDefer(d) => { return opttup_arm_stmt_escapes(d.action, p, inner, structs); },
         _ => { return false; }
     }
     return false;
@@ -20642,7 +20704,7 @@ function opttup_arm_stmt_escapes(st: parser.Stmt, p: string, inner: string): boo
 // way (opttup_arm_expr/stmt_escapes)? The tuple-aware replacement for
 // opt_body_binding_escapes in the OPTTUP admission. Scans nested blocks for the
 // `match (name)`; a `Some(_)` (no binding) never escapes.
-function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: string): boolean {
+function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: string, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -20661,9 +20723,9 @@ function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: strin
                                 var vc: i32 = 0;
                                 while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()]; } vc = vc + 1; }
                                 if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
-                                    if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, pv.binding, inner)) { return true; }
+                                    if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, pv.binding, inner, structs)) { return true; }
                                     var bi: i32 = 0;
-                                    while (bi < m.arms[ai].body.len()) { if (opttup_arm_stmt_escapes(m.arms[ai].body[bi], pv.binding, inner)) { return true; } bi = bi + 1; }
+                                    while (bi < m.arms[ai].body.len()) { if (opttup_arm_stmt_escapes(m.arms[ai].body[bi], pv.binding, inner, structs)) { return true; } bi = bi + 1; }
                                 }
                             },
                             _ => {}
@@ -20672,11 +20734,11 @@ function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: strin
                     }
                 }
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (opttup_payload_escapes(m.arms[mi].body, name, inner)) { return true; } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (opttup_payload_escapes(m.arms[mi].body, name, inner, structs)) { return true; } mi = mi + 1; }
             },
-            parser.StmtIf(f) => { if (opttup_payload_escapes(f.then_body, name, inner) || opttup_payload_escapes(f.else_body, name, inner)) { return true; } },
-            parser.StmtWhile(w) => { if (opttup_payload_escapes(w.body, name, inner)) { return true; } },
-            parser.StmtFor(fo) => { if (opttup_payload_escapes(fo.body, name, inner)) { return true; } },
+            parser.StmtIf(f) => { if (opttup_payload_escapes(f.then_body, name, inner, structs) || opttup_payload_escapes(f.else_body, name, inner, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (opttup_payload_escapes(w.body, name, inner, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (opttup_payload_escapes(fo.body, name, inner, structs)) { return true; } },
             _ => {}
         }
         i = i + 1;
@@ -20712,7 +20774,7 @@ function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.Struct
                     }
                     if (n_match == 1 && match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
-                        && !opttup_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name))
+                        && !opttup_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
                         a = push_str_unique(a, v.name);
@@ -21832,7 +21894,7 @@ function arrtup_elem_type_of_decl(stmts: parser.Stmt[], structs: parser.StructDe
 // (indexed array-field read) and `name[i].N.len()` are borrows; a BARE `name[i]`
 // element (the tuple box) or a bare `name` escapes. Erring toward escape is a safe
 // leak, never an over-release.
-function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string): boolean {
+function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprNumber(_) => { return false; },
@@ -21845,15 +21907,39 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string): bool
                         parser.ExprIdent(aid) => {
                             if (aid.name == name && util.is_all_digits(fa.field)) {
                                 var tag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(fa.field));
-                                if (!is_scalar_type_name(tag)) { return true; }   // bare array/nested extract
-                                return arrtup_elem_esc_expr(ix.index, name, ttype);
+                                if (!is_scalar_type_name(tag)) { return true; }   // bare array/nested/struct extract
+                                return arrtup_elem_esc_expr(ix.index, name, ttype, structs);
                             }
                         },
                         _ => {}
                     }
-                    return arrtup_elem_esc_expr(fa.obj, name, ttype);
+                    return arrtup_elem_esc_expr(fa.obj, name, ttype, structs);
                 },
-                _ => { return arrtup_elem_esc_expr(fa.obj, name, ttype); }
+                parser.ExprFieldAccess(ofa) => {
+                    // `name[i].N.field`: struct-field read of a struct tuple element. A SCALAR
+                    // field is a borrow (safe, check the index); a struct ARRAY/pointer field
+                    // extracted bare escapes (its buffer the reclaim would free). #4365.
+                    match (ofa.obj) {
+                        parser.ExprIndex(oix) => {
+                            match (oix.array) {
+                                parser.ExprIdent(oaid) => {
+                                    if (oaid.name == name && util.is_all_digits(ofa.field)) {
+                                        var stag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(ofa.field));
+                                        if (decl_is_struct(structs, stag)) {
+                                            var sft: string = decl_field_type(structs, stag, fa.field);
+                                            if (is_scalar_type_name(sft)) { return arrtup_elem_esc_expr(oix.index, name, ttype, structs); }
+                                            return true;   // struct array/pointer field extracted bare
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    return arrtup_elem_esc_expr(fa.obj, name, ttype, structs);
+                },
+                _ => { return arrtup_elem_esc_expr(fa.obj, name, ttype, structs); }
             }
         },
         parser.ExprIndex(ix) => {
@@ -21865,35 +21951,20 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string): bool
                             match (bix.array) {
                                 parser.ExprIdent(bid) => {
                                     if (bid.name == name && util.is_all_digits(bfa.field)) {
-                                        return arrtup_elem_esc_expr(bix.index, name, ttype) || arrtup_elem_esc_expr(ix.index, name, ttype);
+                                        return arrtup_elem_esc_expr(bix.index, name, ttype, structs) || arrtup_elem_esc_expr(ix.index, name, ttype, structs);
                                     }
                                 },
                                 _ => {}
                             }
                         },
-                        _ => {}
-                    }
-                },
-                parser.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] tuple box
-                _ => {}
-            }
-            return arrtup_elem_esc_expr(ix.array, name, ttype) || arrtup_elem_esc_expr(ix.index, name, ttype);
-        },
-        parser.ExprCall(c) => {
-            // `name[i].N.len()`: the one whitelisted borrow method — safe receiver, check args.
-            match (c.callee) {
-                parser.ExprFieldAccess(cfa) => {
-                    match (cfa.obj) {
-                        parser.ExprFieldAccess(pfa) => {
-                            match (pfa.obj) {
-                                parser.ExprIndex(pix) => {
-                                    match (pix.array) {
-                                        parser.ExprIdent(pid) => {
-                                            if (pid.name == name && util.is_all_digits(pfa.field) && cfa.field == "len") {
-                                                if (arrtup_elem_esc_expr(pix.index, name, ttype)) { return true; }
-                                                var ai: i32 = 0;
-                                                while (ai < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ai], name, ttype)) { return true; } ai = ai + 1; }
-                                                return false;
+                        // `name[i].N.field[j]`: indexed struct ARRAY-field read — safe; check indices.
+                        parser.ExprFieldAccess(bofa) => {
+                            match (bofa.obj) {
+                                parser.ExprIndex(boix) => {
+                                    match (boix.array) {
+                                        parser.ExprIdent(boid) => {
+                                            if (boid.name == name && util.is_all_digits(bofa.field)) {
+                                                return arrtup_elem_esc_expr(boix.index, name, ttype, structs) || arrtup_elem_esc_expr(ix.index, name, ttype, structs);
                                             }
                                         },
                                         _ => {}
@@ -21905,84 +21976,140 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string): bool
                         _ => {}
                     }
                 },
+                parser.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] tuple box
                 _ => {}
             }
-            if (arrtup_elem_esc_expr(c.callee, name, ttype)) { return true; }
+            return arrtup_elem_esc_expr(ix.array, name, ttype, structs) || arrtup_elem_esc_expr(ix.index, name, ttype, structs);
+        },
+        parser.ExprCall(c) => {
+            // `name[i].N.len()` and `name[i].N.field.len()`: whitelisted borrow methods —
+            // safe receiver, check args.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprFieldAccess(pfa) => {
+                                match (pfa.obj) {
+                                    // `name[i].N.len()`: array tuple-element length.
+                                    parser.ExprIndex(pix) => {
+                                        match (pix.array) {
+                                            parser.ExprIdent(pid) => {
+                                                if (pid.name == name && util.is_all_digits(pfa.field)) {
+                                                    if (arrtup_elem_esc_expr(pix.index, name, ttype, structs)) { return true; }
+                                                    var ai: i32 = 0;
+                                                    while (ai < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ai], name, ttype, structs)) { return true; } ai = ai + 1; }
+                                                    return false;
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                    // `name[i].N.field.len()`: struct array-field length.
+                                    parser.ExprFieldAccess(ppfa) => {
+                                        match (ppfa.obj) {
+                                            parser.ExprIndex(ppix) => {
+                                                match (ppix.array) {
+                                                    parser.ExprIdent(ppid) => {
+                                                        if (ppid.name == name && util.is_all_digits(ppfa.field)) {
+                                                            if (arrtup_elem_esc_expr(ppix.index, name, ttype, structs)) { return true; }
+                                                            var aj: i32 = 0;
+                                                            while (aj < c.args.len()) { if (arrtup_elem_esc_expr(c.args[aj], name, ttype, structs)) { return true; } aj = aj + 1; }
+                                                            return false;
+                                                        }
+                                                    },
+                                                    _ => {}
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (arrtup_elem_esc_expr(c.callee, name, ttype, structs)) { return true; }
             var ci: i32 = 0;
-            while (ci < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ci], name, ttype)) { return true; } ci = ci + 1; }
+            while (ci < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ci], name, ttype, structs)) { return true; } ci = ci + 1; }
             return false;
         },
-        parser.ExprBinary(b) => { return arrtup_elem_esc_expr(b.left, name, ttype) || arrtup_elem_esc_expr(b.right, name, ttype); },
-        parser.ExprUnary(u) => { return arrtup_elem_esc_expr(u.operand, name, ttype); },
-        parser.ExprSlice(sl) => { return arrtup_elem_esc_expr(sl.array, name, ttype) || arrtup_elem_esc_expr(sl.start, name, ttype) || arrtup_elem_esc_expr(sl.end, name, ttype); },
+        parser.ExprBinary(b) => { return arrtup_elem_esc_expr(b.left, name, ttype, structs) || arrtup_elem_esc_expr(b.right, name, ttype, structs); },
+        parser.ExprUnary(u) => { return arrtup_elem_esc_expr(u.operand, name, ttype, structs); },
+        parser.ExprSlice(sl) => { return arrtup_elem_esc_expr(sl.array, name, ttype, structs) || arrtup_elem_esc_expr(sl.start, name, ttype, structs) || arrtup_elem_esc_expr(sl.end, name, ttype, structs); },
         parser.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { if (arrtup_elem_esc_expr(ar.elements[i], name, ttype)) { return true; } i = i + 1; }
+            while (i < ar.elements.len()) { if (arrtup_elem_esc_expr(ar.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (arrtup_elem_esc_expr(t.elements[i], name, ttype)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (arrtup_elem_esc_expr(t.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && arrtup_elem_esc_expr(sl.base, name, ttype)) { return true; }
+            if (sl.has_base && arrtup_elem_esc_expr(sl.base, name, ttype, structs)) { return true; }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (arrtup_elem_esc_expr(sl.field_values[i], name, ttype)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (arrtup_elem_esc_expr(sl.field_values[i], name, ttype, structs)) { return true; } i = i + 1; }
             return false;
         },
         _ => { return false; }
     }
     return false;
 }
-function arrtup_elem_esc_stmt(st: parser.Stmt, name: string, ttype: string): boolean {
+function arrtup_elem_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return arrtup_elem_esc_expr(v.init, name, ttype); },
-        parser.StmtReturn(r) => { return arrtup_elem_esc_expr(r.value, name, ttype); },
-        parser.StmtExpr(e) => { return arrtup_elem_esc_expr(e.value, name, ttype); },
-        parser.StmtAssign(a) => { return arrtup_elem_esc_expr(a.value, name, ttype); },
+        parser.StmtVar(v) => { return arrtup_elem_esc_expr(v.init, name, ttype, structs); },
+        parser.StmtReturn(r) => { return arrtup_elem_esc_expr(r.value, name, ttype, structs); },
+        parser.StmtExpr(e) => { return arrtup_elem_esc_expr(e.value, name, ttype, structs); },
+        parser.StmtAssign(a) => { return arrtup_elem_esc_expr(a.value, name, ttype, structs); },
         parser.StmtIf(f) => {
-            if (arrtup_elem_esc_expr(f.cond, name, ttype)) { return true; }
+            if (arrtup_elem_esc_expr(f.cond, name, ttype, structs)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (arrtup_elem_esc_stmt(f.then_body[ti], name, ttype)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (arrtup_elem_esc_stmt(f.then_body[ti], name, ttype, structs)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (arrtup_elem_esc_stmt(f.else_body[ei], name, ttype)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (arrtup_elem_esc_stmt(f.else_body[ei], name, ttype, structs)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
-            if (arrtup_elem_esc_expr(w.cond, name, ttype)) { return true; }
+            if (arrtup_elem_esc_expr(w.cond, name, ttype, structs)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (arrtup_elem_esc_stmt(w.body[i], name, ttype)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (arrtup_elem_esc_stmt(w.body[i], name, ttype, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
-            if (arrtup_elem_esc_expr(fo.iter, name, ttype)) { return true; }
+            if (arrtup_elem_esc_expr(fo.iter, name, ttype, structs)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (arrtup_elem_esc_stmt(fo.body[i], name, ttype)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (arrtup_elem_esc_stmt(fo.body[i], name, ttype, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
-            if (arrtup_elem_esc_expr(m.scrutinee, name, ttype)) { return true; }
+            if (arrtup_elem_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && arrtup_elem_esc_expr(m.arms[ai].guard, name, ttype)) { return true; }
+                if (m.arms[ai].has_guard && arrtup_elem_esc_expr(m.arms[ai].guard, name, ttype, structs)) { return true; }
                 var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { if (arrtup_elem_esc_stmt(m.arms[ai].body[bi], name, ttype)) { return true; } bi = bi + 1; }
+                while (bi < m.arms[ai].body.len()) { if (arrtup_elem_esc_stmt(m.arms[ai].body[bi], name, ttype, structs)) { return true; } bi = bi + 1; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return arrtup_elem_esc_stmt(d.action, name, ttype); },
+        parser.StmtDefer(d) => { return arrtup_elem_esc_stmt(d.action, name, ttype, structs); },
         _ => { return false; }
     }
     return false;
 }
 // arrtup_elem_payload_escapes: any statement in the body uses `name` (element tuple
-// type `ttype`) in an escaping way per arrtup_elem_esc_stmt.
-function arrtup_elem_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string): boolean {
+// type `ttype`) in an escaping way per arrtup_elem_esc_stmt. A struct tuple-element
+// SCALAR-field read / indexed array-field read / .len() is a borrow (reclaim proceeds);
+// a whole struct element or a bare struct array-field extraction escapes. #4365.
+function arrtup_elem_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (arrtup_elem_esc_stmt(stmts[i], name, ttype)) { return true; }
+        if (arrtup_elem_esc_stmt(stmts[i], name, ttype, structs)) { return true; }
         i = i + 1;
     }
     return false;
