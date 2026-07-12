@@ -293,7 +293,11 @@ Percent-encoding, URL parsing, query parsing.
 
 ### `std/json`
 
-- `json_encode(v: JsonValue): string`
+- `json_encode(v: JsonValue): string` — compact canonical JSON
+- `json_encode_pretty(v: JsonValue, indent: i32): string` — indented,
+  human-readable JSON (`indent` spaces per level; empty arrays/objects
+  stay on one line). Same value tokens as `json_encode` — only
+  whitespace differs.
 - `json_parse(s: string): Option[JsonValue]`
 
 ### `std/http`
