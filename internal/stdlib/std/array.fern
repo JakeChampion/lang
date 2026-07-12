@@ -1016,6 +1016,23 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
     return None;
 }
 
+// `find_map(xs, f)` — apply `f` to each element and return the FIRST
+// `Some` it produces, else `None`. The map-and-search fusion of
+// `map(...).find(is_some)` in a single short-circuiting pass, keeping
+// only the mapped value (not the element that produced it). Handy when
+// the projection itself decides membership — e.g. the first line that
+// parses to a valid config entry. Mirrors Rust's `Iterator::find_map`;
+// the closure lowers on every backend and the self-host IR path.
+pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
+    for x in xs {
+        match (f(x)) {
+            Some(v) => { return Some(v); },
+            None => {},
+        }
+    }
+    return None;
+}
+
 // `max_by_i32_key(xs, key)` / `min_by_i32_key(xs, key)` — the ELEMENT of `xs`
 // whose i32 `key(x)` projection is largest / smallest, as `Option[T]` (`None`
 // for an empty array). The "which record has the max timestamp" case, the

@@ -177,7 +177,8 @@ convention.
   `count_str`, `all_starts_with`, `all_ends_with`,
   `sorted_str_asc`, `sorted_str_desc`, `join_with_last`
 - **generic `[T]` combinators** (free + method forms): `map`,
-  `filter`, `fold`, `reduce`, `any`, `all`, `find`, `position`,
+  `filter`, `fold`, `reduce`, `any`, `all`, `find`, `find_map`
+  (first `Some` of a projection returning `Option[U]`), `position`,
   `take`/`drop`/`take_while`/`drop_while`, `slice`, `chunks`,
   `windows`, `zip`, `enumerate`, `reverse`, `intersperse`,
   `flat_map`, `flatten` (`T[][]` → `T[]`), `partition`
