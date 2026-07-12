@@ -260,10 +260,25 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 		mark = "^" + strings.Repeat("~", span-1)
 	}
 
-	out := fmt.Sprintf("%s\n    %s\n    %s%s", header, line, pad, paint(ansiRed, mark))
+	// Rich (colour) mode renders a right-aligned line-number gutter with a
+	// box-drawing separator (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7); the
+	// classic path is byte-for-byte unchanged so every non-interactive
+	// caller sees the historical layout. The note aligns under the gutter.
+	coloredMark := paint(ansiRed, mark)
+	var out, notePrefix string
+	if enableColor {
+		num := fmt.Sprintf("%d", pos.Line)
+		blank := strings.Repeat(" ", len(num))
+		sep := paint(ansiBlue, "│")
+		out = fmt.Sprintf("%s\n %s %s %s\n %s %s %s%s", header, num, sep, line, blank, sep, pad, coloredMark)
+		notePrefix = " " + blank + " " + sep + " "
+	} else {
+		out = fmt.Sprintf("%s\n    %s\n    %s%s", header, line, pad, coloredMark)
+		notePrefix = "    "
+	}
 	if h, ok := err.(Hinted); ok {
 		if hint := h.Hint(); hint != "" {
-			out += "\n    " + paint(ansiBlue, "note:") + " " + hint
+			out += "\n" + notePrefix + paint(ansiBlue, "note:") + " " + hint
 		}
 	}
 	// Multi-label diagnostic (docs/DIAGNOSTIC-UX-RESEARCH.md
