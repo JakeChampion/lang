@@ -326,6 +326,49 @@ func (f *formatter) writeDeriveAttr(derives []string) {
 	f.b.WriteString(")\n")
 }
 
+// writeTypeParams emits a generic parameter list `[A, B: Trait + Other,
+// C: From[i32]]`. `bounds` maps a parameter name to its trait bounds
+// (nil / absent for an unbounded param), and `boundArgs` carries the
+// type arguments of a generic-trait bound (`From[i32]`), parallel to
+// `bounds`. Structs pass nil for both (struct params are never bounded).
+// Emitting nothing for an empty list keeps non-generic decls unchanged.
+func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, boundArgs map[string][][]ast.Type) {
+	if len(names) == 0 {
+		return
+	}
+	f.b.WriteByte('[')
+	for i, name := range names {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		f.b.WriteString(name)
+		bs := bounds[name]
+		if len(bs) == 0 {
+			continue
+		}
+		f.b.WriteString(": ")
+		for j, bt := range bs {
+			if j > 0 {
+				f.b.WriteString(" + ")
+			}
+			f.b.WriteString(bt)
+			if boundArgs != nil {
+				if args := boundArgs[name]; j < len(args) && len(args[j]) > 0 {
+					f.b.WriteByte('[')
+					for k, at := range args[j] {
+						if k > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(formatType(at))
+					}
+					f.b.WriteByte(']')
+				}
+			}
+		}
+	}
+	f.b.WriteByte(']')
+}
+
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.writeDeriveAttr(sd.Derives)
 	if sd.PackageScoped {
@@ -335,6 +378,7 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	}
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
+	f.writeTypeParams(sd.TypeParams, nil, nil)
 	f.b.WriteString(" { ")
 	for i, fld := range sd.Fields {
 		if i > 0 {
@@ -402,13 +446,28 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	}
 	f.b.WriteString("function ")
 	if fn.Receiver != nil {
+		// A method's type parameters go in leading position, before
+		// the receiver, so the receiver type (`Box[T]`) can reference
+		// them — the shape the parser documents as canonical.
+		if len(fn.TypeParams) > 0 {
+			f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
+			f.b.WriteByte(' ')
+		}
 		f.b.WriteByte('(')
+		if fn.Receiver.Own {
+			f.b.WriteString("own ")
+		}
 		f.b.WriteString(fn.Receiver.Name)
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(fn.Receiver.Type))
 		f.b.WriteString(") ")
 	}
 	f.b.WriteString(fn.Name)
+	// A free function spells its type parameters after the name
+	// (`function name[T](x: T): T`) — the dominant in-source style.
+	if fn.Receiver == nil {
+		f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
+	}
 	f.b.WriteByte('(')
 	for i, p := range fn.Params {
 		if i > 0 {

@@ -181,6 +181,26 @@ the small-list convenience cases.
   `sort_strings_asc_ci(arr)`
 - `string_cmp(a, b)`, `string_cmp_ci(a, b)`
 
+### `std/set`
+
+A generic, value-semantic set of distinct elements,
+`Set[T: cmp.Eq]`. Every operation returns a NEW set and leaves
+its receiver untouched. Element type only needs `cmp.Eq`
+(membership is decided by `==`); iteration / `to_array()` is in
+first-inserted order.
+
+- `set_new()`, `set_of(xs)` — empty set / dedup an array
+- `(s).add(x)`, `(s).remove(x)` — insert / delete, returning a
+  new set (a no-op returns the receiver)
+- `(s).contains(x)`, `(s).len()`, `(s).is_empty()`,
+  `(s).to_array()`
+- `(s).union(o)`, `(s).intersect(o)`, `(s).difference(o)`
+- `(s).is_subset(o)`, `(s).equals(o)` (order-insensitive)
+
+Backed by a linear-scan array, so `contains` / `add` are O(n)
+(an n-element build is O(n²)) — right-sized for CLI-scale working
+sets, not for large collections.
+
 ### `std/format`
 
 - `format(fmt, args)` — template substitution with `{}`

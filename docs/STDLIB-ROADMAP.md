@@ -379,6 +379,37 @@ repetitive `to_lower` allocations.
 **Inspiration**: Go `strings.Fields` / `EqualFold`, Rust
 `strip_prefix`.
 
+### 16. `Set[T]` · small · ☑
+
+**Surface**: `std/set` — a generic, value-semantic
+`Set[T: cmp.Eq]`: `set_new` / `set_of`, `add` / `remove` /
+`contains` / `len` / `is_empty` / `to_array`, and the algebra
+`union` / `intersect` / `difference` / `is_subset` / `equals`
+(order-insensitive).
+
+**Why**: The most-cited missing container (Roc `Set`); dedup /
+membership / seen-id working sets are constant in CLI tools.
+
+**Inspiration**: Roc `Set`, Rust `HashSet` API shape.
+
+**Status**: shipped in `internal/stdlib/std/set.fern`, backed by
+an insertion-ordered array (membership by `==`). Every mutating
+op returns a NEW set and copies the backing array rather than
+appending onto the receiver's field in place — that in-place
+form passes the interpreter but silently mutates a shared
+receiver once compiled (the copy-on-write aliasing hazard), so
+the copy is load-bearing, not incidental. Covered by
+`examples/tests/set_test.fern` (pure-Fern runner, `add is pure`
+being the value-semantics guard) and
+`internal/e2e/set_module_test.go` (differential across interp /
+x86-64 / wasm / arm64). **Complexity**: linear-scan store, so
+`contains` / `add` are O(n) and an n-element build is O(n²) —
+right-sized for CLI-scale sets, a trap past ~10⁴ elements. The
+O(1)-membership hash-backed version awaits a native codegen fix
+for returning a `Map`-wrapping struct from a function (a
+value-semantic `Set` re-wraps its map on every `add`); the
+public API is designed to carry over unchanged.
+
 ## Extras (not in the original 15)
 
 These landed in the chunks above but weren't on the original
