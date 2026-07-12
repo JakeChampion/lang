@@ -2780,6 +2780,24 @@ func TestRunnerSemverExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/glob_test.fern` covers std/glob — the shell-style
+// matcher: `*` (non-separator), `?`, `**` (globstar with zero-directory
+// elision), and `[...]` classes with ranges + negation. Passing suite →
+// exit 0; plan line `1..7`.
+func TestRunnerGlobExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/glob_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/glob", "1..7", "# pass 7", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
