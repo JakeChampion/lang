@@ -335,8 +335,10 @@ first-inserted order.
   new set (a no-op returns the receiver)
 - `(s).contains(x)`, `(s).len()`, `(s).is_empty()`,
   `(s).to_array()`
-- `(s).union(o)`, `(s).intersect(o)`, `(s).difference(o)`
-- `(s).is_subset(o)`, `(s).equals(o)` (order-insensitive)
+- `(s).union(o)`, `(s).intersect(o)`, `(s).difference(o)`,
+  `(s).symmetric_difference(o)` (elements in exactly one set)
+- `(s).is_subset(o)`, `(s).is_superset(o)`, `(s).is_disjoint(o)`,
+  `(s).equals(o)` (order-insensitive)
 
 Backed by a linear-scan array, so `contains` / `add` are O(n)
 (an n-element build is O(n²)) — right-sized for CLI-scale working

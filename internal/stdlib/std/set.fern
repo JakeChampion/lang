@@ -183,3 +183,39 @@ pub function (s: Set[T]) equals[T: cmp.Eq](other: Set[T]): boolean {
     if (s.xs.len() != other.xs.len()) { return false; }
     return s.is_subset(other);
 }
+
+// `is_superset(other)` — is every element of `other` also in `s`? The
+// mirror of `is_subset`; every set is a superset of the empty set.
+pub function (s: Set[T]) is_superset[T: cmp.Eq](other: Set[T]): boolean {
+    return other.is_subset(s);
+}
+
+// `is_disjoint(other)` — do the two sets share NO element? True when the
+// intersection is empty (so the empty set is disjoint from everything).
+pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean {
+    var i: i32 = 0;
+    while (i < s.xs.len()) {
+        if (other.contains(s.xs[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `symmetric_difference(other)` — the elements in EXACTLY ONE of the two
+// sets: `(s - other)` followed by `(other - s)`. `s`'s unique elements
+// keep their order and come first, then `other`'s, matching `union`'s
+// ordering convention.
+pub function (s: Set[T]) symmetric_difference[T: cmp.Eq](other: Set[T]): Set[T] {
+    var ys: T[] = [];
+    var i: i32 = 0;
+    while (i < s.xs.len()) {
+        if (!other.contains(s.xs[i])) { ys = ys.append(s.xs[i]); }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < other.xs.len()) {
+        if (!s.contains(other.xs[j])) { ys = ys.append(other.xs[j]); }
+        j = j + 1;
+    }
+    return Set { xs: ys };
+}
