@@ -848,6 +848,21 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString(") ")
 		f.formatStmt(x.Body, depth)
 	case *ast.Loop:
+		// A parser-synthesised `todo` stub re-prints as its sugar
+		// (`todo;` / `todo("msg");`), not the desugared
+		// `loop { eprint(...); exit(101); }` body — unlike `assert`,
+		// the todo marker is a workflow inventory the formatter
+		// must not erase. TodoMsg is the original message expression.
+		if x.IsTodo {
+			if x.TodoMsg != nil {
+				f.b.WriteString("todo(")
+				f.formatExpr(x.TodoMsg, precLowest)
+				f.b.WriteString(");")
+			} else {
+				f.b.WriteString("todo;")
+			}
+			return
+		}
 		f.b.WriteString("loop ")
 		f.formatStmt(x.Body, depth)
 	case *ast.For:

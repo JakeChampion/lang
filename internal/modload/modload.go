@@ -772,6 +772,13 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		// them here means cross-module type queries find the
 		// right TypeRef for the entry module's source.
 		combined.TypeRefs = append(combined.TypeRefs, mod.prog.TypeRefs...)
+		// TodoSites is carried over from the ENTRY module only:
+		// ast.Position has no filename, so `todo` positions from
+		// imported modules could not be attributed to their file
+		// in `-check`'s warning output.
+		if p == entryPath {
+			combined.TodoSites = append(combined.TodoSites, mod.prog.TodoSites...)
+		}
 	}
 	return combined, nil
 }

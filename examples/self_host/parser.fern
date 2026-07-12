@@ -3079,6 +3079,49 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_if(e_unary("!", as_cond), as_body, as_noelse), asp);
         }
     }
+    // `todo;` / `todo("msg");` builtin — desugar to
+    // `while (true) { eprint("todo[: msg]"); exit(101); }`, mirroring
+    // the native parser's parseTodo (whose `loop { ... }` desugar this
+    // parser lowers to the same while-true shape — see parse_loop_stmt).
+    // The always-true loop makes the stub DIVERGE for the checker's
+    // missing-return / let-else analyses, so `todo;` can stand in for a
+    // whole non-void function body; exit(101) fires on the first
+    // iteration. Only the statement-position `todo ;` / `todo (` shapes
+    // are intercepted, so `todo` stays usable as an ordinary identifier
+    // elsewhere. The runtime message must stay byte-identical to the
+    // native parser's.
+    if (p.peek_ident() == "todo") {
+        var td0: Par = p.advance();  // consume `todo`
+        var td0p: string = td0.peek_punct();
+        if (td0p == "(" || td0p == ";") {
+            var tdp: Par = td0;
+            var td_has_msg: boolean = false;
+            var td_msg: Expr = e_string("");
+            if (td0p == "(") {
+                tdp = tdp.advance();  // consume `(`
+                if (tdp.peek_punct() != ")") {
+                    var (tdm_e, tdmp) = parse_expr(tdp);
+                    td_msg = tdm_e;
+                    tdp = tdmp;
+                    td_has_msg = true;
+                }
+                if (tdp.peek_punct() == ")") { tdp = tdp.advance(); }
+            }
+            if (tdp.peek_punct() == ";") { tdp = tdp.advance(); }
+            var td_text: Expr = e_string("todo: not implemented");
+            if (td_has_msg) {
+                td_text = e_binary("+", e_string("todo: "), td_msg);
+            }
+            var td_body: Stmt[] = [];
+            var td_eargs: Expr[] = [];
+            td_eargs = td_eargs.append(td_text);
+            td_body = td_body.append(s_expr(e_call(e_ident("eprint"), td_eargs)));
+            var td_xargs: Expr[] = [];
+            td_xargs = td_xargs.append(e_number("101", "", false));
+            td_body = td_body.append(s_expr(e_call(e_ident("exit"), td_xargs)));
+            return (s_while(e_bool(true), td_body), tdp);
+        }
+    }
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
         // `defer ACTION;` — the deferred action is an ordinary statement
