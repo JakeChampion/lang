@@ -1,0 +1,43 @@
+import "std/test";
+import "std/time" as time;
+// examples/tests/time_relative_test.fern — pure-Fern coverage of
+// std/time.Instant.relative_to: the "just now" window, past vs future
+// direction ("ago" / "in"), singular vs plural units, and the unit
+// ladder from seconds through years.
+
+// Reference instant all cases are measured against.
+function now(): Instant { return time.instant_from_unix(1000000 as i64); }
+function at(sec: i64): Instant { return time.instant_from_unix(sec); }
+function rel(sec: i64): string { return at(sec).relative_to(now()); }
+
+function test_just_now(): test.TestOutcome {
+    if (rel(1000000 as i64) != "just now") { return test.fail("exact"); }
+    if (rel(999997 as i64) != "just now") { return test.fail("3s past"); }
+    return test.assert_eq(rel(1000004 as i64), "just now");
+}
+
+function test_seconds_and_direction(): test.TestOutcome {
+    if (rel(999990 as i64) != "10 seconds ago") { return test.fail("past secs"); }
+    return test.assert_eq(rel(1000030 as i64), "in 30 seconds");
+}
+
+function test_singular_vs_plural(): test.TestOutcome {
+    if (rel(999940 as i64) != "1 minute ago") { return test.fail("1 minute"); }
+    return test.assert_eq(rel(999880 as i64), "2 minutes ago");
+}
+
+function test_unit_ladder(): test.TestOutcome {
+    if (rel(996400 as i64) != "1 hour ago") { return test.fail("hour"); }
+    if (rel(913600 as i64) != "1 day ago") { return test.fail("day"); }
+    if (rel(1000000 - 40 * 86400 as i64) != "1 month ago") { return test.fail("month"); }
+    return test.assert_eq(rel(1000000 + 800 * 86400 as i64), "in 2 years");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/time relative_to");
+    r = r.it("just now",           test_just_now());
+    r = r.it("seconds + direction", test_seconds_and_direction());
+    r = r.it("singular vs plural", test_singular_vs_plural());
+    r = r.it("unit ladder",        test_unit_ladder());
+    return r.finish();
+}

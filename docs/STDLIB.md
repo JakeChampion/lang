@@ -491,6 +491,9 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
 - **Spans / durations:** `span_seconds`/`_minutes`/`_hours`/`_days`/
   `_weeks`/`_months`/`_years(n)`, `duration_seconds(s)`,
   `duration_millis(ms)`.
+- **Humanised relative time:** `(i: Instant).relative_to(now)` — the
+  `fromNow` shape, e.g. `"5 minutes ago"`, `"in 2 days"`, `"just now"`
+  (coarse units: month ≈ 30 days, year = 365 days).
 - Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
   `DAYS_PER_WEEK`, etc.
 
