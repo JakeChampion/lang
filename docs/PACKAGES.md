@@ -1,4 +1,4 @@
-# Packages: the `fern.toml` manifest (slices 1–5)
+# Packages: the `fern.toml` manifest (slices 1–6)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
@@ -118,6 +118,15 @@ the usual undeclared-dependency error. This is the shape the eventual
 self-hosted compiler wants (lexer / parser / checker / codegen as
 sibling members).
 
+`fern -check DIR` understands packages and workspaces: given a
+workspace root it type-checks **every member** (each member's `lib`
+module, or `main.fern` for an application member), printing an
+`ok`/`FAIL` line per member and exiting non-zero if any fail — one
+broken package doesn't hide the rest. Given a plain package directory
+it checks that package's entry module; given a `.fern` file it is the
+original single-entry check. This is the workspace-wide validation the
+multi-package compiler wants: one command checks the whole tree.
+
 ## Adding a dependency — `fern -add` (slice 5)
 
 `fern -add NAME SPEC [DIR]` appends a declared dependency to the
@@ -171,8 +180,9 @@ only declared deps resolve.
 
 Version constraints + MVS resolution, `fern.lock` (for url deps the
 manifest hash already pins content; the lockfile matters once version
-deps resolve transitively) and workspace-wide `fern -check`/`-vendor`
-iteration over members. See `PACKAGE-MANAGEMENT-SOTA.md`
+deps resolve transitively) and workspace-wide `fern -vendor` iteration
+over members (workspace-wide `-check` has landed). See
+`PACKAGE-MANAGEMENT-SOTA.md`
 for the design each of these follows.
 
 **MVS / version deps — the open design fork.** Minimum Version

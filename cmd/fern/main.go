@@ -696,7 +696,7 @@ func main() {
 		} else {
 			path = "-"
 		}
-		if err := runCheck(path); err != nil {
+		if err := runCheckTarget(path); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
