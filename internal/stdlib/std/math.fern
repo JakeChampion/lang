@@ -88,3 +88,45 @@ pub function i64_min(): i64 { return (0 as i64) - 9223372036854775807 - (1 as i6
 pub function pack_rgb(r: i32, g: i32, b: i32): i32 {
     return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
 }
+
+// __hex_digit(b) — value 0..15 of an ASCII hex byte, or -1 if it isn't
+// one. Self-contained so std/math keeps zero module dependencies.
+function __hex_digit(b: i32): i32 {
+    if (b >= 48 && b <= 57) { return b - 48; }        // '0'..'9'
+    if (b >= 97 && b <= 102) { return b - 97 + 10; }  // 'a'..'f'
+    if (b >= 65 && b <= 70) { return b - 65 + 10; }   // 'A'..'F'
+    return -1;
+}
+
+// `parse_rgb_hex(s)` — parse a hex colour string into a packed RGB i32
+// (the `pack_rgb` layout `(r<<16)|(g<<8)|b`), or `None` if malformed.
+// The inverse of `(n).to_rgb_hex()`, completing the colour pipeline:
+// `parse_rgb_hex("#ff8800")` → `Some(pack_rgb(255,136,0))`, ready for
+// `to_rgb_hex()` or `std/ansi.fg_rgb`. Accepts an optional leading `#`
+// and both the 6-digit form (`#rrggbb`) and 3-digit shorthand (`#rgb`,
+// each nibble doubled so `#f80` == `#ff8800`). Hex is case-insensitive.
+pub function parse_rgb_hex(s: string): Option[i32] {
+    var start: i32 = 0;
+    if (s.len() > 0 && s[0] == 35) { start = 1; }   // optional '#'
+    var body: i32 = s.len() - start;
+    if (body == 6) {
+        var v: i32 = 0;
+        var i: i32 = 0;
+        while (i < 6) {
+            var d: i32 = __hex_digit(s[start + i]);
+            if (d < 0) { return None; }
+            v = (v << 4) | d;
+            i = i + 1;
+        }
+        return Some(v);
+    }
+    if (body == 3) {
+        var r: i32 = __hex_digit(s[start]);
+        var g: i32 = __hex_digit(s[start + 1]);
+        var b: i32 = __hex_digit(s[start + 2]);
+        if (r < 0 || g < 0 || b < 0) { return None; }
+        // Double each nibble: 0xF -> 0xFF.
+        return Some((((r << 4) | r) << 16) | (((g << 4) | g) << 8) | ((b << 4) | b));
+    }
+    return None;
+}

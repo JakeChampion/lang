@@ -54,6 +54,31 @@ function test_pack_rgb_wraps(): test.TestOutcome {
     return test.assert_eq(math.pack_rgb(256, 256, 256), 0);
 }
 
+// parse_rgb_hex is the inverse of the pack_rgb / to_rgb_hex pipeline.
+function pr(s: string): i32 {
+    match (math.parse_rgb_hex(s)) {
+        Some(v) => { return v; },
+        None => { return -1; },
+    }
+}
+
+function test_parse_rgb_hex(): test.TestOutcome {
+    // 6-digit, optional '#', case-insensitive — all pack the same.
+    if (pr("#ff8800") != math.pack_rgb(255, 136, 0)) { return test.fail("#ff8800"); }
+    if (pr("ff8800") != math.pack_rgb(255, 136, 0)) { return test.fail("no hash"); }
+    if (pr("#FF8800") != math.pack_rgb(255, 136, 0)) { return test.fail("uppercase"); }
+    // 3-digit shorthand doubles each nibble: #f80 == #ff8800.
+    return test.assert_eq(pr("#f80"), math.pack_rgb(255, 136, 0));
+}
+
+function test_parse_rgb_hex_invalid(): test.TestOutcome {
+    // Wrong length, bad digit, and empty all return None (pr → -1).
+    if (pr("#12345") != -1) { return test.fail("short"); }
+    if (pr("#gg0000") != -1) { return test.fail("bad digit"); }
+    if (pr("") != -1) { return test.fail("empty"); }
+    return test.assert_eq(pr("#"), -1);
+}
+
 // random_int's contract — deterministic even though the draw isn't.
 // Regression guard for the 24-bit truncation bug: before random_int
 // drew a full 32 bits, any range > 2^24 was silently capped to the
@@ -107,6 +132,8 @@ function main(): i32 {
     r = r.it("i64 bounds",              test_i64_bounds());
     r = r.it("pack_rgb",                test_pack_rgb());
     r = r.it("pack_rgb wraps",          test_pack_rgb_wraps());
+    r = r.it("parse_rgb_hex",           test_parse_rgb_hex());
+    r = r.it("parse_rgb_hex invalid",   test_parse_rgb_hex_invalid());
     r = r.it("random_int range",        test_random_int_range());
     r = r.it("random_int empty",        test_random_int_empty());
     return r.finish();
