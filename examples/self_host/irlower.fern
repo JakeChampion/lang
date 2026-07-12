@@ -31077,7 +31077,7 @@ function lift_call_arg(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: parser.ExprIdent { name: nm, line: 0, col: 0 }, acc: nacc };
             }
@@ -31576,7 +31576,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
-    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
     var capargs: parser.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(parser.ExprIdent { name: caps[ca], line: 0, col: 0 }); ca = ca + 1; }
@@ -31682,7 +31682,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -31773,7 +31773,7 @@ function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -31782,7 +31782,7 @@ function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails to AST.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.FuncDecl[]): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
     var fi: i32 = 0;
     while (fi < mfuncs.len()) {
         if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
@@ -31798,7 +31798,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
             var call: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: fnname, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0 };
             var bd: parser.Stmt[] = [parser.StmtReturn { value: call, line: 0, col: 0 }];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 }, ok: true };
+            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] }, ok: true };
         }
         fi = fi + 1;
     }
@@ -32544,7 +32544,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[]): parse
         i = i + 1;
     }
     if (boxed.len() == 0) { return fd; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count };
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [] };
 }
 
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
@@ -32606,7 +32606,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         // round); a body with no such closure is returned unchanged (fixpoint-safe).
         var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, mod.funcs);
         if (ic.funcs.len() > 0) {
-            fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count };
+            fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [] };
             var ici: i32 = 0;
             while (ici < ic.funcs.len()) { acc = LiftAcc { funcs: acc.funcs.append(ic.funcs[ici]), counter: acc.counter + 1 }; ici = ici + 1; }
         }
@@ -32630,7 +32630,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         var r: LiftStmts = lift_stmts(cbody, acc, gfns);
         acc = r.acc;
         var nb: parser.Stmt[] = r.stmts;
-        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [] });
         // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
         // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
         // to a make_closure box); only the hoisted target is appended here.

@@ -285,7 +285,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
             ret_type: fd.ret_type,
             body: fold_block(fd.body),
             line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: []
         });
         i = i + 1;
     }
