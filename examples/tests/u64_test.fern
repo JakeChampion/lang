@@ -76,6 +76,45 @@ function test_to_string_umax(): test.TestOutcome {
     return test.assert_eq(umax().to_string(), "18446744073709551615");
 }
 
+function test_predicates(): test.TestOutcome {
+    if (!(0 as u64).is_zero() || (1 as u64).is_zero()) { return test.fail("is_zero"); }
+    if (!(4 as u64).is_even() || (3 as u64).is_even()) { return test.fail("is_even"); }
+    return test.assert_true((3 as u64).is_odd() && !(4 as u64).is_odd());
+}
+
+function test_pow(): test.TestOutcome {
+    // 2^40 = 1099511627776, well past the u32 range.
+    return test.assert_eq((2 as u64).pow(40), 1099511627776 as u64);
+}
+
+function test_saturating(): test.TestOutcome {
+    // Boundary cases involve the all-ones value, which the generic
+    // assert_eq degrades to signed — so compare with `!=` operators,
+    // which lower as proper unsigned comparisons.
+    if (umax().saturating_add(1 as u64) != umax()) { return test.fail("add clamps to MAX"); }
+    if ((3 as u64).saturating_sub(10 as u64) != (0 as u64)) { return test.fail("sub clamps to 0"); }
+    if ((10 as u64).saturating_add(5 as u64) != (15 as u64)) { return test.fail("add in range"); }
+    return test.assert_eq((10 as u64).saturating_sub(4 as u64), 6 as u64);
+}
+
+function test_checked(): test.TestOutcome {
+    // Overflow → None.
+    match (umax().checked_add(1 as u64)) {
+        Some(v) => { return test.fail("expected None on overflow"); },
+        None => {},
+    }
+    // Underflow → None.
+    match ((3 as u64).checked_sub(10 as u64)) {
+        Some(v) => { return test.fail("expected None on underflow"); },
+        None => {},
+    }
+    // In range → Some.
+    match ((3 as u64).checked_add(4 as u64)) {
+        Some(v) => { return test.assert_eq(v, 7 as u64); },
+        None => { return test.fail("expected Some(7)"); },
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/u64");
     r = r.it("min",                test_min());
@@ -89,5 +128,9 @@ function main(): i32 {
     r = r.it("to_string small",    test_to_string_small());
     r = r.it("to_string wide",     test_to_string_wide());
     r = r.it("to_string umax",     test_to_string_umax());
+    r = r.it("predicates",         test_predicates());
+    r = r.it("pow",                test_pow());
+    r = r.it("saturating",         test_saturating());
+    r = r.it("checked",            test_checked());
     return r.finish();
 }

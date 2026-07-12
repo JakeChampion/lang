@@ -28,3 +28,55 @@ pub function (n: u64) clamp(lo: u64, hi: u64): u64 {
 pub function (n: u64) to_string(): string {
     return int.__int_to_string_u64(n as i64, 0);
 }
+
+// `(n: u64) is_zero()` / `is_even()` / `is_odd()` — parity + zero
+// predicates matching the std/i64 versions.
+pub function (n: u64) is_zero(): boolean { return n == (0 as u64); }
+pub function (n: u64) is_even(): boolean { return n % (2 as u64) == (0 as u64); }
+pub function (n: u64) is_odd(): boolean  { return n % (2 as u64) != (0 as u64); }
+
+// `(n: u64) pow(exp)` — exponentiation by squaring. Overflow wraps
+// (unsigned, modulo 2^64), same shape as the i64 version.
+pub function (n: u64) pow(exp: i32): u64 {
+    if (exp < 0) { return 0 as u64; }
+    var base: u64 = n;
+    var e: i32 = exp;
+    var out: u64 = 1 as u64;
+    while (e > 0) {
+        if (e % 2 == 1) { out = out * base; }
+        base = base * base;
+        e = e / 2;
+    }
+    return out;
+}
+
+// === u64 saturating / checked arithmetic ===
+//
+// Unsigned overflow has no sign bit to inspect: an add overflows
+// exactly when the wrapped result is smaller than an operand, and a
+// sub underflows exactly when the subtrahend exceeds the minuend.
+// `saturating_*` clamps to u64::MAX / 0; `checked_*` returns None.
+
+pub function (n: u64) saturating_add(other: u64): u64 {
+    var r: u64 = n + other;
+    // u64::MAX is the all-ones value; the 2^64-1 decimal literal isn't
+    // i64-representable, so build it by underflow (matches umax()).
+    if (r < n) { return (0 as u64) - (1 as u64); }        // wrapped → clamp to MAX
+    return r;
+}
+
+pub function (n: u64) saturating_sub(other: u64): u64 {
+    if (other > n) { return 0 as u64; }                  // would underflow → clamp to 0
+    return n - other;
+}
+
+pub function (n: u64) checked_add(other: u64): Option[u64] {
+    var r: u64 = n + other;
+    if (r < n) { return None; }
+    return Some(r);
+}
+
+pub function (n: u64) checked_sub(other: u64): Option[u64] {
+    if (other > n) { return None; }
+    return Some(n - other);
+}

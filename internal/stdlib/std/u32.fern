@@ -32,3 +32,53 @@ pub function (n: u32) clamp(lo: u32, hi: u32): u32 {
 pub function (n: u32) to_string(): string {
     return int.__int_to_string_u64((n as i64) & (4294967295 as i64), 0);
 }
+
+// `(n: u32) is_zero()` / `is_even()` / `is_odd()` — parity + zero
+// predicates matching the std/u64 versions.
+pub function (n: u32) is_zero(): boolean { return n == (0 as u32); }
+pub function (n: u32) is_even(): boolean { return n % (2 as u32) == (0 as u32); }
+pub function (n: u32) is_odd(): boolean  { return n % (2 as u32) != (0 as u32); }
+
+// `(n: u32) pow(exp)` — exponentiation by squaring. Overflow wraps
+// (unsigned, modulo 2^32), same shape as the u64 version.
+pub function (n: u32) pow(exp: i32): u32 {
+    if (exp < 0) { return 0 as u32; }
+    var base: u32 = n;
+    var e: i32 = exp;
+    var out: u32 = 1 as u32;
+    while (e > 0) {
+        if (e % 2 == 1) { out = out * base; }
+        base = base * base;
+        e = e / 2;
+    }
+    return out;
+}
+
+// === u32 saturating / checked arithmetic ===
+//
+// Unsigned overflow (see std/u64 for the rationale): an add overflows
+// when the wrapped result is smaller than an operand; a sub underflows
+// when the subtrahend exceeds the minuend. `saturating_*` clamps to
+// u32::MAX / 0; `checked_*` returns None.
+
+pub function (n: u32) saturating_add(other: u32): u32 {
+    var r: u32 = n + other;
+    if (r < n) { return 4294967295 as u32; }             // wrapped → clamp to MAX
+    return r;
+}
+
+pub function (n: u32) saturating_sub(other: u32): u32 {
+    if (other > n) { return 0 as u32; }                  // would underflow → clamp to 0
+    return n - other;
+}
+
+pub function (n: u32) checked_add(other: u32): Option[u32] {
+    var r: u32 = n + other;
+    if (r < n) { return None; }
+    return Some(r);
+}
+
+pub function (n: u32) checked_sub(other: u32): Option[u32] {
+    if (other > n) { return None; }
+    return Some(n - other);
+}
