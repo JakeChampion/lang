@@ -1,0 +1,83 @@
+// std/regex captures through the capture engine's zero-width leg (IAssert)
+// and its agreement contract with the span matcher: ^ / $ anchors, \b / \B
+// word boundaries, group participation when a quantified group matches
+// only empty (the (a?)*b class — must capture [0,0], like Go/RE2/Perl,
+// not read as unset), unknown (?... forms not claiming capture indices,
+// and a differential sweep pinning regex_captures' group-0 span to
+// regex_search and regex_captures_all's count to regex_find_all. Each
+// check sets a bit; all eight hold -> 255.
+import "std/regex";
+
+// __probe patterns exercise both engines' shared surface: alternation,
+// quantifiers, classes, anchors, boundaries, groups, (?i).
+function patterns(): string[] {
+    return ["(a|ab)", "^(a+)", "([a-z]+)$", "\\b(cat)\\b", "(a?)*b",
+            "((a|b)c)+", "x(\\d{2,3})y", "(?i)h(el+)o", "(\\w+)@(\\w+)", "(a*)(b*)"];
+}
+
+function texts(): string[] {
+    return ["xab", "aab", "Hello world", "a cat sat", "b", "acbcac",
+            "x123y x45y", "say HELLO", "a@b c@d", "aabb", "", "cat", "?=ab"];
+}
+
+function main(): i32 {
+    var r: i32 = 0;
+
+    // ^ anchor through the capture engine
+    var an: regex.RCaps = regex.regex_captures("^(a+)", "aab");
+    if (an.found && an.group(1) == "aa" && an.group_start(0) == 0) { r = r + 1; }
+    if (!regex.regex_captures("^(b)", "ab").found) { r = r + 2; }
+
+    // $ anchor
+    var en: regex.RCaps = regex.regex_captures("([a-z]+)$", "Hello world");
+    if (en.group(1) == "world" && en.group_end(0) == 11) { r = r + 4; }
+
+    // \b and \B word boundaries
+    var wb: regex.RCaps = regex.regex_captures("\\b(cat)\\b", "a cat sat");
+    var nb: regex.RCaps = regex.regex_captures("\\B(at)", "a cat sat");
+    if (wb.group_start(1) == 2 && nb.group_start(1) == 3) { r = r + 8; }
+
+    // a group whose star body matches only empty still PARTICIPATES with
+    // an empty span (Go: FindStringSubmatchIndex("(a?)*b","b") = [0,1,0,0])
+    var ep: regex.RCaps = regex.regex_captures("(a?)*b", "b");
+    if (ep.found && ep.has_group(1) && ep.group_start(1) == 0 && ep.group_end(1) == 0) { r = r + 16; }
+
+    // an unrecognised (?... form must not claim a capture index: the
+    // pattern's only capture slot belongs to the real group
+    var uf: regex.RCaps = regex.regex_captures("(?=a)(b)", "?=ab");
+    if (uf.found && uf.group_count() == 1 && uf.group(1) == "b") { r = r + 32; }
+
+    // differential: regex_captures' group-0 span == regex_search's span
+    // for every pattern x text combination
+    var ps: string[] = patterns();
+    var ts: string[] = texts();
+    var spans_agree: boolean = true;
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var j: i32 = 0;
+        while (j < ts.len()) {
+            var c: regex.RCaps = regex.regex_captures(ps[i], ts[j]);
+            var s: regex.RMatch = regex.regex_search(ps[i], ts[j]);
+            if (c.found != s.found) { spans_agree = false; }
+            if (c.found && (c.group_start(0) != s.start || c.group_end(0) != s.end)) { spans_agree = false; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if (spans_agree) { r = r + 64; }
+
+    // differential: regex_captures_all match count == regex_find_all count
+    var counts_agree: boolean = true;
+    i = 0;
+    while (i < ps.len()) {
+        var j2: i32 = 0;
+        while (j2 < ts.len()) {
+            if (regex.regex_captures_all(ps[i], ts[j2]).len() != regex.regex_find_all(ps[i], ts[j2]).len()) { counts_agree = false; }
+            j2 = j2 + 1;
+        }
+        i = i + 1;
+    }
+    if (counts_agree) { r = r + 128; }
+
+    return r;
+}
