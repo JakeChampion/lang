@@ -171,6 +171,101 @@ pub function json_encode(v: JsonValue): string {
     }
 }
 
+// === JSON pretty-printing ===
+//
+// `json_encode_pretty(v, indent)` renders the same JSON as
+// `json_encode` but human-readable: each array element / object member
+// on its own line, nested `indent` spaces deeper per level. Empty
+// arrays / objects stay on one line (`[]` / `{}`). Scalars and string
+// escaping are identical to `json_encode`, so the two agree on every
+// value token — only whitespace differs. `indent` is spaces per level
+// (2 is the common default; 0 yields newlines with no indentation).
+
+// __json_spaces returns a string of `n` spaces.
+function __json_spaces(n: i32): string {
+    var b: u8[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        b = b.append(32 as u8);
+        i = i + 1;
+    }
+    return string_from_bytes(b);
+}
+
+// __json_append_str appends `s`'s bytes onto `buf` (the same local-u8[]
+// accumulation json_encode uses to avoid O(n²) string concat).
+function __json_append_str(buf: u8[], s: string): u8[] {
+    var i: i32 = 0;
+    var out: u8[] = buf;
+    while (i < s.len()) {
+        out = out.append(s[i] as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
+function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
+    match (v) {
+        JNull => { return "null"; },
+        JBool(b) => {
+            if (b) { return "true"; }
+            return "false";
+        },
+        JNumber(s) => { return s; },
+        JString(s) => { return "\"" + __json_escape(s) + "\""; },
+        JArray(arr) => {
+            var n: i32 = arr.len();
+            if (n == 0) { return "[]"; }
+            var inner: string = __json_spaces((depth + 1) * indent);
+            var close: string = __json_spaces(depth * indent);
+            var buf: u8[] = [];
+            buf = buf.append(91 as u8);           // '['
+            buf = __json_append_str(buf, "\n");
+            var i: i32 = 0;
+            while (i < n) {
+                if (i > 0) { buf = __json_append_str(buf, ",\n"); }
+                buf = __json_append_str(buf, inner);
+                buf = __json_append_str(buf, __json_pretty(arr[i], indent, depth + 1));
+                i = i + 1;
+            }
+            buf = __json_append_str(buf, "\n");
+            buf = __json_append_str(buf, close);
+            buf = buf.append(93 as u8);           // ']'
+            return string_from_bytes(buf);
+        },
+        JObject(m) => {
+            if (m.len() == 0) { return "{}"; }
+            var inner: string = __json_spaces((depth + 1) * indent);
+            var close: string = __json_spaces(depth * indent);
+            var buf: u8[] = [];
+            buf = buf.append(123 as u8);          // '{'
+            buf = __json_append_str(buf, "\n");
+            var first: boolean = true;
+            var iter: MapIter[string, JsonValue] = m.iter();
+            while (iter.has_next()) {
+                if (!first) { buf = __json_append_str(buf, ",\n"); }
+                first = false;
+                buf = __json_append_str(buf, inner);
+                buf = buf.append(34 as u8);       // '"'
+                buf = __json_append_str(buf, __json_escape(iter.key()));
+                buf = buf.append(34 as u8);       // '"'
+                buf = __json_append_str(buf, ": ");
+                buf = __json_append_str(buf, __json_pretty(iter.value(), indent, depth + 1));
+                iter.advance();
+            }
+            buf = __json_append_str(buf, "\n");
+            buf = __json_append_str(buf, close);
+            buf = buf.append(125 as u8);          // '}'
+            return string_from_bytes(buf);
+        }
+    }
+}
+
+// `json_encode_pretty(v, indent)` — indented, human-readable JSON.
+pub function json_encode_pretty(v: JsonValue, indent: i32): string {
+    return __json_pretty(v, indent, 0);
+}
+
 // === JSON parsing ===
 //
 // `json_parse(s)` is the inverse of `json_encode`. Returns
