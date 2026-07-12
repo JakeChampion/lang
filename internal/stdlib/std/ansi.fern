@@ -1,0 +1,90 @@
+// std/ansi — ANSI SGR (Select Graphic Rendition) terminal styling.
+//
+// Raw, ungated colour + style primitives: each wraps a string in an SGR
+// escape and a full reset, ALWAYS emitting the codes. This is the
+// composable primitive layer — `ansi.bold(ansi.red("x"))` nests
+// correctly because every wrap ends in `ESC[0m`. The NO_COLOR policy
+// (whether to emit codes at all) lives one level up in std/cli's
+// `cli_*` helpers, which gate on `cli_color_enabled()`; std/ansi itself
+// stays mechanism, not policy, so callers can build styled strings and
+// decide separately whether a terminal should see them.
+//
+// `strip(s)` is the inverse: it removes every SGR sequence again — for
+// measuring display width, writing plain-text logs, or comparing styled
+// output in tests.
+//
+// POSIX terminal / xterm SGR only. The ESC byte (0x1B) is built from a
+// byte array since Fern string literals don't decode a `\x1b` escape.
+
+// __esc() — the ESC (0x1B) control byte as a one-character string.
+function __esc(): string {
+    var b: u8[] = [27 as u8];
+    return string_from_bytes(b);
+}
+
+// `sgr(code, s)` — wrap `s` in `ESC[<code>m … ESC[0m`. The primitive
+// every colour / style helper builds on, exposed for custom codes:
+// 256-colour (`sgr("38;5;208", s)`) or truecolour
+// (`sgr("38;2;255;128;0", s)`).
+pub function sgr(code: string, s: string): string {
+    var e: string = __esc();
+    return e + "[" + code + "m" + s + e + "[0m";
+}
+
+// === Foreground colours (SGR 30–37) ===
+pub function black(s: string): string   { return sgr("30", s); }
+pub function red(s: string): string     { return sgr("31", s); }
+pub function green(s: string): string   { return sgr("32", s); }
+pub function yellow(s: string): string  { return sgr("33", s); }
+pub function blue(s: string): string    { return sgr("34", s); }
+pub function magenta(s: string): string { return sgr("35", s); }
+pub function cyan(s: string): string    { return sgr("36", s); }
+pub function white(s: string): string   { return sgr("37", s); }
+
+// === Bright foreground colours (SGR 90–97) ===
+pub function bright_black(s: string): string   { return sgr("90", s); }
+pub function bright_red(s: string): string     { return sgr("91", s); }
+pub function bright_green(s: string): string   { return sgr("92", s); }
+pub function bright_yellow(s: string): string  { return sgr("93", s); }
+pub function bright_blue(s: string): string     { return sgr("94", s); }
+pub function bright_magenta(s: string): string { return sgr("95", s); }
+pub function bright_cyan(s: string): string    { return sgr("96", s); }
+pub function bright_white(s: string): string   { return sgr("97", s); }
+
+// === Background colours (SGR 40–47) ===
+pub function bg_black(s: string): string   { return sgr("40", s); }
+pub function bg_red(s: string): string     { return sgr("41", s); }
+pub function bg_green(s: string): string   { return sgr("42", s); }
+pub function bg_yellow(s: string): string  { return sgr("43", s); }
+pub function bg_blue(s: string): string    { return sgr("44", s); }
+pub function bg_magenta(s: string): string { return sgr("45", s); }
+pub function bg_cyan(s: string): string    { return sgr("46", s); }
+pub function bg_white(s: string): string   { return sgr("47", s); }
+
+// === Text styles ===
+pub function bold(s: string): string          { return sgr("1", s); }
+pub function dim(s: string): string           { return sgr("2", s); }
+pub function italic(s: string): string        { return sgr("3", s); }
+pub function underline(s: string): string     { return sgr("4", s); }
+pub function reverse(s: string): string       { return sgr("7", s); }
+pub function strikethrough(s: string): string { return sgr("9", s); }
+
+// `strip(s)` — remove every SGR escape sequence (`ESC [ … m`) from `s`,
+// leaving the plain text. Walks byte-by-byte so multi-byte UTF-8
+// content is copied through untouched (SGR codes are pure ASCII).
+pub function strip(s: string): string {
+    var n: i32 = s.len();
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] == 27 && i + 1 < n && s[i + 1] == 91) {   // ESC '['
+            i = i + 2;
+            while (i < n && s[i] != 109) { i = i + 1; }     // skip to 'm'
+            if (i < n) { i = i + 1; }                        // consume 'm'
+        } else {
+            out = out.append(s[i] as u8);
+            i = i + 1;
+        }
+    }
+    return string_from_bytes(out);
+}

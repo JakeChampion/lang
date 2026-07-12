@@ -231,6 +231,22 @@ Greedy word wrapping for terminal / help text.
   line unbroken, and collapses runs of spaces. Non-positive `width`
   returns `text` unchanged.
 
+### `std/ansi`
+
+Raw, composable ANSI SGR terminal styling — the mechanism layer beneath
+`std/cli`'s NO_COLOR-gated `cli_*` helpers. Each wrapper always emits the
+escape codes; nesting composes because every wrap ends in a full reset.
+
+- `sgr(code, s)` — wrap `s` in `ESC[<code>m … ESC[0m`; exposed for
+  256-colour (`"38;5;208"`) / truecolour (`"38;2;r;g;b"`) codes.
+- **Foreground:** `black`/`red`/`green`/`yellow`/`blue`/`magenta`/`cyan`/
+  `white` (+ `bright_*` variants).
+- **Background:** `bg_black` … `bg_white`.
+- **Styles:** `bold`, `dim`, `italic`, `underline`, `reverse`,
+  `strikethrough`.
+- `strip(s)` — remove every SGR sequence again (for display-width
+  measurement or plain-text logs); preserves surrounding + UTF-8 text.
+
 ### `std/table`
 
 Render rows of strings as a column-aligned text table (CLI output).
