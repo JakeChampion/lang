@@ -2816,6 +2816,25 @@ func TestRunnerDotenvExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/rand_test.fern` covers std/rand — shuffle (a
+// permutation that leaves its input untouched), choice (always
+// in-bounds; None only on empty), and sample (k distinct elements). The
+// draws are non-deterministic, so it asserts the contracts. Passing
+// suite → exit 0; plan line `1..6`.
+func TestRunnerRandExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/rand_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/rand", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
