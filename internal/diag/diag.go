@@ -339,6 +339,16 @@ func renderSecondaryLabel(filename, src string, l Label) string {
 	if mark == "" {
 		mark = "-"
 	}
+	// Rich mode gives the secondary its own line-number gutter, matching
+	// the primary (#4413 Rec §7) so a multi-label diagnostic reads as one
+	// consistently-guttered block. Classic keeps the 8-space indent so the
+	// plain layout is unchanged.
+	if enableColor {
+		num := fmt.Sprintf("%d", l.Pos.Line)
+		blank := strings.Repeat(" ", len(num))
+		sep := paint(ansiBlue, boxVert())
+		return fmt.Sprintf("%s\n %s %s %s\n %s %s %s%s", header, num, sep, line, blank, sep, pad, paint(markColor, mark))
+	}
 	return fmt.Sprintf("%s\n        %s\n        %s%s", header, line, pad, paint(markColor, mark))
 }
 
