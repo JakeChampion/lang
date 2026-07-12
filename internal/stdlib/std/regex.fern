@@ -109,7 +109,7 @@ function __rx_atom(p: string, i: i32): RParse {
         while (j < p.len() && p[j] != 93) { j = j + 1; }
         var endb: i32 = j;
         if (endb < p.len()) { endb = endb + 1; }                 // include ']'
-        return RParse { node: RClass(p[i : endb]), pos: endb };
+        return RParse { node: RClass(p[i : endb] + ""), pos: endb };
     }
     if (c == 46) { return RParse { node: RAny, pos: i + 1 }; }   // '.'
     if (c == 94) { return RParse { node: RStart, pos: i + 1 }; } // '^'
@@ -459,7 +459,7 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
         if (!m.found) {
             done = true;
         } else {
-            var seg: string = text[last : m.start];
+            var seg: string = text[last : m.start] + "";
             parts = parts.append(seg);  total = total + seg.len();
             parts = parts.append(repl); total = total + repl.len();
             last = m.end;
@@ -467,14 +467,14 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
             // a zero-width match leaves `last` at m.start; carry the skipped
             // byte into the output by emitting it before advancing.
             if (m.end <= m.start && nxt <= text.len() && nxt > last) {
-                var z: string = text[last : nxt];
+                var z: string = text[last : nxt] + "";
                 parts = parts.append(z);  total = total + z.len();
                 last = nxt;
             }
             pos = nxt;
         }
     }
-    var tail: string = text[last : text.len()];
+    var tail: string = text[last : text.len()] + "";
     parts = parts.append(tail); total = total + tail.len();
     var buf: u8[] = __alloc_u8(total);
     var bpos: i32 = 0;

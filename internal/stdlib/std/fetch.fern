@@ -110,7 +110,7 @@ function __fetch_drain(c: i32, acc: string): async.Future[string] {
         var chunk: string = tcp_recv(c, 4096);
         if (chunk.len() == 0) {
             tcp_close(c);
-            return Ready(http_body(acc));
+            return Ready(http_body(acc) + "");
         }
         return __fetch_drain(c, acc + chunk);
     }
@@ -147,7 +147,7 @@ pub function http_status(resp: string): i32 {
 // after the first blank line `\r\n\r\n`), or "" if the response has no
 // header/body separator. Does not interpret Content-Length / chunked
 // encoding; it returns whatever followed the headers.
-pub function http_body(resp: string): string {
+pub function http_body(resp: string): str {
     var sep: i32 = resp.index_of("\r\n\r\n");
     if (sep < 0) {
         return "";
@@ -211,22 +211,22 @@ pub function get_url(url: string): string {
     var prefix: string = "http://";
     if (url.len() < prefix.len()) { return ""; }
     if (url[0 : prefix.len()] != prefix) { return ""; }
-    var rest: string = url[prefix.len() : url.len()];
+    var rest: str = url[prefix.len() : url.len()];
     // authority is up to the first '/'; the rest (incl. the '/') is the path.
     var slash: i32 = rest.index_of("/");
-    var authority: string = rest;
-    var path: string = "/";
+    var authority: str = rest;
+    var path: str = "/";
     if (slash >= 0) {
         authority = rest[0 : slash];
         path = rest[slash : rest.len()];
     }
     // authority = HOST[:PORT].
-    var host: string = authority;
+    var host: str = authority;
     var port: i32 = 80;
     var colon: i32 = authority.index_of(":");
     if (colon >= 0) {
         host = authority[0 : colon];
-        var portstr: string = authority[colon + 1 : authority.len()];
+        var portstr: str = authority[colon + 1 : authority.len()];
         port = 0;
         var i: i32 = 0;
         while (i < portstr.len()) {

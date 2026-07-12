@@ -4547,6 +4547,9 @@ func TestStrSliceProducesView(t *testing.T) {
 		`function f() { var s: string = "abcd"; var o: string = s[1:3] + ""; }`,
 		`function f(s: string): i32 { return s[1:3].len(); }`,
 		`function f(s: string): boolean { return s[0:2] == "ab"; }`,
+		// a view prints as its bytes (print/write/eprint accept str)
+		`function f(s: string) { print(s[1:3]); }`,
+		`function f(v: str) { print(v); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: expected OK, got %v", src, err)

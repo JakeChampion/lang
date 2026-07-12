@@ -9727,7 +9727,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if at == nil {
 					return ast.VoidType{}
 				}
-				if _, isStr := at.(ast.StringType); isStr {
+				switch at.(type) {
+				case ast.StringType, ast.StrType:
+					// A `str` view prints as its bytes — same box shape
+					// as string at runtime (the LowerWith erasure).
 					return ast.VoidType{}
 				}
 				if !c.typeImplementsDisplay(at) {

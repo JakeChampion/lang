@@ -39,7 +39,7 @@ function fmt_apply_spec(s: string, spec: string): string {
     if (spec.len() == 0) { return s; }
     var m: i32 = spec.len();
     var p: i32 = 1;
-    var fill: string = " ";
+    var fill: str = " ";
     var align: i32 = 1;
     if (p + 1 < m && fmt_is_align(spec[p + 1])) {
         fill = spec[p:p + 1];
@@ -67,7 +67,7 @@ function fmt_apply_spec(s: string, spec: string): string {
             prec = prec * 10 + (spec[p] - 48);
             p = p + 1;
         }
-        if (val.len() > prec) { val = val[0:prec]; }
+        if (val.len() > prec) { val = val[0:prec] + ""; }
     }
     if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
         val = "+" + val;
@@ -104,7 +104,7 @@ function fmt_format(fmt: string, args: string[]): string {
             var j: i32 = i + 1;
             while (j < n && fmt[j] != 125) { j = j + 1; }
             var isPlaceholder: boolean = false;
-            var spec: string = "";
+            var spec: str = "";
             if (j < n) {
                 spec = fmt[i + 1:j];
                 if (spec.len() == 0) { isPlaceholder = true; }
