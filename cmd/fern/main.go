@@ -75,6 +75,7 @@ import (
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
 	"github.com/jakechampion/lang/internal/ssa"
+	"github.com/jakechampion/lang/internal/treeshake"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -1021,6 +1022,62 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, e.format(err)
+	}
+
+	// Capability enforcement (platforms Phase 2 — E066): reject, before
+	// codegen, any call to a runtime builtin the target's descriptor
+	// doesn't grant (`subprocess` on wasm, filesystem/tcp/stdin under
+	// wasi-http, …) — turning mid-build "undefined label"/"unsupported"
+	// failures into positioned, `fern explain`-able errors. Tree-shake
+	// first so unused imported stdlib wrappers don't trip gates: this
+	// mirrors each backend's own pre-shake (same dyn-dispatch roots +
+	// -shared exports; backends re-shake idempotently), including
+	// wasi-http's drop of the synthesised tcp_serve `main` (see
+	// internal/codegen/wasmbin/build.go). Targets without a descriptor
+	// (e.g. the experimental wasm-ssa) skip enforcement.
+	if platforms.ForTarget(target) != nil {
+		if target == "wasi-http" {
+			kept := prog.Funcs[:0]
+			for _, fn := range prog.Funcs {
+				if fn.IsSynthesisedHandlerMain {
+					continue
+				}
+				kept = append(kept, fn)
+			}
+			prog.Funcs = kept
+		}
+		extras := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+		if shared && export != "" {
+			extras = append(extras, strings.Split(export, ",")...)
+		}
+		if target == "wasi-http" {
+			extras = append(extras, "handle", "__method_HeaderMap_append")
+		}
+		// WIT-exported functions are entry points the AST walk can't
+		// see — keep them (and what they call) in the scanned set.
+		for _, fn := range prog.Funcs {
+			if fn.ExportIface != "" || fn.ExportWITName != "" {
+				extras = append(extras, fn.Name)
+			}
+		}
+		treeshake.Run(prog, extras...)
+		if vs := platforms.Enforce(prog, target); len(vs) > 0 {
+			var errs diag.Errors
+			for _, v := range vs {
+				ce := &checker.Error{Pos: v.Pos, Msg: v.Message(srcPath), ErrCode: "E066"}
+				// modload stamps the ENTRY module's functions with the
+				// entry source path itself; only those positions index
+				// the file the renderer displays. Violations inside
+				// imported modules (std/…, ./util, …) degrade to a
+				// position-less entry — the message names the function
+				// and module instead.
+				if v.FuncModule != "" && v.FuncModule != srcPath {
+					ce.Pos = ast.Position{}
+				}
+				errs = append(errs, ce)
+			}
+			return 1, e.format(errs)
+		}
 	}
 
 	if target == "wasm-ssa" {

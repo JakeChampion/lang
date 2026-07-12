@@ -71,19 +71,21 @@ var table = map[string]Descriptor{
 	"arm64": {
 		Name:        "arm64",
 		Description: "ARM64 Linux ELF (default — Graviton, Apple Silicon via container, Raspberry Pi 4+ 64-bit, Android).",
-		// Native targets: the Platform parameter is threaded
-		// through but capabilities are minimal today.
-		// Long-term targets: `log` (stderr-shaped),
-		// `now` (clock_gettime — already shipped via
-		// __fern_now_unix_ms), `env`.
-		Capabilities: []string{"log", "now", "env"},
+		// Native targets expose the full compiled runtime
+		// surface: fs / tcp / stdin are raw syscalls. NOTE
+		// `subprocess` is deliberately absent — it is an
+		// INTERP-ONLY builtin today (internal/interp only; no
+		// codegen backend lowers it), so no compiled target
+		// grants it and E066 rejects it up front instead of the
+		// old "undefined label" assembler failure.
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"arm64-darwin": {
 		Name:         "arm64-darwin",
 		Description:  "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
-		Capabilities: []string{"log", "env"},
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
@@ -92,24 +94,28 @@ var table = map[string]Descriptor{
 		Description: "ARM64 Android — Linux ELF as a static position-independent " +
 			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
 			"Android's loader. Same syscalls / AAPCS64 as the arm64 target.",
-		Capabilities: []string{"log", "now", "env"},
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"x86-64": {
 		Name:         "x86-64",
 		Description:  "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
-		Capabilities: []string{"log", "now", "env"},
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"wasm": {
 		Name:        "wasm",
 		Description: "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).",
-		// CLI-world wasm gets the same capability shape as
-		// native, with wasi:http added by the wasi-http target
-		// below.
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout"},
+		// CLI-world wasm wires fs (the preview1 fd helpers) and
+		// tcp (wasi:sockets — wasmbin/wasi_tcp.go) but NOT
+		// subprocess: wasi:cli/exec-process isn't in the runtime
+		// helpers (the standing gap wasmbin's
+		// TestBuildReportsUnsupported pins). Programs reaching
+		// `subprocess` here are rejected at check time (E066)
+		// instead of failing mid-build.
+		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"main"},
 		Bindings:     nil,
 	},
