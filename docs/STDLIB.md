@@ -242,6 +242,8 @@ escape codes; nesting composes because every wrap ends in a full reset.
 - **Foreground:** `black`/`red`/`green`/`yellow`/`blue`/`magenta`/`cyan`/
   `white` (+ `bright_*` variants).
 - **Background:** `bg_black` … `bg_white`.
+- **256-colour:** `fg_256(n, s)` / `bg_256(n, s)` (xterm palette 0–255).
+- **Truecolour (24-bit):** `fg_rgb(r, g, b, s)` / `bg_rgb(r, g, b, s)`.
 - **Styles:** `bold`, `dim`, `italic`, `underline`, `reverse`,
   `strikethrough`.
 - `strip(s)` — remove every SGR sequence again (for display-width
@@ -294,7 +296,11 @@ Free helpers — random, ranges, numeric constants, RGB packing.
 - `random_int(lo, hi)`
 - `range(start, end)`, `range_step(start, end, step)`
 - `i32_max()`, `i32_min()`, `i64_max()`, `i64_min()`
-- `pack_rgb(r, g, b)`
+- `pack_rgb(r, g, b)` — pack three 0–255 channels into a 24-bit i32.
+- `parse_rgb_hex(s): Option[i32]` — inverse: parse `#rrggbb` / `rrggbb`
+  / `#rgb` shorthand (case-insensitive) into a packed RGB i32, `None` if
+  malformed. Completes the colour pipeline with `(i32).to_rgb_hex()` and
+  `std/ansi.fg_rgb`.
 
 ### `std/sort`
 

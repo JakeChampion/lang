@@ -187,7 +187,7 @@ func TestRunnerMathExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/math", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/math", "# pass 14", "# fail 0", "1..14"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -2993,7 +2993,7 @@ func TestRunnerAnsiExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/ansi", "1..5", "# pass 5", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/ansi", "1..6", "# pass 6", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
