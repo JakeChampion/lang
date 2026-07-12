@@ -20,6 +20,10 @@
 //                         duplicate `/`, drop `.` elements, and
 //                         resolve `..` against the preceding
 //                         element (Go `path.Clean`, Unix).
+//   path_is_absolute(p) — true iff `p` starts at the root (`/`).
+//   path_stem(p)        — last component minus its final extension.
+//   path_with_extension(p, ext)
+//                       — replace/append the final extension.
 //
 // Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
@@ -166,4 +170,60 @@ pub function path_clean(p: string): string {
     if (rooted) { return "/" + joined; } // "/"+"" = "/" (bare root)
     if (joined.len() == 0) { return "."; }
     return joined;
+}
+
+// path_is_absolute(p) — true iff `p` begins at the filesystem root
+// (a leading `/`). Relative paths, `./x`, and the empty string are
+// all false. The POSIX-only counterpart to Rust `Path::is_absolute`.
+pub function path_is_absolute(p: string): boolean {
+    return p.len() > 0 && p[0] == 47;
+}
+
+// path_stem(p) — the last component with its final extension removed;
+// the leading half of the `path_stem` / `path_extension` split.
+//   "a/b/foo.txt"    → "foo"
+//   "archive.tar.gz" → "archive.tar"  (only the final extension goes)
+//   ".bashrc"        → ".bashrc"      (a leading-dot file has no ext)
+//   "foo"            → "foo"          (no dot: whole name)
+pub function path_stem(p: string): str {
+    var name: str = path_file_name(p);
+    var n: i32 = name.len();
+    if (n == 0) { return ""; }
+    var i: i32 = n - 1;
+    while (i > 0 && name[i] != 46) { i = i - 1; }
+    // A dot only at index 0 (hidden file) is not an extension
+    // separator, so the whole name is the stem.
+    if (i <= 0) { return name; }
+    return name[0:i];
+}
+
+// path_with_extension(p, ext) — `p` with its final extension replaced
+// by `ext` (given WITHOUT a leading dot). If the last component has no
+// extension, `ext` is appended; an empty `ext` drops the extension
+// (and its dot) entirely. The directory portion is preserved.
+//   ("a/b/foo.txt", "md") → "a/b/foo.md"
+//   ("foo", "md")         → "foo.md"
+//   ("archive.tar.gz", "") → "archive.tar"
+//   (".bashrc", "txt")    → ".bashrc.txt"  (hidden file has no ext)
+pub function path_with_extension(p: string, ext: string): string {
+    var n: i32 = p.len();
+    // Locate the real last component, ignoring any trailing slashes.
+    var end: i32 = n;
+    while (end > 0 && p[end - 1] == 47) { end = end - 1; }
+    if (end == 0) {
+        if (ext.len() == 0) { return p; }
+        return p + "." + ext;
+    }
+    var fs: i32 = end - 1;
+    while (fs >= 0 && p[fs] != 47) { fs = fs - 1; }
+    fs = fs + 1;                       // first char of the file name
+    // Find the extension dot inside (fs, end); a dot at fs is a
+    // hidden-file leading dot, not an extension separator.
+    var dot: i32 = end;
+    var j: i32 = end - 1;
+    while (j > fs && p[j] != 46) { j = j - 1; }
+    if (j > fs && p[j] == 46) { dot = j; }
+    var base: string = p[0:dot] + "";
+    if (ext.len() == 0) { return base; }
+    return base + "." + ext;
 }

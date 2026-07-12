@@ -120,6 +120,32 @@ function test_clean_trailing_slash(): test.TestOutcome {
     return test.assert_eq(path.path_clean("/a/b/"), "/a/b");
 }
 
+function test_is_absolute(): test.TestOutcome {
+    if (!path.path_is_absolute("/etc/hosts")) { return test.fail("rooted"); }
+    if (path.path_is_absolute("etc/hosts")) { return test.fail("relative"); }
+    if (path.path_is_absolute("")) { return test.fail("empty"); }
+    return test.assert_false(path.path_is_absolute("./x"));
+}
+
+function test_stem(): test.TestOutcome {
+    if (path.path_stem("a/b/foo.txt").to_owned() != "foo") { return test.fail("simple"); }
+    // Only the final extension is stripped.
+    if (path.path_stem("archive.tar.gz").to_owned() != "archive.tar") { return test.fail("multi ext"); }
+    // A leading-dot file has no extension, so the whole name is the stem.
+    if (path.path_stem(".bashrc").to_owned() != ".bashrc") { return test.fail("hidden"); }
+    return test.assert_eq(path.path_stem("foo").to_owned(), "foo");
+}
+
+function test_with_extension(): test.TestOutcome {
+    if (path.path_with_extension("a/b/foo.txt", "md") != "a/b/foo.md") { return test.fail("replace"); }
+    // No existing extension: the new one is appended.
+    if (path.path_with_extension("foo", "md") != "foo.md") { return test.fail("append"); }
+    // An empty extension drops the final extension entirely.
+    if (path.path_with_extension("archive.tar.gz", "") != "archive.tar") { return test.fail("drop"); }
+    // A hidden file has no extension, so ext is appended.
+    return test.assert_eq(path.path_with_extension(".bashrc", "txt"), ".bashrc.txt");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/path");
     r = r.it("join",                    test_join());
@@ -147,5 +173,8 @@ function main(): i32 {
     r = r.it("clean cancels to dot",    test_clean_to_dot());
     r = r.it("clean bare root",         test_clean_root());
     r = r.it("clean trailing slash",    test_clean_trailing_slash());
+    r = r.it("is_absolute",             test_is_absolute());
+    r = r.it("stem",                    test_stem());
+    r = r.it("with_extension",          test_with_extension());
     return r.finish();
 }
