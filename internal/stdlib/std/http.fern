@@ -70,6 +70,26 @@ pub function is_valid_http_status(code: i32): boolean {
     return code >= 100 && code <= 599;
 }
 
+// Status-class predicates — the RFC 9110 §15 response classes, for
+// branching on a response code without hard-coding range bounds at
+// every call site (`if (http_is_success(resp.status)) { … }`). Each
+// tests the code's leading digit / century:
+//   1xx informational, 2xx success, 3xx redirect,
+//   4xx client error, 5xx server error.
+// A code outside [100, 599] belongs to no class, so every predicate is
+// false for it.
+pub function http_is_informational(code: i32): boolean { return code >= 100 && code <= 199; }
+pub function http_is_success(code: i32): boolean       { return code >= 200 && code <= 299; }
+pub function http_is_redirect(code: i32): boolean      { return code >= 300 && code <= 399; }
+pub function http_is_client_error(code: i32): boolean  { return code >= 400 && code <= 499; }
+pub function http_is_server_error(code: i32): boolean  { return code >= 500 && code <= 599; }
+
+// `http_is_error(code)` — client OR server error (4xx / 5xx), the
+// common "did the request fail?" check.
+pub function http_is_error(code: i32): boolean {
+    return code >= 400 && code <= 599;
+}
+
 // `http_response_ok(body)` — 200 OK with the given body.
 // `http_response_text(status, body)` — explicit status code.
 // `http_response_not_found()` — common 404 builder.

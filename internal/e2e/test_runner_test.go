@@ -2669,6 +2669,26 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_status_test.fern` covers the std/http status
+// helpers — http_status_text reason phrases and the RFC 9110
+// status-class predicates (http_is_informational/success/redirect/
+// client_error/server_error/error), incl. century boundaries and the
+// no-class result for out-of-range codes. Passing suite → exit 0;
+// plan line `1..4`.
+func TestRunnerHttpStatusExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_status_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/http status", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/fail_fast_test.fern` exercises the new
 // fail-fast mode added to std/test:
 //   - `test_new_fail_fast(suite)` constructor.
