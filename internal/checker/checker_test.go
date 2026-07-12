@@ -4530,3 +4530,26 @@ func TestStrEscapeAllowed(t *testing.T) {
 		}
 	}
 }
+
+// TestStrViewOwnParamRejected: an `own` (consuming) parameter takes
+// ownership of its argument — the callee frees it. A `str` view must never
+// be freed by its holder, so the borrowed-position carve-out does not
+// apply to `own` params (the #4813 tightening): lending a view to a
+// consumer is the #4294 corruption shape. The plain borrowed param in the
+// same program stays accepting.
+func TestStrViewOwnParamRejected(t *testing.T) {
+	src := `function consume(own x: string): i32 { return x.len(); }
+function borrow(x: string): i32 { return x.len(); }
+function f(v: str): i32 { return consume(v) + borrow(v); }`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatalf("expected the own-param str argument to be rejected, got nil")
+	}
+	if !hasCode(err, "E038") {
+		t.Errorf("want E038 on the own-param position, got %v", err)
+	}
+	// The borrowed position must NOT be flagged: exactly one str mismatch.
+	if n := strings.Count(err.Error(), "expected string, got str"); n != 1 {
+		t.Errorf("want exactly 1 str-arg mismatch (own position only), got %d in %v", n, err)
+	}
+}
