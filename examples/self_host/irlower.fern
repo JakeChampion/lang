@@ -147,91 +147,112 @@ pub struct LocalInfo {
     is_u32: boolean,
     is_u64: boolean,
     subword: string,
+    // str_own: the OWNERSHIP class of the string box an is_str slot holds --
+    // the slot-carried fact of #4297 CS4 (the self-host mirror of native
+    // ast.Ownership; docs/OWNERSHIP-TYPES-PLAN.md). Codes mirror
+    // str_producer_ownership: 0 = Owned (this slot holds the owning
+    // reference to a fresh rc box), 1 = Borrowed (an owner elsewhere -- a
+    // caller, a container, another local -- holds it), 2 = View (an immortal
+    // rc=-1 box sharing another buffer, #4294), 3 = Static (interned
+    // .rodata literal). Seeded at the binding (lower_var / if-let / match
+    // payload) from str_binding_ownership; every unproven slot -- params,
+    // container-element binders, non-string slots -- stays at the DEFAULT 1
+    // (Borrowed), the conservative never-free class, matching the
+    // `i >= n_params` params-are-borrowed rule the reclaim heuristics
+    // already assume. Read via str_expr_ownership / str_own_slot; no
+    // codegen decision consults it yet (CS4 is behaviour-identical -- the
+    // consumers are CS3/#4355 and the reuse-analysis slice). Meaningless
+    // (inert 1) on a non-string slot.
+    str_own: i32,
 }
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "" };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", str_own: 1 };
 }
 
 pub function li_set_names(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: v, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: v, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_arr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: v, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: v, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_str(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: v, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: v, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_strarr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: v, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: v, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_struct_type(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: v, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: v, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_opt_type(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: v, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: v, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_tuple_elems(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: v, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: v, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_map_type(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: v, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: v, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_i64(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: v, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: v, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_f64(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: v, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: v, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_f32(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: v, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: v, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_f64arr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: v, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: v, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_i64arr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: v, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: v, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_closurearr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: v, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: v, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_fnarr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: v, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: v, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_arrarr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: v, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: v, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_arrarr_elem(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: v, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: v, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_u32(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: v, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: v, is_u64: li.is_u64, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_is_u64(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: v, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: v, subword: li.subword, str_own: li.str_own };
 }
 
 pub function li_set_subword(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: v };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: v, str_own: li.str_own };
+}
+
+pub function li_set_str_own(li: LocalInfo, v: i32): LocalInfo {
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword, str_own: v };
 }
 
 pub struct LowerState {
@@ -650,6 +671,20 @@ pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_strarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+}
+
+// str_own_slot / mark_str_own query and set the slot-carried string
+// OWNERSHIP class (#4297 CS4; see LocalInfo.str_own for the code table).
+// An out-of-range slot reads 1 (Borrowed) -- the conservative never-free
+// default every unproven binding keeps.
+pub function (s: LowerState) str_own_slot(i: i32): i32 {
+    if (i < 0) { return 1; }
+    if (i >= s.locals.len()) { return 1; }
+    return s.locals[i].str_own;
+}
+
+pub function (s: LowerState) mark_str_own(i: i32, v: i32): LowerState {
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_str_own(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -2832,6 +2867,54 @@ pub function field_ownerships(slit: parser.ExprStructLit, s: LowerState): i32[] 
         j = j + 1;
     }
     return out;
+}
+
+// str_binding_ownership classifies the ownership a NEW BINDING acquires from
+// its init expression `e` -- the seeding-side companion of
+// str_producer_ownership (#4297 CS4, the self-host mirror of native
+// ast.ExprResultOwnershipWith's binding refinement; the result lands in the
+// slot's str_own via mark_str_own). Producer forms classify by syntax
+// (str_producer_ownership); a bare IDENT init consults the SOURCE slot's
+// carried fact: a View / Static source propagates (the alias references the
+// same immortal box, so the new binding is exactly as unfreeable), while an
+// Owned or Borrowed source yields Borrowed -- an alias never ACQUIRES
+// ownership; the original binding keeps the owning reference (freeing both
+// would be the #4294 over-release).
+pub function str_binding_ownership(e: parser.Expr, s: LowerState): i32 {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var si: i32 = s.slot_of(id.name);
+            if (si >= 0 && s.is_str_slot(si)) {
+                var so: i32 = s.str_own_slot(si);
+                if (so == 2 || so == 3) { return so; }
+            }
+            return 1;
+        },
+        _ => { return str_producer_ownership(e, s); }
+    }
+    return 1;
+}
+
+// str_expr_ownership classifies the ownership class of the box a string
+// expression EVALUATES TO -- the read-side classifier (#4297 CS4, mirroring
+// native ast.ExprResultOwnershipWith): producer forms classify by syntax; a
+// bare ident reflects its binding's slot-carried str_own VERBATIM (an Owned
+// local reads as Owned -- whether the READER must retain before storing the
+// alias is the RC pass's separate question, exactly as the native doc
+// draws the line). An unknown / non-string ident falls back to 1 (Borrowed),
+// the conservative never-free class. No codegen decision consults this yet;
+// it is the query surface CS3 (#4355) and the reuse-analysis slice read
+// instead of re-deriving ownership from the syntactic freshness heuristics.
+pub function str_expr_ownership(e: parser.Expr, s: LowerState): i32 {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var si: i32 = s.slot_of(id.name);
+            if (si >= 0 && s.is_str_slot(si)) { return s.str_own_slot(si); }
+            return 1;
+        },
+        _ => { return str_producer_ownership(e, s); }
+    }
+    return 1;
 }
 
 // str_free_producer_ident reports whether an UNAMBIGUOUS named fresh-string
@@ -11058,6 +11141,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     var slot: i32 = sb.slot_of(v.name);
     sb = sb.mark_arr(slot, is_arr);
     sb = sb.mark_str(slot, is_str);
+    // #4297 CS4: record the ownership class this BINDING acquires on the
+    // slot (li.str_own), so a later reader (str_expr_ownership -- the CS3 /
+    // reuse consumers) gets the fact off the slot instead of re-deriving it
+    // syntactically. Classified against `se` (the pre-binding state) so an
+    // ident init resolves the SOURCE slot. IIFE temps and container-element
+    // binders stay at the Borrowed default (a representative-branch expr
+    // can't classify all branches; an element read aliases a container-owned
+    // box) -- both are the conservative never-free class. No consumer yet;
+    // behaviour-identical.
+    if (is_str) { sb = sb.mark_str_own(slot, str_binding_ownership(v.init, se)); }
     sb = sb.mark_strarr(slot, is_strarr);
     sb = sb.mark_f64arr(slot, is_f64arr);
     sb = sb.mark_i64arr(slot, is_i64arr);
@@ -11459,6 +11552,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
 function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     var slot: i32 = s.slot_of(a.target);
     if (slot < 0) { return s.fail(); }
+    // #4297 CS4: a REASSIGNMENT re-binds the slot's string box, so the
+    // slot-carried ownership fact becomes the MEET of the old and new
+    // bindings' classes -- the sound flow-insensitive summary (a branch-
+    // conditional reassign means either box may be live at a later read /
+    // drop). Equal classes keep the fact (`x = x + y` on an Owned slot
+    // stays Owned -- the fresh-rebind shape); differing classes demote to
+    // 1 (Borrowed, never-free -- sound for every mix: freeing is only
+    // sound when EVERY binding was Owned). Fact-only; no lowering
+    // decision reads it yet (CS4 is behaviour-identical).
+    if (s.is_str_slot(slot)) {
+        if (str_binding_ownership(a.value, s) != s.str_own_slot(slot)) { s = s.mark_str_own(slot, 1); }
+    }
     // `d = <expr>` where `d` is a SCALAR `dyn Trait` local (its
     // local_struct_type starts with "dyn "): the RHS coerces to `dyn
     // Trait` like the `var d: dyn = …` init — a struct/enum value flows
@@ -24983,7 +25088,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi] });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], str_own: 1 });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the
@@ -29040,6 +29145,94 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         u = u + 1;
     }
     return out + "\n";
+}
+
+// str_own_word renders a str_own / str_*_ownership code as its dump word
+// (#4297 CS4; codes + words mirror native ast.Ownership.String()).
+function str_own_word(o: i32): string {
+    if (o == 0) { return "owned"; }
+    if (o == 2) { return "view"; }
+    if (o == 3) { return "static"; }
+    return "borrowed";
+}
+
+// str_own_dump renders the slot-carried string-ownership facts (#4297 CS4)
+// for THIS function's top-level bindings -- the -str-own driver mode's body
+// and the Go gate's assertion surface (the self-host analogue of native
+// internal/ast/ownership_test.go). One line per string PARAM
+// (`p <name>: borrowed` -- params are borrowed under owned-by-default), per
+// top-level string VAR binding (`v <name>: <word>` -- the seeded
+// str_binding_ownership fact read BACK off the slot via str_own_slot, so the
+// line proves the mark/read round-trip), and per top-level `return <ident>`
+// of a string slot (`r <name>: <word>` -- the read-side str_expr_ownership,
+// which reflects the slot fact VERBATIM: an owned local reads owned).
+// Top-level statements only: the dump is a unit surface for the classifier +
+// accessor round-trip, not an analysis; nested-scope bindings ride the same
+// lower_var seeding, validated behaviour-identical by the fixpoint + run
+// gates. Registries follow rc_plan_dump's convention (module-local
+// str_ret_fns_of side-table; everything irrelevant empty).
+pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string {
+    var no_ops: ir.Op[] = [];
+    var no_blk: i32[] = [];
+    var no_strs: string[] = [];
+    var no_stmts: parser.Stmt[] = [];
+    var locals0: LocalInfo[] = [];
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var li: LocalInfo = li_new(fn.params[pi].name);
+        if (fn.params[pi].type_name == "string") { li = li_set_is_str(li, true); }
+        locals0 = locals0.append(li);
+        pi = pi + 1;
+    }
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, try_cleanup: no_stmts, n_params: fn.params.len(), ok: true };
+    var out: string = "";
+    var qi: i32 = 0;
+    while (qi < fn.params.len()) {
+        if (fn.params[qi].type_name == "string") {
+            out = out + "p " + fn.params[qi].name + ": " + str_own_word(st.str_own_slot(qi)) + "\n";
+        }
+        qi = qi + 1;
+    }
+    var si: i32 = 0;
+    while (si < fn.body.len()) {
+        match (fn.body[si]) {
+            parser.StmtVar(v) => {
+                var vstr: boolean = v.type_name == "string" || expr_is_str(v.init, st);
+                var own: i32 = str_binding_ownership(v.init, st);
+                st = st.add_local(v.name);
+                var slot: i32 = st.slot_of(v.name);
+                if (vstr) {
+                    st = st.mark_str(slot, true);
+                    st = st.mark_str_own(slot, own);
+                    out = out + "v " + v.name + ": " + str_own_word(st.str_own_slot(slot)) + "\n";
+                }
+            },
+            parser.StmtAssign(a2) => {
+                // The reassignment MEET, mirroring lower_stmt_assign's:
+                // equal classes keep the fact, differing classes demote to
+                // Borrowed. The `a` line prints the post-meet slot fact.
+                var aslot: i32 = st.slot_of(a2.target);
+                if (aslot >= 0 && st.is_str_slot(aslot)) {
+                    if (str_binding_ownership(a2.value, st) != st.str_own_slot(aslot)) { st = st.mark_str_own(aslot, 1); }
+                    out = out + "a " + a2.target + ": " + str_own_word(st.str_own_slot(aslot)) + "\n";
+                }
+            },
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(rid) => {
+                        var rslot: i32 = st.slot_of(rid.name);
+                        if (rslot >= 0 && st.is_str_slot(rslot)) {
+                            out = out + "r " + rid.name + ": " + str_own_word(str_expr_ownership(r.value, st)) + "\n";
+                        }
+                    },
+                    _ => { }
+                }
+            },
+            _ => { }
+        }
+        si = si + 1;
+    }
+    return out;
 }
 
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
