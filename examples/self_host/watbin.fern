@@ -686,6 +686,26 @@ function label_depth(labels: string[], name: string): i32 {
     return 0;
 }
 
+// sat_trunc_opcode maps a saturating float->int truncation to its 0xFC-prefixed
+// sub-opcode index (0..7), or -1 for anything else. These are the two-byte
+// `0xFC idx` (LEB) form the stack-IR backend emits for `as i32` / `as i64` float
+// casts — the *saturating* truncations, distinct from the single-byte trapping
+// 0xaa-family (`i32.trunc_f64_s` = 170) that arith_opcode already covers. Without
+// this the IR emitter's `i32.trunc_sat_f64_s` fell through both enc paths and
+// emitted NOTHING, leaving an f64 on the stack where an i32 was expected (every
+// f64 program's `as i32` failed wasm validation with a type mismatch).
+function sat_trunc_opcode(op: string): i32 {
+    if (op == "i32.trunc_sat_f32_s") { return 0; }
+    if (op == "i32.trunc_sat_f32_u") { return 1; }
+    if (op == "i32.trunc_sat_f64_s") { return 2; }
+    if (op == "i32.trunc_sat_f64_u") { return 3; }
+    if (op == "i64.trunc_sat_f32_s") { return 4; }
+    if (op == "i64.trunc_sat_f32_u") { return 5; }
+    if (op == "i64.trunc_sat_f64_s") { return 6; }
+    if (op == "i64.trunc_sat_f64_u") { return 7; }
+    return 0 - 1;
+}
+
 // memarg_align gives the natural alignment (log2 of access size) for a
 // memory op; the self-host emits bare loads/stores, so natural alignment +
 // offset 0.
@@ -888,6 +908,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.append(27);    // 0x1b
         return out;
     }
+    var stf: i32 = sat_trunc_opcode(op);
+    if (stf >= 0) {
+        // Saturating float->int truncation: encode the single operand, then the
+        // two-byte `0xFC idx` (LEB) form.
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        out = out.append(252);   // 0xFC
+        return leb_u32(out, stf);
+    }
     var ao: i32 = arith_opcode(op);
     if (ao != 0) {
         // unary (eqz) takes one operand; the rest take two.
@@ -1008,6 +1036,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             var ml: i32 = mem_load_opcode(op);
             var ms: i32 = mem_store_opcode(op);
             var ao: i32 = arith_opcode(op);
+            var stf: i32 = sat_trunc_opcode(op);
             if (ml != 0) {
                 out = out.append(ml);
                 out = leb_u32(out, memarg_align(op));
@@ -1016,6 +1045,11 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 out = out.append(ms);
                 out = leb_u32(out, memarg_align(op));
                 out = leb_u32(out, 0);
+            } else if (stf >= 0) {
+                // Saturating float->int truncation: two-byte `0xFC idx` (operand
+                // already on the stack in the flat form).
+                out = out.append(252);   // 0xFC
+                out = leb_u32(out, stf);
             } else if (ao != 0) {
                 out = out.append(ao);   // arithmetic / comparison (no immediate)
             }
