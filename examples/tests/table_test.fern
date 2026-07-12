@@ -1,0 +1,46 @@
+import "std/test";
+import "std/table" as table;
+// examples/tests/table_test.fern — pure-Fern coverage of std/table:
+// column-aligned rendering (last column unpadded, short rows padded
+// with empty cells, code-point-width alignment) and the header variant
+// with its `-` rule.
+
+function test_render_basic(): test.TestOutcome {
+    // Column 0 padded to width 3; the last column carries no trailing pad.
+    return test.assert_eq(table.render([["a", "bb"], ["ccc", "d"]]), "a    bb\nccc  d");
+}
+
+function test_render_single_column(): test.TestOutcome {
+    return test.assert_eq(table.render([["only"], ["one"]]), "only\none");
+}
+
+function test_render_empty(): test.TestOutcome {
+    var empty: string[][] = [];
+    return test.assert_eq(table.render(empty), "");
+}
+
+function test_render_short_rows(): test.TestOutcome {
+    // A short row is padded out with empty trailing cells.
+    return test.assert_eq(table.render([["x", "y", "z"], ["1"]]), "x  y  z\n1     ");
+}
+
+function test_codepoint_alignment(): test.TestOutcome {
+    // 'é' counts as one column, so `café` (4 code points) aligns.
+    return test.assert_eq(table.render([["café", "x"], ["a", "y"]]), "café  x\na     y");
+}
+
+function test_render_with_header(): test.TestOutcome {
+    var h: string = table.render_with_header(["name", "age"], [["ada", "36"], ["bo", "9"]]);
+    return test.assert_eq(h, "name  age\n----  ---\nada   36\nbo    9");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/table");
+    r = r.it("render basic",       test_render_basic());
+    r = r.it("single column",      test_render_single_column());
+    r = r.it("empty",              test_render_empty());
+    r = r.it("short rows",         test_render_short_rows());
+    r = r.it("codepoint align",    test_codepoint_alignment());
+    r = r.it("with header",        test_render_with_header());
+    return r.finish();
+}

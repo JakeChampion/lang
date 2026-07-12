@@ -207,6 +207,16 @@ Shell-style glob matching over a path-like string.
   zero directories), and `[abc]` / `[a-z]` / `[!…]` character classes.
   Anchored (whole text vs whole pattern).
 
+### `std/table`
+
+Render rows of strings as a column-aligned text table (CLI output).
+
+- `render(rows: string[][]): string` — pad each column to its widest
+  cell (code-point width), two spaces between columns, last column
+  unpadded; short rows get empty trailing cells.
+- `render_with_header(headers, rows): string` — the same with a header
+  row and a `-` rule under each column.
+
 ### `std/strdist`
 
 String similarity — for fuzzy matching / "did you mean" / dedup.
