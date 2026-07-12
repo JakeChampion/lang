@@ -3155,6 +3155,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lms_append:\n");
     s = s.write("    movq (%r12), %rdi\n");
     s = s.write("    movq %r13, %rsi\n");
+    // NOTE: these two appends must stay on the LEAK-ONLY __fern_arr_push, not the
+    // sole-owner __fern_arr_push_owned, until map_keys/map_values snapshot-copy
+    // (kinds 131/132 currently return the RAW keys@0 / vals@8 buffer with NO
+    // rc-inc — an uncounted alias). arr_push_owned frees the superseded buffer on
+    // an rc==1 grow, which WOULD close the register map's cap-0 grow-leak (48
+    // B/build) — but a live `var ks = m.keys()` alias followed by a growing
+    // `m.set` would then free the buffer `ks` still points to (use-after-free).
+    // The leak keeps that buffer alive and masks the hazard. Closing it needs the
+    // keys/values snapshot-copy (the wasm map already snapshots) or counted-alias
+    // rc accounting first — a goal-2 slice. #4353.
     s = s.write("    call __fern_arr_push\n");      // keys.append(key)
     s = s.write("    movq %rax, (%r12)\n");
     s = s.write("    movq 8(%r12), %rdi\n");
