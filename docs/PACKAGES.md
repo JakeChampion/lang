@@ -1,13 +1,14 @@
-# Packages: the `fern.toml` manifest (slices 1–2 — path + hash-addressed deps)
+# Packages: the `fern.toml` manifest (slices 1–3 — path, hash-addressed, vendored)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
-RESEARCH.md` Rec §1): local `path` dependencies, and hash-addressed
-`url` dependencies fetched by an explicit `fern -fetch` into a
-content-addressed store. No registry, no version resolution, no
-lockfile yet — those layer on later per the research docs. Everything
-is opt-in: a program with no `fern.toml` anywhere up its directory
-tree loads exactly as before.
+RESEARCH.md` Rec §1): local `path` dependencies, hash-addressed `url`
+dependencies fetched by an explicit `fern -fetch` into a
+content-addressed store, and `fern -vendor` for fully-offline vendored
+builds. No registry, no version resolution, no lockfile yet — those
+layer on later per the research docs. Everything is opt-in: a program
+with no `fern.toml` anywhere up its directory tree loads exactly as
+before.
 
 ## Using it
 
@@ -67,29 +68,54 @@ that escape the root or aren't plain files/dirs are rejected.
 `fern -fetch` when a url dependency hasn't been fetched — the compiler
 never fetches (the no-build-time-network constraint).
 
+## Vendoring — `fern -vendor` + offline builds (slice 3)
+
+`fern -vendor [DIR]` flattens the whole transitive dependency graph
+into `<root>/vendor/<name>/` — one directory per package, keyed by its
+manifest `name`, following path dependencies to their directories and
+url dependencies to the (already-fetched) content-addressed store.
+After vendoring, builds are **fully offline**: the loader resolves
+every declared dependency out of `vendor/`, ignoring the deps' original
+path/url locations entirely, so a checked-in `vendor/` tree builds with
+no network and no external directories. This is the shape
+`BOOTSTRAP-RESEARCH.md`'s no-build-time-network constraint wants — the
+package manager fetches; the compiler only ever reads `vendor/`.
+
+Names must be unique across the graph (the flat namespace); a collision
+between two distinct packages is a hard error. `vendor/` holds source
+only (`fern.toml` + `.fern`/`.fern.md`); a nested `vendor/` or dot-dir
+in a dependency is skipped. url deps must be `fern -fetch`ed before
+vendoring (vendoring copies from the store, it doesn't download).
+
 ## Resolution + isolation rules
 
 Inside a manifest-governed package, an import resolves in this order:
 
 1. `std/` / `core/` → embedded stdlib (unchanged).
 2. `./x` / `../x` → importing-file-relative (unchanged).
-3. First path segment matches a **declared dependency** → into that
-   dependency's directory. The manifest is the authority: a declared
-   dep wins over a same-named sibling file.
-4. Otherwise, an existing file at the directory-relative path loads as
+3. First segment matches a **declared dependency**, and a `vendor/`
+   tree governs the package → `<vendor-root>/vendor/<name>/`. Vendored
+   mode is offline and total: a declared dep missing from `vendor/`
+   errors (re-run `fern -vendor`), never a fallback to path/url.
+4. First segment matches a **declared dependency** (no vendor tree) →
+   into the dependency's directory (path dep) or content-addressed
+   store (url dep). The manifest is the authority: a declared dep wins
+   over a same-named sibling file.
+5. Otherwise, an existing file at the directory-relative path loads as
    before (so adding a `fern.toml` never breaks a loading program).
-5. Nothing matches → error naming the governing `fern.toml` and the
+6. Nothing matches → error naming the governing `fern.toml` and the
    `[dependencies]` line to add.
 
-Rule 5 is the resolver-side isolation invariant from the research: a
-package can only reach dependencies it declares — enforced in
-`resolveImport` (`internal/modload`), not by directory layout.
+Rules 4/6 are the resolver-side isolation invariant from the research:
+a package can only reach dependencies it declares — enforced in
+`resolveImport` (`internal/modload`), not by directory layout. Vendored
+mode (rule 3) preserves it: only declared deps resolve from `vendor/`.
 
 ## Not yet (deliberately)
 
 Version constraints + MVS resolution, `fern.lock` (for url deps the
 manifest hash already pins content; the lockfile matters once version
-deps resolve transitively), vendoring, workspaces, `fern add`.
+deps resolve transitively), workspaces, `fern add`.
 See `PACKAGE-MANAGEMENT-SOTA.md` for the design each of these follows.
 The self-hosted compiler's modloader (`examples/self_host/
 modloader.fern`) does not read manifests yet — a port slice, tracked

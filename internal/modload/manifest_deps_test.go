@@ -219,3 +219,58 @@ func TestLoadManifestURLDepUnfetchedErrors(t *testing.T) {
 		t.Fatalf("want an error pointing at `fern -fetch`, got %v", err)
 	}
 }
+
+// Vendored mode: with a `vendor/<name>/` tree next to the root manifest,
+// a declared dependency resolves out of vendor/ — offline, ignoring the
+// dependency's original path/url entirely (here the path points at a
+// directory that does not even exist).
+func TestLoadVendoredResolution(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"app/fern.toml":               "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../gone\" }\n",
+		"app/main.fern":               `import "helper";` + "\n" + `function main(): i32 { return helper.ten(); }`,
+		"app/vendor/helper/fern.toml": "[package]\nname = \"helper\"\n",
+		"app/vendor/helper/lib.fern":  "pub function ten(): i32 { return 10; }",
+	})
+	prog, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "lib__ten" {
+			return
+		}
+	}
+	t.Fatal("vendored dependency's lib module was not loaded from vendor/")
+}
+
+// A vendored dependency resolves ITS OWN declared deps flat in the same
+// top-level vendor/ tree (not a nested vendor/), and isolation still
+// holds: helper reaches textkit only because helper declares it.
+func TestLoadVendoredTransitiveFlat(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"app/fern.toml":                "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../gone\" }\n",
+		"app/main.fern":                `import "helper";` + "\n" + `function main(): i32 { return helper.eleven(); }`,
+		"app/vendor/helper/fern.toml":  "[package]\nname = \"helper\"\n[dependencies]\ntextkit = { path = \"../../../gone2\" }\n",
+		"app/vendor/helper/lib.fern":   `import "textkit";` + "\n" + `pub function eleven(): i32 { return textkit.eleven(); }`,
+		"app/vendor/textkit/fern.toml": "[package]\nname = \"textkit\"\n",
+		"app/vendor/textkit/lib.fern":  "pub function eleven(): i32 { return 11; }",
+	})
+	if _, _, err := Load(filepath.Join(root, "app", "main.fern")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A declared dep missing from an otherwise-vendored tree errors pointing
+// at `fern -vendor`, never falling back to the network or the path.
+func TestLoadVendoredMissingDepErrors(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"app/fern.toml":               "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\nother = { path = \"../other\" }\n",
+		"app/main.fern":               `import "other";` + "\n" + `function main(): i32 { return 0; }`,
+		"app/vendor/helper/fern.toml": "[package]\nname = \"helper\"\n",
+		"app/vendor/helper/lib.fern":  "pub function x(): i32 { return 1; }",
+	})
+	_, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err == nil || !strings.Contains(err.Error(), "-vendor") {
+		t.Fatalf("want an error pointing at `fern -vendor`, got %v", err)
+	}
+}

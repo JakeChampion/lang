@@ -614,6 +614,25 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 		return resolveImportPath(importingDir, importPath), nil
 	}
 	seg, rest, _ := strings.Cut(importPath, "/")
+	// Vendored mode (Rec §6): when a `vendor/` tree governs this package,
+	// a declared dependency resolves to `<vendor-root>/vendor/<name>/` —
+	// flat, offline, path/url origins irrelevant, no network. Detected
+	// from man.Dir alone (no load-wide threading): the vendor root is the
+	// directory whose `vendor/` subdir either IS man's dir or contains it.
+	// Isolation is still enforced — only DECLARED deps (`isDep`) resolve —
+	// so a vendored package can't reach a sibling in vendor it didn't
+	// declare. A declared dep missing from a vendor tree is an error
+	// (the vendor dir is stale — re-run `fern -vendor`), never a fallback
+	// to the network.
+	if _, isDep := man.Deps[seg]; isDep {
+		if vr := vendorRootFor(man.Dir); vr != "" {
+			depDir := filepath.Join(vr, "vendor", seg)
+			if st, err := os.Stat(depDir); err == nil && st.IsDir() {
+				return resolveDepImport(depDir, rest, mans)
+			}
+			return "", fmt.Errorf("dependency %q is not in the vendor directory %s — re-run `fern -vendor %s`", seg, filepath.Join(vr, "vendor"), filepath.Join(vr, manifest.FileName))
+		}
+	}
 	if d, isDep := man.Deps[seg]; isDep && d.URL != "" {
 		// Hash-addressed dependency: resolve through the content-addressed
 		// store, NEVER the network — `fern -fetch` is the only fetcher (the
@@ -661,6 +680,39 @@ func resolveDepImport(depDir, rest string, mans map[string]*manifest.Manifest) (
 		lib = depMan.Lib
 	}
 	return filepath.Abs(filepath.Join(depDir, lib))
+}
+
+// vendorRootFor returns the vendor root governing a package whose
+// manifest lives at manDir, or "" when the package is not vendored.
+// Two shapes count as vendored, both confirmed by an actual `vendor/`
+// directory (so a project that merely has a path component named
+// "vendor" isn't misread):
+//   - manDir itself has a `vendor/` subdir → manDir is the vendor root
+//     (the top-level project after `fern -vendor`);
+//   - manDir sits under `<root>/vendor/<pkg>[/…]` → <root> is the vendor
+//     root (a vendored dependency resolving ITS deps flat in the same
+//     tree).
+func vendorRootFor(manDir string) string {
+	if st, err := os.Stat(filepath.Join(manDir, "vendor")); err == nil && st.IsDir() {
+		return manDir
+	}
+	// Find the last `vendor` path component; the directory before it is
+	// the root. filepath.Dir peels one segment at a time so this handles
+	// nested subdirectories inside a vendored package too.
+	d := manDir
+	for {
+		parent := filepath.Dir(d)
+		if parent == d {
+			return ""
+		}
+		if filepath.Base(parent) == "vendor" {
+			root := filepath.Dir(parent)
+			if st, err := os.Stat(parent); err == nil && st.IsDir() && root != parent {
+				return root
+			}
+		}
+		d = parent
+	}
 }
 
 // manifestFor returns the manifest governing dir (nearest fern.toml at
