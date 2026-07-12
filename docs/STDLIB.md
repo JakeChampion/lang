@@ -138,7 +138,9 @@ Grouped by family:
   `count_chars_in`
 - **Split / pad / center:** `split`, `splitn`, `split_at`,
   `split_once`, `pad_start`, `pad_end`, `pad_start_str`,
-  `pad_end_str`, `center`, `wrap`, `indent`, `repeat_with_sep`
+  `pad_end_str`, `center`, `wrap`, `indent`, `dedent` (strip the
+  common leading-whitespace prefix — the inverse of `indent`, à la
+  Python `textwrap.dedent`), `repeat_with_sep`
 - **Slice / count / reverse:** `take`, `drop`, `chunks`, `at`,
   `chars`, `to_array`, `reverse_bytes`, `count`, `count_byte`,
   `bytes`, `first`, `last`, `before`, `after`, `between`,

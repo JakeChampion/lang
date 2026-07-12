@@ -133,6 +133,22 @@ function test_indent_consecutive_newlines(): test.TestOutcome {
     return test.assert_eq("\n\ny".indent("-"), "-\n-\n-y");
 }
 
+// dedent is the inverse of indent: strip the common leading-whitespace
+// prefix shared by every non-blank line.
+function test_dedent(): test.TestOutcome {
+    // Common 4-space prefix removed; the deeper line keeps its extra 2.
+    if ("    hello\n      world".dedent() != "hello\n  world") { return test.fail("common prefix"); }
+    // A whitespace-only line normalizes to "" and doesn't defeat the prefix.
+    return test.assert_eq("    a\n  \n    b".dedent(), "a\n\nb");
+}
+
+function test_dedent_edges(): test.TestOutcome {
+    // A column-0 line means no common prefix — unchanged.
+    if ("a\n    b".dedent() != "a\n    b") { return test.fail("no prefix"); }
+    // indent then dedent round-trips a flush-left block.
+    return test.assert_eq("x\ny".indent("    ").dedent(), "x\ny");
+}
+
 // ---- fixed-width slicing ----
 
 function test_chunks(): test.TestOutcome {
@@ -161,6 +177,8 @@ function main(): i32 {
     r = r.it("indent",            test_indent());
     r = r.it("indent trailing nl", test_indent_trailing_newline());
     r = r.it("indent consec nl",  test_indent_consecutive_newlines());
+    r = r.it("dedent",            test_dedent());
+    r = r.it("dedent edges",      test_dedent_edges());
     r = r.it("chunks",            test_chunks());
     return r.finish();
 }
