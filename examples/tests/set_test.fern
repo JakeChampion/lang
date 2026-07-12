@@ -100,6 +100,32 @@ function test_string_elems(): test.TestOutcome {
     return test.assert_true(!s.contains("a") && s.contains("c"));
 }
 
+function test_superset_and_disjoint(): test.TestOutcome {
+    var a: set.Set[i32] = set.set_of([1, 2, 3]);
+    var sub: set.Set[i32] = set.set_of([2, 3]);
+    var e: set.Set[i32] = set.set_new();
+    // is_superset is the mirror of is_subset.
+    if (!a.is_superset(sub) || sub.is_superset(a)) { return test.fail("superset"); }
+    if (!a.is_superset(e)) { return test.fail("superset of empty"); }
+    // is_disjoint: shares nothing.
+    if (a.is_disjoint(sub)) { return test.fail("a and sub overlap"); }
+    return test.assert_true(a.is_disjoint(set.set_of([7, 8])) && a.is_disjoint(e));
+}
+
+function test_symmetric_difference(): test.TestOutcome {
+    var a: set.Set[i32] = set.set_of([1, 2, 3]);
+    var b: set.Set[i32] = set.set_of([2, 3, 4]);
+    // (a-b) ∪ (b-a) = {1} ∪ {4}, a's uniques first.
+    var sd: set.Set[i32] = a.symmetric_difference(b);
+    if (!sd.equals(set.set_of([1, 4]))) { return test.fail("sym diff value"); }
+    var arr: i32[] = sd.to_array();
+    if (arr[0] != 1 || arr[1] != 4) { return test.fail("sym diff order"); }
+    // Symmetric difference with self is empty; with empty is identity.
+    var e: set.Set[i32] = set.set_new();
+    return test.assert_true(a.symmetric_difference(a).is_empty() &&
+                            a.symmetric_difference(e).equals(a));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/set");
     r = r.it("set_of dedup + order", test_set_of_dedup());
@@ -114,5 +140,7 @@ function main(): i32 {
     r = r.it("subset and equals",   test_subset_and_equals());
     r = r.it("empty",               test_empty());
     r = r.it("string elements",     test_string_elems());
+    r = r.it("superset + disjoint",  test_superset_and_disjoint());
+    r = r.it("symmetric difference", test_symmetric_difference());
     return r.finish();
 }
