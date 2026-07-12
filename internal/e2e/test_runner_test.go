@@ -2742,6 +2742,24 @@ func TestRunnerSetExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/unicode_test.fern` covers std/unicode — simple
+// (1:1) case mapping across ASCII / Latin-1 / Greek / Cyrillic, the
+// code-point helpers, the simple-mapping caveat (ß unchanged), and
+// eq_ignore_case. Passing suite → exit 0; the TAP plan line is `1..9`.
+func TestRunnerUnicodeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/unicode_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/unicode", "1..9", "# pass 9", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
