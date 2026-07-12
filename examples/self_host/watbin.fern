@@ -686,6 +686,39 @@ function label_depth(labels: string[], name: string): i32 {
     return 0;
 }
 
+// sat_trunc_opcode maps a saturating float->int truncation to its 0xFC-prefixed
+// sub-opcode index (0..7), or -1 for anything else. These are the two-byte
+// `0xFC idx` (LEB) form the stack-IR backend emits for `as i32` / `as i64` float
+// casts — the *saturating* truncations, distinct from the single-byte trapping
+// 0xaa-family (`i32.trunc_f64_s` = 170) that arith_opcode already covers. Without
+// this the IR emitter's `i32.trunc_sat_f64_s` fell through both enc paths and
+// emitted NOTHING, leaving an f64 on the stack where an i32 was expected (every
+// f64 program's `as i32` failed wasm validation with a type mismatch).
+function sat_trunc_opcode(op: string): i32 {
+    if (op == "i32.trunc_sat_f32_s") { return 0; }
+    if (op == "i32.trunc_sat_f32_u") { return 1; }
+    if (op == "i32.trunc_sat_f64_s") { return 2; }
+    if (op == "i32.trunc_sat_f64_u") { return 3; }
+    if (op == "i64.trunc_sat_f32_s") { return 4; }
+    if (op == "i64.trunc_sat_f32_u") { return 5; }
+    if (op == "i64.trunc_sat_f64_s") { return 6; }
+    if (op == "i64.trunc_sat_f64_u") { return 7; }
+    return 0 - 1;
+}
+
+// is_offset_atom reports whether an SExpr child is a folded `offset=N` memarg
+// atom (a leaf token whose text begins "offset="). offset_atom_value parses the
+// N. wasm.fern's folded field loads/stores carry these for non-zero slots.
+function is_offset_atom(n: SExpr): boolean {
+    if (n.kind == 0) { return false; }
+    if (n.text.len() < 7) { return false; }
+    return n.text[0:7] == "offset=";
+}
+
+function offset_atom_value(n: SExpr): i32 {
+    return parse_dec(n.text[7:n.text.len()]);
+}
+
 // memarg_align gives the natural alignment (log2 of access size) for a
 // memory op; the self-host emits bare loads/stores, so natural alignment +
 // offset 0.
@@ -865,19 +898,37 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     var ml: i32 = mem_load_opcode(op);
     if (ml != 0) {
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        // An optional `offset=N` memarg atom rides between the op and the address
+        // operand — wasm.fern's folded struct-drop / field helpers use it to read
+        // a non-zero field slot (`(i32.load offset=8 (local.get $box))`). Parsing
+        // it fixes both the emitted offset (was hardcoded 0) AND the operand index:
+        // without it, enc_instr recursed into the `offset=8` ATOM (its `items` is
+        // null) and SIGSEGV'd on any struct with a pointer field (#4801).
+        var loff: i32 = 0;
+        var lopnd: i32 = 1;
+        if (node.items.len() > 2 && is_offset_atom(node.items[1])) {
+            loff = offset_atom_value(node.items[1]);
+            lopnd = 2;
+        }
+        out = wcat(out, enc_instr(node.items[lopnd], lnames, fnames, gnames, labels, tnames));
         out = out.append(ml);
         out = leb_u32(out, memarg_align(op));
-        out = leb_u32(out, 0);     // offset
+        out = leb_u32(out, loff);
         return out;
     }
     var ms: i32 = mem_store_opcode(op);
     if (ms != 0) {
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+        var soff: i32 = 0;
+        var sbase: i32 = 1;
+        if (node.items.len() > 3 && is_offset_atom(node.items[1])) {
+            soff = offset_atom_value(node.items[1]);
+            sbase = 2;
+        }
+        out = wcat(out, enc_instr(node.items[sbase], lnames, fnames, gnames, labels, tnames));
+        out = wcat(out, enc_instr(node.items[sbase + 1], lnames, fnames, gnames, labels, tnames));
         out = out.append(ms);
         out = leb_u32(out, memarg_align(op));
-        out = leb_u32(out, 0);
+        out = leb_u32(out, soff);
         return out;
     }
     if (op == "select") {
@@ -887,6 +938,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
         out = out.append(27);    // 0x1b
         return out;
+    }
+    var stf: i32 = sat_trunc_opcode(op);
+    if (stf >= 0) {
+        // Saturating float->int truncation: encode the single operand, then the
+        // two-byte `0xFC idx` (LEB) form.
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        out = out.append(252);   // 0xFC
+        return leb_u32(out, stf);
     }
     var ao: i32 = arith_opcode(op);
     if (ao != 0) {
@@ -1008,6 +1067,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             var ml: i32 = mem_load_opcode(op);
             var ms: i32 = mem_store_opcode(op);
             var ao: i32 = arith_opcode(op);
+            var stf: i32 = sat_trunc_opcode(op);
             if (ml != 0) {
                 out = out.append(ml);
                 out = leb_u32(out, memarg_align(op));
@@ -1016,6 +1076,11 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 out = out.append(ms);
                 out = leb_u32(out, memarg_align(op));
                 out = leb_u32(out, 0);
+            } else if (stf >= 0) {
+                // Saturating float->int truncation: two-byte `0xFC idx` (operand
+                // already on the stack in the flat form).
+                out = out.append(252);   // 0xFC
+                out = leb_u32(out, stf);
             } else if (ao != 0) {
                 out = out.append(ao);   // arithmetic / comparison (no immediate)
             }
