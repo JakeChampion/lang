@@ -2762,6 +2762,24 @@ func TestRunnerUnicodeExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/semver_test.fern` covers std/semver — SemVer 2.0.0
+// parse, canonical to_string, the §11 precedence chain (incl. the
+// numeric `beta.2 < beta.11` trap), build-metadata-ignored, and
+// malformed-input rejection. Passing suite → exit 0; plan line `1..7`.
+func TestRunnerSemverExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/semver_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/semver", "1..7", "# pass 7", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

@@ -1,0 +1,86 @@
+import "std/test";
+import "std/semver" as semver;
+// examples/tests/semver_test.fern — pure-Fern coverage of std/semver:
+// parse + field extraction, canonical to_string, the SemVer §11
+// precedence chain (including the numeric-vs-lexical `beta.2 < beta.11`
+// trap), build-metadata-is-ignored, and the malformed-input rejections.
+
+// compare two version strings by precedence; 99 if either won't parse.
+function cmp(x: string, y: string): i32 {
+    match (semver.parse(x)) {
+        Some(a) => {
+            match (semver.parse(y)) { Some(b) => { return a.compare(b); }, None => { return 99; } }
+        },
+        None => { return 99; }
+    }
+}
+
+function parses(s: string): boolean {
+    match (semver.parse(s)) { Some(v) => { return true; }, None => { return false; } }
+}
+
+function test_parse_fields(): test.TestOutcome {
+    match (semver.parse("1.2.3-rc.1+build.5")) {
+        Some(v) => {
+            return test.assert_true(v.major == 1 && v.minor == 2 && v.patch == 3 &&
+                                    v.prerelease == "rc.1" && v.build == "build.5");
+        },
+        None => { return test.fail("valid version failed to parse"); }
+    }
+}
+
+function test_to_string(): test.TestOutcome {
+    match (semver.parse("1.2.3-rc.1+build.5")) {
+        Some(v) => { return test.assert_eq(v.to_string(), "1.2.3-rc.1+build.5"); },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_core_precedence(): test.TestOutcome {
+    return test.assert_true(cmp("1.9.0", "1.10.0") < 0 &&      // numeric, not lexical
+                            cmp("2.0.0", "1.99.99") > 0 &&
+                            cmp("1.2.3", "1.2.3") == 0);
+}
+
+function test_prerelease_lt_release(): test.TestOutcome {
+    // A prerelease ranks below the released version.
+    return test.assert_true(cmp("1.0.0-rc.1", "1.0.0") < 0);
+}
+
+function test_precedence_chain(): test.TestOutcome {
+    // The canonical semver.org §11 example, each strictly less than the next.
+    if (cmp("1.0.0-alpha", "1.0.0-alpha.1") >= 0) { return test.fail("alpha < alpha.1"); }
+    if (cmp("1.0.0-alpha.1", "1.0.0-alpha.beta") >= 0) { return test.fail("alpha.1 < alpha.beta"); }
+    if (cmp("1.0.0-alpha.beta", "1.0.0-beta") >= 0) { return test.fail("alpha.beta < beta"); }
+    if (cmp("1.0.0-beta", "1.0.0-beta.2") >= 0) { return test.fail("beta < beta.2"); }
+    if (cmp("1.0.0-beta.2", "1.0.0-beta.11") >= 0) { return test.fail("beta.2 < beta.11 (numeric)"); }
+    if (cmp("1.0.0-beta.11", "1.0.0-rc.1") >= 0) { return test.fail("beta.11 < rc.1"); }
+    return test.pass();
+}
+
+function test_build_ignored(): test.TestOutcome {
+    // Build metadata does not affect precedence.
+    return test.assert_true(cmp("1.0.0+a", "1.0.0+b") == 0 &&
+                            cmp("1.0.0+x", "1.0.0") == 0);
+}
+
+function test_rejects_malformed(): test.TestOutcome {
+    if (parses("1.2")) { return test.fail("two-part accepted"); }
+    if (parses("1.2.3-")) { return test.fail("empty prerelease accepted"); }
+    if (parses("01.2.3")) { return test.fail("leading-zero major accepted"); }
+    if (parses("1.2.x")) { return test.fail("non-numeric patch accepted"); }
+    if (parses("1.2.3-01")) { return test.fail("leading-zero numeric prerelease id accepted"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/semver");
+    r = r.it("parse fields",           test_parse_fields());
+    r = r.it("to_string canonical",    test_to_string());
+    r = r.it("core precedence",        test_core_precedence());
+    r = r.it("prerelease < release",   test_prerelease_lt_release());
+    r = r.it("precedence chain",       test_precedence_chain());
+    r = r.it("build ignored",          test_build_ignored());
+    r = r.it("rejects malformed",      test_rejects_malformed());
+    return r.finish();
+}
