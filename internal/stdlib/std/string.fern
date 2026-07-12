@@ -1102,6 +1102,57 @@ pub function (s: string) indent(prefix: string): string {
     return string_from_bytes(buf);
 }
 
+// `s.dedent()` — remove the longest common leading-whitespace prefix
+// (spaces / tabs) shared by every non-blank line, the inverse of
+// `indent` and Python's `textwrap.dedent`. Lines that are entirely
+// whitespace (or empty) are normalised to `""` and don't constrain the
+// common prefix, so a blank indented line in a here-doc doesn't defeat
+// the dedent. Because the prefix is matched byte-for-byte, a line
+// indented with a tab and one indented with spaces share no prefix (as
+// in Python). Lines are split on `\n`.
+pub function (s: string) dedent(): string {
+    var lines: string[] = s.split("\n");
+    // First pass: the common leading-whitespace prefix over non-blank lines.
+    var common: string = "";
+    var have_common: boolean = false;
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        var line: string = lines[i];
+        var ws: i32 = 0;
+        while (ws < line.len() && (line[ws] == 32 || line[ws] == 9)) { ws = ws + 1; }
+        if (ws < line.len()) {                     // has non-whitespace content
+            var lead: string = line[0:ws] + "";
+            if (!have_common) {
+                common = lead;
+                have_common = true;
+            } else {
+                var k: i32 = 0;
+                var maxk: i32 = common.len();
+                if (lead.len() < maxk) { maxk = lead.len(); }
+                while (k < maxk && common[k] == lead[k]) { k = k + 1; }
+                common = common[0:k] + "";
+            }
+        }
+        i = i + 1;
+    }
+    // Second pass: strip `common` from each line; blank lines → "".
+    var clen: i32 = common.len();
+    var out: string[] = [];
+    var j: i32 = 0;
+    while (j < lines.len()) {
+        var ln: string = lines[j];
+        var wsj: i32 = 0;
+        while (wsj < ln.len() && (ln[wsj] == 32 || ln[wsj] == 9)) { wsj = wsj + 1; }
+        if (wsj == ln.len()) {                     // whitespace-only or empty
+            out = out.append("");
+        } else {
+            out = out.append(ln[clen:ln.len()] + "");
+        }
+        j = j + 1;
+    }
+    return out.join("\n");
+}
+
 // The trim family returns `str` (#4813 producer flip, slice P1): the
 // declared type says "this is a view of the receiver's bytes" even though
 // the native/wasm backends still COPY today (the asm-IR path is already
