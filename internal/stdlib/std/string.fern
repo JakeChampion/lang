@@ -271,7 +271,7 @@ pub function (s: string) strip_quotes(): Option[string] {
     var first: i32 = s[0];
     var last: i32 = s[n - 1];
     if ((first == 34 && last == 34) || (first == 39 && last == 39)) {
-        return Some(s[1:n - 1]);
+        return Some(s[1:n - 1].to_owned());
     }
     return None;
 }
@@ -510,7 +510,7 @@ pub function (s: string) is_email_like(): boolean {
 // shape check, like `is_email_like`; defer to a real URL
 // parser when one lands.
 pub function (s: string) is_url_like(): boolean {
-    var rest: string = "";
+    var rest: str = "";
     if (s.starts_with("https://")) {
         rest = s.remove_prefix("https://");
     } else if (s.starts_with("http://")) {
@@ -540,7 +540,7 @@ pub function (s: string) is_json_like(): boolean {
 // `s.common_prefix(other)` — longest shared leading
 // substring. Returns "" when the first byte differs or
 // either argument is empty.
-pub function (s: string) common_prefix(other: string): string {
+pub function (s: string) common_prefix(other: string): str {
     var n: i32 = s.len();
     var m: i32 = other.len();
     var cap: i32 = n;
@@ -556,7 +556,7 @@ pub function (s: string) common_prefix(other: string): string {
 // `s.common_suffix(other)` — longest shared trailing
 // substring. Returns "" when no overlap or either side
 // is empty.
-pub function (s: string) common_suffix(other: string): string {
+pub function (s: string) common_suffix(other: string): str {
     var n: i32 = s.len();
     var m: i32 = other.len();
     var cap: i32 = n;
@@ -813,7 +813,7 @@ pub function (s: string) split_at(i: i32): (string, string) {
     var k: i32 = i;
     if (k < 0) { k = 0; }
     if (k > n) { k = n; }
-    return (s[0:k], s[k:n]);
+    return (s[0:k].to_owned(), s[k:n].to_owned());
 }
 
 // `s.replace_byte(from, to)` — return a copy of s with every
@@ -1122,7 +1122,7 @@ pub function (s: string) trim_end(): str {
 // Removes "\n" or "\r\n" (the CRLF pair) but stops there —
 // runs of multiple newlines are preserved beyond the first
 // strip. Use trim_end for full whitespace strip.
-pub function (s: string) rstrip_newline(): string {
+pub function (s: string) rstrip_newline(): str {
     var n: i32 = s.len();
     if (n == 0) { return s; }
     if (s[n - 1] == 10) {
@@ -1136,7 +1136,7 @@ pub function (s: string) rstrip_newline(): string {
 // `chars` from both ends. Empty `chars` is a no-op. Useful
 // for stripping a chosen set of delimiters / wrapping
 // characters in one pass.
-pub function (s: string) trim_chars(chars: string): string {
+pub function (s: string) trim_chars(chars: string): str {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var low: i32 = 0;
@@ -1155,7 +1155,7 @@ pub function (s: string) trim_chars(chars: string): string {
 // `s.trim_start_chars(chars)` / `s.trim_end_chars(chars)` —
 // one-sided variants of trim_chars. Strip any byte in `chars`
 // from the start / end only.
-pub function (s: string) trim_start_chars(chars: string): string {
+pub function (s: string) trim_start_chars(chars: string): str {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var i: i32 = 0;
@@ -1165,7 +1165,7 @@ pub function (s: string) trim_start_chars(chars: string): string {
     return s[i:n];
 }
 
-pub function (s: string) trim_end_chars(chars: string): string {
+pub function (s: string) trim_end_chars(chars: string): str {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var end: i32 = n;
@@ -1339,14 +1339,14 @@ pub function (s: string) last(): Option[i32] {
 // drop(big) returns empty. take(neg) / drop(neg) treat
 // the count as 0. Saves the `s[0:min(n, len(s))]` /
 // `s[min(n, len(s)):len(s)]` boilerplate at every call site.
-pub function (s: string) take(n: i32): string {
+pub function (s: string) take(n: i32): str {
     if (n <= 0) { return ""; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return s; }
     return s[0:n];
 }
 
-pub function (s: string) drop(n: i32): string {
+pub function (s: string) drop(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -1473,7 +1473,7 @@ pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
 // the trailing chunk in a single call.
 pub function (s: string) strip_prefix(prefix: string): Option[string] {
     if (!s.starts_with(prefix)) { return None; }
-    return Some(s[prefix.len():s.len()]);
+    return Some(s[prefix.len():s.len()].to_owned());
 }
 
 // `s.strip_suffix(s)` — Some(head) if s ends with the suffix.
@@ -1481,7 +1481,7 @@ pub function (s: string) strip_prefix(prefix: string): Option[string] {
 pub function (s: string) strip_suffix(suffix: string): Option[string] {
     if (!s.ends_with(suffix)) { return None; }
     var k: i32 = s.len() - suffix.len();
-    return Some(s[0:k]);
+    return Some(s[0:k].to_owned());
 }
 
 // `s.remove_prefix(prefix)` / `s.remove_suffix(suffix)` —
@@ -1489,12 +1489,12 @@ pub function (s: string) strip_suffix(suffix: string): Option[string] {
 // when the prefix / suffix doesn't match, instead of
 // Option. Avoids the match boilerplate when the unchanged
 // value is the right fallback.
-pub function (s: string) remove_prefix(prefix: string): string {
+pub function (s: string) remove_prefix(prefix: string): str {
     if (!s.starts_with(prefix)) { return s; }
     return s[prefix.len():s.len()];
 }
 
-pub function (s: string) remove_suffix(suffix: string): string {
+pub function (s: string) remove_suffix(suffix: string): str {
     if (!s.ends_with(suffix)) { return s; }
     var k: i32 = s.len() - suffix.len();
     return s[0:k];
@@ -1572,7 +1572,7 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
     var i: i32 = 0;
     while (i + sLen <= n) {
         if (__substr_eq(s, i, sep, sLen)) {
-            return Some((s[0:i], s[i + sLen:n]));
+            return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
         }
         i = i + 1;
     }
@@ -1583,7 +1583,7 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
 // peel sub off the beginning / end as many times as it
 // appears, contiguously. Symmetric with the regular trim()
 // that strips whitespace.
-pub function (s: string) trim_start_matches(sub: string): string {
+pub function (s: string) trim_start_matches(sub: string): str {
     if (sub.len() == 0) { return s; }
     var n: i32 = s.len();
     var subLen: i32 = sub.len();
@@ -1594,7 +1594,7 @@ pub function (s: string) trim_start_matches(sub: string): string {
     return s[i:n];
 }
 
-pub function (s: string) trim_end_matches(sub: string): string {
+pub function (s: string) trim_end_matches(sub: string): str {
     if (sub.len() == 0) { return s; }
     var n: i32 = s.len();
     var subLen: i32 = sub.len();
@@ -1717,7 +1717,7 @@ pub function (s: string) truncate(n: i32, ellipsis: string): string {
     var sLen: i32 = s.len();
     if (sLen <= n) { return s; }
     var eLen: i32 = ellipsis.len();
-    if (n <= eLen) { return s[0:n]; }
+    if (n <= eLen) { return s[0:n].to_owned(); }
     return s[0:n - eLen] + ellipsis;
 }
 
@@ -1732,7 +1732,7 @@ pub function (s: string) ellipsis(n: i32): string {
     if (s.len() <= n) { return s; }
     if (n < 3) {
         if (n <= 0) { return ""; }
-        return "..."[0:n];
+        return "..."[0:n].to_owned();
     }
     if (n == 3) { return "..."; }
     return s[0:n - 3] + "...";
@@ -1746,7 +1746,7 @@ pub function (s: string) first_line(): Option[string] {
     if (s.len() == 0) { return None; }
     var idx: i32 = s.index_of("\n");
     if (idx < 0) { return Some(s); }
-    return Some(s[0:idx]);
+    return Some(s[0:idx].to_owned());
 }
 
 // `s.at(i)` — bounds-checked byte access. Returns Some(byte)
@@ -2049,7 +2049,7 @@ pub function (s: string) remove_all(needle: string): string {
 // `s.before(sep)` — substring before the first occurrence
 // of sep. Returns s unchanged if sep not present, "" if
 // s starts with sep. Doesn't include sep in the result.
-pub function (s: string) before(sep: string): string {
+pub function (s: string) before(sep: string): str {
     var idx: i32 = s.index_of(sep);
     if (idx < 0) { return s; }
     return s[0:idx];
@@ -2058,7 +2058,7 @@ pub function (s: string) before(sep: string): string {
 // `s.after(sep)` — substring after the first occurrence
 // of sep. Returns "" if sep not present, s unchanged if sep
 // is empty. Doesn't include sep in the result.
-pub function (s: string) after(sep: string): string {
+pub function (s: string) after(sep: string): str {
     if (sep.len() == 0) { return s; }
     var idx: i32 = s.index_of(sep);
     if (idx < 0) { return ""; }
@@ -2080,7 +2080,7 @@ pub function (s: string) between(start: string, end: string): Option[string] {
     var j: i32 = begin;
     while (j + endLen <= n) {
         if (__substr_eq(s, j, end, endLen)) {
-            return Some(s[begin:j]);
+            return Some(s[begin:j].to_owned());
         }
         j = j + 1;
     }

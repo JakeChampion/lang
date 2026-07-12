@@ -17,21 +17,21 @@ import "std/string";
 // ---- delimiter extraction ----
 
 function test_before(): test.TestOutcome {
-    return test.assert_eq("key=value".before("="), "key");
+    return test.assert_eq("key=value".before("=").to_owned(), "key");
 }
 
 function test_before_missing(): test.TestOutcome {
     // sep absent → whole string unchanged.
-    return test.assert_eq("noeq".before("="), "noeq");
+    return test.assert_eq("noeq".before("=").to_owned(), "noeq");
 }
 
 function test_after(): test.TestOutcome {
-    return test.assert_eq("key=value".after("="), "value");
+    return test.assert_eq("key=value".after("=").to_owned(), "value");
 }
 
 function test_after_missing(): test.TestOutcome {
     // sep absent → empty string.
-    return test.assert_eq("noeq".after("="), "");
+    return test.assert_eq("noeq".after("=").to_owned(), "");
 }
 
 function test_between(): test.TestOutcome {

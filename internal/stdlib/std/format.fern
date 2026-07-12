@@ -97,7 +97,7 @@ pub function format(fmt: string, args: string[]): string {
             var j: i32 = i + 1;
             while (j < n && fmt[j] != 125) { j = j + 1; }
             var isPlaceholder: boolean = false;
-            var spec: string = "";
+            var spec: str = "";
             if (j < n) {
                 spec = fmt[i + 1:j];
                 if (spec.len() == 0) { isPlaceholder = true; }
@@ -143,7 +143,7 @@ function __format_apply_spec(s: string, spec: string): string {
     var p: i32 = 1; // skip the leading ':'
     // [fill]align — a fill char only counts when an align char (`<>^`)
     // follows it; a bare align char takes the default space fill.
-    var fill: string = " ";
+    var fill: str = " ";
     var align: i32 = 1; // 1=left, 2=right, 3=center; strings default left.
     if (p + 1 < m && __is_align(spec[p + 1])) {
         fill = spec[p:p + 1];
@@ -179,7 +179,7 @@ function __format_apply_spec(s: string, spec: string): string {
             prec = prec * 10 + (spec[p] - 48);
             p = p + 1;
         }
-        if (val.len() > prec) { val = val[0:prec]; }
+        if (val.len() > prec) { val = val[0:prec].to_owned(); }
     }
     // sign flag — prefix `+` on a value that looks like a non-negative
     // number (first byte a digit). A value already carrying `-`/`+`,

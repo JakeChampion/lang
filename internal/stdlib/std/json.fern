@@ -364,7 +364,7 @@ function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
             p = __JsonParser { ...p, pos: p.pos + 1 };
         }
     }
-    return (JNumber(p.s[start:p.pos]), p);
+    return (JNumber(p.s[start:p.pos] + ""), p);
 }
 
 // __json_emit_codepoint encodes a single Unicode scalar value

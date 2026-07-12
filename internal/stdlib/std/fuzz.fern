@@ -298,8 +298,8 @@ function __fuzz_shrink_halve(seed: string, target: (string) => test.TestOutcome,
     var n: i32 = seed.len();
     if (n < 2 || budget <= 0) { return (seed, budget); }
     var mid: i32 = n / 2;
-    var left: string = seed[0:mid];
-    var right: string = seed[mid:n];
+    var left: string = seed[0:mid].to_owned();
+    var right: string = seed[mid:n].to_owned();
     // Try left half first — same lexicographic preference
     // the seed-iteration order uses, so failures cluster
     // toward the "obvious" minimal reproducer.

@@ -601,7 +601,7 @@ pub function (i: Instant) format_http_date(): string {
 // it isn't one. Case-sensitive (IMF-fixdate is `Nov`, not `NOV`).
 function __month_from_short(s: string, start: i32): i32 {
     if (start + 3 > s.len()) { return -1; }
-    var m: string = s[start : start + 3];
+    var m: str = s[start : start + 3];
     if (m == "Jan") { return 1; }
     if (m == "Feb") { return 2; }
     if (m == "Mar") { return 3; }
@@ -725,7 +725,7 @@ pub function (z: Zoned) format_rfc3339(): string {
     var dt: DateTime = z.to_datetime();
     var head: string = dt.date.format_iso() + "T"
         + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second);
-    var tail: string = "";
+    var tail: str = "";
     if (dt.time.nsec != 0) {
         // Reuse the Instant fractional emitter logic via a
         // surrogate Instant. Cheap — no syscalls.

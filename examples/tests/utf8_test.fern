@@ -162,7 +162,7 @@ function test_substring(): test.TestOutcome {
     if (utf8.substring(mixed(), 0, 4) != mixed()) { return test.fail("full range"); }
     if (utf8.substring(mixed(), 2, 100) != euro() + emoji()) { return test.fail("clamped end"); }
     if (utf8.substring(mixed(), 3, 1) != "") { return test.fail("end <= start"); }
-    return test.assert_eq(utf8.substring(mixed(), 10, 12), "");
+    return test.assert_eq(utf8.substring(mixed(), 10, 12).to_owned(), "");
 }
 
 function main(): i32 {

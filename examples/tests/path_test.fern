@@ -31,53 +31,53 @@ function test_join_none(): test.TestOutcome {
 }
 
 function test_parent(): test.TestOutcome {
-    return test.assert_eq(path.path_parent("/a/b/c"), "/a/b");
+    return test.assert_eq(path.path_parent("/a/b/c").to_owned(), "/a/b");
 }
 
 function test_parent_relative(): test.TestOutcome {
-    return test.assert_eq(path.path_parent("a/b"), "a");
+    return test.assert_eq(path.path_parent("a/b").to_owned(), "a");
 }
 
 function test_parent_no_sep(): test.TestOutcome {
-    return test.assert_eq(path.path_parent("foo"), "");
+    return test.assert_eq(path.path_parent("foo").to_owned(), "");
 }
 
 function test_parent_root(): test.TestOutcome {
-    return test.assert_eq(path.path_parent("/"), "/");
+    return test.assert_eq(path.path_parent("/").to_owned(), "/");
 }
 
 function test_parent_top(): test.TestOutcome {
-    return test.assert_eq(path.path_parent("/a"), "/");
+    return test.assert_eq(path.path_parent("/a").to_owned(), "/");
 }
 
 function test_file_name(): test.TestOutcome {
-    return test.assert_eq(path.path_file_name("/a/b/c"), "c");
+    return test.assert_eq(path.path_file_name("/a/b/c").to_owned(), "c");
 }
 
 function test_file_name_trailing(): test.TestOutcome {
-    return test.assert_eq(path.path_file_name("a/b/"), "b");
+    return test.assert_eq(path.path_file_name("a/b/").to_owned(), "b");
 }
 
 function test_file_name_bare(): test.TestOutcome {
-    return test.assert_eq(path.path_file_name("foo"), "foo");
+    return test.assert_eq(path.path_file_name("foo").to_owned(), "foo");
 }
 
 function test_extension(): test.TestOutcome {
-    return test.assert_eq(path.path_extension("a/b/file.txt"), "txt");
+    return test.assert_eq(path.path_extension("a/b/file.txt").to_owned(), "txt");
 }
 
 function test_extension_last_dot(): test.TestOutcome {
     // Extension is the substring after the LAST dot.
-    return test.assert_eq(path.path_extension("archive.tar.gz"), "gz");
+    return test.assert_eq(path.path_extension("archive.tar.gz").to_owned(), "gz");
 }
 
 function test_extension_hidden(): test.TestOutcome {
     // A leading-dot file has no extension.
-    return test.assert_eq(path.path_extension(".bashrc"), "");
+    return test.assert_eq(path.path_extension(".bashrc").to_owned(), "");
 }
 
 function test_extension_none(): test.TestOutcome {
-    return test.assert_eq(path.path_extension("noext"), "");
+    return test.assert_eq(path.path_extension("noext").to_owned(), "");
 }
 
 function test_clean_dots(): test.TestOutcome {
