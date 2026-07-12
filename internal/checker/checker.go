@@ -3171,7 +3171,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	for i, arg := range n.Args {
 		at := c.checkExpr(arg, s)
 		want := ast.SubstSelf(wantParams[i].Type, dt)
-		if at != nil && !c.argAssignable(want, at) {
+		if at != nil && !c.argAssignable(want, at, wantParams[i].Own) {
 			c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 		}
 	}
@@ -6383,9 +6383,17 @@ func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
 // view is safe. Owning sinks stay on the strict assignable. `own` params
 // are not yet distinguished here (FuncSigs carry types only); that
 // tightening rides the A2 escape slice (#4814).
-func (c *checker) argAssignable(want, got ast.Type) bool {
+func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
 	if c.assignable(want, got) {
 		return true
+	}
+	if own {
+		// An `own` (consuming) parameter takes OWNERSHIP of its argument —
+		// the callee frees it. A `str` view must never be freed by its
+		// holder, so the borrow carve-out below does not apply: lending a
+		// view to a consumer is exactly the #4294 corruption shape.
+		// Materialise with .to_owned() instead.
+		return false
 	}
 	_, gotStr := got.(ast.StrType)
 	_, wantString := want.(ast.StringType)
@@ -9794,7 +9802,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							for i, arg := range n.Args {
 								at := c.checkExpr(arg, s)
 								want := ast.SubstSelf(tm.Params[i].Type, tp)
-								if at != nil && !c.argAssignable(want, at) {
+								if at != nil && !c.argAssignable(want, at, tm.Params[i].Own) {
 									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 								}
 							}
@@ -9972,7 +9980,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				for i, arg := range n.Args {
 					at := c.checkExpr(arg, s)
 					want := ast.SubstSelf(wantParams[i].Type, tt)
-					if at != nil && !c.argAssignable(want, at) {
+					if at != nil && !c.argAssignable(want, at, wantParams[i].Own) {
 						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 					}
 				}
@@ -10202,6 +10210,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
+		// The callee's per-parameter `own` flags (empty when the callee is
+		// not a named function or declares none) — an `own` param consumes
+		// its argument, which disables argAssignable's str-view borrow.
+		var calleeOwnFlags []bool
+		if cid, ok := n.Callee.(*ast.Ident); ok {
+			calleeOwnFlags = c.info.OwnFuncs[cid.Name]
+		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				c.setElemHintFor(n.Args[i], ft.Params[i])
@@ -10264,7 +10279,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if !c.unifyType(expected, at, sub) {
 						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 					}
-				} else if !c.argAssignable(expected, at) {
+				} else if !c.argAssignable(expected, at, i < len(calleeOwnFlags) && calleeOwnFlags[i]) {
 					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 				}
 			}

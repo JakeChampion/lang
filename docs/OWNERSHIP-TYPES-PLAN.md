@@ -287,10 +287,14 @@ precompute shape.
   This answers #4297's open question for the current model: immutability +
   bump-arena + "views don't escape their source" suffices without lifetime
   annotations, at the cost of the conservative local-source rejection.
-  **Remaining A-phase work:** the producer flip (`s[a:b]: str` /
+  **Landed since:** self-host `str` acceptance (#4856 — parse-boundary
+  erasure in `parse_type_name`, pinned byte-identical by
+  `TestSelfHostStrViewErasure`) and the `own`-param tightening
+  (`argAssignable` takes the callee's per-param `own` flag from
+  `Info.OwnFuncs` / the trait `Param.Own`; a view never flows to a
+  consumer). **Remaining A-phase work:** the producer flip (`s[a:b]: str` /
   `.trim(): str`, with backend zero-copy convergence gated by the byte-
-  identity differentials), `own`-param tightening, and self-host `str`
-  acceptance (#4451 debt).
+  identity differentials).
 
 ## Validation discipline (learned from #4294 / the A2 attempts)
 
