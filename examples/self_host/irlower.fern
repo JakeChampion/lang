@@ -11328,6 +11328,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (slot_is_reclaimable_opttup(sb, slot)) {
         return emit_opttup_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
     }
+    // A reclaimable Option[<struct-with-array>] LOOP-LOCAL (#4365): the struct sibling —
+    // deep-drop the prior iteration's Some payload struct (rc fields via __struct_drop_<P>)
+    // + the option box before the store.
+    if (slot_is_reclaimable_optstruct(sb, slot)) {
+        return emit_optstruct_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
+    }
     // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
     // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
     // + "x" }; }`): the loop-rebind must DEEP-drop the prior box's STRING too, else
@@ -14567,6 +14573,20 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         otj = otj + 1;
     }
+    // Reclaimable Option[<struct-with-array>] locals (#4365): deep-free the final live box
+    // (Some payload struct via __struct_drop_<P> + option box) via the same inline path the
+    // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes this dedicated loop.
+    // Entry-zeroed via arr_slots_of (slot_is_reclaimable_optstruct), so an untaken-branch
+    // slot routes a null through the guard.
+    var osj: i32 = st.n_params;
+    while (osj < st.locals.len()) {
+        if (!slot_list_has(keeps, osj) && slot_is_reclaimable_optstruct(st, osj)) {
+            st = emit_optstruct_deep_free(st, osj, opttup_inner_type(st.locals[osj].opt_type));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(osj));
+        }
+        osj = osj + 1;
+    }
     // Reclaimable (<tuple-with-array>)[] locals (#4365): deep-free the final live
     // structure (per-element tuple deep-drop + tuple box, then the outer buffer) via
     // the same inline element-walk the loop-rebind uses. An arrtup slot is is_arr but
@@ -15072,7 +15092,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -17508,6 +17528,19 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (oti < ots.len()) {
         out = out.append("OPTTUP:" + ots[oti]);
         oti = oti + 1;
+    }
+    // Fresh Option[<struct-with-array-field>] locals (#4365): `var o: Option[P] =
+    // Some(P { xs: [..] })` (P routes field-reclaim) consumed by a borrow-only match —
+    // the struct sibling of OPTTUP. Credited "OPTSTRUCT:" so slot_is_reclaimable_optstruct
+    // routes the loop-rebind + exit sweep through emit_optstruct_deep_free (tag-check ->
+    // struct-field deep-drop __struct_drop_<P> -> struct box dec -> option box dec).
+    // collect_fresh_optstruct_names is self-gating (block-level consuming-match analysis),
+    // so credit the names it returns directly.
+    var oss: string[] = collect_fresh_optstruct_names(body, structs, []);
+    var osi: i32 = 0;
+    while (osi < oss.len()) {
+        out = out.append("OPTSTRUCT:" + oss[osi]);
+        osi = osi + 1;
     }
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -20232,6 +20265,308 @@ function emit_opttup_reclaim_store(se: LowerState, slot: i32, inner: string): Lo
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
     st = emit_opttup_deep_free(st, slot, inner);     // free old box + payload
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// ── OPTSTRUCT: reclaim `Option[<struct-with-array-field>]` locals (#4365) ──
+// The struct sibling of OPTTUP: the Some payload is a STRUCT box (not a tuple), so the
+// inline deep-free drops it via the struct-field deep-drop (emit_struct_field_drops ->
+// __struct_drop_<P>) instead of the tuple deep-drop. some_opt_type records the full
+// Option[P] for a struct payload (no tuple-style element collapse), so no opt_ty override
+// is needed at the binding.
+
+// optstruct_ann_is: `type_name` is `Option[<struct-with-reclaim-array-field>]`.
+function optstruct_ann_is(type_name: string, structs: parser.StructDecl[]): boolean {
+    var inner: string = opttup_inner_type(type_name);
+    if (inner == "") { return false; }
+    if (!decl_is_struct(structs, inner)) { return false; }
+    return struct_has_reclaim_array_field(structs, inner);
+}
+
+// optstruct_init_is_fresh: the init is `Some(<fresh struct literal>)` (is_fresh_struct_init
+// — an ExprStructLit of a struct decl; the construction alias-inc balances the per-field
+// __struct_drop) or `None`. A bare-ident/other Some payload aliasing a live struct declines.
+function optstruct_init_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" && c.args.len() == 1) { return is_fresh_struct_init(c.args[0], structs); }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(nid) => { return nid.name == "None"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optstruct_arm_expr_escapes: does `e` use the Some-payload struct binding `p` (struct type
+// `sty`) in an escaping way? A scalar field read (p.n), an indexed array-field read
+// (p.xs[i]) and p.xs.len() are borrows; a bare `p`, a bare `p.<arrayfield>` extraction, or
+// any other touch of p escapes. Erring toward rejection is a safe leak, never over-release.
+function optstruct_arm_expr_escapes(e: parser.Expr, p: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == p; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name == p) {
+                        var ft: string = decl_field_type(structs, sty, fa.field);
+                        return ft != "" && !is_scalar_type_name(ft);   // bare non-scalar field extract escapes
+                    }
+                    return false;
+                },
+                _ => { return optstruct_arm_expr_escapes(fa.obj, p, sty, structs); }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprFieldAccess(bfa) => {
+                    match (bfa.obj) {
+                        parser.ExprIdent(bid) => {
+                            if (bid.name == p) { return optstruct_arm_expr_escapes(ix.index, p, sty, structs); }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            return optstruct_arm_expr_escapes(ix.array, p, sty, structs) || optstruct_arm_expr_escapes(ix.index, p, sty, structs);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        parser.ExprFieldAccess(pfa) => {
+                            match (pfa.obj) {
+                                parser.ExprIdent(pid) => {
+                                    if (pid.name == p && cfa.field == "len") {
+                                        var ai: i32 = 0;
+                                        while (ai < c.args.len()) { if (optstruct_arm_expr_escapes(c.args[ai], p, sty, structs)) { return true; } ai = ai + 1; }
+                                        return false;
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            if (optstruct_arm_expr_escapes(c.callee, p, sty, structs)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (optstruct_arm_expr_escapes(c.args[ci], p, sty, structs)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return optstruct_arm_expr_escapes(b.left, p, sty, structs) || optstruct_arm_expr_escapes(b.right, p, sty, structs); },
+        parser.ExprUnary(u) => { return optstruct_arm_expr_escapes(u.operand, p, sty, structs); },
+        parser.ExprSlice(sl) => { return optstruct_arm_expr_escapes(sl.array, p, sty, structs) || optstruct_arm_expr_escapes(sl.start, p, sty, structs) || optstruct_arm_expr_escapes(sl.end, p, sty, structs); },
+        parser.ExprArray(ar) => { var i: i32 = 0; while (i < ar.elements.len()) { if (optstruct_arm_expr_escapes(ar.elements[i], p, sty, structs)) { return true; } i = i + 1; } return false; },
+        parser.ExprTuple(t) => { var i: i32 = 0; while (i < t.elements.len()) { if (optstruct_arm_expr_escapes(t.elements[i], p, sty, structs)) { return true; } i = i + 1; } return false; },
+        parser.ExprStructLit(slb) => {
+            if (slb.has_base && optstruct_arm_expr_escapes(slb.base, p, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < slb.field_values.len()) { if (optstruct_arm_expr_escapes(slb.field_values[i], p, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function optstruct_arm_stmt_escapes(st: parser.Stmt, p: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return optstruct_arm_expr_escapes(v.init, p, sty, structs); },
+        parser.StmtReturn(r) => { return optstruct_arm_expr_escapes(r.value, p, sty, structs); },
+        parser.StmtExpr(e) => { return optstruct_arm_expr_escapes(e.value, p, sty, structs); },
+        parser.StmtAssign(a) => { return optstruct_arm_expr_escapes(a.value, p, sty, structs); },
+        parser.StmtIf(f) => {
+            if (optstruct_arm_expr_escapes(f.cond, p, sty, structs)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (optstruct_arm_stmt_escapes(f.then_body[ti], p, sty, structs)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (optstruct_arm_stmt_escapes(f.else_body[ei], p, sty, structs)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (optstruct_arm_expr_escapes(w.cond, p, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (optstruct_arm_stmt_escapes(w.body[i], p, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (optstruct_arm_expr_escapes(fo.iter, p, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (optstruct_arm_stmt_escapes(fo.body[i], p, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (optstruct_arm_expr_escapes(m.scrutinee, p, sty, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && optstruct_arm_expr_escapes(m.arms[ai].guard, p, sty, structs)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (optstruct_arm_stmt_escapes(m.arms[ai].body[bi], p, sty, structs)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return optstruct_arm_stmt_escapes(d.action, p, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+// optstruct_payload_escapes: for the option local `name` (payload struct type `sty`), does
+// the consuming `match (name)`'s Some-arm use its bound payload in an escaping way? The
+// struct-aware sibling of opttup_payload_escapes.
+function optstruct_payload_escapes(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var is_scrut: boolean = false;
+                match (m.scrutinee) {
+                    parser.ExprIdent(sid) => { if (sid.name == name) { is_scrut = true; } },
+                    _ => {}
+                }
+                if (is_scrut) {
+                    var ai: i32 = 0;
+                    while (ai < m.arms.len()) {
+                        match (m.arms[ai].pattern) {
+                            parser.PatVariant(pv) => {
+                                var vn: string = pv.type_name;
+                                var vc: i32 = 0;
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()]; } vc = vc + 1; }
+                                if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
+                                    if (m.arms[ai].has_guard && optstruct_arm_expr_escapes(m.arms[ai].guard, pv.binding, sty, structs)) { return true; }
+                                    var bi: i32 = 0;
+                                    while (bi < m.arms[ai].body.len()) { if (optstruct_arm_stmt_escapes(m.arms[ai].body[bi], pv.binding, sty, structs)) { return true; } bi = bi + 1; }
+                                }
+                            },
+                            _ => {}
+                        }
+                        ai = ai + 1;
+                    }
+                }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (optstruct_payload_escapes(m.arms[mi].body, name, sty, structs)) { return true; } mi = mi + 1; }
+            },
+            parser.StmtIf(f) => { if (optstruct_payload_escapes(f.then_body, name, sty, structs) || optstruct_payload_escapes(f.else_body, name, sty, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (optstruct_payload_escapes(w.body, name, sty, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (optstruct_payload_escapes(fo.body, name, sty, structs)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_fresh_optstruct_names: the struct sibling of collect_fresh_opttup_names — a fresh
+// Some(<struct lit>)/None under an Option[<struct-with-array>] annotation, consumed by
+// exactly one borrow-only match in the same block, not reassigned, not escaping.
+function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (optstruct_ann_is(v.type_name, structs)
+                    && optstruct_init_is_fresh(v.init, structs)
+                    && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < stmts.len()) {
+                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi
+                        && !match_arms_use_name(stmts[match_idx], v.name)
+                        && !optstruct_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
+                        && !name_used_after(stmts, v.name, match_idx)
+                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        a = push_str_unique(a, v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, structs, a); a = collect_fresh_optstruct_names(f.else_body, structs, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, structs, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, structs, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_optstruct_names(m.arms[mi].body, structs, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
+// slot_is_reclaimable_optstruct: slot i holds a fresh, non-escaping
+// `Option[<struct-with-array>]` local, credited "OPTSTRUCT:" by reclaimable_names_of. Gated
+// on the opt_type mark (an option-box slot whose inner is a reclaim-array struct) + credit.
+function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].opt_type.len() == 0) { return false; }
+    var inner: string = opttup_inner_type(s.locals[i].opt_type);
+    if (!decl_is_struct(s.structs, inner)) { return false; }
+    if (!struct_has_reclaim_array_field(s.structs, inner)) { return false; }
+    return util.index_of_str(s.reclaimable_names, "OPTSTRUCT:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_optstruct_deep_free frees the option box in `slot`: null-guarded, if Some
+// (op_opt_tag == 0) it extracts the struct-box payload, deep-drops the struct's rc fields
+// (emit_struct_field_drops -> __struct_drop_<sty>, balanced by the construction alias-inc),
+// frees the struct box, then the option box. A None box skips to the box dec. Leaves the
+// slot dangling.
+function emit_optstruct_deep_free(se: LowerState, slot: i32, sty: string): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some)
+    st = st.emit(ir.op_if(0));
+    var etn: string = "$optst" + util.i32_to_string(st.locals.len());
+    st = st.add_local(etn);
+    var etslot: i32 = st.slot_of(etn);
+    st = st.mark_struct_type(etslot, sty);           // so emit_struct_field_drops routes __struct_drop_<sty>
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());               // struct box ptr
+    st = st.emit(ir.op_store_local(etslot));
+    st = emit_struct_field_drops(st, etslot);        // free the struct's rc fields
+    st = st.emit(ir.op_load_local(etslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the struct box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-Some
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_optstruct_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD option box
+// (emit_optstruct_deep_free), then store new. The null guard inside deep_free suffices.
+function emit_optstruct_reclaim_store(se: LowerState, slot: i32, sty: string): LowerState {
+    var scratch: string = "$osr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_optstruct_deep_free(st, slot, sty);    // free old box + payload
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
