@@ -144,3 +144,39 @@ function main(): i32 {
 		})
 	}
 }
+
+// appendCopyLeakBoundProgram pins the reclaim half of the #4827 fix: the
+// forced copy (#4838) must DIE when consumed by a borrowing call, not
+// leak. #4849's in-place exemptions removed the self-host compile's own
+// hot shapes (return-position accumulators, borrowed-param self-
+// reassigns), but a plain ARG-POSITION forced copy — `take(path.append(i))`
+// with `path` reused after — still leaked one whole buffer per call. The
+// stage-(b) appendCopyTempType recognizer stashes it and decs it after the
+// call (scalar-element arrays only; a pointer-element copy's elements
+// alias the original's and must not be deep-dropped). 5000 iterations must
+// stay heap-flat (< 512 B growth), the operand must be untouched (value
+// semantics), and no rc underflow may fire.
+const appendCopyLeakBoundProgram = `function take(xs: i32[]): i32 { return xs.len(); }
+
+function main(): i32 {
+    var path: i32[] = [1, 2];
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = acc + take(path.append(w)); w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { acc = acc + take(path.append(i)); i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (path.len() != 2) { return 97; }
+    if (acc < 0) { return 96; }
+    return 0;
+}
+`
+
+func TestX86_64AppendCopyLeakBound(t *testing.T) {
+	if _, code := compileAndRunX86_64(t, appendCopyLeakBoundProgram); code != 0 {
+		t.Errorf("x86-64 append-copy leak bound: exit = %d, want 0 (98 = copy leaked; 99 = over-release; 97 = operand mutated)", code)
+	}
+}
