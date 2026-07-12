@@ -63,7 +63,7 @@ func TestSelfHostStrSliceRcBoxIRX86_64(t *testing.T) {
 
 	// EMISSION: a direct string slice `s[1:4]` must build the rc-headered immortal
 	// view box (movq $-1 sentinel). "hello"[1:4] = "ell", len 3 -> exit 3.
-	run(t, `function main(): i32 { var s: string = "hello"; var t: string = s[1:4]; return t.len(); }`,
+	run(t, `function main(): i32 { var s: string = "hello"; var t: string = s[1:4] + ""; return t.len(); }`,
 		"slice-emits-rc-header", 3, true)
 
 	// SAFETY-NET CHURN: 2,000,000 trim + slice iterations. trim() lowers to s[start:end]

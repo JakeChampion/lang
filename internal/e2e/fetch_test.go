@@ -49,7 +49,7 @@ import "std/string";
 function main(): i32 {
     var h: i32 = fetch.ipv4(127, 0, 0, 1);
     var resp: string = fetch.fetch_get(h, %d, "/");
-    var body: string = fetch.http_body(resp);
+    var body: str = fetch.http_body(resp);
     if (body == "hello-world") { return 42; }
     return 1;
 }`, port)
@@ -189,7 +189,7 @@ import "std/string";
 
 function main(): i32 {
     var resp: string = fetch.get_url("http://127.0.0.1:%d/path");
-    var body: string = fetch.http_body(resp);
+    var body: str = fetch.http_body(resp);
     if (body == "hello-world") { return 42; }
     return 1;
 }`, port)

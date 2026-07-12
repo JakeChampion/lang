@@ -1513,8 +1513,8 @@ import "core/map";
 import "std/string";
 function mk(): i32 {
     var src: string = "a=hi";
-    var short_key: string = src[0:1];   // inline (1 byte, tagged)
-    var short_val: string = src[2:4];   // inline (2 bytes, tagged)
+    var short_key: str = src[0:1];   // inline (1 byte, tagged)
+    var short_val: str = src[2:4];   // inline (2 bytes, tagged)
     var m: Map[string, string] = map_new(8);
     m = m.insert(short_key, short_val);    // aliased inline K + V — retains must skip tagged
     var n = m.len();
@@ -3562,7 +3562,7 @@ function main(): i32 {
     var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
     var i: i32 = 0;
     while (i < 40) {
-        var piece: string = base[0 : 20 + (i - (i / 30) * 30)];
+        var piece: str = base[0 : 20 + (i - (i / 30) * 30)];
         s = need(s, "structdroptestprefix:" + piece);
         i = i + 1;
     }

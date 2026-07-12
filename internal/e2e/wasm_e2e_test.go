@@ -1547,9 +1547,9 @@ func TestWASMSubI32Slices(t *testing.T) {
 func TestWASMStringSlice(t *testing.T) {
 	src := `function main(): i32 {
     var greeting: string = "hello world";
-    var hello: string = greeting[0:5];
-    var world: string = greeting[6:11];
-    var dot: string = greeting[5:6];
+    var hello: str = greeting[0:5];
+    var world: str = greeting[6:11];
+    var dot: str = greeting[5:6];
     if (hello.len() != 5) { return 1; }
     if (world.len() != 5) { return 2; }
     if (dot.len() != 1) { return 3; }
@@ -1557,12 +1557,12 @@ func TestWASMStringSlice(t *testing.T) {
     if (world != "world") { return 5; }
     if (dot != " ") { return 6; }
     // Open-ended low / high.
-    var prefix: string = greeting[:5];
-    var suffix: string = greeting[6:];
+    var prefix: str = greeting[:5];
+    var suffix: str = greeting[6:];
     if (prefix != "hello") { return 7; }
     if (suffix != "world") { return 8; }
     // Empty slice.
-    var empty: string = greeting[3:3];
+    var empty: str = greeting[3:3];
     if (empty.len() != 0) { return 9; }
     return 0;
 }`
@@ -4798,8 +4798,8 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "abcd";
-		var a: string = s[0:0];
-		var b: string = s[0:0];
+		var a: str = s[0:0];
+		var b: str = s[0:0];
 		var c: string = a + b;
 		return c.len();
 	}`
@@ -4811,7 +4811,7 @@ func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "abcd";
-		var empty: string = s[2:2];
+		var empty: str = s[2:2];
 		return empty.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -4852,7 +4852,7 @@ func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "world";
-		var empty: string = s[0:0];
+		var empty: str = s[0:0];
 		var greeting: string = "hello, " + empty + s;
 		return greeting.len();
 	}`
