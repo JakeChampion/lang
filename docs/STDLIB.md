@@ -435,9 +435,12 @@ against NIST / RFC 4231 known-answer vectors.
 
 Percent-encoding, URL parsing, query parsing.
 
-- `url_encode(s)`, `url_decode(s)`
+- `url_encode(s)`, `url_decode(s)`, `form_encode(s)`, `form_decode(s)`
 - `url_parse(s) Option[Url]`
-- `query_parse(s) Map[string, string[]]`
+- `query_parse(s) Map[string, string[]]`, `query_encode(pairs)`
+- **Single-key query accessors** (scan the raw query string, no map
+  build): `query_get(query, key) Option[string]` (first value),
+  `query_get_all(query, key) string[]` (ordered), `query_has(query, key)`
 
 ### `std/json`
 

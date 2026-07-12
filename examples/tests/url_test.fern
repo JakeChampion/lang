@@ -123,6 +123,45 @@ function test_query_parse_plus(): test.TestOutcome {
     }
 }
 
+// Single-key query accessors: query_get first-value / None / bare-flag,
+// with form-decoding of both key and value.
+function test_query_get(): test.TestOutcome {
+    match (url.query_get("a=1&b=2", "b")) {
+        Some(v) => { if (v != "2") { return test.fail("b=2"); } },
+        None => { return test.fail("expected b"); }
+    }
+    // Repeated key → the first value; bare flag → Some("").
+    match (url.query_get("a=1&a=2", "a")) {
+        Some(v) => { if (v != "1") { return test.fail("first a"); } },
+        None => { return test.fail("expected a"); }
+    }
+    // %20 in key, + in value both decode.
+    match (url.query_get("a%20b=c+d", "a b")) {
+        Some(v) => { return test.assert_eq(v, "c d"); },
+        None => { return test.fail("expected decoded key"); }
+    }
+}
+
+function test_query_get_missing(): test.TestOutcome {
+    // A missing key and an empty query both yield None.
+    match (url.query_get("a=1", "z")) {
+        Some(v) => { return test.fail("unexpected value"); },
+        None => {}
+    }
+    match (url.query_get("", "a")) {
+        Some(v) => { return test.fail("empty query has no keys"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_query_has_and_all(): test.TestOutcome {
+    if (!url.query_has("a=1&b=2", "b") || url.query_has("a=1", "z")) { return test.fail("has"); }
+    // get_all preserves order across repeated keys.
+    var all: string[] = url.query_get_all("a=1&b=2&a=3", "a");
+    if (all.len() != 2 || all[0] != "1" || all[1] != "3") { return test.fail("get_all order"); }
+    return test.assert_eq(url.query_get_all("a=1", "z").len(), 0);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/url");
     r = r.it("encode space",            test_encode_space());
@@ -142,5 +181,8 @@ function main(): i32 {
     r = r.it("query_encode",            test_query_encode());
     r = r.it("query_encode edges",      test_query_encode_edges());
     r = r.it("query_parse plus",        test_query_parse_plus());
+    r = r.it("query_get",               test_query_get());
+    r = r.it("query_get missing",       test_query_get_missing());
+    r = r.it("query_has + get_all",     test_query_has_and_all());
     return r.finish();
 }
