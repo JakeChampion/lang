@@ -33,6 +33,7 @@ package printer
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -115,6 +116,31 @@ func Format(prog *ast.Program) string {
 		f.formatResourceDecl(rd)
 		written = true
 	}
+	for _, td := range prog.Traits {
+		if written {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(td.P.Line, 0)
+		f.formatTraitDecl(td)
+		written = true
+	}
+	// Impl methods are also present in prog.Funcs (the parser flattens
+	// them there for the checker). Collect them so the top-level Funcs
+	// loop skips them — they render inside their `impl { … }` block.
+	implMethods := map[*ast.FuncDecl]bool{}
+	for _, id := range prog.Impls {
+		for _, m := range id.Methods {
+			implMethods[m] = true
+		}
+	}
+	for _, id := range prog.Impls {
+		if written {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(id.P.Line, 0)
+		f.formatImplDecl(id)
+		written = true
+	}
 	for _, cd := range prog.Consts {
 		if written {
 			f.b.WriteByte('\n')
@@ -124,6 +150,9 @@ func Format(prog *ast.Program) string {
 		written = true
 	}
 	for _, fn := range prog.Funcs {
+		if implMethods[fn] {
+			continue
+		}
 		if written {
 			f.b.WriteByte('\n')
 		}
@@ -389,6 +418,174 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 		f.b.WriteString(formatType(fld.Type))
 	}
 	f.b.WriteString(" }\n")
+}
+
+// formatTraitDecl emits `trait Name[T]: Super { type Assoc; method sigs }`
+// across multiple lines. Associated types are emitted before methods
+// (source interleaving isn't retained on TraitDecl); the ordering is
+// stable, so Format stays idempotent. A method with a default body
+// renders that body; an abstract one ends at `;`.
+func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
+	if td.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if td.Public {
+		f.b.WriteString("pub ")
+	}
+	f.b.WriteString("trait ")
+	f.b.WriteString(td.Name)
+	f.writeTypeParams(td.TypeParams, nil, nil)
+	if len(td.Supertraits) > 0 {
+		f.b.WriteString(": ")
+		f.b.WriteString(strings.Join(td.Supertraits, " + "))
+	}
+	if len(td.AssocTypes) == 0 && len(td.Methods) == 0 {
+		f.b.WriteString(" {}\n")
+		return
+	}
+	f.b.WriteString(" {\n")
+	for _, at := range td.AssocTypes {
+		f.indent(1)
+		f.b.WriteString("type ")
+		f.b.WriteString(at)
+		f.b.WriteString(";\n")
+	}
+	for _, m := range td.Methods {
+		f.formatTraitMethod(m)
+	}
+	f.b.WriteString("}\n")
+}
+
+// formatTraitMethod emits one trait method signature at one indent
+// level: `function name(self: Self, …): R;` for an abstract method, or
+// with a `{ … }` body for a default method. An associated function
+// (Assoc) has no `self` receiver — its params are emitted verbatim.
+func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
+	f.indent(1)
+	f.b.WriteString("function ")
+	f.b.WriteString(m.Name)
+	f.b.WriteByte('(')
+	for i, p := range m.Params {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		if p.Own {
+			f.b.WriteString("own ")
+		}
+		f.b.WriteString(p.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(p.Type))
+	}
+	f.b.WriteByte(')')
+	if m.Result != nil {
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(m.Result))
+	}
+	if m.Body != nil {
+		f.b.WriteByte(' ')
+		f.formatBlock(m.Body, 1)
+		f.b.WriteByte('\n')
+		return
+	}
+	f.b.WriteString(";\n")
+}
+
+// formatImplDecl emits `impl[T] Trait[Args] for Type { … }` (or an
+// inherent `impl Type { … }`), with associated-type bindings first
+// (sorted for a stable, idempotent order) then the methods. Methods are
+// the desugared forms stashed on the ImplDecl: `Self` already reads as
+// the concrete impl type, and an ordinary method's `self` receiver is
+// re-inserted as its first parameter (the shape an impl block requires).
+func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
+	f.b.WriteString("impl")
+	f.writeTypeParams(id.TypeParams, id.Bounds, nil)
+	f.b.WriteByte(' ')
+	if id.Trait != "" {
+		f.b.WriteString(id.Trait)
+		if len(id.TraitArgs) > 0 {
+			f.b.WriteByte('[')
+			for i, a := range id.TraitArgs {
+				if i > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(formatType(a))
+			}
+			f.b.WriteByte(']')
+		}
+		f.b.WriteString(" for ")
+	}
+	f.b.WriteString(formatType(id.Type))
+	if len(id.AssocTypeBindings) == 0 && len(id.Methods) == 0 {
+		f.b.WriteString(" {}\n")
+		return
+	}
+	f.b.WriteString(" {\n")
+	// Sorted keys keep the emit order stable across passes.
+	names := make([]string, 0, len(id.AssocTypeBindings))
+	for name := range id.AssocTypeBindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		f.indent(1)
+		f.b.WriteString("type ")
+		f.b.WriteString(name)
+		f.b.WriteString(" = ")
+		f.b.WriteString(formatType(id.AssocTypeBindings[name]))
+		f.b.WriteString(";\n")
+	}
+	// A parametric impl (`impl[T] …`) shares its type params with every
+	// method, so the methods must NOT respell them; a plain impl's method
+	// keeps its own.
+	parametric := len(id.TypeParams) > 0
+	for _, m := range id.Methods {
+		f.formatImplMethod(m, parametric)
+	}
+	f.b.WriteString("}\n")
+}
+
+// formatImplMethod emits one desugared impl method inside its block. An
+// ordinary method (Receiver set) gets `self: <type>` re-inserted as its
+// first parameter; an associated function (AssocType set, no receiver)
+// keeps its parameters as-is. Type params are respelled only for a
+// non-parametric impl.
+func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
+	f.indent(1)
+	f.b.WriteString("function ")
+	f.b.WriteString(fn.Name)
+	if !parametric {
+		f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
+	}
+	f.b.WriteByte('(')
+	wrote := false
+	if fn.Receiver != nil {
+		if fn.Receiver.Own {
+			f.b.WriteString("own ")
+		}
+		f.b.WriteString(fn.Receiver.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(fn.Receiver.Type))
+		wrote = true
+	}
+	for _, p := range fn.Params {
+		if wrote {
+			f.b.WriteString(", ")
+		}
+		if p.Own {
+			f.b.WriteString("own ")
+		}
+		f.b.WriteString(p.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(p.Type))
+		wrote = true
+	}
+	f.b.WriteByte(')')
+	if fn.ReturnType != nil {
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(fn.ReturnType))
+	}
+	f.b.WriteByte(' ')
+	f.formatBlock(fn.Body, 1)
+	f.b.WriteByte('\n')
 }
 
 // formatResourceDecl emits a `resource Name;` declaration (P5 WIT

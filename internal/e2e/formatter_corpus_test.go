@@ -81,6 +81,28 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("formatted output failed to re-parse: %v\n--- formatted ---\n%s", err, once)
 			}
+			// Content preservation: formatting must not DROP whole
+			// declarations. Idempotence alone can't catch this — a
+			// formatter that silently omits every trait/impl still
+			// round-trips stably (both passes lack them), which is
+			// exactly how the trait/impl-emission gap hid. Compare the
+			// per-kind declaration counts across the reparse.
+			for _, c := range []struct {
+				kind      string
+				got, want int
+			}{
+				{"funcs", len(prog2.Funcs), len(prog.Funcs)},
+				{"structs", len(prog2.Structs), len(prog.Structs)},
+				{"enums", len(prog2.Enums), len(prog.Enums)},
+				{"unions", len(prog2.Unions), len(prog.Unions)},
+				{"traits", len(prog2.Traits), len(prog.Traits)},
+				{"impls", len(prog2.Impls), len(prog.Impls)},
+				{"consts", len(prog2.Consts), len(prog.Consts)},
+			} {
+				if c.got != c.want {
+					t.Errorf("format dropped %s: reparsed %d, want %d\n--- formatted ---\n%s", c.kind, c.got, c.want, once)
+				}
+			}
 			twice := printer.Format(prog2)
 			if once != twice {
 				t.Errorf("format not idempotent (first pass != second pass); first differing run is the second format")

@@ -531,6 +531,79 @@ func TestFormatOwnReceiverRoundTrip(t *testing.T) {
 	}
 }
 
+// A trait declaration round-trips: type params, supertraits,
+// associated types, abstract signatures, and default-method bodies all
+// survive a formatter pass. Regression guard — the formatter used to
+// omit trait declarations entirely (they weren't in the emit loop).
+func TestFormatTraitRoundTrip(t *testing.T) {
+	src := `pub trait Ord[K]: Eq {
+  type Item;
+  function cmp(self: Self, other: Self): i32;
+  function max(self: Self): i32 { return 0; }
+}`
+	got := formatSrc(t, src)
+	for _, w := range []string{
+		"pub trait Ord[K]: Eq {",
+		"type Item;",
+		"function cmp(self: Self, other: Self): i32;",
+		"function max(self: Self): i32 {",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("output missing %q; got:\n%s", w, got)
+		}
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
+// An impl block round-trips: trait impls, inherent impls, parametric
+// impls, associated functions (no `self`), and associated-type
+// bindings. Regression guard — impls were dropped entirely, and their
+// methods leaked out as top-level receiver functions. `Self` renders as
+// the concrete impl type (the desugared form), which re-parses to the
+// same AST.
+func TestFormatImplRoundTrip(t *testing.T) {
+	src := `struct Box[T] { xs: T[] }
+trait Maker { function make(): Self; }
+impl Maker for Box[i32] { function make(): Self { return Box { xs: [] }; } }
+impl[T] Box[T] { function size(self: Self): i32 { return self.xs.len(); } }`
+	got := formatSrc(t, src)
+	for _, w := range []string{
+		"impl Maker for Box[i32] {",
+		"function make(): Box[i32] {",        // assoc fn, Self -> concrete, no self param
+		"impl[T] Box[T] {",                   // inherent parametric impl
+		"function size(self: Box[T]): i32 {", // method: self re-inserted, params NOT respelled
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("output missing %q; got:\n%s", w, got)
+		}
+	}
+	// The impl methods must NOT leak out as bare top-level functions —
+	// a top-level decl starts at column 0 (`\nfunction …`), an impl
+	// method is indented two spaces (`\n  function …`).
+	if strings.Contains(got, "\nfunction make(") || strings.Contains(got, "\nfunction size(") {
+		t.Errorf("impl method leaked to top level:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
+// An associated-type binding in an impl round-trips (`type Item = i32;`).
+func TestFormatImplAssocTypeBinding(t *testing.T) {
+	src := `struct C {}
+trait Iter { type Item; function get(self: Self): i32; }
+impl Iter for C { type Item = i32; function get(self: Self): i32 { return 0; } }`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "type Item = i32;") {
+		t.Errorf("expected assoc-type binding; got:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
 // f-strings round-trip through parse → format → parse: the
 // surface `f"..."` syntax survives a formatter pass instead of
 // collapsing to its desugared `+`-chain. Covers empty f-string,
