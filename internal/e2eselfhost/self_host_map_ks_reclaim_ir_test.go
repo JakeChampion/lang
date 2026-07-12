@@ -131,4 +131,77 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "mapks-aliased-key-excluded", 0)
+
+	// OVERWRITE with a recurring FRESH key (the word-count / histogram
+	// m.set(computed_key, n) pattern): each re-insert of the same key overwrites
+	// the slot and discards the incoming fresh key temp, which __fern_map_set now
+	// frees (kconsume) rather than leaking. Differential against an i32-keyed map
+	// doing the same overwrites (i32 keys carry no rc → no leak), so the shared
+	// map buffer grow-leak cancels. The register twin of the wasm overwrite fix.
+	run(t, `function build_sk_over(n: i32): i32 {
+    var m: Map[string, i32] = Map { "wo" + "rd": 0 };
+    var j: i32 = 0;
+    while (j < 8) { m.set("wo" + "rd", j); j = j + 1; }
+    return 1;
+}
+function build_ik_over(n: i32): i32 {
+    var m: Map[i32, i32] = Map { 7: 0 };
+    var j: i32 = 0;
+    while (j < 8) { m.set(7, j); j = j + 1; }
+    return 1;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + build_sk_over(i) + build_ik_over(i); i = i + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + build_sk_over(j); j = j + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 2000) { acc = acc + build_ik_over(k); k = k + 1; }
+    var k2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "mapks-overwrite-fresh-key-flat", 0)
+
+	// Overwrite correctness + no over-release: the recurring fresh key reads back
+	// the LAST value and len stays 1 through the churn.
+	run(t, `function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var m: Map[string, i32] = Map { "wo" + "rd": 0 };
+        var j: i32 = 0;
+        while (j < 8) { m.set("wo" + "rd", j); j = j + 1; }
+        if (m.get_or("word", 0) != 7) { bad = 1; }
+        if (m.len() != 1) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "mapks-overwrite-fresh-key-correct", 0)
+
+	// Overwrite with an ALIASED key (a bare local reused across re-inserts):
+	// kconsume=0, so map_set must NOT free the key — the local stays valid through
+	// the overwrites and there is no over-release.
+	run(t, `function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var key: string = "wo" + "rd";
+        var m: Map[string, i32] = Map { "wo" + "rd": 0 };
+        var j: i32 = 0;
+        while (j < 8) { m.set(key, j); j = j + 1; }
+        if (key.len() != 4) { bad = 1; }
+        if (m.get_or("word", 0) != 7) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "mapks-overwrite-aliased-key", 0)
 }
