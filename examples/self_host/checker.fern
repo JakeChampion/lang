@@ -833,10 +833,17 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
                 TypeArray(fe) => {
                     // An empty / uninferred array literal types to
                     // `unknown[]`; it flows into any concrete `T[]` slot.
+                    // Symmetrically, a generic parameter `T[]` erases to
+                    // `unknown[]` on the TO side, so a concrete `string[]`
+                    // flows into it — this is what lets a concrete array
+                    // argument satisfy a generic array parameter, e.g.
+                    // `sort_by(arr, cmp)` with `arr: string[]` against
+                    // `sort_by[T](arr: T[], …)` (std/sort delegating its
+                    // string sorts to the generic comparator form — #4829).
                     // (Scalar `unknown` is NOT treated as a wildcard — a
                     // genuinely unresolved value should still surface its
                     // assignment error, e.g. `var s: string = badcall()`.)
-                    if (is_unknown(fe.elem)) { return true; }
+                    if (is_unknown(fe.elem) || is_unknown(te.elem)) { return true; }
                     return type_assignable(fe.elem, te.elem, unions);
                 },
                 _ => { return false; }

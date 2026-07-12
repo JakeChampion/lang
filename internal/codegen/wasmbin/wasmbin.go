@@ -2252,6 +2252,18 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s: unknown callee %q", op.Kind, op.Str)
 		}
+		// A function that is BOTH direct-called and used as a closure
+		// value (e.g. `sort_by(arr, string_cmp)` while string_cmp is
+		// also called directly) got an env_ptr appended to its wasm
+		// signature by the closure-target ABI. The direct-call IR site
+		// supplies only the natural args, so push a dummy env_ptr (0)
+		// after them — env is the last param and such a target never
+		// reads it (only captured closures do, and those aren't
+		// direct-called by name). See closureTargetSet's invariant
+		// note; a bare comparator passed to sort_by breaks it (#4829).
+		if op.Kind == ir.OpCallDirect && calleeEnvAppended(ctx, op.Str) {
+			body = inst.InstI32Const(body, 0)
+		}
 		return inst.InstCall(body, idx), nil
 
 	// ---- Indirect calls (slice 6) ----
@@ -2387,6 +2399,12 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		idx, ok := ctx.funcIdx[op.Str]
 		if !ok {
 			return nil, fmt.Errorf("OpCallDirectPair: unknown callee %q", op.Str)
+		}
+		// Same env-append reconciliation as OpCallDirect (#4829): a
+		// pair-returning function that is also a closure target needs a
+		// dummy env_ptr pushed after its natural args on a direct call.
+		if calleeEnvAppended(ctx, op.Str) {
+			body = inst.InstI32Const(body, 0)
 		}
 		return inst.InstCall(body, idx), nil
 
@@ -2573,6 +2591,29 @@ func hasEnvParam(params []ast.Param) bool {
 		return false
 	}
 	return params[len(params)-1].Name == "__env"
+}
+
+// calleeEnvAppended reports whether the wasm codegen appended an
+// env_ptr param to callee `name`'s signature — i.e. it's a closure
+// target whose IR params don't already carry the closureconv `__env`
+// slot. This is exactly the condition under which emitBody bumps the
+// scratch base for the extra env slot (see the closureTargets check
+// there). A *direct* call to such a function must push a dummy
+// env_ptr (0) after its natural args, because the direct-call IR site
+// supplies only the natural args. Normally a function is either
+// direct-called or a closure target (closureTargetSet's invariant),
+// but a bare named comparator passed to a generic — `sort_by(arr,
+// string_cmp)` where string_cmp is also called directly — is both,
+// which is what surfaced this on the wasm backend (#4829).
+func calleeEnvAppended(ctx *emitCtx, name string) bool {
+	if !ctx.closureTargets[name] {
+		return false
+	}
+	callee, ok := ctx.funcByName[name]
+	if !ok {
+		return false
+	}
+	return !hasEnvParam(callee.Params)
 }
 
 func closureTargetSet(prog *ir.Program) map[string]bool {

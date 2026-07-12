@@ -20,23 +20,19 @@
 // `<` / `>` — no per-element comparator-closure indirection (their
 // allocation profile matches `sort_by`'s: one scratch copy per merge
 // pass, materialized explicitly — see sort_i32_asc's doc comment for
-// why it must not alias). The string sorts are monomorphic too, but
-// only for a wasm-codegen reason. The three original enablers have
-// all landed — modload rewrites module-local comparator references
-// from arg positions and lambda bodies of a mangled module (#4802),
-// the `call_indirect` signature seam accepts two-slot `string` params
-// (#4804), and the `__fern_box_free` funcidx collision is fixed
-// (#4816) — and a `sort_by[string]` instantiation now compiles and
-// runs standalone. BUT delegating these three string sorts to
-// `sort_by` STILL makes `prop_sort_strings` fail `-target wasm`
-// validation (a separate two-slot-`string` value-flow defect that
-// only manifests through the mangled-module delegation + the
-// fixture's op mix — #4829). Until #4829 closes, the merge bodies are
-// spelled out monomorphically here; once it does they should become
-// one-line `sort_by` delegations.
-// The generic comparator form `sort_by[T](arr, cmp)` (below) covers
-// any element type / custom ordering now that closure args lower on
-// every backend.
+// why it must not alias). The string sorts, by contrast, are now
+// one-line `sort_by` delegations: a string compare is a call either
+// way, so routing it through the generic comparator costs nothing. The
+// full enabler chain has landed — modload rewrites module-local
+// comparator references from arg positions and lambda bodies of a
+// mangled module (#4802), the `call_indirect` signature seam accepts
+// two-slot `string` params (#4804), the `__fern_box_free` funcidx
+// collision is fixed (#4816), and the wasm closure-target ABI now
+// reconciles a function that is BOTH direct-called and used as a
+// closure value — a bare comparator like `string_cmp` — by pushing a
+// dummy env_ptr at its direct-call sites (#4829). The generic
+// comparator form `sort_by[T](arr, cmp)` (below) covers any element
+// type / custom ordering.
 //
 // Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md. The prelude was removed in
@@ -342,91 +338,22 @@ pub function string_cmp(a: string, b: string): i32 {
 // (config keys, sorted output for stable tests, alphabetised
 // CLI flags).
 //
-// These SHOULD be one-line delegations to `sort_by` (a string
-// compare is a call either way, so delegating costs nothing;
-// modload rewrites the module-local comparator reference — #4802,
-// and the call_indirect signature seam takes two-slot `string`
-// params — #4804), but a `sort_by[string]` instantiation still
-// emits invalid wasm in several configurations (#4816): a
-// value-flow site in the wasm closure-call lowering unbalances
-// the stack for `string`, so e.g. two string sorts in one program
-// fail `-target wasm` validation (caught by the `prop_sort_strings`
-// fixture). Until #4816 closes, the merge body is spelled out
-// monomorphically here (mirroring `sort_by`; keep them in sync).
+// One-line delegations to the generic `sort_by`: a string compare
+// is a call either way, so routing it through the comparator costs
+// nothing, and the whole enabler chain (#4802/#4804/#4816/#4829)
+// has landed. `desc` passes an inline lambda that flips the
+// comparison; `asc` passes the bare `string_cmp` comparator —
+// which the wasm closure-target ABI now handles even though
+// `string_cmp` is also called directly (env_ptr reconciliation,
+// #4829). Regression coverage: `prop_sort_strings` (exhaustive
+// property fixture) + `sort_strings_delegation_wasm` (the minimal
+// direct-call + delegation shape).
 pub function sort_strings_asc(arr: string[]): string[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: string[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: string[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (string_cmp(src[j], src[i]) < 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
+    return sort_by(arr, string_cmp);
 }
 
 pub function sort_strings_desc(arr: string[]): string[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: string[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: string[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (string_cmp(src[j], src[i]) > 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
+    return sort_by(arr, function (a: string, b: string): i32 { return string_cmp(b, a); });
 }
 
 // `string_cmp_ci(a, b)` — same as string_cmp but ASCII case-
@@ -454,45 +381,10 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 // sort over `string_cmp_ci`. Useful for user-facing
 // alphabetical listings where case shouldn't fragment the
 // ordering. Stable (merge sort): strings that compare ci-equal
-// ("Apple" / "apple") keep their input order. (Monomorphic
-// body for the same #4816 wasm-codegen reason as
-// sort_strings_asc.)
+// ("Apple" / "apple") keep their input order. One-line `sort_by`
+// delegation like `sort_strings_asc` (#4829).
 pub function sort_strings_asc_ci(arr: string[]): string[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: string[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: string[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (string_cmp_ci(src[j], src[i]) < 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
+    return sort_by(arr, string_cmp_ci);
 }
 
 // --- In-place (`own`) sorts ------------------------------------------------
