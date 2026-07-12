@@ -105,6 +105,49 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 // double-free. MakeClosure is excluded for now (a bare closure temp is
 // effectively nonexistent, and the per-closure capture-drop thunk is keyed
 // by local name) — those keep their prior plain handling.
+// appendCopyTempType classifies a call ARGUMENT that is an `.append` whose
+// lowering takes the #4827 forced-copy path (appendForcesCopy: bare-ident
+// operand, reused after, non-self-reassign, outside #4849's in-place
+// exemptions). The general Call exclusion in freshOwnedRcTempType is
+// because a push can return its receiver's buffer in place — but a
+// FORCED-COPY push provably returns a fresh buffer (the operand's rc is
+// bumped across the grow precisely so the helper's copy path runs).
+// Handed to a borrowing call, that fresh buffer is otherwise never freed —
+// the #4357 "consumed by a borrowing call" leak class, one whole array
+// copy per call (TestX86_64AppendCopyLeakBound pinned 5000 iterations of
+// `take(path.append(i))` leaking unboundedly). #4849's exemptions removed
+// the self-host compile's own hot shapes; this recognizer reclaims the
+// remaining arg-position copies.
+//
+// Restricted to SCALAR-element arrays (the `path.append(k)` i32[] shape):
+// the grow's copy path memcpys elements WITHOUT retains, so a pointer-
+// element copy's elements alias the original's — and emitOwnedSlotDrop
+// routes pointer-element arrays through the DEEP per-element drops
+// (__drop_arr_*, the string walk), which would over-release the
+// original's elements. A scalar element falls through to the plain
+// shallow __fern_arr_dec — exactly the sound free. Pointer-element
+// forced copies keep their prior safe-leak.
+func (b *builder) appendCopyTempType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled {
+		return nil, false
+	}
+	c, ok := e.(*ast.Call)
+	if !ok {
+		return nil, false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != "__method_Array_push" || len(c.Args) != 2 || len(c.TypeArgs) != 1 {
+		return nil, false
+	}
+	if ast.IsPointerType(c.TypeArgs[0]) {
+		return nil, false // pointer elements: shallow-free-unsafe, keep the leak
+	}
+	if !b.appendForcesCopy(c) {
+		return nil, false // in-place fast path: result aliases the receiver
+	}
+	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
+}
+
 func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false

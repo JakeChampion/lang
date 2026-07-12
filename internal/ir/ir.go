@@ -11226,6 +11226,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			if !ok {
 				tt, ok = b.ownedCallResultType(a)
 			}
+			if !ok {
+				tt, ok = b.appendCopyTempType(a)
+			}
 			if ok {
 				// Evaluate into a scratch slot (typed so two-word strings
 				// store/load correctly), then reload for the call. Records
@@ -15255,6 +15258,24 @@ func (b *builder) curAppendOrder() identOrder {
 	return b.appendOrder
 }
 
+// appendForcesCopy reports whether emitArrayPush takes the #4827
+// forced-copy path for this `__method_Array_push` call: a non-self-reassign
+// append on a plain-IDENT operand that is reused after (not its last
+// occurrence) and not in the inPlacePushes exemption set (#4849's
+// return-position / borrowed-param self-reassign shapes). Shared between
+// emitArrayPush (which emits the rc bump that forces the grow helper's
+// copy path) and the stage-(b) arg-temp recognizer appendCopyTempType
+// (which reclaims the resulting fresh copy after a borrowing call — the
+// remaining forced-copy leak #4849's exemptions don't cover).
+func (b *builder) appendForcesCopy(n *ast.Call) bool {
+	if ast.Expr(n) == b.selfPushMoveCall {
+		return false
+	}
+	id, ok := n.Args[0].(*ast.Ident)
+	return ok && needsRcIncOnAlias(n.Args[0], b) &&
+		!b.curAppendOrder().isLast(id) && !b.appendInPlaceOK[n]
+}
+
 func (b *builder) emitArrayPush(n *ast.Call) error {
 	elemType := n.TypeArgs[0]
 	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
@@ -15334,13 +15355,7 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	//     accumulated array per append — O(n²) bytes that the leak-mode
 	//     bump arena never reclaims, which blew the per-module emit past
 	//     the arena ceiling (exit 137) and OOM-killed the CI runners.
-	forceCopy := false
-	if ast.Expr(n) != b.selfPushMoveCall {
-		if id, ok := n.Args[0].(*ast.Ident); ok && needsRcIncOnAlias(n.Args[0], b) &&
-			!b.curAppendOrder().isLast(id) && !b.appendInPlaceOK[n] {
-			forceCopy = true
-		}
-	}
+	forceCopy := b.appendForcesCopy(n)
 	if forceCopy {
 		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
