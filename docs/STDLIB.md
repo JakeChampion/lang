@@ -303,6 +303,9 @@ Free helpers — random, ranges, numeric constants, RGB packing.
   / `#rgb` shorthand (case-insensitive) into a packed RGB i32, `None` if
   malformed. Completes the colour pipeline with `(i32).to_rgb_hex()` and
   `std/ansi.fg_rgb`.
+- `rgb_luminance(rgb): i32` — perceived brightness 0–255 (ITU-R BT.601
+  luma), and `rgb_is_dark(rgb): boolean` (luma < 128) for picking a
+  readable foreground over a coloured background.
 
 ### `std/sort`
 
