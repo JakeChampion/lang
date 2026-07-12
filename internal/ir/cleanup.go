@@ -29,40 +29,21 @@ const optimizeCleanupMaxIterations = 8
 // for Fold's const + drop peephole when <expr> is itself a const).
 func OptimizeCleanup(prog *Program) {
 	for i := 0; i < optimizeCleanupMaxIterations; i++ {
-		before := snapshotPrograms(prog)
-		PropagateCopies(prog)
-		ConstPropagate(prog)
-		Fold(prog)
-		ReduceStrength(prog)
-		if equalPrograms(prog, before) {
+		// Run all four every iteration (they interact — no short-circuit)
+		// and OR their changed verdicts. Converged once a full round
+		// rewrote nothing. This replaces the old snapshotPrograms +
+		// equalPrograms convergence check, which deep-COPIED the entire
+		// program's op lists every iteration — an up-to-8× whole-program
+		// duplication that dominated self-host driver build time and kept
+		// this fixpoint off the native backends (#4377 slice 1b). Each
+		// sub-pass now reports whether it changed anything (a per-function
+		// opsEqual, no copy), so the loop needs no snapshot at all.
+		c1 := PropagateCopies(prog)
+		c2 := ConstPropagate(prog)
+		c3 := Fold(prog)
+		c4 := ReduceStrength(prog)
+		if !(c1 || c2 || c3 || c4) {
 			return
 		}
 	}
-}
-
-// snapshotPrograms records every function's op list so the cleanup
-// loop can detect "no further changes". Cheap — just a copy of the
-// per-function ops slice headers; the underlying ops are immutable
-// across one snapshot lifetime.
-func snapshotPrograms(prog *Program) [][]Op {
-	out := make([][]Op, len(prog.Funcs))
-	for i, fn := range prog.Funcs {
-		out[i] = append([]Op(nil), fn.Ops...)
-	}
-	return out
-}
-
-// equalPrograms reports whether prog's per-function op lists match
-// the recorded snapshot. Convergence detection — when nothing
-// changed in the last iteration, we're done.
-func equalPrograms(prog *Program, snap [][]Op) bool {
-	if len(prog.Funcs) != len(snap) {
-		return false
-	}
-	for i, fn := range prog.Funcs {
-		if !opsEqual(fn.Ops, snap[i]) {
-			return false
-		}
-	}
-	return true
 }

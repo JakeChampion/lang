@@ -37,7 +37,11 @@ package ir
 // Iterates each function to a fixed point (constant arithmetic can
 // cascade — `1 + 2 + 3` lowers to two adds, the first fold reveals
 // the second), so backends never need to re-run the pass.
-func Fold(prog *Program) {
+// Returns whether any function's op list changed — the cleanup fixpoint
+// (OptimizeCleanup) uses this to detect convergence without snapshotting +
+// deep-comparing the whole program each iteration (#4377 slice 1b).
+func Fold(prog *Program) bool {
+	changed := false
 	for _, fn := range prog.Funcs {
 		for {
 			next := foldOnce(fn.Ops)
@@ -45,8 +49,10 @@ func Fold(prog *Program) {
 				break
 			}
 			fn.Ops = next
+			changed = true
 		}
 	}
+	return changed
 }
 
 // foldOnce runs one pass over ops, applying every recognised pattern.

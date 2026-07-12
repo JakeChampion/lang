@@ -38,14 +38,21 @@ import "github.com/jakechampion/lang/internal/ast"
 // PropagateCopies eliminates OpTeeLocal / OpStoreLocal sites whose
 // slot is unused elsewhere in the function. Functions without an
 // eligible site are unchanged.
-func PropagateCopies(prog *Program) {
+// Returns whether any function's op list changed (see Fold — #4377 slice 1b).
+func PropagateCopies(prog *Program) bool {
 	ptrW := prog.PtrW
 	if ptrW == 0 {
 		ptrW = 4
 	}
+	changed := false
 	for _, fn := range prog.Funcs {
-		fn.Ops = propagateCopiesOps(fn, fn.Ops, ptrW)
+		next := propagateCopiesOps(fn, fn.Ops, ptrW)
+		if !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
 	}
+	return changed
 }
 
 // slotIsTwoWord reports whether slot `idx` in `fn` materialises
