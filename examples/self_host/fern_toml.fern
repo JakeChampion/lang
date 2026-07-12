@@ -191,32 +191,30 @@ function parse_str_array(val: string): string[] {
     return out;
 }
 
-// dep_of returns the declared dependency `name`, or None.
-pub function dep_of(m: Manifest, name: string): Option[Dep] {
+// dep_path returns the declared PATH of a path dependency `name`, or
+// None. Iterates m.deps directly (no Option[Dep] intermediary): a struct-
+// payload Option (Some(dep)) is outside the self-host IR emitter's lowered
+// subset, so returning the primitive Option[string] keeps this module
+// per-module-IR-eligible.
+pub function dep_path(m: Manifest, name: string): Option[string] {
     var i: i32 = 0;
     while (i < m.deps.len()) {
-        if (m.deps[i].name == name) { return Some(m.deps[i]); }
+        if (m.deps[i].name == name && m.deps[i].kind == "path") {
+            return Some(m.deps[i].path + "");
+        }
         i = i + 1;
     }
     return None;
 }
 
-// dep_path returns the declared PATH of a path dependency `name`, or
-// None (kept for the loader's path-dep fast path).
-pub function dep_path(m: Manifest, name: string): Option[string] {
-    match (dep_of(m, name)) {
-        Some(d) => { if (d.kind == "path") { return Some(d.path + ""); } return None; },
-        None => { return None; },
-    }
-    return None;
-}
-
 // dep_kind returns the kind of dependency `name` ("path"/"workspace"/
-// "version"/""), or "" when undeclared.
+// "version"/""), or "" when undeclared. Iterates m.deps directly (see
+// dep_path on why no Option[Dep] intermediary).
 pub function dep_kind(m: Manifest, name: string): string {
-    match (dep_of(m, name)) {
-        Some(d) => { return d.kind; },
-        None => { return ""; },
+    var i: i32 = 0;
+    while (i < m.deps.len()) {
+        if (m.deps[i].name == name) { return m.deps[i].kind + ""; }
+        i = i + 1;
     }
     return "";
 }
