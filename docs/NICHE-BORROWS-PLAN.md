@@ -243,7 +243,14 @@ reset while the server keeps answering subsequent requests.
 
 ### Phase E — type-system & Perceus-adjacent
 
-**E1. `@must_consume` marker types.** [status: not started]
+**E1. `@must_consume` marker types.** [status: design shipped —
+`docs/MUST-CONSUME.md`; slice-1 checker implementation next]
+Decision: at-least-once obligation checking (E067), E063-shaped
+conservative walk, consuming uses = call-arg / return / construct /
+destructure, unmarked-container laundering rejected, closures
+capturing marked values forbidden in slice 1; self-host checker
+parity required in the same implementation PR. First queued real
+user: D2's worker-lifecycle handle.
 Vale-Higher-RAII/Austral-inspired linear obligation, layered on
 RC (checker-only; Perceus still frees). Design doc
 (`docs/MUST-CONSUME.md`) then slice 1. Sketch: `@must_consume`
