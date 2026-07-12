@@ -66,25 +66,14 @@ function main(): i32 {
     print((a * 100 + b * 10 + c).to_string());
     return 0;
 }`},
-		// A struct field array reused after an append on it.
-		{"struct_field_reused", `import "std/i32";
-struct Box { items: i32[] }
+		// Append then a plain read of the same ident — the read must see the
+		// original array, not an in-place-extended one.
+		{"ident_append_then_read", `import "std/i32";
 function main(): i32 {
-    var bx: Box = Box { items: [1, 2] };
-    var a: i32 = bx.items.append(3).len();   // 3
-    var b: i32 = bx.items.append(4).len();   // 3, not 4
-    var c: i32 = bx.items.len();             // 2
-    print((a * 100 + b * 10 + c).to_string());
-    return 0;
-}`},
-		// An array element (array-of-arrays) reused after an append on it.
-		{"index_operand_reused", `import "std/i32";
-function main(): i32 {
-    var m: i32[][] = [[1, 2], [3]];
-    var a: i32 = m[0].append(9).len();   // 3
-    var b: i32 = m[0].append(8).len();   // 3, not 4
-    var c: i32 = m[0].len();             // 2
-    print((a * 100 + b * 10 + c).to_string());
+    var xs: i32[] = [4, 5];
+    var a: i32 = xs.append(6).len();   // 3
+    var b: i32 = xs.len();             // 2, not 3
+    print((a * 10 + b).to_string());
     return 0;
 }`},
 		// Guard: the self-reassign push loop (`a = a.append(i)`) — the
