@@ -2720,6 +2720,123 @@ func (o identOrder) isLast(id *ast.Ident) bool {
 	return o.idx[id] == o.last[id.Name]
 }
 
+// pushOnIdent returns the `__method_Array_push(ident, …)` call and its
+// bare-ident receiver when `e` has exactly that shape, else (nil, nil).
+// The receiver shape check shared by isSelfArrayPushLocal (which adds the
+// borrowed-param exclusion its overwrite-free reclaim needs) and
+// inPlacePushes (which deliberately does not — see below).
+func pushOnIdent(e ast.Expr) (*ast.Call, *ast.Ident) {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return nil, nil
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok || callee.Name != "__method_Array_push" || len(call.Args) == 0 {
+		return nil, nil
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	if !ok {
+		return nil, nil
+	}
+	return call, recv
+}
+
+// inPlacePushes returns the append calls in `body` that may stay on the
+// rc-gated in-place grow even though their bare-ident operand is not its
+// textually LAST occurrence (identOrder.isLast) — the two shapes where no
+// LATER intra-function read can observe the in-place mutation, so the
+// #4827 forced copy (emitArrayPush forceCopy) is pure waste:
+//
+//   - self-reassign: `x = x.append(v)`. The binding is rebound to the
+//     append result in the same statement, so every later read of `x`
+//     sees the appended value whether the grow mutated in place or
+//     copied. selfPushMoveCall already exempts the local / `own`-param
+//     form; this covers the BORROWED-param form isSelfArrayPushLocal
+//     must reject (its overwrite-dec would free the caller's buffer) —
+//     here no dec is added, only the forced copy is skipped, exactly
+//     the pre-#4827 runtime behaviour.
+//
+//   - return position: `return … x.append(v) …` where `x` occurs exactly
+//     once in the whole return expression (the operand itself) and is
+//     never referenced under a `defer` or a lambda anywhere in the body.
+//     After the return expression evaluates the function exits — only a
+//     defer (or a closure that captured `x`) could still read `x`, and
+//     those names are excluded. This is the accumulator-threading shape
+//     (`return acc.append(id.name)`) the self-host compiler's AST
+//     walkers use once per visited node; forcing a full copy there is
+//     O(n²) bytes in the leak-mode arena (the #4838 CI OOM).
+//
+// Both shapes retain the rc-gate itself: a runtime rc > 1 operand still
+// takes the copy path, exactly as before #4827.
+func inPlacePushes(body ast.Node) map[*ast.Call]bool {
+	ok := map[*ast.Call]bool{}
+	// Names readable after the enclosing statement completes: anything
+	// referenced under a defer action or inside a lambda body (a closure
+	// can run later and read a captured binding). Conservative — any
+	// occurrence of the name disqualifies its return-position pushes.
+	esc := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		var sub ast.Node
+		switch d := n.(type) {
+		case *ast.Defer:
+			sub = d.Expr
+		case *ast.Lambda:
+			sub = n
+		default:
+			return true
+		}
+		ast.Walk(sub, func(m ast.Node) bool {
+			if id, isIdent := m.(*ast.Ident); isIdent {
+				esc[id.Name] = true
+			}
+			return true
+		})
+		// Descend anyway: a Defer's own subtree holds no Return/Assign
+		// exprs to mark, and marking inside a Lambda is skipped below,
+		// but nested statements still need the esc scan above.
+		return true
+	})
+	ast.Walk(body, func(n ast.Node) bool {
+		switch st := n.(type) {
+		case *ast.Lambda:
+			// A push inside a lambda body executes when the closure is
+			// CALLED, not here — never mark it from the enclosing fn.
+			return false
+		case *ast.Assign:
+			if t, isIdent := st.Target.(*ast.Ident); isIdent {
+				if call, recv := pushOnIdent(st.Value); call != nil && recv.Name == t.Name {
+					ok[call] = true
+				}
+			}
+		case *ast.Return:
+			if st.Value == nil {
+				return true
+			}
+			counts := map[string]int{}
+			ast.Walk(st.Value, func(m ast.Node) bool {
+				if id, isIdent := m.(*ast.Ident); isIdent {
+					counts[id.Name]++
+				}
+				return true
+			})
+			ast.Walk(st.Value, func(m ast.Node) bool {
+				if _, isLambda := m.(*ast.Lambda); isLambda {
+					return false
+				}
+				if e, isExpr := m.(ast.Expr); isExpr {
+					if call, recv := pushOnIdent(e); call != nil &&
+						counts[recv.Name] == 1 && !esc[recv.Name] {
+						ok[call] = true
+					}
+				}
+				return true
+			})
+		}
+		return true
+	})
+	return ok
+}
+
 // computeBorrowedAliases finds `var y = x` aliases that are pure BORROWED
 // VIEWS (#4402 opt 1 — dead-alias dup/drop cancellation): y's transfer inc
 // and exit-sweep dec are a guaranteed net-zero pair, so both are elided and
