@@ -1,0 +1,58 @@
+import "std/test";
+import "std/format" as format;
+// examples/tests/format_duration_parse_test.fern — pure-Fern coverage of
+// std/format.parse_duration_ms: single units (ms/s/m/h/d), multi-part
+// durations with and without separating spaces, the i64 range beyond
+// i32, and the None rejections (empty, bare number, unknown unit).
+
+// Small helpers so the assertions read as i64 comparisons: unwrap a Some
+// to its value (defaulting to -1 on None) and test for None.
+function ms_of(s: string): i64 {
+    match (format.parse_duration_ms(s)) {
+        Some(v) => { return v; },
+        None => { return -1 as i64; },
+    }
+}
+
+function is_none(s: string): boolean {
+    match (format.parse_duration_ms(s)) {
+        Some(v) => { return false; },
+        None => { return true; },
+    }
+}
+
+function test_single_units(): test.TestOutcome {
+    if (ms_of("500ms") != 500 as i64) { return test.fail("500ms"); }
+    if (ms_of("1s") != 1000 as i64) { return test.fail("1s"); }
+    if (ms_of("1m") != 60000 as i64) { return test.fail("1m"); }
+    if (ms_of("1h") != 3600000 as i64) { return test.fail("1h"); }
+    return test.assert_eq(ms_of("2d"), 172800000 as i64);
+}
+
+function test_multi_part(): test.TestOutcome {
+    if (ms_of("1h30m") != 5400000 as i64) { return test.fail("1h30m"); }
+    if (ms_of("1h 30m") != 5400000 as i64) { return test.fail("1h 30m"); }
+    return test.assert_eq(ms_of("1h30m45s500ms"), 5445500 as i64);
+}
+
+function test_beyond_i32(): test.TestOutcome {
+    // 30 days in ms = 2592000000, larger than the i32 max (2147483647).
+    return test.assert_eq(ms_of("30d"), 2592000000 as i64);
+}
+
+function test_rejections(): test.TestOutcome {
+    if (!is_none("")) { return test.fail("empty"); }
+    if (!is_none("5")) { return test.fail("bare number"); }
+    if (!is_none("5x")) { return test.fail("unknown unit"); }
+    if (!is_none("h")) { return test.fail("unit with no number"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/format parse_duration_ms");
+    r = r.it("single units",   test_single_units());
+    r = r.it("multi part",     test_multi_part());
+    r = r.it("beyond i32",     test_beyond_i32());
+    r = r.it("rejections",     test_rejections());
+    return r.finish();
+}

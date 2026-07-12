@@ -302,3 +302,50 @@ pub function format_duration_ms(ms: i32): string {
     }
     return sign + out;
 }
+
+// `parse_duration_ms(s)` — the inverse of `format_duration_ms`: parse a
+// duration string into milliseconds. The input is a sequence of
+// `<integer><unit>` parts (optionally space-separated), with units
+// `ms` / `s` / `m` / `h` / `d`; e.g. `"500ms"`, `"1h30m"`, `"1h 30m"`,
+// `"2d12h"`. Returns `None` on empty input, a missing/unknown unit, or a
+// part with no number. The `i64` result holds durations far beyond the
+// i32 that `format_duration_ms` takes.
+pub function parse_duration_ms(s: string): Option[i64] {
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    var total: i64 = 0;
+    var saw: boolean = false;
+    while (i < n) {
+        if (s[i] == 32) { i = i + 1; continue; }   // skip spaces
+        var start: i32 = i;
+        var num: i64 = 0;
+        while (i < n && s[i] >= 48 && s[i] <= 57) {
+            num = num * (10 as i64) + ((s[i] - 48) as i64);
+            i = i + 1;
+        }
+        if (i == start) { return None; }            // expected a number
+        var unit_ms: i64 = 0;
+        if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {   // "ms"
+            unit_ms = 1;
+            i = i + 2;
+        } else if (i < n && s[i] == 115) {                   // "s"
+            unit_ms = 1000;
+            i = i + 1;
+        } else if (i < n && s[i] == 109) {                   // "m"
+            unit_ms = 60000;
+            i = i + 1;
+        } else if (i < n && s[i] == 104) {                   // "h"
+            unit_ms = 3600000;
+            i = i + 1;
+        } else if (i < n && s[i] == 100) {                   // "d"
+            unit_ms = 86400000;
+            i = i + 1;
+        } else {
+            return None;                                     // missing/unknown unit
+        }
+        total = total + num * unit_ms;
+        saw = true;
+    }
+    if (!saw) { return None; }
+    return Some(total);
+}

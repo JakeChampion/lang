@@ -2366,12 +2366,42 @@ function pipe_prepend(head: Expr, tail: Expr[]): Expr[] {
 }
 
 // pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
-// call's args → `f(x, a, b)`; `x |> f` (a bare callee) wraps it as a
-// single-arg call → `f(x)`. Mirrors the Go parser's parsePipe, lowering
-// to the same ExprCall the rest of the pipeline already handles.
+// call's args → `f(x, a, b)`; `x |> f(a, _)` substitutes x at the `_`
+// topic placeholder instead → `f(a, x)` (at most one `_`, direct args
+// only — the native parser rejects two with P004, so a native-valid
+// program has at most one; this mirror substitutes at the first);
+// `x |> f` (a bare callee) wraps it as a single-arg call → `f(x)`.
+// Mirrors the Go parser's parsePipe, lowering to the same ExprCall the
+// rest of the pipeline already handles.
 function pipe_desugar(left: Expr, right: Expr): Expr {
     match (right) {
-        ExprCall(c) => { return e_call(c.callee, pipe_prepend(left, c.args)); },
+        ExprCall(c) => {
+            var hole: i32 = 0 - 1;
+            var hi: i32 = 0;
+            while (hi < c.args.len()) {
+                if (hole < 0) {
+                    match (c.args[hi]) {
+                        ExprIdent(id) => { if (id.name == "_") { hole = hi; } },
+                        _ => {}
+                    }
+                }
+                hi = hi + 1;
+            }
+            if (hole >= 0) {
+                var subst: Expr[] = [];
+                var si: i32 = 0;
+                while (si < c.args.len()) {
+                    if (si == hole) {
+                        subst = subst.append(left);
+                    } else {
+                        subst = subst.append(c.args[si]);
+                    }
+                    si = si + 1;
+                }
+                return e_call(c.callee, subst);
+            }
+            return e_call(c.callee, pipe_prepend(left, c.args));
+        },
         _ => {
             var one: Expr[] = [left];
             return e_call(right, one);
@@ -3077,6 +3107,49 @@ function parse_stmt(p: Par): (Stmt, Par) {
             as_body = as_body.append(s_expr(e_call(e_ident("exit"), as_xargs)));
             var as_noelse: Stmt[] = [];
             return (s_if(e_unary("!", as_cond), as_body, as_noelse), asp);
+        }
+    }
+    // `todo;` / `todo("msg");` builtin — desugar to
+    // `while (true) { eprint("todo[: msg]"); exit(101); }`, mirroring
+    // the native parser's parseTodo (whose `loop { ... }` desugar this
+    // parser lowers to the same while-true shape — see parse_loop_stmt).
+    // The always-true loop makes the stub DIVERGE for the checker's
+    // missing-return / let-else analyses, so `todo;` can stand in for a
+    // whole non-void function body; exit(101) fires on the first
+    // iteration. Only the statement-position `todo ;` / `todo (` shapes
+    // are intercepted, so `todo` stays usable as an ordinary identifier
+    // elsewhere. The runtime message must stay byte-identical to the
+    // native parser's.
+    if (p.peek_ident() == "todo") {
+        var td0: Par = p.advance();  // consume `todo`
+        var td0p: string = td0.peek_punct();
+        if (td0p == "(" || td0p == ";") {
+            var tdp: Par = td0;
+            var td_has_msg: boolean = false;
+            var td_msg: Expr = e_string("");
+            if (td0p == "(") {
+                tdp = tdp.advance();  // consume `(`
+                if (tdp.peek_punct() != ")") {
+                    var (tdm_e, tdmp) = parse_expr(tdp);
+                    td_msg = tdm_e;
+                    tdp = tdmp;
+                    td_has_msg = true;
+                }
+                if (tdp.peek_punct() == ")") { tdp = tdp.advance(); }
+            }
+            if (tdp.peek_punct() == ";") { tdp = tdp.advance(); }
+            var td_text: Expr = e_string("todo: not implemented");
+            if (td_has_msg) {
+                td_text = e_binary("+", e_string("todo: "), td_msg);
+            }
+            var td_body: Stmt[] = [];
+            var td_eargs: Expr[] = [];
+            td_eargs = td_eargs.append(td_text);
+            td_body = td_body.append(s_expr(e_call(e_ident("eprint"), td_eargs)));
+            var td_xargs: Expr[] = [];
+            td_xargs = td_xargs.append(e_number("101", "", false));
+            td_body = td_body.append(s_expr(e_call(e_ident("exit"), td_xargs)));
+            return (s_while(e_bool(true), td_body), tdp);
         }
     }
     var kw: string = p.peek_keyword();

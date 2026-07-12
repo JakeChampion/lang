@@ -1550,6 +1550,14 @@ type Call struct {
 	// any other Call; only the formatter checks the flag so it
 	// can re-render the pipe form on the way out.
 	IsPipe bool
+	// PipeHole records where the pipe's LHS landed when the piped
+	// call used the `_` topic placeholder (`x |> f(a, _)` — LHS
+	// substitutes at the hole instead of being prepended). It is
+	// the 1-BASED index into Args of the substituted slot; 0 means
+	// "no placeholder, LHS was prepended as Args[0]" (the default
+	// data-first form). Like IsPipe, only the formatter reads it —
+	// to re-render `x |> f(a, _)` instead of the prepended form.
+	PipeHole int
 	// TypeArgs is filled by the checker when the callee resolves
 	// to a generic function (FuncDecl with non-empty TypeParams).
 	// Each entry is the inferred concrete type for the
@@ -2061,6 +2069,18 @@ type Loop struct {
 	// Label is the optional loop label (`outer: loop { ... }`), empty
 	// when unlabeled.
 	Label string
+	// IsTodo marks a Loop synthesised by the parser's `todo;` /
+	// `todo("msg");` desugar (`loop { eprint(...); exit(101); }`).
+	// The `loop` shape gives the stub divergence for free (E052
+	// missing-return + `let else` both already treat Loop as
+	// non-falling-through), and the flag lets the formatter
+	// round-trip the sugar instead of printing the desugared body.
+	// TodoMsg holds the ORIGINAL message expression (nil for the
+	// bare `todo;` form) — the formatter re-prints it verbatim.
+	// Both fields are inert everywhere else (checker / IR / interp
+	// see an ordinary Loop).
+	IsTodo  bool
+	TodoMsg Expr
 }
 
 // For preserves the C/JS-style three-part for loop so that `continue`
@@ -2962,6 +2982,14 @@ func (s *ImplDecl) Pos() Position  { return s.P }
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// TodoSites records the source position of every `todo;` /
+	// `todo("msg");` statement the parser desugared, in source
+	// order. `fern -check` prints a warning per entry so the
+	// remaining stubs stay visible. Populated only by the parse
+	// of THIS program — modload does not merge imported modules'
+	// sites (Position carries no filename, so cross-module
+	// entries could not be attributed correctly).
+	TodoSites []Position
 	// Resources lists top-level `resource Name;` declarations in source
 	// order — nominal WIT resource-handle types (P5 — see ResourceDecl and
 	// docs/WIT-BRING-YOUR-OWN.md). Referenced as `own Name` / `borrow Name`

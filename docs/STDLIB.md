@@ -306,6 +306,10 @@ sets, not for large collections.
   specs (`{:>8}`, `{:*^10}`, `{:.3}`, `{:>8.2}`).
 - `format_bytes(n)` — `"1024 → 1 KiB"` shape (binary prefixes).
 - `format_duration_ms(ms)` — `"1h 23m 45s"` shape.
+- `parse_duration_ms(s)` — inverse of `format_duration_ms`: parse a
+  `<int><unit>` sequence (units `ms`/`s`/`m`/`h`/`d`, space-optional,
+  e.g. `"1h30m"`, `"1h 30m"`, `"500ms"`) into `Option[i64]` milliseconds;
+  `None` on empty input, a missing/unknown unit, or a part with no number.
 
 ### `std/csv`
 
@@ -340,7 +344,13 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
 POSIX path manipulation (string-level only).
 
 - `path_join(parts)`, `path_parent(p)`, `path_file_name(p)`,
-  `path_extension(p)`.
+  `path_extension(p)`, `path_clean(p)`.
+- `path_is_absolute(p)` — true iff `p` begins at the root (`/`).
+- `path_stem(p)` — last component minus its final extension
+  (`"archive.tar.gz"` → `"archive.tar"`, `".bashrc"` → `".bashrc"`).
+- `path_with_extension(p, ext)` — replace/append the final extension
+  (`ext` without a leading dot; empty `ext` drops it), preserving the
+  directory (`"a/b/foo.txt"`, `"md"` → `"a/b/foo.md"`).
 
 ### `std/base64`
 
@@ -487,6 +497,9 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
 - **Spans / durations:** `span_seconds`/`_minutes`/`_hours`/`_days`/
   `_weeks`/`_months`/`_years(n)`, `duration_seconds(s)`,
   `duration_millis(ms)`.
+- **Humanised relative time:** `(i: Instant).relative_to(now)` — the
+  `fromNow` shape, e.g. `"5 minutes ago"`, `"in 2 days"`, `"just now"`
+  (coarse units: month ≈ 30 days, year = 365 days).
 - Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
   `DAYS_PER_WEEK`, etc.
 

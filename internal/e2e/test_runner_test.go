@@ -196,8 +196,9 @@ func TestRunnerMathExamplePasses(t *testing.T) {
 
 // `examples/tests/path_test.fern` covers the std/path POSIX helpers
 // (string-level, no FS) — path_join / path_parent / path_file_name /
-// path_extension / path_clean, incl. separator-collapsing,
-// root-preservation, trailing-slash, hidden-file, and `.`/`..`
+// path_extension / path_clean / path_is_absolute / path_stem /
+// path_with_extension, incl. separator-collapsing, root-preservation,
+// trailing-slash, hidden-file, multi-extension, and `.`/`..`
 // resolution edges. Passing suite → exit 0.
 func TestRunnerPathExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -206,7 +207,7 @@ func TestRunnerPathExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/path", "# pass 25", "# fail 0", "1..25"} {
+	for _, w := range []string{"# Suite: std/path", "# pass 28", "# fail 0", "1..28"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -506,6 +507,24 @@ func TestRunnerTimeTimezoneExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/time timezone", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/time_relative_test.fern` covers std/time's
+// Instant.relative_to humaniser — the "just now" window, past/future
+// direction, singular vs plural units, and the unit ladder. Passing →
+// exit 0; plan line `1..4`.
+func TestRunnerTimeRelativeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/time_relative_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time relative_to", "# pass 4", "# fail 0", "1..4"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -2900,6 +2919,24 @@ func TestRunnerTextwrapExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/textwrap", "1..6", "# pass 6", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/format_duration_parse_test.fern` covers
+// std/format.parse_duration_ms — single units, multi-part durations
+// with/without spaces, the i64 range beyond i32, and the None
+// rejections. Passing suite → exit 0; plan line `1..4`.
+func TestRunnerFormatDurationParseExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/format_duration_parse_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/format parse_duration_ms", "1..4", "# pass 4", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

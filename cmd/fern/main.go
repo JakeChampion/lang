@@ -964,6 +964,16 @@ func runCheck(srcPath string) error {
 	if err := monomorph.Run(prog, info); err != nil {
 		return formatErr(err)
 	}
+	// A clean check still inventories the entry module's remaining
+	// `todo` stubs — warnings on stderr, exit stays 0. Imported
+	// modules' sites aren't tracked (see ast.Program.TodoSites).
+	name := srcPath
+	if name == "-" {
+		name = "<stdin>"
+	}
+	for _, site := range prog.TodoSites {
+		fmt.Fprintf(os.Stderr, "%s:%d:%d: warning: `todo` stub remaining\n", name, site.Line, site.Col)
+	}
 	return nil
 }
 

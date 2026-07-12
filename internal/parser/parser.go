@@ -67,6 +67,7 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	prog.Comments = comments
 	prog.BlankLines = blankLineNumbers(src)
 	prog.TypeRefs = p.typeRefs
+	prog.TodoSites = p.todoSites
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -133,6 +134,11 @@ type parser struct {
 	// one-shot parseExprFromText for f-string interpolants) get
 	// their own *parser and their typeRefs are discarded.
 	typeRefs []ast.TypeRef
+	// todoSites accumulates the position of every `todo;` /
+	// `todo("msg");` statement parseTodo desugared, drained into
+	// prog.TodoSites at the end of Parse for `-check`'s
+	// remaining-stub warnings.
+	todoSites []ast.Position
 	// foreachN counts how many `for IDENT in expr` desugars we've
 	// emitted in this Parse so synthetic slot names stay unique
 	// across nested foreach loops.
@@ -2162,6 +2168,21 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseAssert()
 		}
 	}
+	// `todo;` / `todo("msg");` builtin — a Gleam-inspired stub marker
+	// that desugars to `loop { eprint("todo[: msg]"); exit(101); }`.
+	// The `loop` wrapper (never re-entered — exit fires on the first
+	// iteration) makes the stub DIVERGE for both checker analyses
+	// (E052 missing-return and `let else`), so `todo;` can stand in
+	// for a whole non-void function body. Exit code 101 distinguishes
+	// "unimplemented" from assert's 1 and the trap/arena 134/137
+	// family. Same contextual-intercept rule as `assert`: only the
+	// statement-position `todo ;` / `todo (` shapes are taken, so
+	// `todo` stays usable as an ordinary identifier elsewhere.
+	if t.Kind == lexer.Ident && t.Text == "todo" && p.i+1 < len(p.tokens) {
+		if nx := p.tokens[p.i+1]; nx.Kind == lexer.Punct && (nx.Text == "(" || nx.Text == ";") {
+			return p.parseTodo()
+		}
+	}
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
 		case "if":
@@ -3718,6 +3739,54 @@ func (p *parser) parseAssert() (ast.Stmt, error) {
 	return &ast.If{P: pos, Cond: notCond, Then: then}, nil
 }
 
+// parseTodo desugars the `todo;` / `todo("msg");` stub statement to
+//
+//	loop { eprint("todo[: msg]"); exit(101); }
+//
+// over the already-supported loop / eprint / exit primitives, so it
+// lowers with no dedicated codegen on every backend (mirroring
+// parseAssert's approach, #4416). The Loop node carries IsTodo +
+// TodoMsg so the formatter re-prints the sugar, and the site is
+// recorded on prog.TodoSites for `-check`'s remaining-stub warnings.
+// The runtime message deliberately omits the source position — the
+// self-host parser must produce a byte-identical message, and the
+// `-check` warning carries the position instead.
+func (p *parser) parseTodo() (ast.Stmt, error) {
+	kw := p.advance() // `todo`
+	var msg ast.Expr
+	if _, ok := p.accept(lexer.Punct, "("); ok {
+		if !p.match(lexer.Punct, ")") {
+			m, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			msg = m
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	pos := kw.Pos
+	p.todoSites = append(p.todoSites, pos)
+	var text ast.Expr = &ast.StringLit{P: pos, Value: "todo: not implemented"}
+	if msg != nil {
+		text = &ast.Binary{P: pos, Op: "+",
+			Left:  &ast.StringLit{P: pos, Value: "todo: "},
+			Right: msg,
+		}
+	}
+	eprintCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "eprint"}, Args: []ast.Expr{text}}
+	exitCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "exit"}, Args: []ast.Expr{&ast.NumberLit{P: pos, Value: 101}}}
+	body := &ast.Block{P: pos, Stmts: []ast.Stmt{
+		&ast.ExprStmt{P: pos, Expr: eprintCall},
+		&ast.ExprStmt{P: pos, Expr: exitCall},
+	}}
+	return &ast.Loop{P: pos, Body: body, IsTodo: true, TodoMsg: msg}, nil
+}
+
 func (p *parser) parseVar() (ast.Stmt, error) {
 	kw := p.advance()
 	// Tuple-destructuring form: `var (a, b, ...) = expr;`. Mirrors
@@ -4172,8 +4241,33 @@ func (p *parser) parsePipe() (ast.Expr, error) {
 		}
 		switch r := right.(type) {
 		case *ast.Call:
-			// `x |> f(a, b)` — prepend x to f's arg list.
-			r.Args = append([]ast.Expr{left}, r.Args...)
+			// `x |> f(a, _)` — the `_` topic placeholder: the LHS
+			// substitutes at the hole instead of being prepended,
+			// for the minority of callees that don't take the piped
+			// value first. At most one `_`, and only as a DIRECT
+			// argument of the piped call — a `_` nested inside a
+			// sub-expression is left alone (it stays an ordinary
+			// identifier and fails the checker's E001 like any other
+			// unknown name). A nested pipe in an arg has already
+			// consumed its own `_` by the time this scan runs, so
+			// holes compose: `x |> f(y |> g(_), _)` resolves the
+			// inner hole to y and the outer one to x.
+			hole := -1
+			for i, a := range r.Args {
+				if id, ok := a.(*ast.Ident); ok && id.Name == "_" {
+					if hole >= 0 {
+						return nil, p.errorfCode(id.P, "P004", "at most one `_` placeholder in a piped call")
+					}
+					hole = i
+				}
+			}
+			if hole >= 0 {
+				r.Args[hole] = left
+				r.PipeHole = hole + 1
+			} else {
+				// `x |> f(a, b)` — prepend x to f's arg list.
+				r.Args = append([]ast.Expr{left}, r.Args...)
+			}
 			r.IsPipe = true
 			left = r
 		default:
