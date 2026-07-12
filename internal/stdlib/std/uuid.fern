@@ -59,3 +59,34 @@ pub function uuid_v7(): string {
         + "-" + uuid_byte_hex(r[4]) + uuid_byte_hex(r[5]) + uuid_byte_hex(r[6])
         + uuid_byte_hex(r[7]) + uuid_byte_hex(r[8]) + uuid_byte_hex(r[9]);
 }
+
+// `uuid_nil()` — the all-zeros "nil" UUID (RFC 4122 §5.9), the
+// canonical sentinel / default value.
+pub function uuid_nil(): string {
+    return "00000000-0000-0000-0000-000000000000";
+}
+
+// `uuid_is_nil(s)` — true iff `s` is exactly the nil UUID.
+pub function uuid_is_nil(s: string): boolean {
+    return s == uuid_nil();
+}
+
+// __uuid_nibble(b) — hex value 0..15 of an ASCII hex byte, or -1.
+function __uuid_nibble(b: i32): i32 {
+    if (b >= 48 && b <= 57) { return b - 48; }        // '0'..'9'
+    if (b >= 97 && b <= 102) { return b - 97 + 10; }  // 'a'..'f'
+    if (b >= 65 && b <= 70) { return b - 65 + 10; }   // 'A'..'F'
+    return -1;
+}
+
+// `uuid_version(s)` — the version number a canonical UUID encodes in
+// the first nibble of its 3rd group (index 14): `4` for `uuid_v4()`,
+// `7` for `uuid_v7()`, `0` for `uuid_nil()`. Returns -1 unless `s` is a
+// well-formed 36-char hyphenated UUID (correct length, hyphens at
+// 8/13/18/23, a hex version nibble). Structural check only — for full
+// validation call `string.is_uuid()` first.
+pub function uuid_version(s: string): i32 {
+    if (s.len() != 36) { return -1; }
+    if (s[8] != 45 || s[13] != 45 || s[18] != 45 || s[23] != 45) { return -1; }   // '-'
+    return __uuid_nibble(s[14]);
+}

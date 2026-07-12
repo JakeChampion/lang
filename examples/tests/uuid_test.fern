@@ -56,6 +56,27 @@ function test_v7_version(): test.TestOutcome {
     return test.assert_eq(uuid.uuid_v7()[14], 55);
 }
 
+function test_nil(): test.TestOutcome {
+    if (uuid.uuid_nil() != "00000000-0000-0000-0000-000000000000") { return test.fail("nil value"); }
+    if (!uuid.uuid_is_nil(uuid.uuid_nil())) { return test.fail("is_nil on nil"); }
+    // A generated v4 is never nil.
+    return test.assert_false(uuid.uuid_is_nil(uuid.uuid_v4()));
+}
+
+function test_version_extract(): test.TestOutcome {
+    // Version comes from index 14: v4 → 4, v7 → 7, nil → 0.
+    if (uuid.uuid_version(uuid.uuid_v4()) != 4) { return test.fail("v4"); }
+    if (uuid.uuid_version(uuid.uuid_v7()) != 7) { return test.fail("v7"); }
+    return test.assert_eq(uuid.uuid_version(uuid.uuid_nil()), 0);
+}
+
+function test_version_malformed(): test.TestOutcome {
+    // Wrong length / missing hyphens / empty → -1.
+    if (uuid.uuid_version("not-a-uuid") != -1) { return test.fail("short"); }
+    if (uuid.uuid_version("f47ac10b58cc4372a5670e02b2c3d479") != -1) { return test.fail("no hyphens"); }
+    return test.assert_eq(uuid.uuid_version(""), -1);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/uuid");
     r = r.it("v4 length 36",       test_v4_len());
@@ -67,5 +88,8 @@ function main(): i32 {
     r = r.it("v7 length 36",       test_v7_len());
     r = r.it("v7 is_uuid shape",   test_v7_is_uuid());
     r = r.it("v7 version nibble",   test_v7_version());
+    r = r.it("nil + is_nil",        test_nil());
+    r = r.it("version extract",     test_version_extract());
+    r = r.it("version malformed",   test_version_malformed());
     return r.finish();
 }
