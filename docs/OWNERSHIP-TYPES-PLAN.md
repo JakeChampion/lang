@@ -275,9 +275,22 @@ precompute shape.
   (`s[a:b]: str`, `.trim(): str` — the zero-copy flip, gated behind A2), the
   `own`-param tightening, and self-host compiler acceptance of `str`
   (native-only surface for now — a #4451 debt entry).
-- **A2 (#4814).** Dangling rule: a `str` may not escape unless its source is
-  a parameter / `'static` (extend the existing `sliceBorrowsLocal` analysis
-  to strings). Prerequisite for the producer flip.
+- **A2 (#4814, LANDED).** Dangling rule — **E065**, the `str` sibling of
+  E063: a `str` view may not escape via `return` unless its source is a
+  parameter (caller-owned) or a string literal (`'static` / immortal); a view
+  of a function-LOCAL owned `string` is rejected (`checkStrEscape` /
+  `strViewsLocal` in the checker — the cycle-guarded binding-chase mirroring
+  `sliceBorrowsLocal`). Call results are not chased (today every callee
+  returns an owned `string`, a move — the same documented intraprocedural
+  hole as the slice rule; both tighten together with the producer flip).
+  `return` is the only checked escape position, matching the E063 precedent.
+  This answers #4297's open question for the current model: immutability +
+  bump-arena + "views don't escape their source" suffices without lifetime
+  annotations, at the cost of the conservative local-source rejection.
+  **Remaining A-phase work:** the producer flip (`s[a:b]: str` /
+  `.trim(): str`, with backend zero-copy convergence gated by the byte-
+  identity differentials), `own`-param tightening, and self-host `str`
+  acceptance (#4451 debt).
 
 ## Validation discipline (learned from #4294 / the A2 attempts)
 

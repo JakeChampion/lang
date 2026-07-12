@@ -4150,8 +4150,11 @@ type builder struct {
 	// function's body (lazily, per fn) so emitArrayPush can ask whether an
 	// ident append operand is its LAST use without rebuilding the order at
 	// every push site. appendOrderFn is the fn the cache was built for.
-	appendOrder   identOrder
-	appendOrderFn *ast.FuncDecl
+	// appendInPlaceOK (built in the same refresh) is the set of push calls
+	// exempt from the reused-after forced copy — see inPlacePushes.
+	appendOrder     identOrder
+	appendOrderFn   *ast.FuncDecl
+	appendInPlaceOK map[*ast.Call]bool
 	// paramEscapes[name][i] is true when parameter i of function `name` can
 	// escape (inferParamEscapes). Borrow inference (BorrowInferEnabled) keeps a
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
@@ -15246,6 +15249,7 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = identOrderOf(b.fn.Body)
+		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
 		b.appendOrderFn = b.fn
 	}
 	return b.appendOrder
@@ -15319,10 +15323,21 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	//     (TestWASMSelfReassignFieldBounded) and whose container is
 	//     replaced rather than reused;
 	//   - the self-reassign form (selfPushMoveCall), whose in-place mutate
-	//     pairs with the assign-site overwrite dec — O(1) push loops.
+	//     pairs with the assign-site overwrite dec — O(1) push loops;
+	//   - the inPlacePushes set — self-reassigns of BORROWED params
+	//     (`acc = acc.append(v)`, outside selfPushMoveCall's local/own
+	//     scope) and single-occurrence RETURN-position appends
+	//     (`return acc.append(v)`), where no later intra-function read
+	//     can observe the mutation. Without these two, the self-host
+	//     compiler's accumulator-threading walkers (`return
+	//     acc.append(id.name)` once per visited AST node) copy the whole
+	//     accumulated array per append — O(n²) bytes that the leak-mode
+	//     bump arena never reclaims, which blew the per-module emit past
+	//     the arena ceiling (exit 137) and OOM-killed the CI runners.
 	forceCopy := false
 	if ast.Expr(n) != b.selfPushMoveCall {
-		if id, ok := n.Args[0].(*ast.Ident); ok && needsRcIncOnAlias(n.Args[0], b) && !b.curAppendOrder().isLast(id) {
+		if id, ok := n.Args[0].(*ast.Ident); ok && needsRcIncOnAlias(n.Args[0], b) &&
+			!b.curAppendOrder().isLast(id) && !b.appendInPlaceOK[n] {
 			forceCopy = true
 		}
 	}

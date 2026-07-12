@@ -6927,6 +6927,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	}
 	c.checkOwnedParams(fn)
 	c.checkSliceEscape(fn)
+	c.checkStrEscape(fn)
 	// A value-returning function must return on every path. Falling off
 	// the end leaves the result undefined (the interpreter yields Void
 	// where a real value is expected and crashes downstream; a scalar
@@ -7033,6 +7034,79 @@ func (c *checker) sourceIsLocalStorage(src ast.Expr, locals map[string]*ast.Var,
 			visiting[s.Name] = true
 			defer delete(visiting, s.Name)
 			return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
+		}
+		return false
+	}
+	return false
+}
+
+// checkStrEscape implements E065 — the `str` sibling of E063 (#4814 / #4297
+// A2): a borrowed-string view must not escape via `return` unless its source
+// is a parameter (caller-owned) or a string literal ('static / immortal). A
+// `str` viewing a function-LOCAL owned `string` outlives storage the RC
+// passes may reclaim at exit — the #4294 corruption class the `str` type
+// exists to prevent. No producer yields `str` yet (the s[a:b]/.trim() flip
+// is gated on this rule), so today the rejectable shape is an ident chain
+// bottoming out at a local `string` binding; the chase mirrors
+// sliceBorrowsLocal (cycle-guarded, params excluded). Like E063, `return`
+// is the only checked escape position for now, and the chase is
+// intraprocedural — a view laundered through a str-returning callee is not
+// chased (same known hole as the slice rule; both tighten together later).
+func (c *checker) checkStrEscape(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+	if _, ok := fn.ReturnType.(ast.StrType); !ok {
+		return
+	}
+	params := map[string]bool{}
+	for _, p := range fn.Params {
+		params[p.Name] = true
+	}
+	locals := map[string]*ast.Var{}
+	for _, v := range c.info.Locals[fn] {
+		locals[v.Name] = v
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.Return)
+		if !ok || ret.Value == nil {
+			return true
+		}
+		if c.strViewsLocal(ret.Value, locals, params, map[string]bool{}) {
+			c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
+		}
+		return true
+	})
+}
+
+// strViewsLocal reports whether expr evaluates to a `str` view whose viewed
+// storage is a function-local owned `string` (so it dies when the function
+// returns). Params are caller-owned and string literals immortal — both are
+// safe sources. A call result is not chased (today every callee returns an
+// owned `string`, a move; the producer flip revisits this together with the
+// slice rule's identical hole). `visiting` guards the binding-chase
+// recursion against cycles, mirroring sliceBorrowsLocal.
+func (c *checker) strViewsLocal(expr ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
+	switch e := expr.(type) {
+	case *ast.StringLit:
+		return false // 'static / immortal
+	case *ast.Ident:
+		if params[e.Name] {
+			return false // caller-owned
+		}
+		v, ok := locals[e.Name]
+		if !ok || visiting[e.Name] {
+			return false
+		}
+		if _, isStr := v.Type.(ast.StrType); isStr && v.Init != nil {
+			// A local `str` binding views whatever its initializer views.
+			visiting[e.Name] = true
+			defer delete(visiting, e.Name)
+			return c.strViewsLocal(v.Init, locals, params, visiting)
+		}
+		if _, isString := v.Type.(ast.StringType); isString {
+			// A locally-declared owned string IS the backing storage.
+			return true
 		}
 		return false
 	}

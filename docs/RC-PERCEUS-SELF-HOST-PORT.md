@@ -4197,3 +4197,84 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `var nparams: ParamDecl[] = [ParamDecl {…}]`, all escape into a FuncDecl, so
   body_unsafe_for excludes them). Remaining nearby: `string[][][]` deep free,
   map string K/V (#4353).
+
+- 2026-07-12: **#4353 scoping — register-backend map string K/V deep-release
+  (design, not yet implemented).** Investigation of the last-standing reclaim
+  item. STATE: wasm's `$__fern_map_release` already deep-releases string K/V
+  (occupancy-aware `used[]` walk over its 40-byte box, gated by the `kis@+20` /
+  `vis@+28` flags — each occupied slot's key/value `arr_dec`'d before the
+  buffers). The REGISTER backends (x86 `asm_ir`, arm64) do NOT: `__fern_map_free`
+  frees the keys/vals buffers via `__fern_arr_dec` + returns the raw 16-byte box
+  to the freelist, but the string boxes HELD in those buffers leak one level.
+  KEY LAYOUT DIFFERENCE (why wasm's body can't be mirrored): the register map box
+  is a RAW 16-byte `{keys@0, vals@8}` — a LINEAR PARALLEL-ARRAY map (not
+  open-addressing): `__fern_map_set` linear-scans keys, and on miss
+  `__fern_arr_push`es key+val. So occupancy is DENSE (`0 .. keys.len()`, no
+  tombstones / no `used[]`), which makes the element walk trivial — but
+  `__fern_map_set` stores the key/val pointer with NO `__fern_rc_inc`. So the map
+  does not own a counted ref to its string K/V.
+  THE SOUNDNESS FORK (a dec-on-release alone would double-free an aliased key):
+    1. **Native-discipline port (general, risky).** Native incs the string
+       key/value on insert (`ir.go` balances `__drop_map_str_keys` /
+       `__drop_map_str_values` against that inc). Porting means adding a
+       string-K/V `__fern_rc_inc` to the register `__fern_map_set` (which needs a
+       val-kind flag alongside the existing key-kind arg) AND the dec-walk to
+       release. Touches the generic map runtime used by EVERY map — including the
+       compiler's own heavy map use — so an imbalance miscompiles the self-compile
+       (caught by the fixpoint, hard to bisect). Highest coverage, highest risk.
+    2. **Fresh-K/V subset (bounded, sound, recommended first cut).** Deep-release
+       only when every string K/V put into a reclaimable map is provably FRESH
+       (literal / concat / fresh producer — the same discipline the "SARR"
+       string[]-element reclaim uses): then the map is the sole rc=1 owner and a
+       dec-on-release balances the alloc with NO `map_set` inc change. REUSE: the
+       map's keys buffer (string-K) IS a `string[]`, so freeing it via the
+       EXISTING `__fern_str_arr_free` (walk + per-element rc-aware free + buffer)
+       instead of `__fern_arr_dec` deep-releases it — no new element-walk asm.
+  PROPOSED SHAPE for cut (2): per-string-column `__fern_map_free` variants
+  (`_ks` / `_vs` / `_kvs` — swap the string column's `__fern_arr_dec` for
+  `__fern_str_arr_free`, keep the box free) on x86 + arm64; wasm keeps routing to
+  its existing deep `$__fern_map_release`. `emit_map_buffers_free` picks the
+  variant from the map slot's K/V string-ness (`map_type` value tag + key kind)
+  AND a new `map_kv_fresh` gate (walk every `m.set(...)` / `Map{…}` entry for the
+  map; require each string K/V arg fresh). NEW ANALYSIS = the `map_kv_fresh` gate;
+  everything else is routing + small asm variants. TEST PLAN: churn
+  `Map[string,i32]` / `Map[i32,string]` / `Map[string,string]` built from fresh
+  concats (flat at detector zero); an ALIASED-K/V exclusion case (a `m.set(local,
+  …)` keeps the sound leak, no over-release); x86 + arm64 + wasm (wasm already
+  green), fixpoint byte-identical (the compiler's own maps are `i32`/interned-key,
+  and any string-valued map with a non-fresh value stays excluded → inert).
+
+- 2026-07-12: **#4353 — cut-2 attempt found a DEEPER PREREQUISITE: the register
+  map's keys/vals BUFFERS don't recycle at all.** Implemented the cut-2 fresh-K/V
+  value-column deep-release end-to-end (a `map_kv_fresh`-style gate crediting a
+  `Map[K, string]`-with-fresh-values local "MAPVS:", routing `emit_map_buffers_
+  free` to a new `__fern_map_free_vs` that freed the vals column via the existing
+  `__fern_str_arr_free` on x86 + arm64; wasm routed to its already-deep
+  `$__fern_map_release`). It compiled on all three backends and the SOUNDNESS
+  cases passed (no over-release / no corruption / aliased-value exclusion), and
+  the emitted asm carried the expected `__fern_map_free_vs` calls — **but the
+  value boxes still leaked**. Root-causing (helper-function churn — a map declared
+  directly in a loop is NOT freed per iteration, a separate pre-existing gap, so
+  the map must be built in a callee to be swept per call; and a `> 2000`-byte
+  boolean growth check because a raw `b2 - b1` exit code wraps mod 256 and 96000 %
+  256 == 0, which masked the leak as "flat" through several probes — a trap worth
+  remembering) showed the value column can't be the culprit: **the existing
+  SHALLOW `__fern_map_free` already leaks even an `Map[i32, i32]`'s keys/vals
+  buffers.** `__fern_map_new` allocs the empty keys/vals via `__fern_alloc_u8(0)`
+  and `__fern_map_set` grows them with `__fern_arr_push`; at reclaim
+  `__fern_map_free`'s `__fern_arr_dec` on each buffer is a **no-op** (it does not
+  reach the rc==1 free path — the buffer is either not rc-headed the way arr_dec
+  expects, or the map holds it at rc>1), so the buffers (and thus any string
+  elements inside them) are never returned to the freelist. The existing map-
+  reclaim tests only assert RESULTS (6 / 14 / 55), never heap flatness, so this
+  was uncaught. **Consequence:** the value deep-release is blocked on this deeper
+  fix — a `str_arr_free` element walk can't fire while the buffer itself never
+  hits rc==1. NEXT STEP for #4353 must FIRST make the register map's keys/vals
+  buffers reclaim (audit `__fern_alloc_u8` → `__fern_arr_push` rc handling: does
+  the grown buffer carry cap@[b-16]/rc@[b-8] and rc==1 at drop? if not, either
+  route map buffers through `__fern_arr_box` on first push or free them
+  unconditionally in `__fern_map_free` given the MAP sole-ownership gate), THEN
+  layer the string-value element walk on top (the cut-2 code, reverted here,
+  applies unchanged once buffers recycle). The non-working cut-2 patch was
+  reverted to keep the tree clean; this entry preserves the diagnosis so the
+  next attempt starts from the real blocker, not the value column.

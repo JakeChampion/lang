@@ -100,6 +100,43 @@ function main(): i32 {
     print(n.to_string());
     return 0;
 }`},
+		// Guard: the RETURN-position accumulator (the self-host compiler's
+		// AST-walker shape) — exempt from the forced copy (inPlacePushes) so
+		// the leak-mode self-compile stays O(N); the caller rebinds the
+		// threaded accumulator, so in-place vs copy is unobservable and all
+		// backends must agree with interp.
+		{"return_position_accumulator", `import "std/i32";
+function collect(acc: i32[], v: i32): i32[] {
+    return acc.append(v * 3);
+}
+function main(): i32 {
+    var acc: i32[] = [];
+    var i: i32 = 0;
+    while (i < 6) { acc = collect(acc, i); i = i + 1; }
+    var s: i32 = 0;
+    var j: i32 = 0;
+    while (j < acc.len()) { s = s + acc[j]; j = j + 1; }
+    print((s * 10 + acc.len()).to_string());
+    return 0;
+}`},
+		// Guard: the borrowed-param self-reassign (`xs = xs.append(i)` where
+		// xs is a plain param) — the other inPlacePushes exemption. The
+		// rebind means later reads see the appended value on every path.
+		{"param_self_reassign_threaded", `import "std/i32";
+function extend(xs: i32[], n: i32): i32[] {
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return xs;
+}
+function main(): i32 {
+    var a: i32[] = extend([], 4);
+    a = extend(a, 3);
+    var s: i32 = 0;
+    var j: i32 = 0;
+    while (j < a.len()) { s = s + a[j]; j = j + 1; }
+    print((s * 10 + a.len()).to_string());
+    return 0;
+}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
