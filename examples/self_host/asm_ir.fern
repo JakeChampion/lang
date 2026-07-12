@@ -121,6 +121,11 @@ pub function is_fern_helper(name: string): boolean {
         // routes it to $__fern_map_release (which additionally deep-drops string
         // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
         || name == "__fern_map_free"
+        // #4353: string-VALUE-column deep-release variant — frees the vals
+        // column via __fern_str_arr_free (each fresh value box + the buffer)
+        // instead of the shallow arr_dec; keys still shallow. Register-only;
+        // wasm_helper_symbol routes it to the already-deep $__fern_map_release.
+        || name == "__fern_map_free_vs"
         || name == "__fern_rc_is_unique"
         // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
         // when its cap matches, else freelists it and allocs fresh — so a reuse
@@ -1455,6 +1460,39 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
     s = s.write("    popq %rbx\n");
     s = s.write(".Lmapfree_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_map_free_vs(box) — #4353 string-VALUE-column deep-release. Identical
+    // to __fern_map_free but frees the VALUES buffer (box[8]) via
+    // __fn___fern_str_arr_free (rc==1-gated per-element __fern_str_free, then the
+    // buffer) so each fresh string value box is reclaimed, not just the vals
+    // buffer. Keys (box[0]) keep the shallow arr_dec (their string boxes leak one
+    // level — a follow-up). Called ONLY on irlower-proven Map[K, string] locals
+    // whose every value is fresh (slot MAPVS credit), so the map is the sole rc=1
+    // owner of each value. Same raw 16-byte box {keys@0, vals@8} + freelist-class-2
+    // box reclaim as __fern_map_free; %rbx holds the box across the two calls.
+    s = s.write("__fn___fern_map_free_vs:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");         // box
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lmapfvs_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");        // low-addr guard
+    s = s.write("    jb .Lmapfvs_ret\n");
+    s = s.write("    pushq %rbx\n");                 // save callee-saved
+    s = s.write("    movq %rax, %rbx\n");            // box
+    s = s.write("    movq (%rbx), %rax\n");          // keys = box[0]
+    s = s.write("    pushq %rax\n");                 // stack arg
+    s = s.write("    call __fn___fern_arr_dec\n");   // keys: shallow (elements leak)
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    movq 8(%rbx), %rax\n");         // vals = box[8]
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_str_arr_free\n"); // vals: DEEP string-element free
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
+    s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
+    s = s.write("    movq %rbx, 16(%r8)\n");         // freelist[2] = box
+    s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
+    s = s.write("    popq %rbx\n");
+    s = s.write(".Lmapfvs_ret:\n");
     s = s.write("    ret\n");
     // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
     // Gates the struct/enum-array field-drop's element walk (walk + free the

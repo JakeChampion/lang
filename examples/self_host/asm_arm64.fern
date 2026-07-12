@@ -5963,6 +5963,39 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x19, x30, [sp], #16\n");
         s = s.write(".Lmapfree_ret:\n");
         s = s.write("    ret\n");
+        // __fern_map_free_vs(box) — #4353 string-VALUE-column deep-release, the
+        // arm64 sibling of the x86-64 body. Identical to __fern_map_free but frees
+        // the VALUES buffer (box[8]) via __fn___fern_str_arr_free (rc==1-gated
+        // per-element string free, then the buffer) so each fresh string value box
+        // is reclaimed; keys (box[0]) keep the shallow arr_dec (their string boxes
+        // leak one level). Called ONLY on irlower-proven Map[K, string] locals
+        // whose every value is fresh (MAPVS credit) — the map is the sole rc=1
+        // owner of each value. x19 holds the box across the two calls.
+        s = s.write("__fn___fern_map_free_vs:\n");
+        s = s.write("    ldr x0, [sp]\n");                  // box
+        s = s.write("    cbz x0, .Lmapfvs_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Lmapfvs_ret\n");             // low-addr guard
+        s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
+        s = s.write("    mov x19, x0\n");                   // box
+        s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
+        s = s.write("    str x0, [sp, #-16]!\n");           // push stack arg (16-aligned)
+        s = s.write("    bl __fn___fern_arr_dec\n");        // keys: shallow (elements leak)
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_str_arr_free\n");   // vals: DEEP string-element free
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    adrp x3, __fern_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
+        s = s.write("    str x10, [x19]\n");                // *box = old head
+        s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
+        s = s.write("    mov x0, x19\n");                   // return box (caller drops)
+        s = s.write("    ldp x19, x30, [sp], #16\n");
+        s = s.write(".Lmapfvs_ret:\n");
+        s = s.write("    ret\n");
         s = s.write("__fn___fern_drop_arr_ptr:\n");
         s = s.write("    ret\n");
 
