@@ -533,6 +533,10 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			if id != nil {
+				// Keep a back-reference to the desugared methods so the
+				// formatter can re-emit the `impl { … }` grouping; the
+				// checker/codegen path still reads them from prog.Funcs.
+				id.Methods = methods
 				prog.Impls = append(prog.Impls, id)
 				// Impl methods are desugared into ordinary
 				// receiver-methods so modload + the checker's

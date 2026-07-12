@@ -2945,6 +2945,15 @@ type ImplDecl struct {
 	// orphan-rule check (the impl is legal only if Trait or Type is
 	// declared in this same module). Empty for single-file programs.
 	SourceModule string
+	// Methods holds the same desugared *FuncDecl values the parser also
+	// appends to Program.Funcs — kept here purely so the formatter can
+	// re-emit the `impl { … }` grouping (the checker/codegen path reads
+	// them from Program.Funcs as before, unaware of this back-reference).
+	// Each is the post-desugar form: `self` peeled into Receiver (or
+	// AssocType stamped) and `Self` substituted to the impl type, so the
+	// formatter renders the concrete type where the source wrote `Self`.
+	// Empty for impls parsed before this field existed / with no methods.
+	Methods []*FuncDecl
 }
 
 func (s *TraitDecl) Pos() Position { return s.P }
