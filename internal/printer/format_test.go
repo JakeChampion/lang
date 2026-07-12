@@ -469,6 +469,68 @@ function find(): Option[i32] { return None; }`)
 	}
 }
 
+// A generic struct declaration keeps its `[T]` type-parameter list.
+// Regression guard: the formatter used to drop the list entirely,
+// turning `struct Set[T]` into a non-generic `struct Set` whose `T`
+// field type no longer resolved (silently un-compilable output).
+func TestFormatGenericStructRoundTrip(t *testing.T) {
+	got := formatSrc(t, `struct Set[T] { xs: T[] }`)
+	if !strings.Contains(got, "struct Set[T] { xs: T[] }") {
+		t.Errorf("expected generic struct decl with [T]; got:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
+// A free generic function keeps its post-name type-parameter list,
+// including trait bounds and generic-trait bound arguments.
+func TestFormatGenericFreeFunctionRoundTrip(t *testing.T) {
+	for _, want := range []string{
+		"function id[T](x: T): T",
+		"function eq2[T: Eq + Display](a: T, b: T): boolean",
+		"function conv[T: From[i32]](x: T): T",
+	} {
+		src := want + " { return x; }"
+		got := formatSrc(t, src)
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s", want, got)
+		}
+		if again := formatSrc(t, got); got != again {
+			t.Errorf("format not idempotent for %q:\nfirst:\n%s\nsecond:\n%s", want, got, again)
+		}
+	}
+}
+
+// A generic *method* spells its type parameters in leading position,
+// before the receiver, so the receiver type can reference them. The
+// formatter previously dropped the clause, leaving an unbounded `T`
+// that failed to typecheck.
+func TestFormatGenericMethodRoundTrip(t *testing.T) {
+	src := `struct Box[T] { xs: T[] }
+pub function [T: Eq] (b: Box[T]) has(x: T): boolean { return false; }`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "function [T: Eq] (b: Box[T]) has(x: T): boolean") {
+		t.Errorf("expected leading-position method type params; got:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
+// An `own` (consuming) receiver keeps its `own` modifier through a
+// formatter pass — dropping it silently turned a consuming method into
+// a borrowing one.
+func TestFormatOwnReceiverRoundTrip(t *testing.T) {
+	got := formatSrc(t, `function (own self: Box) drop(): void {}`)
+	if !strings.Contains(got, "function (own self: Box) drop(): void") {
+		t.Errorf("expected `own` receiver preserved; got:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
 // f-strings round-trip through parse → format → parse: the
 // surface `f"..."` syntax survives a formatter pass instead of
 // collapsing to its desugared `+`-chain. Covers empty f-string,

@@ -2722,6 +2722,26 @@ func TestRunnerQuietModeExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/set_test.fern` covers std/set — the generic,
+// value-semantic Set[T] (membership, dedup, union/intersect/
+// difference, subset/equals) over both i32 and string elements. The
+// load-bearing case is `add is pure` (test 4): the value-semantics
+// contract that an operation never mutates its receiver. Passing
+// suite → exit 0; the TAP plan line is `1..12`.
+func TestRunnerSetExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/set_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/set", "ok 4 - add is pure", "1..12", "# pass 12", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
