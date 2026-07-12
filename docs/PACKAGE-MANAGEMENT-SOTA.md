@@ -67,10 +67,11 @@ all in the direction of *more* of the substrate existing:
 Also unchanged and load-bearing: module loading is intra-project
 only. `resolveImportPath` (`modload.go:556-575`) knows exactly two
 namespaces — `stdlib://` (embedded via `go:embed`) and
-importing-file-relative disk paths. There is no manifest, no
-lockfile, no remote fetch, no vendoring, no registry anywhere in
-shipping code. A package manager integrates with a greenfield
-surface, which is the best time to pick the design.
+importing-file-relative disk paths — plus, since this doc was first
+written, the `fern.toml` dependency namespace: the manifest + path-
+dependency slice is now implemented (see `PACKAGES.md`;
+`internal/manifest` + `resolveImport` in `internal/modload`). There
+is still no lockfile, remote fetch, vendoring, or registry.
 
 ## Resolution algorithms: the actual math
 
