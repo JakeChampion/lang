@@ -1249,6 +1249,45 @@ pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
     return out;
 }
 
+// `flatten(xss)` — concatenate a nested `T[][]` into one flat `T[]`,
+// preserving order (`flat_map` with the identity callback, but
+// structural — no closure). `flatten([[1,2],[],[3]])` → `[1,2,3]`.
+pub function flatten[T](xss: T[][]): T[] {
+    var out: T[] = [];
+    for xs in xss {
+        for x in xs { out = out.append(x); }
+    }
+    return out;
+}
+
+// `partition(xs, pred)` — split `xs` into `(kept, rejected)`: the first
+// array holds the elements satisfying `pred` (in order), the second the
+// rest (in order). `partition([1,2,3,4], is_even)` → `([2,4], [1,3])`.
+// A single pass, so `pred` runs exactly once per element.
+pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
+    var kept: T[] = [];
+    var rejected: T[] = [];
+    for x in xs {
+        if (pred(x)) { kept = kept.append(x); } else { rejected = rejected.append(x); }
+    }
+    return (kept, rejected);
+}
+
+// `scan(xs, init, f)` — the running accumulators of a left fold: element
+// `i` of the result is `f` applied cumulatively through `xs[0..=i]`, so
+// the output has the SAME length as `xs` (the seed `init` is not
+// emitted). `scan([1,2,3], 0, add)` → `[1,3,6]` (a generic `cumsum`).
+// The final element equals `fold(xs, init, f)`.
+pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
+    var out: A[] = [];
+    var acc: A = init;
+    for x in xs {
+        acc = f(acc, x);
+        out = out.append(acc);
+    }
+    return out;
+}
+
 // `intersperse(xs, sep)` — a fresh `T[]` with `sep` inserted between
 // each pair of adjacent elements (never before the first or after the
 // last). Structural (no callback), so it works for any element type.
@@ -1622,3 +1661,15 @@ pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean { return ends_
 // `target`, else `None`. The reverse-scan companion to the existing
 // string[] `.index_of`/`.position`, over any `T: cmp.Eq`.
 pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] { return index_of_last(xs, target); }
+
+// (No `T[][]` receiver method for `flatten` — array-receiver methods
+// must be element-polymorphic `(xs: T[])`, so a nested-array receiver
+// is rejected by E021. Call the free `flatten(xss)` form instead.)
+
+// `xs.partition(pred)` — method form of `partition`: `(kept, rejected)`
+// split by the predicate.
+pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) { return partition(xs, pred); }
+
+// `xs.scan(init, f)` — method form of `scan`: the running accumulators
+// of a left fold (same length as `xs`).
+pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] { return scan(xs, init, f); }

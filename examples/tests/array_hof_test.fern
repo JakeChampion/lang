@@ -87,6 +87,40 @@ function test_intersperse_strings(): test.TestOutcome {
     return test.assert_eq_array(xs.intersperse("-"), ["a", "-", "b", "-", "c"]);
 }
 
+function flatten_is_even(x: i32): boolean { return x % 2 == 0; }
+function flatten_add(a: i32, x: i32): i32 { return a + x; }
+
+function test_flatten(): test.TestOutcome {
+    // Nested arrays concatenate in order; inner empties vanish.
+    return test.assert_eq_array(array.flatten([[1, 2], [], [3, 4]]), [1, 2, 3, 4]);
+}
+
+function test_flatten_empty(): test.TestOutcome {
+    var empty: i32[][] = [];
+    return test.assert_eq(array.flatten(empty).len(), 0);
+}
+
+function test_partition(): test.TestOutcome {
+    // kept = matches (in order), rejected = the rest (in order).
+    var pr: (i32[], i32[]) = array.partition([1, 2, 3, 4, 5], flatten_is_even);
+    if (pr.1.len() != 3) { return test.fail("rejected len"); }
+    return test.assert_eq_array(pr.0, [2, 4]);
+}
+
+function test_partition_method(): test.TestOutcome {
+    var pr: (i32[], i32[]) = [1, 2, 3, 4].partition(flatten_is_even);
+    return test.assert_eq_array(pr.1, [1, 3]);
+}
+
+function test_scan(): test.TestOutcome {
+    // Running left fold; same length as input, final == fold.
+    return test.assert_eq_array(array.scan([1, 2, 3, 4], 0, flatten_add), [1, 3, 6, 10]);
+}
+
+function test_scan_method(): test.TestOutcome {
+    return test.assert_eq_array([5, 5, 5].scan(0, flatten_add), [5, 10, 15]);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array higher-order");
     r = r.it("flat_map",         test_flat_map());
@@ -101,5 +135,11 @@ function main(): i32 {
     r = r.it("intersperse single",  test_intersperse_single());
     r = r.it("intersperse empty",   test_intersperse_empty());
     r = r.it("intersperse strings", test_intersperse_strings());
+    r = r.it("flatten",           test_flatten());
+    r = r.it("flatten empty",     test_flatten_empty());
+    r = r.it("partition",         test_partition());
+    r = r.it("partition method",  test_partition_method());
+    r = r.it("scan",              test_scan());
+    r = r.it("scan method",       test_scan_method());
     return r.finish();
 }

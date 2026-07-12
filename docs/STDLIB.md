@@ -158,6 +158,15 @@ convention.
   `take`, `drop`, `all_non_empty`, `any_contains`,
   `count_str`, `all_starts_with`, `all_ends_with`,
   `sorted_str_asc`, `sorted_str_desc`, `join_with_last`
+- **generic `[T]` combinators** (free + method forms): `map`,
+  `filter`, `fold`, `reduce`, `any`, `all`, `find`, `position`,
+  `take`/`drop`/`take_while`/`drop_while`, `slice`, `chunks`,
+  `windows`, `zip`, `enumerate`, `reverse`, `intersperse`,
+  `flat_map`, `flatten` (`T[][]` → `T[]`), `partition`
+  (→ `(kept, rejected)`), `scan` (running left fold, same length
+  as input). Eq/Ord-bounded: `contains`, `index_of`,
+  `index_of_last`, `distinct`, `count`, `is_sorted`, `equal`,
+  `starts_with`/`ends_with`.
 
 ### `std/math`
 
