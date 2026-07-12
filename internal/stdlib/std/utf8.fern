@@ -191,7 +191,7 @@ pub function char_at(s: string, index: i32): Option[string] {
             None => { i = i + 1; valid = false; }
         }
         if (cp_idx == index) {
-            if (valid) { return Some(s[start : i]); }
+            if (valid) { return Some(s[start : i].to_owned()); }
             return Some(utf8_encode(65533));   // U+FFFD for a malformed byte
         }
         cp_idx = cp_idx + 1;
@@ -206,7 +206,7 @@ pub function char_at(s: string, index: i32): Option[string] {
 // byte slice `s[a:b]` — which would split multibyte characters and
 // produce invalid UTF-8. A single O(n) scan records the byte offsets
 // where the codepoint cursor crosses `start` and `end`.
-pub function substring(s: string, start: i32, end: i32): string {
+pub function substring(s: string, start: i32, end: i32): str {
     var n: i32 = s.len();
     var lo: i32 = start;
     if (lo < 0) { lo = 0; }

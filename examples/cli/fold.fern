@@ -33,12 +33,12 @@ function fold_line(line: string, width: i32, at_spaces: boolean): void {
     print(line);
     return;
   }
-  var rest: string = line;
+  var rest: str = line;
   while (rest.len() > width) {
     var brk: i32 = width;
     if (at_spaces) {
       // Prefer the last space within the first `width` columns.
-      var head: string = rest.take(width);
+      var head: str = rest.take(width);
       var sp: i32 = head.last_index_of(" ");
       if (sp > 0) {
         brk = sp + 1;

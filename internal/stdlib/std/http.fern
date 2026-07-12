@@ -189,7 +189,7 @@ pub function http_path_segments(path: string): string[] {
 // unchanged when there's no query. Companion to
 // http_path_segments when callers want the bare path
 // without splitting.
-pub function http_url_path_only(path: string): string {
+pub function http_url_path_only(path: string): str {
     var q: i32 = path.index_of("?");
     if (q < 0) { return path; }
     return path[0:q];
@@ -237,8 +237,8 @@ function __http_parse_request_line(line: string): Option[HttpRequest] {
     if (sp2 < 0) {
         return None;
     }
-    var method: string = line[0:sp1];
-    var path: string = line[sp1 + 1:sp1 + 1 + sp2];
+    var method: string = line[0:sp1].to_owned();
+    var path: string = line[sp1 + 1:sp1 + 1 + sp2].to_owned();
     return Some(HttpRequest {
         method: method,
         path: path,
@@ -272,7 +272,7 @@ function __parse_headers(block: string): HeaderMap {
         if (line.len() > 0) {
             var col: i32 = line.index_of(":");
             if (col > 0) {
-                var name: string = line[0:col];
+                var name: string = line[0:col].to_owned();
                 var value: string = line[col + 1:line.len()].trim().to_owned();
                 h = h.append(name, value);
             }
@@ -369,7 +369,7 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
     // Content-Length from it. `first_crlf + 2` skips the CRLF that
     // terminates the request line; `headers_end` is the start of the
     // `\r\n\r\n` separator, so the slice excludes the empty line.
-    var hdr_block: string = buf[first_crlf + 2:headers_end];
+    var hdr_block: str = buf[first_crlf + 2:headers_end];
     var req_headers: HeaderMap = __parse_headers(hdr_block);
     var content_length: i32 = 0;
     match (__http_content_length(req_headers)) {
@@ -391,7 +391,7 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
         Some(req) => {
             var body: string = "";
             if (content_length > 0) {
-                body = buf[headers_len:headers_len + content_length];
+                body = buf[headers_len:headers_len + content_length].to_owned();
             }
             return Some(HttpRequest {
                 method: req.method,

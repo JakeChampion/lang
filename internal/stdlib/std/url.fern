@@ -22,6 +22,8 @@
 // Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+import "std/string";
+
 import "core/map";
 
 function __url_unreserved(b: i32): boolean {
@@ -219,7 +221,7 @@ pub function url_parse(s: string): Option[Url] {
 
     var rest_start: i32 = 0;
     if (scheme_end >= 0) {
-        u = Url { ...u, scheme: s[0:scheme_end] };
+        u = Url { ...u, scheme: s[0:scheme_end].to_owned() };
         rest_start = scheme_end + 3;
     }
 
@@ -231,7 +233,7 @@ pub function url_parse(s: string): Option[Url] {
         i = i + 1;
     }
     if (frag_start < n) {
-        u = Url { ...u, fragment: s[frag_start+1:n] };
+        u = Url { ...u, fragment: s[frag_start+1:n].to_owned() };
     }
 
     // Find query '?' in [rest_start, frag_start).
@@ -242,7 +244,7 @@ pub function url_parse(s: string): Option[Url] {
         i = i + 1;
     }
     if (query_start < frag_start) {
-        u = Url { ...u, query: s[query_start+1:frag_start] };
+        u = Url { ...u, query: s[query_start+1:frag_start].to_owned() };
     }
 
     // Find authority end. With a scheme, scan for the first
@@ -280,15 +282,15 @@ pub function url_parse(s: string): Option[Url] {
                 if (port > 65535) { port = 0; break; }
                 i = i + 1;
             }
-            u = Url { ...u, host: s[rest_start:colon], port: port };
+            u = Url { ...u, host: s[rest_start:colon].to_owned(), port: port };
         } else {
-            u = Url { ...u, host: s[rest_start:authority_end] };
+            u = Url { ...u, host: s[rest_start:authority_end].to_owned() };
         }
     }
 
     // Path: [authority_end, query_start).
     if (authority_end < query_start) {
-        u = Url { ...u, path: s[authority_end:query_start] };
+        u = Url { ...u, path: s[authority_end:query_start].to_owned() };
     }
 
     return Some(u);

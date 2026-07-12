@@ -216,7 +216,7 @@ pub function parse_filter_from_args(argv: string[]): string {
             return argv[i + 1];
         }
         if (a.starts_with("--filter=")) {
-            return a[9:a.len()];
+            return a[9:a.len()].to_owned();
         }
         i = i + 1;
     }
@@ -1528,7 +1528,7 @@ pub function assert_contains_in_order(haystack: string, needles: string[]): Test
     var cursor: i32 = 0;
     var i: i32 = 0;
     while (i < needles.len()) {
-        var rest: string = haystack[cursor:haystack.len()];
+        var rest: str = haystack[cursor:haystack.len()];
         var idx: i32 = rest.index_of(needles[i]);
         if (idx < 0) {
             return Fail("assert_contains_in_order: \"" + needles[i] +

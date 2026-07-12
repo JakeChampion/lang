@@ -126,10 +126,10 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
             no_more = true;
             i = i + 1;
         } else if (a.starts_with("--")) {
-            var body: string = a[2:a.len()];
+            var body: str = a[2:a.len()];
             var eq: i32 = body.index_of("=");
-            var name: string = body;
-            var inline_val: string = "";
+            var name: str = body;
+            var inline_val: str = "";
             var has_inline: boolean = false;
             if (eq >= 0) {
                 name = body[0:eq];
@@ -166,14 +166,14 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
             // valued option consumes the rest of the token as its
             // value (`-n5`) or, when it's the last character, the
             // next argv token (`-n 5`).
-            var cluster: string = a[1:a.len()];
+            var cluster: str = a[1:a.len()];
             var j: i32 = 0;
             while (j < cluster.len()) {
-                var cname: string = cluster[j:j + 1];
+                var cname: str = cluster[j:j + 1];
                 match (__cli_find_short(s, cname)) {
                     Some(f) => {
                         if (f.takes_value) {
-                            var glued: string = cluster[j + 1:cluster.len()];
+                            var glued: str = cluster[j + 1:cluster.len()];
                             if (glued.len() > 0) {
                                 opts = opts.insert(f.long, glued);
                             } else if (i + 1 < argv.len()) {
