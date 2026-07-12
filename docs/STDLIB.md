@@ -179,6 +179,9 @@ package, and re-encodes.
 - `to_upper(s)` / `to_lower(s)` — whole-string mapping
 - `to_upper_char(cp)` / `to_lower_char(cp)` — single code point
 - `eq_ignore_case(a, b)` — case-insensitive equality (simple fold)
+- **character classes** (over a code point, via range binary search):
+  `is_letter`, `is_digit` (Nd), `is_alnum`, `is_whitespace`,
+  `is_upper`, `is_lower`
 
 Caveats: SIMPLE mappings only (multi-code-point expansions like
 `ß`→`SS` are left unchanged, matching Go); not locale-aware. The
