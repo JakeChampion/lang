@@ -5996,6 +5996,60 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x19, x30, [sp], #16\n");
         s = s.write(".Lmapfvs_ret:\n");
         s = s.write("    ret\n");
+        // __fern_map_free_ks(box) — #4353 string-KEY-column deep-release (arm64).
+        // Keys buffer (box[0]) via __fn___fern_str_arr_free; vals (box[8]) shallow.
+        s = s.write("__fn___fern_map_free_ks:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    cbz x0, .Lmapfks_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Lmapfks_ret\n");
+        s = s.write("    stp x19, x30, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_str_arr_free\n");   // keys: DEEP
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_arr_dec\n");        // vals: shallow
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    adrp x3, __fern_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x10, [x3, #16]\n");
+        s = s.write("    str x10, [x19]\n");
+        s = s.write("    str x19, [x3, #16]\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    ldp x19, x30, [sp], #16\n");
+        s = s.write(".Lmapfks_ret:\n");
+        s = s.write("    ret\n");
+        // __fern_map_free_kvs(box) — #4353 both-columns deep-release (arm64). Both
+        // keys (box[0]) and vals (box[8]) buffers via __fn___fern_str_arr_free.
+        s = s.write("__fn___fern_map_free_kvs:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    cbz x0, .Lmapfkvs_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Lmapfkvs_ret\n");
+        s = s.write("    stp x19, x30, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_str_arr_free\n");   // keys: DEEP
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_str_arr_free\n");   // vals: DEEP
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    adrp x3, __fern_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x10, [x3, #16]\n");
+        s = s.write("    str x10, [x19]\n");
+        s = s.write("    str x19, [x3, #16]\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    ldp x19, x30, [sp], #16\n");
+        s = s.write(".Lmapfkvs_ret:\n");
+        s = s.write("    ret\n");
         s = s.write("__fn___fern_drop_arr_ptr:\n");
         s = s.write("    ret\n");
 
