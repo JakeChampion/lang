@@ -66,6 +66,40 @@ function test_is_odd(): test.TestOutcome {
     return test.assert_true((7 as i64).is_odd() && !(10 as i64).is_odd());
 }
 
+function test_signum(): test.TestOutcome {
+    if ((5 as i64).signum() != (1 as i64)) { return test.fail("positive"); }
+    if (((0 as i64) - 5).signum() != (0 as i64) - 1) { return test.fail("negative"); }
+    return test.assert_eq((0 as i64).signum(), 0 as i64);
+}
+
+function test_sign_predicates(): test.TestOutcome {
+    if (!(5 as i64).is_positive() || (0 as i64).is_positive()) { return test.fail("is_positive"); }
+    if (!((0 as i64) - 5).is_negative()) { return test.fail("is_negative"); }
+    return test.assert_true((0 as i64).is_zero() && !(1 as i64).is_zero());
+}
+
+function test_saturating(): test.TestOutcome {
+    var MAX: i64 = 9223372036854775807 as i64;
+    var MIN: i64 = (0 as i64) - 9223372036854775807 - 1;
+    // Overflow clamps to the bound rather than wrapping.
+    if (MAX.saturating_add(1 as i64) != MAX) { return test.fail("add overflow"); }
+    if (MIN.saturating_sub(1 as i64) != MIN) { return test.fail("sub underflow"); }
+    return test.assert_eq((10 as i64).saturating_add(5 as i64), 15 as i64);
+}
+
+function test_checked(): test.TestOutcome {
+    var MAX: i64 = 9223372036854775807 as i64;
+    // Overflow → None; in-range → Some.
+    match (MAX.checked_add(1 as i64)) {
+        Some(v) => { return test.fail("expected None on overflow"); },
+        None => {},
+    }
+    match ((3 as i64).checked_add(4 as i64)) {
+        Some(v) => { return test.assert_eq(v, 7 as i64); },
+        None => { return test.fail("expected Some(7)"); },
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i64");
     r = r.it("abs",                test_abs());
@@ -82,5 +116,9 @@ function main(): i32 {
     r = r.it("to_string negative", test_to_string_neg());
     r = r.it("is_even",            test_is_even());
     r = r.it("is_odd",             test_is_odd());
+    r = r.it("signum",             test_signum());
+    r = r.it("sign predicates",    test_sign_predicates());
+    r = r.it("saturating",         test_saturating());
+    r = r.it("checked",            test_checked());
     return r.finish();
 }

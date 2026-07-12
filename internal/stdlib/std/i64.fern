@@ -83,3 +83,55 @@ pub function (n: i64) to_string(): string {
 // matching the i32 versions in std/i32.
 pub function (n: i64) is_even(): boolean { return n % (2 as i64) == (0 as i64); }
 pub function (n: i64) is_odd(): boolean  { return n % (2 as i64) != (0 as i64); }
+
+// `(n: i64) signum()` — -1 / 0 / 1 indicating the sign, with
+// `is_positive` / `is_negative` / `is_zero` boolean companions.
+// Matches Rust i64::signum. The i64 siblings of the std/i32
+// versions — the wide type is the one CLI / edge code reaches for
+// (timestamps, byte counts, durations).
+pub function (n: i64) signum(): i64 {
+    if (n > (0 as i64)) { return 1 as i64; }
+    if (n < (0 as i64)) { return (0 as i64) - (1 as i64); }
+    return 0 as i64;
+}
+
+pub function (n: i64) is_positive(): boolean { return n > (0 as i64); }
+pub function (n: i64) is_negative(): boolean { return n < (0 as i64); }
+pub function (n: i64) is_zero(): boolean     { return n == (0 as i64); }
+
+// === i64 saturating / checked arithmetic ===
+//
+// `saturating_*` clamps to i64::MAX / i64::MIN instead of
+// wrapping; `checked_*` returns None on overflow so the caller
+// can decide. Overflow detection is sign-bit-based (same shape as
+// the std/i32 versions): an add of two same-sign operands that
+// flips sign overflowed, and a sub whose operands differ in sign
+// from a wrong-signed result overflowed.
+
+pub function (n: i64) saturating_add(other: i64): i64 {
+    var r: i64 = n + other;
+    if (n > (0 as i64) && other > (0 as i64) && r < (0 as i64)) { return 9223372036854775807 as i64; }
+    if (n < (0 as i64) && other < (0 as i64) && r >= (0 as i64)) { return (0 as i64) - 9223372036854775807 - 1; }
+    return r;
+}
+
+pub function (n: i64) saturating_sub(other: i64): i64 {
+    var r: i64 = n - other;
+    if (n >= (0 as i64) && other < (0 as i64) && r < (0 as i64)) { return 9223372036854775807 as i64; }
+    if (n < (0 as i64) && other > (0 as i64) && r > (0 as i64)) { return (0 as i64) - 9223372036854775807 - 1; }
+    return r;
+}
+
+pub function (n: i64) checked_add(other: i64): Option[i64] {
+    var r: i64 = n + other;
+    if (n > (0 as i64) && other > (0 as i64) && r < (0 as i64)) { return None; }
+    if (n < (0 as i64) && other < (0 as i64) && r >= (0 as i64)) { return None; }
+    return Some(r);
+}
+
+pub function (n: i64) checked_sub(other: i64): Option[i64] {
+    var r: i64 = n - other;
+    if (n >= (0 as i64) && other < (0 as i64) && r < (0 as i64)) { return None; }
+    if (n < (0 as i64) && other > (0 as i64) && r > (0 as i64)) { return None; }
+    return Some(r);
+}
