@@ -242,6 +242,8 @@ escape codes; nesting composes because every wrap ends in a full reset.
 - **Foreground:** `black`/`red`/`green`/`yellow`/`blue`/`magenta`/`cyan`/
   `white` (+ `bright_*` variants).
 - **Background:** `bg_black` … `bg_white`.
+- **256-colour:** `fg_256(n, s)` / `bg_256(n, s)` (xterm palette 0–255).
+- **Truecolour (24-bit):** `fg_rgb(r, g, b, s)` / `bg_rgb(r, g, b, s)`.
 - **Styles:** `bold`, `dim`, `italic`, `underline`, `reverse`,
   `strikethrough`.
 - `strip(s)` — remove every SGR sequence again (for display-width

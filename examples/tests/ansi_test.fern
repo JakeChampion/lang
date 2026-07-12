@@ -39,6 +39,14 @@ function test_codes_emitted(): test.TestOutcome {
     return test.assert_eq(ansi.strip(ansi.strip(ansi.yellow("dup"))), "dup");
 }
 
+function test_256_and_truecolor(): test.TestOutcome {
+    // 256-colour and 24-bit truecolour wrap + strip like the named ones.
+    if (ansi.strip(ansi.fg_256(208, "hi")) != "hi") { return test.fail("fg_256"); }
+    if (ansi.strip(ansi.bg_256(21, "x")) != "x") { return test.fail("bg_256"); }
+    if (ansi.strip(ansi.fg_rgb(255, 136, 0, "orange")) != "orange") { return test.fail("fg_rgb"); }
+    return test.assert_eq(ansi.strip(ansi.bg_rgb(0, 0, 0, "y")), "y");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/ansi");
     r = r.it("strip roundtrip",       test_strip_roundtrip());
@@ -46,5 +54,6 @@ function main(): i32 {
     r = r.it("styles",                test_styles());
     r = r.it("custom sgr",            test_custom_sgr());
     r = r.it("codes emitted",         test_codes_emitted());
+    r = r.it("256 + truecolour",      test_256_and_truecolor());
     return r.finish();
 }

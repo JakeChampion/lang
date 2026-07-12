@@ -16,6 +16,11 @@
 // POSIX terminal / xterm SGR only. The ESC byte (0x1B) is built from a
 // byte array since Fern string literals don't decode a `\x1b` escape.
 
+// The 256-colour / truecolour helpers stringify their numeric channel
+// via (i32) `.to_string()`; declare std/i32 so it registers under
+// no-prelude.
+import "std/i32";
+
 // __esc() — the ESC (0x1B) control byte as a one-character string.
 function __esc(): string {
     var b: u8[] = [27 as u8];
@@ -68,6 +73,38 @@ pub function italic(s: string): string        { return sgr("3", s); }
 pub function underline(s: string): string     { return sgr("4", s); }
 pub function reverse(s: string): string       { return sgr("7", s); }
 pub function strikethrough(s: string): string { return sgr("9", s); }
+
+// === 256-colour palette (SGR 38;5;n / 48;5;n) ===
+//
+// The xterm 256-colour cube: 0–15 the classic + bright colours, 16–231
+// a 6×6×6 RGB cube, 232–255 a greyscale ramp. `n` is used as given (no
+// clamp) — callers pass a value in 0–255.
+
+// `fg_256(n, s)` — foreground from the 256-colour palette.
+pub function fg_256(n: i32, s: string): string {
+    return sgr("38;5;" + n.to_string(), s);
+}
+
+// `bg_256(n, s)` — background from the 256-colour palette.
+pub function bg_256(n: i32, s: string): string {
+    return sgr("48;5;" + n.to_string(), s);
+}
+
+// === Truecolour / 24-bit RGB (SGR 38;2;r;g;b / 48;2;r;g;b) ===
+//
+// Direct 24-bit colour for terminals that support it. Channels are used
+// as given (callers pass 0–255 each); pair with a hex parser or
+// std/math.pack_rgb upstream.
+
+// `fg_rgb(r, g, b, s)` — 24-bit foreground colour.
+pub function fg_rgb(r: i32, g: i32, b: i32, s: string): string {
+    return sgr("38;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string(), s);
+}
+
+// `bg_rgb(r, g, b, s)` — 24-bit background colour.
+pub function bg_rgb(r: i32, g: i32, b: i32, s: string): string {
+    return sgr("48;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string(), s);
+}
 
 // `strip(s)` — remove every SGR escape sequence (`ESC [ … m`) from `s`,
 // leaving the plain text. Walks byte-by-byte so multi-byte UTF-8
