@@ -8089,6 +8089,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x19, x0\n");           // mapbox
         s = s.write("    mov x20, x1\n");           // key
         s = s.write("    mov x21, x2\n");           // val
+        // x24 = kconsume (the incoming KEY is a fresh sole-owned string temp, from
+        // irlower o.width bit 1). x24 is callee-saved (already stp'd) and otherwise
+        // unused here, so it survives the probe loop's __fern_str_eq calls without
+        // extra saves; reloaded at .Lms_found to free the DISCARDED new key on an
+        // overwrite (the arm64 twin of the x86-IR #4881 fix — a recurring computed
+        // key, e.g. word-count `m.set(word, n)`, otherwise leaks one key box each).
+        s = s.write("    mov x24, x4\n");           // kconsume
         s = s.write("    ldr x22, [x19]\n");        // keys arr
         s = s.write("    mov x23, #0\n");           // i
         s = s.write("    cbnz x3, .Lms_loop_i32\n"); // keykind (1 = i32)
@@ -8117,6 +8124,17 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldr x9, [x19, #8]\n");      // values arr
         s = s.write("    add x10, x23, #1\n");
         s = s.write("    str x21, [x9, x10, lsl #3]\n");  // values[i+1] = val
+        // Overwrite keeps the EXISTING key; the incoming key x20 is discarded. When
+        // it is a fresh sole-owned temp (kconsume), free it via the rc-aware
+        // __fern_str_free (a literal's .rodata data / an rc>1 aliased key are handled
+        // by str_free's guards). str_free clobbers only x0-x3/x9/x10/w4 and preserves
+        // x19/x20 (callee-saved), so the mapbox return is intact. An aliased key
+        // (kconsume 0) is left untouched — its source local's sweep owns it.
+        s = s.write("    cbz x24, .Lms_found_nokf\n");
+        s = s.write("    str x20, [sp, #-16]!\n");   // discarded fresh key (16-byte aligned push)
+        s = s.write("    bl __fn___fern_str_free\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write(".Lms_found_nokf:\n");
         s = s.write("    b .Lms_ret\n");
         s = s.write(".Lms_append:\n");
         s = s.write("    ldr x0, [x19]\n");

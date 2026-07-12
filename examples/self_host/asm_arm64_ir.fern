@@ -785,9 +785,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // unconditionally, so no need is set). Push x0 for the drop.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_sleep_ms\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 125) {  // map_set
-            // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind).
+            // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=kconsume).
             s = s.need("maps");
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            // x4 = kconsume: the KEY arg is a fresh sole-owned string temp (o.width
+            // bit 1, from irlower's is_fresh_str_temp). map_set frees the discarded
+            // key on an overwrite so a recurring computed key doesn't leak (the arm64
+            // twin of the x86-IR fix). i32/interned keys are never fresh → x4=0 →
+            // old behaviour, so the compiler's own maps + fixpoint are unaffected.
+            if (o.width == 2 || o.width == 3) { s = s.write("    mov x4, #1\n"); } else { s = s.write("    mov x4, #0\n"); }
             s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 126) {  // map_len
             // pop map; len = keys-array length ([[map]]).
