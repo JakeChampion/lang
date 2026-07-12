@@ -67,30 +67,65 @@ func Fetch(url, hash string) (string, error) {
 	if present {
 		return dir, nil
 	}
-	resp, err := http.Get(url)
+	raw, err := download(url)
 	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", url, err)
+		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch %s: HTTP %s", url, resp.Status)
-	}
-	// Bound the read (64 MiB) so a hostile mirror can't exhaust disk; a
-	// legitimate archive that large should be split anyway.
-	const maxArchive = 64 << 20
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxArchive+1))
-	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", url, err)
-	}
-	if len(raw) > maxArchive {
-		return "", fmt.Errorf("fetch %s: archive exceeds %d bytes", url, maxArchive)
-	}
-	sum := sha256.Sum256(raw)
-	got := "sha256:" + hex.EncodeToString(sum[:])
+	got := HashBytes(raw)
 	if got != hash {
 		return "", fmt.Errorf("fetch %s: hash mismatch — manifest declares %s, server sent %s; refusing to unpack", url, hash, got)
 	}
 	return dir, unpackInto(dir, raw)
+}
+
+// FetchUnverified downloads the archive at url, computes its sha256, and
+// unpacks it into the store under that computed hash — the Zig-style
+// "fetch and tell me the hash" flow behind `fern -add --url` (the user
+// has no hash yet; `add` records the one this returns into the
+// manifest, and every later `fern -fetch` verifies against it). Returns
+// the `sha256:<hex>` hash and the unpacked directory.
+func FetchUnverified(url string) (hash, dir string, err error) {
+	raw, err := download(url)
+	if err != nil {
+		return "", "", err
+	}
+	hash = HashBytes(raw)
+	dir, present, err := Dir(hash)
+	if err != nil {
+		return "", "", err
+	}
+	if present {
+		return hash, dir, nil
+	}
+	return hash, dir, unpackInto(dir, raw)
+}
+
+// HashBytes returns the `sha256:<hex>` content hash of b.
+func HashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// download fetches url's body, bounded to 64 MiB so a hostile mirror
+// can't exhaust disk (a legitimate archive that large should be split).
+func download(url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: HTTP %s", url, resp.Status)
+	}
+	const maxArchive = 64 << 20
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxArchive+1))
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
+	}
+	if len(raw) > maxArchive {
+		return nil, fmt.Errorf("fetch %s: archive exceeds %d bytes", url, maxArchive)
+	}
+	return raw, nil
 }
 
 // unpackInto unpacks verified .tar.gz bytes into dir, atomically: a

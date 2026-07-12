@@ -130,3 +130,31 @@ func TestDirBadHashScheme(t *testing.T) {
 		t.Error("non-sha256 hash should error")
 	}
 }
+
+// FetchUnverified downloads, computes the hash, and stores under it —
+// the `fern -add --url` flow. The returned hash matches HashBytes of the
+// served archive, and a later verified Fetch against that hash hits the
+// cache without contacting the server.
+func TestFetchUnverifiedComputesHash(t *testing.T) {
+	t.Setenv("FERN_CACHE_DIR", t.TempDir())
+	archive := tarGz(t, map[string]string{"lib.fern": "pub function f(): i32 { return 1; }"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(archive)
+	}))
+	defer srv.Close()
+	hash, dir, err := FetchUnverified(srv.URL + "/pkg.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash != hashOf(archive) {
+		t.Fatalf("hash = %q, want %q", hash, hashOf(archive))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lib.fern")); err != nil {
+		t.Fatalf("not unpacked: %v", err)
+	}
+	// The recorded hash now verifies against a normal Fetch, server down.
+	srv.Close()
+	if _, err := Fetch(srv.URL+"/pkg.tar.gz", hash); err != nil {
+		t.Fatalf("verified fetch of the just-added hash should hit cache: %v", err)
+	}
+}
