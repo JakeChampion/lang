@@ -5084,7 +5084,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (!expr_is_f64(b.right, s) && infer_expr_width(b.right, s) != 64) {
                     fr = fr.emit(ir.op_i32_to_f64());
                 }
-                return fr.emit(ir.op_fbin(fk));
+                fr = fr.emit(ir.op_fbin(fk));
+                // f32 arithmetic rounds its result to single precision: f32
+                // shares the 8-byte f64 slot, so fadd/fsub/fmul/fdiv compute at
+                // DOUBLE precision, but native gives f32 a true 4-byte slot and
+                // rounds after every op (`fadd s`-class). Round via the
+                // f32_bits/f32_from_bits round-trip (demote → promote) when the
+                // op is arithmetic — a comparison (is_fcmp_kind) yields an i32
+                // bool that must NOT be rounded — and at least one operand is
+                // f32. Idempotent with a later `as f32` cast. (#4366 — the
+                // arithmetic sibling of the `as f32` cast rounding.)
+                if (!is_fcmp_kind(fk) && (expr_is_f32(b.left, s) || expr_is_f32(b.right, s))) {
+                    fr = fr.emit(ir.op_f32_bits());
+                    fr = fr.emit(ir.op_f32_from_bits());
+                }
+                return fr;
             }
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
