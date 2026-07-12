@@ -1,0 +1,357 @@
+// std/peg — a PEG (Parsing Expression Grammar) matcher.
+//
+// Plan item C1 of docs/NICHE-BORROWS-PLAN.md: Janet, Rebol/Red, and
+// Raku independently converged on grammars-in-the-stdlib as the
+// primary text-processing tool — composable, readable, no
+// catastrophic backtracking, and (unlike std/regex, which stays the
+// right tool for one-line matches) with named CAPTURES and named
+// recursive rules for structured formats: config lines, HTTP request
+// lines, routing patterns, CSV-ish records.
+//
+// The pattern algebra is the `Pattern` enum — variants are the API,
+// there is no pattern-string syntax to learn or escape:
+//
+//   PLit("ab")         the literal string
+//   PAny               any single byte
+//   PRange(lo, hi)     one byte in [lo, hi] (inclusive, byte values)
+//   PSet("+-*/")       one byte from the set
+//   PNotSet("\n")      one byte NOT in the set
+//   PSeq([p1, p2, …])  all in order
+//   PChoice([p1, …])   ORDERED choice — first alternative that
+//                      matches wins (PEG semantics: no ambiguity,
+//                      no backtracking into a committed choice)
+//   PStar(p)           zero or more (greedy, never backtracks)
+//   PPlus(p)           one or more
+//   POpt(p)            zero or one
+//   PNot(p)            negative lookahead — succeeds (consuming
+//                      nothing) iff p does NOT match here
+//   PAnd(p)            positive lookahead — zero-width match of p
+//   PRef("rule")       invoke a named rule of the grammar
+//   PCap("name", p)    match p, capture the matched text as "name"
+//   PEof               succeeds only at end of input
+//
+// A `Grammar` is a Map from rule names to Patterns plus a start
+// rule; `peg_grammar` validates it (start rule + every PRef must
+// resolve) and returns `Result[Grammar, string]`. Matching:
+//
+//   let Ok(g) = peg.peg_grammar(rules, "line") else { … };
+//   var r: peg.PegResult = peg.peg_match(g, input);
+//   if (r.ok) { … r.pos … r.caps.get("key") … }
+//
+// `peg_match` anchors at position 0 and succeeds as soon as the
+// start pattern matches — it does NOT require consuming the whole
+// input; end a rule with `PEof` for that. On failure, `PegResult.pos`
+// is the FURTHEST byte position any alternative reached — the
+// natural "syntax error near byte N" report. Captures are collected
+// only from the branches that end up on the successful parse
+// (backtracked alternatives leave nothing behind); a capture name
+// matched repeatedly (e.g. under PStar) keeps its LAST occurrence.
+//
+// Bounds (TigerStyle): rule invocations deeper than 8192 fail the
+// match rather than hanging — LEFT-RECURSIVE grammars therefore
+// fail fast instead of looping; rewrite with repetition (PStar /
+// PPlus), the PEG-native shape. A PStar whose operand matches
+// without consuming input stops rather than spinning.
+//
+// Matching is on raw bytes (like std/regex): multi-byte UTF-8 is
+// matched byte-wise, which is exactly right for the ASCII-shaped
+// formats above.
+
+import "core/map";
+
+// Pattern is the pattern algebra — see the module header for the
+// meaning of each variant. Variants are the public construction API.
+pub enum Pattern {
+    PLit(string),
+    PAny,
+    PRange(i32, i32),
+    PSet(string),
+    PNotSet(string),
+    PSeq(Pattern[]),
+    PChoice(Pattern[]),
+    PStar(Pattern),
+    PPlus(Pattern),
+    POpt(Pattern),
+    PNot(Pattern),
+    PAnd(Pattern),
+    PRef(string),
+    PCap(string, Pattern),
+    PEof
+}
+
+// Grammar pairs the rule table with the start rule. Build via
+// peg_grammar (which validates) rather than the literal.
+pub struct Grammar { rules: Map[string, Pattern], start: string }
+
+// PegResult is what matching returns. ok=true: the start pattern
+// matched anchored at 0 and `pos` is the first byte AFTER the match
+// (input.len() when the grammar ends in PEof). ok=false: `pos` is
+// the furthest position reached before failing, and caps is empty.
+pub struct PegResult { ok: boolean, pos: i32, caps: Map[string, string] }
+
+// PegState threads the matcher's bookkeeping FUNCTIONALLY (struct
+// fields are immutable — every change builds a new state). The
+// capture trail is three parallel arrays (name / start / end); a
+// failed alternative simply resumes from the pre-attempt state
+// binding, so backtracking needs no undo. `furthest` is the max
+// position any branch reached — merged across failures for error
+// reporting.
+struct PegState { tn: string[], ts: i32[], te: i32[], furthest: i32 }
+
+// __peg_fail records `pos` into the furthest-failure watermark and
+// returns the failure sentinel. Every failing arm routes through
+// here so PegResult.pos is meaningful on ok=false.
+function __peg_fail(st: PegState, pos: i32): (i32, PegState) {
+    if (pos > st.furthest) {
+        return (0 - 1, PegState { ...st, furthest: pos });
+    }
+    return (0 - 1, st);
+}
+
+// __peg_merge_furthest carries a failed attempt's watermark into the
+// state a backtracking construct resumes from (trail restored, the
+// furthest mark kept).
+function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
+    if (from.furthest > keep.furthest) {
+        return PegState { ...keep, furthest: from.furthest };
+    }
+    return keep;
+}
+
+// __peg_run matches pattern `p` at `pos`, returning (newPos, state):
+// newPos >= 0 on success, -1 on failure. `depth` counts PRef
+// expansions only (structural recursion into sub-patterns is finite
+// by construction; rule references are what can cycle).
+function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32): (i32, PegState) {
+    match (p) {
+        PLit(s) => {
+            var n: i32 = s.len();
+            if (pos + n > input.len()) { return __peg_fail(st, pos); }
+            var i: i32 = 0;
+            while (i < n) {
+                if (input[pos + i] != s[i]) { return __peg_fail(st, pos); }
+                i = i + 1;
+            }
+            return (pos + n, st);
+        },
+        PAny => {
+            if (pos >= input.len()) { return __peg_fail(st, pos); }
+            return (pos + 1, st);
+        },
+        PRange(lo, hi) => {
+            if (pos >= input.len()) { return __peg_fail(st, pos); }
+            var c: i32 = input[pos];
+            if (c < lo || c > hi) { return __peg_fail(st, pos); }
+            return (pos + 1, st);
+        },
+        PSet(cs) => {
+            if (pos >= input.len()) { return __peg_fail(st, pos); }
+            var c: i32 = input[pos];
+            var i: i32 = 0;
+            while (i < cs.len()) {
+                if (cs[i] == c) { return (pos + 1, st); }
+                i = i + 1;
+            }
+            return __peg_fail(st, pos);
+        },
+        PNotSet(cs) => {
+            if (pos >= input.len()) { return __peg_fail(st, pos); }
+            var c: i32 = input[pos];
+            var i: i32 = 0;
+            while (i < cs.len()) {
+                if (cs[i] == c) { return __peg_fail(st, pos); }
+                i = i + 1;
+            }
+            return (pos + 1, st);
+        },
+        PSeq(ps) => {
+            var cur: i32 = pos;
+            var s2: PegState = st;
+            var i: i32 = 0;
+            while (i < ps.len()) {
+                var (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth);
+                if (r < 0) { return (r, s3); }
+                cur = r;
+                s2 = s3;
+                i = i + 1;
+            }
+            return (cur, s2);
+        },
+        PChoice(ps) => {
+            var s2: PegState = st;
+            var i: i32 = 0;
+            while (i < ps.len()) {
+                var (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth);
+                if (r >= 0) { return (r, s3); }
+                // Failed alternative: resume from the pre-attempt
+                // trail, keeping only the furthest watermark.
+                s2 = __peg_merge_furthest(s2, s3);
+                i = i + 1;
+            }
+            return __peg_fail(s2, pos);
+        },
+        PStar(sub) => {
+            var cur: i32 = pos;
+            var s2: PegState = st;
+            while (true) {
+                var (r, s3) = __peg_run(g, sub, input, cur, s2, depth);
+                if (r < 0) { return (cur, __peg_merge_furthest(s2, s3)); }
+                if (r == cur) { return (cur, s3); }  // nullable operand: stop, don't spin
+                cur = r;
+                s2 = s3;
+            }
+            return (cur, s2);
+        },
+        PPlus(sub) => {
+            var (first, s2) = __peg_run(g, sub, input, pos, st, depth);
+            if (first < 0) { return (first, s2); }
+            return __peg_run(g, PStar(sub), input, first, s2, depth);
+        },
+        POpt(sub) => {
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            if (r >= 0) { return (r, s2); }
+            return (pos, __peg_merge_furthest(st, s2));
+        },
+        PNot(sub) => {
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            if (r >= 0) { return __peg_fail(st, pos); }
+            // Note: a failure INSIDE a negative lookahead is the
+            // pattern succeeding — don't let the probe's watermark
+            // pollute error positions.
+            return (pos, st);
+        },
+        PAnd(sub) => {
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            if (r < 0) { return (r, s2); }
+            // Zero-width: keep captures from the lookahead's trail
+            // discarded — the text isn't consumed, so a capture
+            // spanning it would overlap whatever consumes it next.
+            return (pos, st);
+        },
+        PRef(name) => {
+            if (depth >= 8192) { return __peg_fail(st, pos); }
+            match (g.rules.get(name)) {
+                Some(rp) => { return __peg_run(g, rp, input, pos, st, depth + 1); },
+                None => { return __peg_fail(st, pos); }
+            }
+        },
+        PCap(name, sub) => {
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            if (r < 0) { return (r, s2); }
+            return (r, PegState {
+                tn: s2.tn.append(name),
+                ts: s2.ts.append(pos),
+                te: s2.te.append(r),
+                furthest: s2.furthest
+            });
+        },
+        PEof => {
+            if (pos == input.len()) { return (pos, st); }
+            return __peg_fail(st, pos);
+        }
+    }
+    return __peg_fail(st, pos);
+}
+
+// __peg_check_refs walks a pattern and returns "" when every PRef
+// resolves in `rules`, else the first unknown rule name.
+function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
+    match (p) {
+        PSeq(ps) => {
+            var i: i32 = 0;
+            while (i < ps.len()) {
+                var bad: string = __peg_check_refs(ps[i], rules);
+                if (bad.len() > 0) { return bad; }
+                i = i + 1;
+            }
+            return "";
+        },
+        PChoice(ps) => {
+            var i: i32 = 0;
+            while (i < ps.len()) {
+                var bad: string = __peg_check_refs(ps[i], rules);
+                if (bad.len() > 0) { return bad; }
+                i = i + 1;
+            }
+            return "";
+        },
+        PStar(sub) => { return __peg_check_refs(sub, rules); },
+        PPlus(sub) => { return __peg_check_refs(sub, rules); },
+        POpt(sub) => { return __peg_check_refs(sub, rules); },
+        PNot(sub) => { return __peg_check_refs(sub, rules); },
+        PAnd(sub) => { return __peg_check_refs(sub, rules); },
+        PCap(name, sub) => { return __peg_check_refs(sub, rules); },
+        PRef(name) => {
+            if (rules.has(name)) { return ""; }
+            return name;
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// peg_grammar validates and packages a rule table: the start rule
+// must exist and every PRef in every rule must resolve. Returns
+// Err("unknown rule: NAME") naming the first offender.
+pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string] {
+    if (!rules.has(start)) {
+        return Err("unknown rule: " + start);
+    }
+    var names: string[] = rules.keys();
+    var i: i32 = 0;
+    while (i < names.len()) {
+        match (rules.get(names[i])) {
+            Some(p) => {
+                var bad: string = __peg_check_refs(p, rules);
+                if (bad.len() > 0) { return Err("unknown rule: " + bad); }
+            },
+            None => {}
+        }
+        i = i + 1;
+    }
+    return Ok(Grammar { rules: rules, start: start });
+}
+
+// __peg_result packages a finished run: on success the capture
+// trail becomes the caps map (insertion order = match order, later
+// same-name captures overwrite earlier ones); on failure caps is
+// empty and pos is the furthest watermark.
+function __peg_result(r: i32, st: PegState, input: string): PegResult {
+    var caps: Map[string, string] = map_new(8);
+    if (r < 0) {
+        return PegResult { ok: false, pos: st.furthest, caps: caps };
+    }
+    var i: i32 = 0;
+    while (i < st.tn.len()) {
+        caps = caps.insert(st.tn[i], input[st.ts[i]:st.te[i]]);
+        i = i + 1;
+    }
+    return PegResult { ok: true, pos: r, caps: caps };
+}
+
+// peg_match runs the grammar's start rule anchored at position 0.
+pub function peg_match(g: Grammar, input: string): PegResult {
+    var tn: string[] = [];
+    var ts: i32[] = [];
+    var te: i32[] = [];
+    var st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
+    var (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0);
+    return __peg_result(r, s2, input);
+}
+
+// peg_match_pattern matches a standalone pattern (no rule table —
+// a PRef inside fails the match) anchored at position 0.
+pub function peg_match_pattern(p: Pattern, input: string): PegResult {
+    var rules: Map[string, Pattern] = map_new(2);
+    rules = rules.insert("__start", p);
+    var g: Grammar = Grammar { rules: rules, start: "__start" };
+    return peg_match(g, input);
+}
+
+// Convenience atoms for the common ASCII classes.
+pub function peg_digit(): Pattern { return PRange(48, 57); }          // 0-9
+pub function peg_lower(): Pattern { return PRange(97, 122); }         // a-z
+pub function peg_upper(): Pattern { return PRange(65, 90); }          // A-Z
+pub function peg_alpha(): Pattern { return PChoice([PRange(65, 90), PRange(97, 122)]); }
+pub function peg_alnum(): Pattern { return PChoice([PRange(48, 57), PRange(65, 90), PRange(97, 122)]); }
+pub function peg_space(): Pattern { return PSet(" \t\r\n"); }
