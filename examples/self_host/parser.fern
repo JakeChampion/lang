@@ -10968,6 +10968,18 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 }
                 continue;
             }
+            if (probe.peek_ident() == "must_consume") {
+                // `@must_consume` marker (docs/MUST-CONSUME.md): the
+                // native checker enforces the E067 obligation; the
+                // self-host checker port follows as its own slice
+                // (docs/SELFHOST-CHECKER-PORT.md). Here the attribute
+                // is parse-tolerated and dropped so marked programs
+                // compile through the self-host pipeline unchanged —
+                // the loop re-enters with the cursor on the
+                // struct/enum keyword, which parses normally.
+                p = probe.advance();  // consume `must_consume`
+                continue;
+            }
             var (dr_derives, dr_p) = parse_derive_attr(p);
             p = dr_p;
             var dk: string = p.peek_keyword();

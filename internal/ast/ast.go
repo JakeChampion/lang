@@ -2705,6 +2705,13 @@ type StructDecl struct {
 	// per derived trait (field-wise) before conformance runs. See
 	// docs/TRAITS.md.
 	Derives []string
+	// MustConsume marks a `@must_consume` struct: every value of
+	// this type must be consumed (passed, returned, stored into a
+	// marked container, or destructured) on every control-flow
+	// path before its binding leaves scope — enforced by the
+	// checker's E067 walk. Zero runtime cost; RC still does the
+	// actual freeing. See docs/MUST-CONSUME.md.
+	MustConsume bool
 	// SourceModule mirrors FuncDecl.SourceModule — modload stamps
 	// the canonical module path that declared this struct so the
 	// LSP can answer cross-module goto-definition queries (jump
@@ -2744,6 +2751,10 @@ type EnumDecl struct {
 	// attribute on the enum. The checker synthesises a variant-wise
 	// `impl` per derived trait. See docs/TRAITS.md.
 	Derives []string
+	// MustConsume mirrors StructDecl.MustConsume for `@must_consume`
+	// enums (E067; docs/MUST-CONSUME.md). A `match` on the value is
+	// its canonical consuming use.
+	MustConsume bool
 	// Public marks the enum as exported across modules. Same
 	// semantics as FuncDecl.Public — `pub enum Foo { … }` lets
 	// other modules name `Foo`, including its variants in match

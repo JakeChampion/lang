@@ -26,8 +26,15 @@ allow-list in `parseAttribute`). A VALUE of a marked type must be
 binding goes out of scope.
 
 **Consuming uses** (the value's obligation transfers or resolves):
-- passing it as a call argument (ownership transfers to the callee
-  — which either consumes it or is itself obligated);
+- passing it as a call argument (the obligation moves to the
+  callee: a non-`own` marked param is itself tracked in the
+  callee, while an **`own` param is the declared SINK** — exempt
+  from E067, with `checkOwnedParams`' affine rule providing the
+  at-most-once half, so own-boundaries get exactly-once. Note the
+  owned-argument rule means `own` params accept only fresh
+  constructions or other own params — local-held values discharge
+  by return / match / marked-container store / passing to non-own
+  params);
 - returning it (the caller inherits the obligation);
 - constructing another value with it (struct literal field, enum
   payload, array element, tuple element — the obligation rides
@@ -49,6 +56,10 @@ binding goes out of scope.
   at-least-once, not exactly-once; the RC runtime keeps
   double-use memory-safe regardless (it's an obligation checker,
   not a memory-safety checker).
+- a DISCARDED call result of a marked type (`sink(t);` where sink
+  returns the marked value and the result is dropped) is not
+  tracked in slice 1 — only bindings are. E055-style
+  discarded-result checking is the natural follow-up.
 
 ## Rules (slice 1 — deliberately E063-shaped)
 
@@ -76,12 +87,17 @@ it claims:
 
 ## Self-host parity
 
-Required in the same PR (the differential checker-codes gate
-compares native vs self-host checker output byte-for-byte on its
-corpus): port the walk to `examples/self_host/checker.fern`
-alongside the native `internal/checker` implementation, mirroring
-how E063's `slc_walk` was landed. The attribute must also parse in
-the self-host parser (extend its `@` allow-list).
+**Corrected after grounding (E1 implementation):** the differential
+checker-codes gate is OPT-IN per code (`selfHostImplementedCodes`
+in `internal/e2eselfhost/self_host_checker_codes_test.go` — "each
+checker-port slice grows this set"), so same-PR parity is not
+structurally required; E063 itself landed native-first with its
+port as a separate slice. E067 follows that convention: the native
+walk ships first, the `checker.fern` port (mirroring `slc_walk`)
+lands as its own slice and then joins the opt-in set. The self-host
+PARSER tolerance ships with the native PR (the `@must_consume`
+attribute parses and is dropped, so marked programs compile through
+the self-host pipeline; the obligation is enforced natively).
 
 ## First real users
 
