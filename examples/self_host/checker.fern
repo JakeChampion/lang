@@ -6417,6 +6417,57 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }
 
+// ill_typed_hint returns a best-effort fallback diagnostic for a module that
+// check_module marked ill-typed but produced NO coded diagnostic for — an
+// expression collapsed to TypeUnknown because the partial `Type` union can't
+// yet model an enum value, Option/Result, generic, or `dyn` type (#4346). The
+// `-check` driver calls this ONLY when `all_well_typed` is false and `diags`
+// is empty, so a rejection is never silent. Two deliberate properties keep it
+// safe: (1) it is a driver-only helper — check_module, checker_run, and the
+// differential codes gate (which drives check_module / checker_codes_run and
+// keys on E0NN codes) never invoke it, so parity is untouched; (2) the code is
+// the lowercase tag "type", never an E0NN, so even if some future path did run
+// it through a code scraper the tag would not be mistaken for a native code.
+// Rebuilds the same name environment check_module builds (kept in sync with
+// its head), then reports the first function whose body has an un-inferable
+// expression (at its declaration), else the first offending top-level
+// statement, else a module-level note.
+pub function ill_typed_hint(mod: parser.Module): Diag[] {
+    var alias_names: string[] = [];
+    var an: i32 = 0;
+    while (an < mod.aliases.len()) { alias_names = alias_names.append(mod.aliases[an].name); an = an + 1; }
+    var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
+    var struct_names: string[] = [];
+    var sn: i32 = 0;
+    while (sn < structs.len()) { struct_names = struct_names.append(structs[sn].name); sn = sn + 1; }
+    var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+    var een: i32 = 0;
+    while (een < mod.enums.len()) {
+        unions = unions.append(UnionSig { name: mod.enums[een].name, variants: mod.enums[een].variant_names });
+        een = een + 1;
+    }
+    var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
+    var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) {
+            return [dg_at("type", "\"" + mod.funcs[i].name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", mod.funcs[i].line, mod.funcs[i].col)];
+        }
+        i = i + 1;
+    }
+    var s: Scope = new_scope_full(sigs, structs, unions, methods);
+    var j: i32 = 0;
+    while (j < mod.top_stmts.len()) {
+        var r: CheckResult = check_stmt(mod.top_stmts[j], s);
+        s = r.scope;
+        if (is_unknown(r.ty)) {
+            return [dg_at("type", "a top-level expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", 0, 0)];
+        }
+        j = j + 1;
+    }
+    return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation, #4346)", 0, 0)];
+}
+
 // =================== VALIDATION ====================
 
 function main(): i32 {

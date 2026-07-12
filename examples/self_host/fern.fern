@@ -511,6 +511,23 @@ function main(): i32 {
             di = di + 1;
         }
         if (mt.all_well_typed) { return 0; }
+        // The module is ill-typed but produced no coded diagnostic — an
+        // expression collapsed to TypeUnknown on a type the partial checker
+        // can't model yet (#4346). Surface a best-effort hint so `-check`
+        // never exits 1 silently; the native `fern` remains the full oracle.
+        if (mt.diags.len() == 0) {
+            var hints: checker.Diag[] = checker.ill_typed_hint(merged);
+            var hi: i32 = 0;
+            while (hi < hints.len()) {
+                var h: checker.Diag = hints[hi];
+                if (h.line > 0) {
+                    eprint(checker.itoa_nn(h.line) + ":" + checker.itoa_nn(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
+                } else {
+                    eprint("error[" + h.code + "]: " + h.message + "\n");
+                }
+                hi = hi + 1;
+            }
+        }
         return 1;
     }
 

@@ -436,6 +436,32 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-overreject-not-silent", func(t *testing.T) {
+		// #4346: the partial checker's `Type` union can't model Option/Result,
+		// enum values, generics, or dyn, so an expression on one of those
+		// collapses to TypeUnknown and marks the module ill-typed — but no
+		// coded rule fires. Before the fix `-check` exited 1 with EMPTY output
+		// (silent reject). `var o: Option[i32] = Some(3);` is native-valid
+		// (exit 0) yet over-rejected here; the fix surfaces a best-effort
+		// `error[type]` hint so the rejection is never silent. The native
+		// `fern` stays the full oracle (this asserts non-silence, not a code).
+		srcPath := filepath.Join(dir, "overreject.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var o: Option[i32] = Some(3); return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		_, code := runDriver(t, "-check", srcPath)
+		if code != 1 {
+			t.Errorf("-check on an over-rejected program exited %d, want 1", code)
+		}
+		if len(strings.TrimSpace(string(combined))) == 0 {
+			t.Errorf("-check on an over-rejected program produced no diagnostic (silent exit 1) — #4346 fix regressed")
+		}
+		if !strings.Contains(string(combined), "error[type]") {
+			t.Errorf("-check over-reject hint = %q, want it to contain \"error[type]\"", combined)
+		}
+	})
+
 	t.Run("check-selfhost-no-e001", func(t *testing.T) {
 		// The self-host modules are well-typed real code (they compile and
 		// self-host), full of bare-identifier reads — locals, params, loop
