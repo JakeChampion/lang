@@ -103,3 +103,37 @@ func TestVendorCopiesOnlySources(t *testing.T) {
 		t.Error("nested vendor/ should not be copied")
 	}
 }
+
+// A workspace root vendors the UNION of all members' external deps into
+// the root vendor/, skipping in-tree workspace-member deps; members then
+// resolve those deps out of the root vendor/ (proven by deleting the
+// original external dep dir).
+func TestRunVendorWorkspaceUnion(t *testing.T) {
+	root := writeVendorTree(t, map[string]string{
+		"fern.toml":       "[workspace]\nmembers = [\"lexer\", \"app\"]\n",
+		"lexer/fern.toml": "[package]\nname = \"lexer\"\n[dependencies]\next = { path = \"../ext\" }\n",
+		"lexer/lib.fern":  `import "ext";` + "\n" + `pub function token(): i32 { return ext.val(); }`,
+		"app/fern.toml":   "[package]\nname = \"app\"\n[dependencies]\nlexer = { workspace = true }\n",
+		"app/main.fern":   `import "lexer";` + "\n" + `function main(): i32 { return lexer.token(); }`,
+		"ext/fern.toml":   "[package]\nname = \"ext\"\n",
+		"ext/lib.fern":    "pub function val(): i32 { return 41; }",
+	})
+	if err := runVendor(root); err != nil {
+		t.Fatal(err)
+	}
+	// The external dep is vendored; the in-tree workspace member is not.
+	if _, err := os.Stat(filepath.Join(root, "vendor", "ext", "lib.fern")); err != nil {
+		t.Fatalf("ext should be vendored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "vendor", "lexer")); !os.IsNotExist(err) {
+		t.Error("workspace member 'lexer' should not be vendored (it's in-tree)")
+	}
+	// Delete the original ext — the member build must now resolve it from
+	// the root vendor/.
+	if err := os.RemoveAll(filepath.Join(root, "ext")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := modload.Load(filepath.Join(root, "app", "main.fern")); err != nil {
+		t.Fatalf("member build should resolve ext from the root vendor/: %v", err)
+	}
+}

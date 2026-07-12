@@ -1,4 +1,4 @@
-# Packages: the `fern.toml` manifest (slices 1–6)
+# Packages: the `fern.toml` manifest (slices 1–7)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
@@ -87,6 +87,12 @@ between two distinct packages is a hard error. `vendor/` holds source
 only (`fern.toml` + `.fern`/`.fern.md`); a nested `vendor/` or dot-dir
 in a dependency is skipped. url deps must be `fern -fetch`ed before
 vendoring (vendoring copies from the store, it doesn't download).
+
+`fern -vendor` on a **workspace root** vendors the *union* of every
+member's external (path/url) dependencies into the root's `vendor/` —
+in-tree `workspace = true` deps are skipped (members resolve those by
+name). Members then resolve their external deps out of the shared root
+`vendor/`, so the whole workspace builds offline from one vendored set.
 
 ## Workspaces (slice 4)
 
@@ -180,9 +186,8 @@ only declared deps resolve.
 
 Version constraints + MVS resolution, `fern.lock` (for url deps the
 manifest hash already pins content; the lockfile matters once version
-deps resolve transitively) and workspace-wide `fern -vendor` iteration
-over members (workspace-wide `-check` has landed). See
-`PACKAGE-MANAGEMENT-SOTA.md`
+deps resolve transitively). Workspace-wide `-check` and `-vendor` have
+landed. See `PACKAGE-MANAGEMENT-SOTA.md`
 for the design each of these follows.
 
 **MVS / version deps — the open design fork.** Minimum Version

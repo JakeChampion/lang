@@ -52,6 +52,11 @@ func runVendor(start string) error {
 		}
 		seenDir[m.Dir] = true
 		for name, d := range m.Deps {
+			// Workspace-member deps live in the workspace tree (resolved by
+			// name), not in vendor/ — skip them.
+			if d.Workspace {
+				continue
+			}
 			depDir, err := depSourceDir(m, name, d)
 			if err != nil {
 				return err
@@ -76,7 +81,24 @@ func runVendor(start string) error {
 		}
 		return nil
 	}
-	if err := walk(root); err != nil {
+	// A workspace root vendors the UNION of all members' external
+	// dependencies into the root's vendor/ (members resolve out of it, per
+	// the resolver's workspace-root vendor fallback). A plain package
+	// vendors its own transitive deps.
+	if root.IsWorkspace() {
+		for _, rel := range root.Members {
+			mm, err := manifest.Load(root.MemberDir(rel))
+			if err != nil {
+				return fmt.Errorf("vendor: member %q: %w", rel, err)
+			}
+			if mm == nil {
+				return fmt.Errorf("vendor: workspace member %q has no %s", rel, manifest.FileName)
+			}
+			if err := walk(mm); err != nil {
+				return err
+			}
+		}
+	} else if err := walk(root); err != nil {
 		return err
 	}
 

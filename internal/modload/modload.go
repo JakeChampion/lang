@@ -637,7 +637,19 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 	// (the vendor dir is stale — re-run `fern -vendor`), never a fallback
 	// to the network.
 	if _, isDep := man.Deps[seg]; isDep {
-		if vr := vendorRootFor(man.Dir); vr != "" {
+		vr := vendorRootFor(man.Dir)
+		if vr == "" {
+			// A workspace member's own directory has no `vendor/`, but the
+			// workspace root may (populated by `fern -vendor <root>`). Fall
+			// back to the enclosing workspace root's vendor tree so members
+			// share one vendored dependency set.
+			if ws, werr := manifest.FindWorkspace(man.Dir); werr == nil && ws != nil {
+				if st, err := os.Stat(filepath.Join(ws.Dir, "vendor")); err == nil && st.IsDir() {
+					vr = ws.Dir
+				}
+			}
+		}
+		if vr != "" {
 			depDir := filepath.Join(vr, "vendor", seg)
 			if st, err := os.Stat(depDir); err == nil && st.IsDir() {
 				return resolveDepImport(depDir, rest, mans)
