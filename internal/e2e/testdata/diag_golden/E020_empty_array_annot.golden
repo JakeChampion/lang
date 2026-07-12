@@ -1,0 +1,3 @@
+E020_empty_array_annot.fern:1:24: error[E020]: empty array literal needs a type annotation
+    function main(): i32 { var a = []; return 0; }
+                           ^

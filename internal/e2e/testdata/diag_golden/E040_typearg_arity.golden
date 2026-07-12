@@ -1,0 +1,3 @@
+E040_typearg_arity.fern:2:33: error[E040]: id expects 1 type argument(s), got 2
+    function main(): i32 { return id[i32, i32](1); }
+                                    ^

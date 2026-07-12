@@ -52,6 +52,29 @@ var diagnosticGoldenCases = []struct {
 	// P001 parser error (a stray operator) — pins that parse-time diagnostics
 	// render through the same path as checker ones.
 	{"P001_parse_error", "function main(): i32 { return 1 +; }\n"},
+	// A broad spread across the emitted surface so a phrasing regression in
+	// any common shape surfaces as a golden diff (#4413 Rec §10).
+	{"E003_assign_mismatch", "function main(): i32 { var x: i32 = \"s\"; return x; }\n"},
+	{"E011_break_outside_loop", "function main(): i32 { break; return 0; }\n"},
+	{"E013_dup_var", "function main(): i32 { var x = 1; var x = 2; return x; }\n"},
+	{"E019_generic_arity", "struct Box[T] { v: T }\nfunction f(b: Box[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
+	{"E020_empty_array_annot", "function main(): i32 { var a = []; return 0; }\n"},
+	{"E040_typearg_arity", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32, i32](1); }\n"},
+	{"E043_unknown_field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.y; }\n"},
+	{"E048_immutable_field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; p.x = 2; return p.x; }\n"},
+	{"E063_slice_escape", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }\nfunction main(): i32 { return 0; }\n"},
+	{"E064_unknown_type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
+	// Rarer but distinctly-phrased shapes.
+	{"E024_tuple_destructure", "function main(): i32 { var (a, b) = 5; return a; }\n"},
+	{"E026_wildcard_not_last", "function main(): i32 { var x = 1; match (x) { _ => { return 0; }, 1 => { return 1; } } }\n"},
+	{"E033_invalid_cast", "function main(): i32 { var b: boolean = true; return b as i32; }\n"},
+	{"E037_slice_bound", "function main(): i32 { var a = [1, 2, 3]; var s = a[\"x\":2]; return 0; }\n"},
+	{"E041_eq_mismatch", "function main(): i32 { if (\"a\" == 1) { return 1; } return 0; }\n"},
+	{"E046_tuple_index_oor", "function main(): i32 { var t = (1, 2); return t.5; }\n"},
+	{"E047_int_overflow", "function main(): i32 { return 9999999999; }\n"},
+	{"E055_discarded_result", "function main(): i32 { var a: i32[] = [1]; a.append(2); return 0; }\n"},
+	{"E058_labeled_break", "function main(): i32 { var c = 0; while (c < 3) { c = c + 1; if (c == 2) { break nope; } } return c; }\n"},
+	{"E061_value_block_no_tail", "function main(): i32 { var x = if (1 < 2) { print(\"hi\"); } else { 2 }; return 0; }\n"},
 }
 
 func TestDiagnosticGolden(t *testing.T) {

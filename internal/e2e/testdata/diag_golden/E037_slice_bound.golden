@@ -1,0 +1,3 @@
+E037_slice_bound.fern:1:53: error[E037]: slice low bound must be i32, got string
+    function main(): i32 { var a = [1, 2, 3]; var s = a["x":2]; return 0; }
+                                                        ^

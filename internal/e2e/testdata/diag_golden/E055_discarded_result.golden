@@ -1,0 +1,3 @@
+E055_discarded_result.fern:1:46: error[E055]: result of `.append(...)` is unused; assign it back (e.g. `x = x.append(...)`) — collection operations return a new value, they do not mutate in place (use `var _ = …` to discard intentionally)
+    function main(): i32 { var a: i32[] = [1]; a.append(2); return 0; }
+                                                 ^

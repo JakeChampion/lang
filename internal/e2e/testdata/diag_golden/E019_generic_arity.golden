@@ -1,0 +1,3 @@
+E019_generic_arity.fern:1:1: error[E019]: struct Box has 1 type parameter(s), 2 supplied
+    struct Box[T] { v: T }
+    ^

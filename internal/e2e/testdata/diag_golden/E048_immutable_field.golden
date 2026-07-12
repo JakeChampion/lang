@@ -1,0 +1,3 @@
+E048_immutable_field.fern:2:45: error[E048]: cannot assign to field "x": fields are immutable after construction; rebuild with `T { ...old, x: value }`
+    function main(): i32 { var p = P { x: 1 }; p.x = 2; return p.x; }
+                                                ^
