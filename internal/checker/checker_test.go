@@ -4391,16 +4391,20 @@ func TestSliceEscapeRejected(t *testing.T) {
 
 // TestSliceEscapeAllowed: slices the checker can't prove are local must
 // not be flagged. Slices of a parameter / receiver stay valid as long as
-// the caller's owner does; string slices copy; returning the owned array
-// itself is a move, not a view.
+// the caller's owner does; string slices view param-backed storage (the
+// P2 flip) and materialise into owning sinks explicitly; returning the
+// owned array itself is a move, not a view.
 func TestSliceEscapeAllowed(t *testing.T) {
 	for _, src := range []string{
 		// slice of a parameter — caller owns the backing array
 		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
 		// slice of a parameter, bound through a local first
 		`function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }`,
-		// string slice copies into a fresh owned string
-		`function f(s: string): string { return s[0:2]; }`,
+		// string slice is a view since the P2 flip: returning it as a
+		// str of a param-backed source is fine, and an owning string
+		// return takes an explicit materialisation
+		`function f(s: string): str { return s[0:2]; }`,
+		`function f(s: string): string { return s[0:2] + ""; }`,
 		// returning the owned array itself is a move
 		`function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }`,
 		// receiver-backed slice (element-polymorphic method): caller owns
