@@ -4584,3 +4584,51 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
       (1) lands. **Do NOT implement owned-bits or a MAPVS-gated overwrite-free — it
       UAFs on get_or-then-overwrite.** This supersedes the "recommendation: lazy
       owned-bits" in the entry above.
+
+- 2026-07-12: **#4353 counted-reads foundational change — DECOMPOSITION (grounded).**
+  Per the correction above, both remaining register items need counted map reads.
+  Investigated the code and decomposed it into individually-sound slices, with the
+  exact sites located, so each can land + validate independently:
+
+  **Slice 1 — register i32 keys()/values() snapshot-copy + result reclaim** (the
+  clean, no-element-rc first step; fixes a read-aliasing correctness bug on its own):
+  - Runtime (asm_ir.fern kind 131/132 ~line 4868, asm_arm64_ir.fern ~kind 131/132):
+    today they return the RAW buffer (`box+0`/`box+8`) — an ALIAS. For an i32-element
+    column, replace with a snapshot: alloc a fresh i32 arr_box(len), copy len elems,
+    return it. Gate on element-scalar (op_map_keys/values are 0-arg ops → add an
+    "elem-is-pointer" flag from irlower's map_kv_elem_tag; snapshot only the scalar
+    case, leave string columns on the alias path until slice 3).
+  - Reclaim FLIP (irlower reclaimable_names_of): a `var ks = m.keys()` i32[] result is
+    currently a BORROW (not credited → not dec'd at exit; that's why the alias doesn't
+    double-free today). Once it's a fresh owned snapshot it MUST be credited so the
+    exit-sweep arr_dec frees it (else the snapshot buffer leaks). OPEN: pin the exact
+    scalar-array reclaim-candidacy gate — the credits use prefixes (SARR/ARRARR/ARRTUP/
+    ARRSTRUCT at irlower.fern:18211-18354) but the plain-i32[] exit-dec path + where
+    keys()/values() inits are excluded from it wasn't pinned this session; that gate is
+    the "most regression-prone surface" (CLAUDE.md) — do it carefully, not rushed.
+    Must be gated to i32-element results ONLY (string results stay borrow).
+  - wasm already snapshots (`$__fern_map_snapshot`) so the shared reclaim flip is safe
+    there (reclaiming a copy is balanced). Validate: keys()/values() no longer track a
+    later mutation (snapshot semantics), churn flat (no leak), __rc_underflow()==0,
+    fixpoint byte-identical.
+
+  **Slice 2 — grow-leak close for i32 maps** (depends on slice 1): once i32 keys()/
+  values() snapshot (no buffer alias), and get_or returns i32 by-value (no alias) and
+  iter re-reads box+0 each step (no stale ptr), an i32-key/i32-value map's buffers are
+  sole-owned → swap map_set's keys/vals appends to __fern_arr_push_owned GATED on
+  i32-key AND i32-value. Closes the 48 B/build grow-leak for scalar maps (incl. the
+  compiler's own i32/interned maps). (#4877 measured the swap: 96000→0.)
+
+  **Slice 3 — string keys()/values() snapshot** (element-rc): snapshot + inc each
+  string element on copy (so the fresh array owns its elements), result deep-freed
+  (str_arr_free) at exit. Unblocks slice-2's swap for string columns too.
+
+  **Slice 4 — counted get_or/get for value-overwrite** (the value-side fix): get_or/
+  get rc-inc the returned value, result reclaimed at scope exit; then map_set's
+  overwrite can rc-aware-free the old value (a live read holds rc>1 → dec not free).
+  Closes the value-overwrite leak soundly (supersedes the unsound owned-bits).
+
+  Order 1→2→3→4; each is independently sound + testable. Slice 1's reclaim-flip is the
+  gating unknown and the sensitive part — a focused session should pin the scalar-array
+  reclaim-candidacy gate first, then implement 1 with the full differential + fixpoint
+  gate before proceeding.
