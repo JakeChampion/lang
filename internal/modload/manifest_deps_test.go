@@ -274,3 +274,71 @@ func TestLoadVendoredMissingDepErrors(t *testing.T) {
 		t.Fatalf("want an error pointing at `fern -vendor`, got %v", err)
 	}
 }
+
+// Workspace member resolution: a member declares `sibling = { workspace
+// = true }` and imports it by name; the workspace root's members list
+// locates the sibling by its package name — no `../sibling` path needed.
+func TestLoadWorkspaceMemberDep(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"fern.toml":       "[workspace]\nmembers = [\"app\", \"lexer\"]\n",
+		"app/fern.toml":   "[package]\nname = \"app\"\n[dependencies]\nlexer = { workspace = true }\n",
+		"app/main.fern":   `import "lexer";` + "\n" + `function main(): i32 { return lexer.token(); }`,
+		"lexer/fern.toml": "[package]\nname = \"lexer\"\n",
+		"lexer/lib.fern":  "pub function token(): i32 { return 42; }",
+	})
+	prog, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "lib__token" {
+			return
+		}
+	}
+	t.Fatal("workspace member 'lexer' was not resolved by name")
+}
+
+// The member is located by its PACKAGE name, not its directory name.
+func TestLoadWorkspaceMemberByPackageName(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"fern.toml":          "[workspace]\nmembers = [\"app\", \"pkgs/lex\"]\n",
+		"app/fern.toml":      "[package]\nname = \"app\"\n[dependencies]\nlexer = { workspace = true }\n",
+		"app/main.fern":      `import "lexer";` + "\n" + `function main(): i32 { return lexer.token(); }`,
+		"pkgs/lex/fern.toml": "[package]\nname = \"lexer\"\n",
+		"pkgs/lex/lib.fern":  "pub function token(): i32 { return 7; }",
+	})
+	if _, _, err := Load(filepath.Join(root, "app", "main.fern")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A `workspace = true` dep whose name matches no member errors, naming
+// the workspace.
+func TestLoadWorkspaceMemberMissingErrors(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"fern.toml":     "[workspace]\nmembers = [\"app\"]\n",
+		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nghost = { workspace = true }\n",
+		"app/main.fern": `import "ghost";` + "\n" + `function main(): i32 { return 0; }`,
+	})
+	_, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err == nil || !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("want a workspace-member error, got %v", err)
+	}
+}
+
+// Isolation holds: a member can only import a sibling it declares. Here
+// app does NOT declare lexer, so `import "lexer"` is an undeclared-dep
+// error even though lexer is a workspace member.
+func TestLoadWorkspaceIsolation(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"fern.toml":       "[workspace]\nmembers = [\"app\", \"lexer\"]\n",
+		"app/fern.toml":   "[package]\nname = \"app\"\n",
+		"app/main.fern":   `import "lexer";` + "\n" + `function main(): i32 { return 0; }`,
+		"lexer/fern.toml": "[package]\nname = \"lexer\"\n",
+		"lexer/lib.fern":  "pub function token(): i32 { return 1; }",
+	})
+	_, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err == nil {
+		t.Fatal("undeclared workspace sibling should not resolve")
+	}
+}

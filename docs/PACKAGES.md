@@ -1,14 +1,14 @@
-# Packages: the `fern.toml` manifest (slices 1–3 — path, hash-addressed, vendored)
+# Packages: the `fern.toml` manifest (slices 1–4 — path, hash-addressed, vendored, workspaces)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
 RESEARCH.md` Rec §1): local `path` dependencies, hash-addressed `url`
 dependencies fetched by an explicit `fern -fetch` into a
-content-addressed store, and `fern -vendor` for fully-offline vendored
-builds. No registry, no version resolution, no lockfile yet — those
-layer on later per the research docs. Everything is opt-in: a program
-with no `fern.toml` anywhere up its directory tree loads exactly as
-before.
+content-addressed store, `fern -vendor` for fully-offline vendored
+builds, and workspaces. No registry, no version resolution, no lockfile
+yet — those layer on later per the research docs. Everything is opt-in:
+a program with no `fern.toml` anywhere up its directory tree loads
+exactly as before.
 
 ## Using it
 
@@ -87,36 +87,84 @@ only (`fern.toml` + `.fern`/`.fern.md`); a nested `vendor/` or dot-dir
 in a dependency is skipped. url deps must be `fern -fetch`ed before
 vendoring (vendoring copies from the store, it doesn't download).
 
+## Workspaces (slice 4)
+
+A **workspace** is a directory tree of related packages sharing one
+root. A `fern.toml` with a `[workspace]` table lists member directories:
+
+```toml
+[workspace]
+members = ["compiler/lexer", "compiler/parser", "handlers/app"]
+```
+
+The root may be workspace-only (no `[package]`) or both a package and a
+workspace root. A member depends on another member by name with the
+`workspace = true` form — no brittle `../../lexer` path:
+
+```toml
+# handlers/app/fern.toml
+[package]
+name = "app"
+[dependencies]
+lexer = { workspace = true }        # resolves to the member named "lexer"
+```
+
+`import "lexer"` in `app` resolves to the workspace member whose
+**package name** is `lexer` (its directory name may differ). Isolation
+is unchanged: a member reaches a sibling only if it *declares* the
+`workspace = true` dependency — an undeclared `import "lexer"` is still
+the usual undeclared-dependency error. This is the shape the eventual
+self-hosted compiler wants (lexer / parser / checker / codegen as
+sibling members).
+
 ## Resolution + isolation rules
 
 Inside a manifest-governed package, an import resolves in this order:
 
 1. `std/` / `core/` → embedded stdlib (unchanged).
 2. `./x` / `../x` → importing-file-relative (unchanged).
-3. First segment matches a **declared dependency**, and a `vendor/`
+3. First segment matches a **`workspace = true` dependency** → the
+   workspace member with that package name.
+4. First segment matches a **declared dependency**, and a `vendor/`
    tree governs the package → `<vendor-root>/vendor/<name>/`. Vendored
    mode is offline and total: a declared dep missing from `vendor/`
    errors (re-run `fern -vendor`), never a fallback to path/url.
-4. First segment matches a **declared dependency** (no vendor tree) →
+5. First segment matches a **declared dependency** (no vendor tree) →
    into the dependency's directory (path dep) or content-addressed
    store (url dep). The manifest is the authority: a declared dep wins
    over a same-named sibling file.
-5. Otherwise, an existing file at the directory-relative path loads as
+6. Otherwise, an existing file at the directory-relative path loads as
    before (so adding a `fern.toml` never breaks a loading program).
-6. Nothing matches → error naming the governing `fern.toml` and the
+7. Nothing matches → error naming the governing `fern.toml` and the
    `[dependencies]` line to add.
 
-Rules 4/6 are the resolver-side isolation invariant from the research:
-a package can only reach dependencies it declares — enforced in
-`resolveImport` (`internal/modload`), not by directory layout. Vendored
-mode (rule 3) preserves it: only declared deps resolve from `vendor/`.
+Rules 3/5/7 are the resolver-side isolation invariant from the
+research: a package can only reach dependencies it declares — enforced
+in `resolveImport` (`internal/modload`), not by directory layout.
+Vendored mode (rule 4) and workspace mode (rule 3) both preserve it:
+only declared deps resolve.
 
 ## Not yet (deliberately)
 
 Version constraints + MVS resolution, `fern.lock` (for url deps the
 manifest hash already pins content; the lockfile matters once version
-deps resolve transitively), workspaces, `fern add`.
-See `PACKAGE-MANAGEMENT-SOTA.md` for the design each of these follows.
+deps resolve transitively), workspace-wide `fern -check`/`-vendor`
+iteration over members, and `fern add`. See `PACKAGE-MANAGEMENT-SOTA.md`
+for the design each of these follows.
+
+**MVS / version deps — the open design fork.** Minimum Version
+Selection (the research's headline resolution recommendation) needs a
+*version source*: somewhere to discover a package's available versions
+and, per version, its own dependency manifest. The approach consistent
+with everything shipped here (hash-addressed, no mandatory registry) is
+a lightweight **index file** mapping `package → version → { url, hash }`
+— local or itself url+hash-fetched — with MVS computing max-of-minimums
+over the transitively-fetched manifests and writing the resolved
+`(name, version, url, hash)` set to `fern.lock`. That is the next
+substantial slice; it is deferred until a versioned ecosystem actually
+exists (today every dep is a single pinned point), and the index-vs-git-
+tags choice is recorded here so it isn't re-litigated.
+
 The self-hosted compiler's modloader (`examples/self_host/
 modloader.fern`) does not read manifests yet — a port slice, tracked
 with the rest in issue #4907.

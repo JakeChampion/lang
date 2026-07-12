@@ -47,16 +47,28 @@ type Dep struct {
 	Path string
 	URL  string
 	Hash string // "sha256:<64 hex>" — of the archive bytes
+	// Workspace is true for a `{ workspace = true }` dependency: the
+	// dependency is another member of the enclosing workspace, located by
+	// its package name rather than a path/url. Keeps cross-member deps
+	// explicit (isolation) while removing brittle `../../member` paths.
+	Workspace bool
 }
 
 // Manifest is a parsed fern.toml.
 type Manifest struct {
 	Dir     string // absolute directory containing the manifest
-	Name    string // [package] name
+	Name    string // [package] name (empty for a workspace-only manifest)
 	Version string // [package] version (informational in this slice)
 	Lib     string // [package] lib — entry module for `import "<name>"`; DefaultLib when unset
 	Deps    map[string]Dep
+	// Members is the [workspace] members list (relative directories),
+	// non-nil only when a [workspace] table is present. A manifest may be
+	// workspace-only (no [package]) or both a package and a workspace root.
+	Members []string
 }
+
+// IsWorkspace reports whether this manifest declares a [workspace] table.
+func (m *Manifest) IsWorkspace() bool { return m.Members != nil }
 
 // DepDir resolves a declared dependency's directory to an absolute
 // path (Path entries are relative to the manifest directory).
@@ -69,6 +81,39 @@ func (m *Manifest) DepDir(name string) (string, bool) {
 		return filepath.Clean(d.Path), true
 	}
 	return filepath.Join(m.Dir, d.Path), true
+}
+
+// MemberDir resolves a [workspace] member entry to an absolute
+// directory (members are relative to the workspace manifest's dir).
+func (m *Manifest) MemberDir(rel string) string {
+	if filepath.IsAbs(rel) {
+		return filepath.Clean(rel)
+	}
+	return filepath.Join(m.Dir, rel)
+}
+
+// FindWorkspace walks from dir toward the filesystem root and returns
+// the nearest manifest declaring a [workspace] table, or (nil, nil) if
+// none governs dir.
+func FindWorkspace(dir string) (*Manifest, error) {
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		m, err := Load(d)
+		if err != nil {
+			return nil, err
+		}
+		if m != nil && m.IsWorkspace() {
+			return m, nil
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return nil, nil
+		}
+		d = parent
+	}
 }
 
 // Load reads and parses `<dir>/fern.toml`. Returns (nil, nil) when the
@@ -135,8 +180,12 @@ func Parse(src string) (*Manifest, error) {
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			switch section {
 			case "package", "dependencies":
+			case "workspace":
+				if m.Members == nil {
+					m.Members = []string{}
+				}
 			default:
-				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies])", ln+1, section)
+				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace])", ln+1, section)
 			}
 			continue
 		}
@@ -169,14 +218,50 @@ func Parse(src string) (*Manifest, error) {
 				return nil, fmt.Errorf("line %d: invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
 			}
 			m.Deps[key] = dep
+		case "workspace":
+			if key != "members" {
+				return nil, fmt.Errorf("line %d: unknown [workspace] key %q (supported: members)", ln+1, key)
+			}
+			ms, err := parseStringArray(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: members: %w", ln+1, err)
+			}
+			m.Members = ms
 		default:
-			return nil, fmt.Errorf("line %d: %q outside a section (start with [package] or [dependencies])", ln+1, key)
+			return nil, fmt.Errorf("line %d: %q outside a section (start with [package], [dependencies], or [workspace])", ln+1, key)
 		}
 	}
-	if m.Name == "" {
+	// A workspace-only manifest (a virtual root that just lists members)
+	// needs no [package] name; a package manifest still does.
+	if m.Name == "" && !m.IsWorkspace() {
 		return nil, fmt.Errorf("missing [package] name")
 	}
 	return m, nil
+}
+
+// parseStringArray parses an inline TOML array of double-quoted strings
+// on a single line: `["a", "b/c"]`. Empty (`[]`) is allowed.
+func parseStringArray(val string) ([]string, error) {
+	if !strings.HasPrefix(val, "[") || !strings.HasSuffix(val, "]") {
+		return nil, fmt.Errorf("expected an array like [\"a\", \"b\"], got %q", val)
+	}
+	body := strings.TrimSpace(val[1 : len(val)-1])
+	out := []string{}
+	if body == "" {
+		return out, nil
+	}
+	for _, part := range strings.Split(body, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		s, err := parseString(part)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, filepath.FromSlash(s))
+	}
+	return out, nil
 }
 
 func splitKeyValue(line string) (key, val string, ok bool) {
@@ -203,12 +288,12 @@ func parseString(val string) (string, error) {
 }
 
 // parseDep accepts the declared-dependency forms this slice supports:
-// `{ path = "…" }` and `{ url = "…", hash = "sha256:…" }` — version-only
-// deps (`dep = "1.2"`) belong to the registry/MVS slice and error with a
-// pointer at what IS supported.
+// `{ path = "…" }`, `{ url = "…", hash = "sha256:…" }`, and
+// `{ workspace = true }` — version-only deps (`dep = "1.2"`) belong to
+// the registry/MVS slice and error with a pointer at what IS supported.
 func parseDep(val string) (Dep, error) {
 	if !strings.HasPrefix(val, "{") || !strings.HasSuffix(val, "}") {
-		return Dep{}, fmt.Errorf("only path and url+hash dependencies are supported in this slice — write `{ path = \"../dir\" }` or `{ url = \"https://…/pkg.tar.gz\", hash = \"sha256:…\" }`")
+		return Dep{}, fmt.Errorf("only path, url+hash, and workspace dependencies are supported in this slice — write `{ path = \"../dir\" }`, `{ url = \"https://…/pkg.tar.gz\", hash = \"sha256:…\" }`, or `{ workspace = true }`")
 	}
 	body := strings.TrimSpace(val[1 : len(val)-1])
 	dep := Dep{}
@@ -220,6 +305,13 @@ func parseDep(val string) (Dep, error) {
 		k, v, ok := splitKeyValue(part)
 		if !ok {
 			return Dep{}, fmt.Errorf("expected `key = value` in inline table, got %q", part)
+		}
+		if k == "workspace" {
+			if v != "true" {
+				return Dep{}, fmt.Errorf("workspace must be `true` (the only supported value), got %q", v)
+			}
+			dep.Workspace = true
+			continue
 		}
 		s, err := parseString(v)
 		if err != nil {
@@ -243,10 +335,14 @@ func parseDep(val string) (Dep, error) {
 			}
 			dep.Hash = s
 		default:
-			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash)", k)
+			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash, workspace)", k)
 		}
 	}
 	switch {
+	case dep.Workspace && (dep.Path != "" || dep.URL != "" || dep.Hash != ""):
+		return Dep{}, fmt.Errorf("a `workspace` dependency takes no path/url/hash")
+	case dep.Workspace:
+		return dep, nil
 	case dep.Path != "" && (dep.URL != "" || dep.Hash != ""):
 		return Dep{}, fmt.Errorf("a dependency is either `path` or `url`+`hash`, not both")
 	case dep.Path != "":
@@ -256,7 +352,7 @@ func parseDep(val string) (Dep, error) {
 	case dep.URL != "" || dep.Hash != "":
 		return Dep{}, fmt.Errorf("url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint")
 	default:
-		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`)")
+		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`, or `workspace = true`)")
 	}
 }
 

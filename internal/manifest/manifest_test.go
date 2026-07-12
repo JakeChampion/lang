@@ -112,3 +112,54 @@ func TestDepDir(t *testing.T) {
 		t.Error("undeclared dep resolved")
 	}
 }
+
+func TestParseWorkspace(t *testing.T) {
+	m, err := Parse("[workspace]\nmembers = [\"compiler/lexer\", \"handlers/app\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.IsWorkspace() {
+		t.Fatal("expected a workspace manifest")
+	}
+	if len(m.Members) != 2 || m.Members[0] != filepath.FromSlash("compiler/lexer") {
+		t.Errorf("members = %v", m.Members)
+	}
+	// Workspace-only manifest needs no [package] name.
+	if m.Name != "" {
+		t.Errorf("unexpected name %q", m.Name)
+	}
+}
+
+func TestParseWorkspaceAndPackage(t *testing.T) {
+	m, err := Parse("[package]\nname = \"root\"\n[workspace]\nmembers = [\"a\"]\n[dependencies]\na = { workspace = true }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Name != "root" || !m.IsWorkspace() || !m.Deps["a"].Workspace {
+		t.Errorf("combined manifest parsed wrong: %+v", m)
+	}
+}
+
+func TestParseWorkspaceDepForm(t *testing.T) {
+	m, err := Parse("[package]\nname = \"a\"\n[dependencies]\nb = { workspace = true }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Deps["b"].Workspace || m.Deps["b"].Path != "" {
+		t.Errorf("workspace dep parsed wrong: %+v", m.Deps["b"])
+	}
+}
+
+func TestParseWorkspaceErrors(t *testing.T) {
+	cases := map[string]string{
+		"bad members type":    "[workspace]\nmembers = \"a\"\n",
+		"unknown ws key":      "[workspace]\nexclude = [\"a\"]\n",
+		"workspace not true":  "[package]\nname = \"a\"\n[dependencies]\nb = { workspace = false }\n",
+		"workspace plus path": "[package]\nname = \"a\"\n[dependencies]\nb = { workspace = true, path = \"../b\" }\n",
+	}
+	for label, src := range cases {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected error", label)
+		}
+	}
+}

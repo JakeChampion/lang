@@ -614,6 +614,18 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 		return resolveImportPath(importingDir, importPath), nil
 	}
 	seg, rest, _ := strings.Cut(importPath, "/")
+	if d, isDep := man.Deps[seg]; isDep && d.Workspace {
+		// Workspace-member dependency (Rec §5): resolve `seg` to the
+		// enclosing workspace's member whose package name is `seg`,
+		// instead of a path/url. Keeps cross-member deps explicit
+		// (isolation — still a declared dep) while dropping brittle
+		// `../../member` paths.
+		depDir, err := workspaceMemberDir(man.Dir, seg, mans)
+		if err != nil {
+			return "", err
+		}
+		return resolveDepImport(depDir, rest, mans)
+	}
 	// Vendored mode (Rec §6): when a `vendor/` tree governs this package,
 	// a declared dependency resolves to `<vendor-root>/vendor/<name>/` —
 	// flat, offline, path/url origins irrelevant, no network. Detected
@@ -680,6 +692,33 @@ func resolveDepImport(depDir, rest string, mans map[string]*manifest.Manifest) (
 		lib = depMan.Lib
 	}
 	return filepath.Abs(filepath.Join(depDir, lib))
+}
+
+// workspaceMemberDir finds the directory of the workspace member named
+// `name` (by its package name), for a `{ workspace = true }` dependency
+// declared in the manifest at manDir. It locates the enclosing
+// [workspace] root, then scans its members for one whose own manifest's
+// package name matches. An unresolvable name is an error naming the
+// workspace root (the members list is stale or the name is wrong).
+func workspaceMemberDir(manDir, name string, mans map[string]*manifest.Manifest) (string, error) {
+	ws, err := manifest.FindWorkspace(manDir)
+	if err != nil {
+		return "", err
+	}
+	if ws == nil {
+		return "", fmt.Errorf("dependency %q is `workspace = true` but no [workspace] governs %s", name, manDir)
+	}
+	for _, rel := range ws.Members {
+		dir := ws.MemberDir(rel)
+		mm, err := manifestFor(dir, mans)
+		if err != nil {
+			return "", err
+		}
+		if mm != nil && mm.Dir == dir && mm.Name == name {
+			return dir, nil
+		}
+	}
+	return "", fmt.Errorf("workspace dependency %q is not a member of the workspace at %s (its [workspace] members = %v)", name, filepath.Join(ws.Dir, manifest.FileName), ws.Members)
 }
 
 // vendorRootFor returns the vendor root governing a package whose
