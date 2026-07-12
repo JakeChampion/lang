@@ -1,0 +1,3 @@
+E021_bound_conformance.fern:4:68: error[E021]: type argument T = Foo does not implement trait Ord required by pick
+    function main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }
+                                                                       ^
