@@ -449,22 +449,27 @@ func splitDynPair(key string) (string, string) {
 // (referencedRuntimeHelpers); its `bl fn_<name>` site links the label
 // fnLabel(name) writes. Leaf functions under the AArch64 PCS (arg/result x0).
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique":        emitRcIsUniqueHelper,
-	"__fern_rc_inc":              emitRcIncHelper,
-	"__fern_rc_dec":              emitRcDecHelper,
-	"__fern_box_free":            emitBoxFreeHelper,
-	"__fern_closure_drop":        emitClosureDropHelper,
-	"__str_len":                  emitStrLenHelper,
-	"__str_eq":                   emitStrEqHelper,
-	"__str_concat":               emitStrConcatHelper,
-	"__fern_str_dec":             emitStrDecHelper,
-	"__fern_arr_dec":             emitArrDecHelper,
-	"__fern_drop_arr_str":        emitDropArrStrHelper,
-	"__str_idx":                  emitStrIdxHelper,
-	"__arr_idx":                  emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
-	"__arr_idx_1":                emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
-	"__arr_idx_8":                emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
-	"__arr_idx_16":               emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
+	"__fern_rc_is_unique": emitRcIsUniqueHelper,
+	"__fern_rc_inc":       emitRcIncHelper,
+	"__fern_rc_dec":       emitRcDecHelper,
+	"__fern_box_free":     emitBoxFreeHelper,
+	"__fern_closure_drop": emitClosureDropHelper,
+	"__str_len":           emitStrLenHelper,
+	"__str_eq":            emitStrEqHelper,
+	"__str_concat":        emitStrConcatHelper,
+	"__fern_str_dec":      emitStrDecHelper,
+	"__fern_arr_dec":      emitArrDecHelper,
+	"__fern_drop_arr_str": emitDropArrStrHelper,
+	"__str_idx":           emitStrIdxHelper,
+	"__arr_idx":           emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
+	"__arr_idx_1":         emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
+	"__arr_idx_8":         emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
+	"__arr_idx_16":        emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
+	// Bounds-check-elided variants (#4380 lever 3): same address compute, no trap.
+	"__arr_idx_nc":               emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
+	"__arr_idx_1_nc":             emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
+	"__arr_idx_8_nc":             emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
+	"__arr_idx_16_nc":            emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
 	"__fern_arr_push_grow":       emitArrPushGrowHelper,
 	"__fern_arr_push_grow_ptr":   emitArrPushGrowAliasHelper("__fern_arr_push_grow_ptr"),
 	"__fern_arr_push_grow_str":   emitArrPushGrowAliasHelper("__fern_arr_push_grow_str"),
@@ -1613,6 +1618,10 @@ var helperReturns64 = map[string]bool{
 	"__arr_idx_1":                true,
 	"__arr_idx_8":                true,
 	"__arr_idx_16":               true,
+	"__arr_idx_nc":               true,
+	"__arr_idx_1_nc":             true,
+	"__arr_idx_8_nc":             true,
+	"__arr_idx_16_nc":            true,
 	"__abs_f64":                  true,
 	"__sqrt_f64":                 true,
 	"__floor_f64":                true,
@@ -3244,17 +3253,26 @@ func emitDropArrStrHelper(w func(string, ...any)) {
 // `unreachable`. Returns base + idx*stride; the caller's OpLoad reads the element.
 // Leaf. The ok-label is namespaced by shift so all variants coexist in a module.
 func emitArrIdxHelperN(name string, shift int) func(w func(string, ...any)) {
+	return emitArrIdxHelperNChecked(name, shift, true)
+}
+
+// emitArrIdxHelperNChecked is emitArrIdxHelperN with an explicit bounds-check
+// toggle. The `_nc` (no-check) variants (#4380 lever 3) drop the len-load +
+// compare + trap when the caller proved the index in range (ForEach desugar).
+func emitArrIdxHelperNChecked(name string, shift int, checked bool) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		ok := fmt.Sprintf(".Lssa_arridx%d_ok", shift)
 		w("")
 		w("%s:", fnLabel(name))
-		w("\tldur w2, [x0, #-4]") // len
-		w("\tcmp w1, w2")
-		w("\tb.lo %s", ok) // idx < len (unsigned)
-		w("\tmov x0, #134")
-		w("\tmov x8, #94") // exit_group
-		w("\tsvc #0")
-		w("%s:", ok)
+		if checked {
+			w("\tldur w2, [x0, #-4]") // len
+			w("\tcmp w1, w2")
+			w("\tb.lo %s", ok) // idx < len (unsigned)
+			w("\tmov x0, #134")
+			w("\tmov x8, #94") // exit_group
+			w("\tsvc #0")
+			w("%s:", ok)
+		}
 		if shift == 0 {
 			w("\tadd x0, x0, x1") // base + idx*1
 		} else {

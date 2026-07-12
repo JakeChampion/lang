@@ -1059,6 +1059,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_len":           emitStrLenHelper,
 	"__fern_arr_dec":      emitArrDecHelper,
 	"__arr_idx":           emitArrIdxHelper,
+	"__arr_idx_nc":        emitArrIdxNCHelper,
 	"__str_eq":            emitStrEqHelper,
 	"__str_concat":        emitStrConcatHelper,
 	"__fern_str_dec":      emitStrDecHelper,
@@ -1270,6 +1271,16 @@ func emitArrIdxHelper(w func(string, ...any)) {
 	w("\tmov eax, 231") // exit_group
 	w("\tsyscall")
 	w(".Lssa_arridx_ok:")
+	w("\tlea rax, [rdi + rsi*4]")
+	w("\tret")
+}
+
+// emitArrIdxNCHelper is emitArrIdxHelper minus the bounds check — the
+// elided (`_nc`) variant used when the caller proved the index in range
+// (ForEach desugar, #4380 lever 3). Just base + idx*4.
+func emitArrIdxNCHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__arr_idx_nc"))
 	w("\tlea rax, [rdi + rsi*4]")
 	w("\tret")
 }

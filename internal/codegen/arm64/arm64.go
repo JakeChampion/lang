@@ -2622,6 +2622,19 @@ func (g *generator) emitSliceBoundsCheck() {
 // is the log2 stride. AArch64 supports an LSL shift amount in
 // the operand-2 position — folds the multiply into the add.
 func (g *generator) emitInlineIdxHelper(name string) error {
+	// Bounds-check elision (#4380 lever 3): a `_nc` suffix names the same
+	// address compute minus the len-load + compare + trap. Strip it and
+	// remember to skip emitArrBoundsCheck for the array cases below.
+	checked := true
+	if strings.HasSuffix(name, "_nc") {
+		checked = false
+		name = strings.TrimSuffix(name, "_nc")
+	}
+	arrBounds := func() {
+		if checked {
+			g.emitArrBoundsCheck()
+		}
+	}
 	if name == "__str_idx" && ast.UseTwoWordStrings(8) {
 		// Two-word ABI: stack on entry is [data, len, idx],
 		// top = idx. Pop idx → x0, len → x1, data → x2.
@@ -2687,17 +2700,17 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// idx. Split from $__str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `tbnz` check.
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("add x0, x1, x0")
 	case "__arr_idx":
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("add x0, x1, x0, lsl #2")
 	case "__arr_idx_8":
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("add x0, x1, x0, lsl #3")
 	case "__arr_idx_16":
 		// 16-byte stride — two-word `string[]` element load.
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("add x0, x1, x0, lsl #4")
 	// Slice indexing first bounds-checks `i` against the slice
 	// header's len (at [slice+4]), then dereferences its 32-bit
@@ -9714,6 +9727,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
 		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8", "__arr_idx_16",
+			"__arr_idx_nc", "__arr_idx_1_nc", "__arr_idx_8_nc", "__arr_idx_16_nc",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_8", "__slice_idx_16":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. arm64 doesn't yet

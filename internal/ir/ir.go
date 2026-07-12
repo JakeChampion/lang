@@ -7973,6 +7973,15 @@ func (b *builder) expr(e ast.Expr) error {
 			case 16:
 				helper = "__arr_idx_16"
 			}
+			// Bounds-check elision (#4380 lever 3): a caller that has
+			// statically proven the index in range (currently the
+			// ForEach desugar's synthetic `iter[idx]`) sets n.Unchecked,
+			// routing to the `_nc` ("no check") helper variant — the same
+			// address compute minus the len-load + compare + trap. Only
+			// the array path honours it; string/slice keep their checks.
+			if n.Unchecked {
+				helper = helper + "_nc"
+			}
 			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		}
