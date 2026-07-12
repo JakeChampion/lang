@@ -187,6 +187,35 @@ function test_join_with_last_edges(): test.TestOutcome {
         && uni.join_with_last(", ", " & ") == "Glóin, Óin & Þórin");
 }
 
+// find_map: apply a projection returning Option, keep the first Some.
+function fm_even_x10(n: i32): Option[i32] {
+    if (n % 2 == 0) { return Some(n * 10); }
+    return None;
+}
+
+function test_find_map_some(): test.TestOutcome {
+    // First even is 4 → Some(40); short-circuits before 6.
+    match (array.find_map([1, 3, 4, 6], fm_even_x10)) {
+        Some(v) => { return test.assert_eq(v, 40); },
+        None => { return test.fail("expected Some(40)"); }
+    }
+    return test.pass();
+}
+
+function test_find_map_none(): test.TestOutcome {
+    // No element maps to Some, and the empty array is None too.
+    var empty: i32[] = [];
+    match (array.find_map([1, 3, 5], fm_even_x10)) {
+        Some(v) => { return test.fail("expected None"); },
+        None => {}
+    }
+    match (array.find_map(empty, fm_even_x10)) {
+        Some(v) => { return test.fail("empty should be None"); },
+        None => { return test.pass(); }
+    }
+    return test.pass();
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("array combinators");
     r = r.it("map",                  test_map());
@@ -211,5 +240,7 @@ function main(): i32 {
     r = r.it("map then fold",        test_map_then_fold());
     r = r.it("join edges",           test_join_edges());
     r = r.it("join_with_last edges", test_join_with_last_edges());
+    r = r.it("find_map some",        test_find_map_some());
+    r = r.it("find_map none",        test_find_map_none());
     return r.finish();
 }

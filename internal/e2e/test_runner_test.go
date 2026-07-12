@@ -1670,7 +1670,9 @@ func TestRunnerArrayCombinatorsExample(t *testing.T) {
 		"ok 20 - map then fold",
 		"ok 21 - join edges",
 		"ok 22 - join_with_last edges",
-		"# pass 22",
+		"ok 23 - find_map some",
+		"ok 24 - find_map none",
+		"# pass 24",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
