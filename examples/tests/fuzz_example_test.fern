@@ -40,7 +40,7 @@ function check_to_upper_idempotent(input: string): test.TestOutcome {
 // The corpus seeds whitespace at both ends so the mutation
 // path is exercising both sides.
 function check_trim_strips_spaces(input: string): test.TestOutcome {
-    var trimmed: string = input.trim();
+    var trimmed: str = input.trim();
     if (trimmed.len() == 0) { return test.pass(); }
     if (trimmed[0] == 32) {
         return test.fail("trim left a leading space: \"" + trimmed + "\"");

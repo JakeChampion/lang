@@ -38,14 +38,14 @@ function row_to_object(headers: string[], row: string[]): JsonValue {
   var m: Map[string, JsonValue] = map_new(headers.len());
   var i: i32 = 0;
   while (i < headers.len() && i < row.len()) {
-    m = m.insert(headers[i].trim(), JString(row[i].trim()));
+    m = m.insert(headers[i].trim().to_owned(), JString(row[i].trim().to_owned()));
     i = i + 1;
   }
   return JObject(m);
 }
 
 function main(): i32 {
-  var raw: string = read_all(stdin()).trim();
+  var raw: str = read_all(stdin()).trim();
   var lines: string[] = raw.split("\n");
   if (lines.len() == 0 || lines[0].is_empty()) {
     print("[]");

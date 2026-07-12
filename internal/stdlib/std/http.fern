@@ -273,7 +273,7 @@ function __parse_headers(block: string): HeaderMap {
             var col: i32 = line.index_of(":");
             if (col > 0) {
                 var name: string = line[0:col];
-                var value: string = line[col + 1:line.len()].trim();
+                var value: string = line[col + 1:line.len()].trim().to_owned();
                 h = h.append(name, value);
             }
         }
@@ -316,7 +316,7 @@ function __http_content_length(h: HeaderMap): Option[i32] {
     if (cls.len() > 1) {
         return None;
     }
-    var value: string = cls[0].trim();
+    var value: string = cls[0].trim().to_owned();
     if (value.len() == 0) {
         return None;
     }

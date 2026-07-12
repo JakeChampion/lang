@@ -11497,7 +11497,7 @@ func TestArm64LambdaCallsMethodOnCapturedString(t *testing.T) {
 import "std/string";
 function main(): i32 {
     var s: string = "  hi  ";
-    var f = function (): string { return s.trim(); };
+    var f = function (): string { return s.trim().to_owned(); };
     var got = f();
     if (got == "hi") { return 0; }
     return 1;

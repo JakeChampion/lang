@@ -1619,7 +1619,7 @@ function main(): i32 {
     if (s.index_of("hello world!") != -1) { return 6; }
 
     var padded: string = "  hello   ";
-    var trimmed: string = padded.trim();
+    var trimmed: str = padded.trim();
     if (trimmed != "hello") { return 7; }
     if (trimmed.len() != 5) { return 8; }
     var blank: string = "    ";
@@ -5001,7 +5001,7 @@ func TestWASMLambdaCallsMethodOnCapturedString(t *testing.T) {
 import "std/string";
 function main(): i32 {
     var s: string = "  hi  ";
-    var f = function (): string { return s.trim(); };
+    var f = function (): string { return s.trim().to_owned(); };
     var got = f();
     if (got == "hi") { return 0; }
     return 1;

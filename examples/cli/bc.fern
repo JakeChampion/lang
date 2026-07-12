@@ -218,7 +218,7 @@ function format_result(v: f64): string {
 }
 
 function eval_line(line: string): boolean {
-  var t: string = line.trim();
+  var t: str = line.trim();
   if (t.is_empty()) {
     return true;
   }
