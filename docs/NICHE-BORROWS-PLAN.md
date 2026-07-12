@@ -41,7 +41,17 @@ acceptable.
 
 ### Phase A — small language-surface wins
 
-**A1. `todo` statement builtin.** [status: not started]
+**A1. `todo` statement builtin.** [status: shipped]
+Shipped as designed, with two refinements over the sketch below:
+the desugar wraps in `loop { … }` / `while (true) { … }` (native /
+self-host) instead of a bare statement pair, which makes the stub
+**diverge** for E052 missing-return and `let else` — so `todo;`
+can be a whole non-void function body, no checker changes needed —
+and the formatter round-trips the sugar via `IsTodo`/`TodoMsg` on
+`ast.Loop` (deliberately better than `assert`, which formats as
+its desugared body). `-check` warns per remaining entry-module
+stub; runtime message is `todo: not implemented` / `todo: <msg>`
+(byte-identical native vs self-host), exit 101.
 Gleam-inspired typed hole, scoped first to statement position
 (the porting-workflow case: stub the next match arm / function
 body and keep the build green).
@@ -49,7 +59,7 @@ body and keep the build green).
 - Surface: `todo;` and `todo("message");` as a statement.
   Parser-level builtin exactly like `assert` (contextual — `todo`
   stays usable as an identifier), desugaring to
-  `eprint("todo: <msg> at <file>:<line>"); exit(101);` in **both**
+  `eprint("todo[: msg]"); exit(101);` (loop-wrapped) in **both**
   parsers (native `parseStmt`, self-host `parser.fern`), so every
   backend gets it for free — no checker/IR/interp surface.
   Exit code 101 distinguishes "unimplemented" from assert's 1 and

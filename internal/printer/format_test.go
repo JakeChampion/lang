@@ -913,3 +913,33 @@ func TestFormatDeriveAttr(t *testing.T) {
 		t.Errorf("formatted output dropped @derive on an enum:\n%s", eout)
 	}
 }
+
+// `todo;` / `todo("msg");` desugars in the parser to a `loop { eprint;
+// exit(101); }` stub, but — unlike `assert`, which formats as its desugared
+// form — the formatter must re-print the todo SUGAR: the marker is a
+// remaining-work inventory (`-check` warns per site) that `fern -fmt` must
+// not erase. Pinned here: both forms survive, the message expression is
+// reproduced verbatim, and formatting is idempotent.
+func TestFormatTodoRoundTrip(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{`function f(): i32 { todo; }`, "todo;"},
+		{`function f(): i32 { todo("port the wide-K case"); }`, `todo("port the wide-K case");`},
+		{`function f(): i32 { todo(); }`, "todo;"},
+	}
+	for _, c := range cases {
+		got := formatSrc(t, c.src)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("formatted output for %q lost the todo sugar (want %q):\n%s", c.src, c.want, got)
+		}
+		if strings.Contains(got, "loop") || strings.Contains(got, "eprint") {
+			t.Errorf("formatted output for %q leaked the desugared body:\n%s", c.src, got)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("format not idempotent for %q:\nfirst:\n%s\nsecond:\n%s", c.src, got, again)
+		}
+	}
+}

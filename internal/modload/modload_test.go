@@ -1395,3 +1395,29 @@ function main(): i32 { return (5).abs(); }`
 		t.Errorf("LoadSource must not depend on os.Getwd; got: %v", err)
 	}
 }
+
+// `todo` sites survive the module merge for the ENTRY module only:
+// ast.Position carries no filename, so a site from an imported module
+// could not be attributed to its file in `-check`'s warning output.
+// Pinned here so the contract doesn't silently regress in either
+// direction (dropping entry sites, or leaking import sites).
+func TestLoadCarriesEntryTodoSitesOnly(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern": `pub function stubbed(): i32 { todo("in util"); }`,
+		"main.fern": `import "./util";
+function helper(): i32 {
+    todo("in entry");
+}
+function main(): i32 { return util.stubbed() + helper(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.TodoSites) != 1 {
+		t.Fatalf("TodoSites = %d entries, want 1 (entry module only)", len(prog.TodoSites))
+	}
+	if prog.TodoSites[0].Line != 3 {
+		t.Errorf("TodoSites[0].Line = %d, want 3 (the entry's todo)", prog.TodoSites[0].Line)
+	}
+}
