@@ -510,6 +510,20 @@ function variant_in_unions(name: string, unions: UnionSig[]): boolean {
     return false;
 }
 
+// is_nopayload_builtin_variant reports whether `name` is a NO-payload variant
+// of a front-end-injected builtin enum — the only builtin variants that appear
+// bare as a value (`None`, `JNull`, and every `IoError` variant). The payload
+// builtins (`Some` / `Ok` / `Err` / the `J*` data variants) instead appear as
+// constructor CALLS (`Some(3)`), handled in check_call_expr; resolving them
+// bare would mistype a `Some(3)` callee as a value and trip a "calling
+// non-function value" E038 (#4346 piece 2).
+function is_nopayload_builtin_variant(name: string): boolean {
+    if (name == "None") { return true; }
+    if (name == "JNull") { return true; }
+    if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") { return true; }
+    return false;
+}
+
 // union_of_variant returns the name of the first declared enum/union in scope
 // that lists `name` as a variant, or "" when none does. Used by check_expr to
 // type a bare no-payload enum variant used as a value (#4346 piece 2).
@@ -1260,6 +1274,18 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
         },
         _ => { }
     }
+    // Variant constructors (#4346 piece 2): `Some(x)` / `Ok(x)` / `Err(e)`
+    // (and a user enum's payload variant `A(x)`) aren't functions — they
+    // construct their enum. Type the call to the enum's name-only union so
+    // `var o: Option[i32] = Some(3);` type-checks. A DECLARED enum/union in
+    // scope wins over the builtin table, so a user enum that reuses a builtin
+    // variant name (`enum E { Ok(i32), … }`) types `Ok(1)` as `E`, not
+    // `Result`. Arity / payload-type errors remain the province of the
+    // dedicated variant diagnostic passes; here we only supply the value type.
+    var ctor_user: string = union_of_variant(name, s.unions);
+    if (ctor_user.len() > 0) { return t_union(ctor_user); }
+    var ctor_enum: string = mx_builtin_enum_of(name);
+    if (ctor_enum.len() > 0) { return t_union(ctor_enum); }
     var sig: FuncSig = s.lookup_sig(name);
     if (sig.name.len() == 0) {
         return t_unknown("undefined function: " + name);
@@ -1302,6 +1328,15 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             var un: string = union_of_variant(id.name, s.unions);
             if (un.len() > 0 && s.lookup_struct(id.name).field_names.len() == 0) {
                 return t_union(un);
+            }
+            // Builtin no-payload variants (`None`, `JNull`, the IoError set)
+            // aren't in the declared-union table but the front-end injects them
+            // (#4346 piece 2). Restricted to the no-payload set so a payload
+            // builtin (`Some` / `Ok` / …) stays unknown here and is typed at
+            // its constructor call in check_call_expr — resolving it bare would
+            // mistype a `Some(3)` callee as a value.
+            if (is_nopayload_builtin_variant(id.name)) {
+                return t_union(mx_builtin_enum_of(id.name));
             }
             return bound;
         },
@@ -2060,8 +2095,16 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
         while (vk < r.args.len()) { v_name = v_name + ", " + parser.render_type_ref(r.args[vk]); vk = vk + 1; }
         return t_map(type_from_ref_su(r.args[0], structs, unions), type_from_name_with_structs_unions(v_name, structs, unions));
     }
+    // Builtin generic enums (#4346 piece 2): `Option[T]` / `Result[T, E]` (and
+    // the bare `JsonValue` / `IoError`) resolve to a NAME-ONLY union — the
+    // generic arguments are dropped, exactly as user enums are name-only in
+    // this partial type system. Keyed off r.base (the pre-bracket name), so
+    // both `Option` and `Option[i32]` land here. Without this the full
+    // spelling `Option[i32]` matches no struct/union below and the annotation
+    // collapsed to unknown, over-rejecting every `var o: Option[i32] = …`.
+    if (is_reserved_enum_name(r.base)) { return t_union(r.base); }
     // Any other shape (a bare name, a single-element tuple, a Map with <2 args, a
-    // non-Map generic like `Option[i32]` / `Foo[T]`) resolves by its full spelling:
+    // non-Map generic like `Foo[T]`) resolves by its full spelling:
     // struct → union → unknown. A generic's spelling never matches a struct/union
     // name (those carry no brackets), so it lands on unknown, exactly as before.
     var i: i32 = 0;

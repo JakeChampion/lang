@@ -455,17 +455,42 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-option-result-value-ok", func(t *testing.T) {
+		// #4346 piece 2 (Option/Result slice): a builtin `Option[i32]` /
+		// `Result[i32, i32]` annotation resolves to a name-only union, and the
+		// constructors `Some(x)` / `None` / `Ok(x)` / `Err(e)` type to that
+		// union — so this native-valid program passes self-host `-check`
+		// (exit 0). Before the slice each collapsed to unknown and `-check`
+		// exited 1 (a silent over-reject).
+		srcPath := filepath.Join(dir, "option_result_value.fern")
+		src := "function main(): i32 {\n" +
+			"    var a: Option[i32] = Some(3);\n" +
+			"    var b: Option[i32] = None;\n" +
+			"    var c: Result[i32, i32] = Ok(3);\n" +
+			"    var d: Result[i32, i32] = Err(9);\n" +
+			"    return 0;\n" +
+			"}\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on an Option/Result-value program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
-		// #4346: the partial checker's `Type` union can't model Option/Result,
-		// enum values, generics, or dyn, so an expression on one of those
-		// collapses to TypeUnknown and marks the module ill-typed — but no
-		// coded rule fires. Before the fix `-check` exited 1 with EMPTY output
-		// (silent reject). `var o: Option[i32] = Some(3);` is native-valid
-		// (exit 0) yet over-rejected here; the fix surfaces a best-effort
-		// `error[type]` hint so the rejection is never silent. The native
-		// `fern` stays the full oracle (this asserts non-silence, not a code).
+		// #4346: the partial checker's `Type` union still can't model a bare
+		// generic type parameter (`T`) or a `dyn Trait`, so an expression on one
+		// of those collapses to TypeUnknown and marks the module ill-typed — but
+		// no coded rule fires. Before piece 1 `-check` exited 1 with EMPTY output
+		// (silent reject). A declared generic `ident[T](v: T): T` is native-valid
+		// (exit 0) yet over-rejected here (T → unknown); piece 1 surfaces a
+		// best-effort `error[type]` hint so the rejection is never silent. The
+		// native `fern` stays the full oracle (this asserts non-silence, not a
+		// code). (Option/Result values, once also over-rejected here, now type
+		// via the piece-2 slices — see check-option-result-value-ok above.)
 		srcPath := filepath.Join(dir, "overreject.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var o: Option[i32] = Some(3); return 0; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
