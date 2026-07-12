@@ -5952,17 +5952,50 @@ func isFloatType(t ast.Type) bool {
 	return ok
 }
 
-// bindingSlotTwoWord reports whether a binding of type t occupies a
-// two-word logical slot (fan-out at OpLoadLocal/OpStoreLocal): a string
-// under the two-word ABI, or an inline `dyn Trait` pair on wasm32.
-func bindingSlotTwoWord(t ast.Type, ptrW int) bool {
+// bindingSlot shape classes. Two same-named bindings may share a local
+// slot only when the backend gives both the SAME physical slot type —
+// on wasm a local is typed (i32/i64/f32/f64) and a mixed-width share
+// miscompiles: the local's valtype comes from the final scratchType
+// stamp, so the other arm's store/load is ill-typed and the module
+// fails validation ("type mismatch: expected i64, found i32" — the
+// TestExternVariant{MixedWidth,NonUniform}ResultCustomProvider shape,
+// where `match (classify(n)) { I(v) => …, L(v) => … }` binds an i32 `v`
+// and an i64 `v` in sibling arms).
+const (
+	bindingShapeOneWord = iota // i32-class: bool, i32-width ints, pointer-shaped composites, handles, fn ptrs
+	bindingShapeI64
+	bindingShapeF32
+	bindingShapeF64
+	bindingShapeTwoWord // string under the two-word ABI / inline dyn pair on wasm32
+)
+
+// bindingSlotShape classifies the physical slot type a binding of type t
+// occupies, mirroring the wasm backend's valtypeFor/slotValtypes: a
+// two-word logical slot (fan-out at OpLoadLocal/OpStoreLocal — a string
+// under the two-word ABI, or an inline `dyn Trait` pair on wasm32),
+// otherwise the scalar valtype class. Native backends use untyped 8-byte
+// slots, so the scalar split is conservative there (a cross-width mix
+// takes the scoped fresh-slot path instead of sharing) — but the IR is
+// backend-shared, so the guard must satisfy the strictest consumer.
+func bindingSlotShape(t ast.Type, ptrW int) int {
 	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
-		return true
+		return bindingShapeTwoWord
 	}
 	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
-		return true
+		return bindingShapeTwoWord
 	}
-	return false
+	switch v := t.(type) {
+	case ast.NumberType:
+		if v.NormalWidth() == 64 {
+			return bindingShapeI64
+		}
+	case ast.FloatType:
+		if v.NormalWidth() == 64 {
+			return bindingShapeF64
+		}
+		return bindingShapeF32
+	}
+	return bindingShapeOneWord
 }
 
 // bindingSlot returns the local slot for a match / if-let / let-else arm
@@ -5989,10 +6022,11 @@ func bindingSlotTwoWord(t ast.Type, ptrW int) bool {
 // var / binding on one slot — matching the zero-init pass's "one slot
 // per name" model.
 //
-// Slot-shape guard: a two-word logical slot (wasm strings / inline dyn)
-// cannot share an index with a single-word one — the backend sizes
-// physical slots from the declared param / local / scratch type. Mixed
-// shapes fall back to a fresh slot; on the SCOPED variant below the
+// Slot-shape guard: two bindings may share an index only when the
+// backend gives both the same physical slot type (bindingSlotShape) —
+// two-word vs one-word, and on wasm the scalar valtype class too (an
+// i32 arm binding sharing an i64 var's slot fails module validation).
+// Mixed shapes fall back to a fresh slot; on the SCOPED variant below the
 // name remap is temporary (restored when the binding's scope ends), so
 // the shadowing hazard the fresh slot used to introduce (#4510 — reads,
 // the entry zero-init, and later-lowered exit sweeps splitting one name
@@ -6018,7 +6052,7 @@ func (b *builder) bindingSlot(name string, bt ast.Type) int32 {
 // remap IS their semantics).
 func (b *builder) bindingSlotScoped(name string, bt ast.Type) (int32, func()) {
 	if slot, ok := b.locals[name]; ok {
-		if bindingSlotTwoWord(b.slotShapeType(slot), b.ptrW) == bindingSlotTwoWord(bt, b.ptrW) {
+		if bindingSlotShape(b.slotShapeType(slot), b.ptrW) == bindingSlotShape(bt, b.ptrW) {
 			b.scratchType[slot] = bt
 			return slot, func() {}
 		}
