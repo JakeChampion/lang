@@ -436,6 +436,25 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-enum-value-ok", func(t *testing.T) {
+		// #4346 piece 2 (enum-value slice): a bare no-payload enum variant used
+		// as a value (`var c: Color = Red;`) types to its enum's union, so this
+		// native-valid program now passes self-host `-check` (exit 0). Before
+		// the slice `Red` typed to unknown, failed `type_assignable` against the
+		// declared `Color`, and `-check` exited 1 (a silent over-reject). Covers
+		// both the assignment and return positions.
+		srcPath := filepath.Join(dir, "enum_value.fern")
+		src := "enum Color { Red, Green }\n" +
+			"function pick(): Color { return Green; }\n" +
+			"function main(): i32 { var c: Color = Red; var d: Color = pick(); return 0; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on an enum-value program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
 		// #4346: the partial checker's `Type` union can't model Option/Result,
 		// enum values, generics, or dyn, so an expression on one of those
