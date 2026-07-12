@@ -314,7 +314,8 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 // `examples/tests/i64_test.fern` covers std/i64's signed-64-bit receiver
 // methods (the wider counterpart to std/i32) — abs / min / max / clamp /
 // pow (incl. a value past the i32 range) / gcd / lcm / to_string (incl.
-// negative) / is_even / is_odd. Passing suite → exit 0.
+// negative) / is_even / is_odd / signum / is_positive|negative|zero /
+// saturating_add|sub / checked_add|sub. Passing suite → exit 0.
 func TestRunnerI64ExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/i64_test.fern")
@@ -322,7 +323,7 @@ func TestRunnerI64ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/i64", "# pass 14", "# fail 0", "1..14"} {
+	for _, w := range []string{"# Suite: std/i64", "# pass 18", "# fail 0", "1..18"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

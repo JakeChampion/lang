@@ -49,6 +49,10 @@ Receiver methods on i32 / byte values.
 
 - **Scalar:** `abs`, `min`, `max`, `clamp`, `pow`, `gcd`, `lcm`
 - **Parity:** `is_even`, `is_odd`
+- **Sign:** `signum` (-1/0/1), `is_positive`, `is_negative`, `is_zero`
+- **Overflow-aware:** `saturating_add`/`saturating_sub` (clamp to
+  i64::MAX/MIN), `checked_add`/`checked_sub` (`Option[i64]`, `None` on
+  overflow)
 - **String:** `to_string`
 
 ### `std/u32`
