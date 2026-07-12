@@ -6077,15 +6077,35 @@ function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: s
 // construction, string concatenation (incl. the f-string `+`-chain desugar),
 // calls to non-`fip` functions, any other method call, indirect calls, and
 // index/field writes not rooted at an `own` parameter.
-function e053_root_of_target(target: string): string {
-    // `xs[0]` / `p.f` → the base identifier being written through.
+function e053_root_len(target: string): i32 {
+    // `xs[0]` / `p.f` → byte length of the base identifier being written
+    // through, or -1 for a bare local rebind (no `[` / `.`), which
+    // allocates nothing. Index-based (no slicing) so this stays free of
+    // the str-view producer surface.
     var i: i32 = 0;
     while (i < target.len()) {
         var ch: i32 = target[i];
-        if (ch == 91 || ch == 46) { return target[0:i]; }
+        if (ch == 91 || ch == 46) { return i; }
         i = i + 1;
     }
-    return target;
+    return 0 - 1;
+}
+
+function e053_root_is_own(target: string, rl: i32, own: string[]): boolean {
+    var oi: i32 = 0;
+    while (oi < own.len()) {
+        if (own[oi].len() == rl) {
+            var eq: boolean = true;
+            var k: i32 = 0;
+            while (k < rl) {
+                if (own[oi][k] != target[k]) { eq = false; }
+                k = k + 1;
+            }
+            if (eq) { return true; }
+        }
+        oi = oi + 1;
+    }
+    return false;
 }
 
 function e053_stringish(e: parser.Expr, cur: Scope): boolean {
@@ -6203,14 +6223,9 @@ function e053_stmts(stmts: parser.Stmt[], fname: string, fips: string[], variant
                 // (Re)binding a local slot allocates nothing; an index/field
                 // write is in-place only when rooted at an `own` parameter —
                 // otherwise it triggers a copy-on-write.
-                var root: string = e053_root_of_target(a.target);
-                if (root != a.target) {
-                    var root_own: boolean = false;
-                    var oi: i32 = 0;
-                    while (oi < own.len()) { if (own[oi] == root) { root_own = true; } oi = oi + 1; }
-                    if (!root_own) {
-                        out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not write to a non-`own` heap value (triggers a copy-on-write)", a.line, a.col));
-                    }
+                var trl: i32 = e053_root_len(a.target);
+                if (trl >= 0 && !e053_root_is_own(a.target, trl, own)) {
+                    out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not write to a non-`own` heap value (triggers a copy-on-write)", a.line, a.col));
                 }
                 out = append_diags(out, e053_expr(a.value, fname, fips, variants, own, cur));
             },
@@ -6279,10 +6294,21 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
             parser.StmtVar(v) => {
                 if (v.is_str) {
                     // A `str` binding views its initializer: tainted only
-                    // when the init is (a view of) local string storage.
+                    // when the init is (a view of) local string storage —
+                    // a backed ident, or a slice whose SOURCE is backed
+                    // (the P2 flip makes s[a:b] a view, and the native
+                    // chase follows it to the backing local).
                     match (v.init) {
                         parser.ExprIdent(id) => {
                             if (!e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked)) { sbacked = sbacked.append(v.name); }
+                        },
+                        parser.ExprSlice(vsl) => {
+                            match (vsl.array) {
+                                parser.ExprIdent(sid) => {
+                                    if (!e065_ident_in(sid.name, params) && e065_ident_in(sid.name, sbacked)) { sbacked = sbacked.append(v.name); }
+                                },
+                                _ => { }
+                            }
                         },
                         _ => { }
                     }
@@ -6297,8 +6323,13 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
                     match (v.init) {
                         parser.ExprString(_) => { sbacked = sbacked.append(v.name); },
                         parser.ExprSlice(sl) => {
-                            match (check_expr(sl.array, cur)) {
-                                TypeString(_) => { sbacked = sbacked.append(v.name); },
+                            // A string slice is a VIEW (P2): backed only when
+                            // its source is a backed local, mirroring the
+                            // native chase (a slice of a parameter is safe).
+                            match (sl.array) {
+                                parser.ExprIdent(sid) => {
+                                    if (!e065_ident_in(sid.name, params) && e065_ident_in(sid.name, sbacked)) { sbacked = sbacked.append(v.name); }
+                                },
                                 _ => { }
                             }
                         },
