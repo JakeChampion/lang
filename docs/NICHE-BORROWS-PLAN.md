@@ -109,7 +109,7 @@ of callees that don't take the data first.
 
 ### Phase B — contract & design docs (lock decisions in writing)
 
-**B1. Reuse contract doc.** [status: not started]
+**B1. Reuse contract doc.** [status: shipped — `docs/REUSE-CONTRACT.md`]
 `docs/REUSE-CONTRACT.md`: what Fern's RC/reuse **guarantees**
 today (Koka's stance: specified, programmer-visible behavior) vs
 what is opportunistic. Contents: the reuse-site taxonomy
@@ -120,7 +120,7 @@ list (`general_reuse_test.go` et al.) that keeps each documented
 guarantee locked. Explicitly records the PLDI-2021-vs-drop-guided
 gap and links E3.
 
-**B2. Comptime design brief.** [status: not started]
+**B2. Comptime design brief.** [status: shipped — `docs/COMPTIME-BRIEF.md`]
 `docs/COMPTIME-BRIEF.md`: the Zig rules (hermetic — no comptime
 I/O; target-faithful — comptime observes target layout, critical
 with `WidthPtr` 4-vs-8 across Fern's three backends; one
@@ -132,7 +132,7 @@ functions, starting with the next desugar that lands. No comptime
 implementation now — this is the brief that gates the eventual
 one.
 
-**B3. Iterator fusion contract.** [status: not started]
+**B3. Iterator fusion contract.** [status: shipped — `docs/ITERATOR-FUSION-CONTRACT.md`]
 `docs/ITERATOR-FUSION-CONTRACT.md`: the strymonas-derived
 compositional guarantee to adopt *when* lazy iterators return to
 the agenda — "if each operator is individually non-allocating,
