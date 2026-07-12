@@ -1399,6 +1399,26 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.mark_u32_to_string();
         return s;
     }
+    // 64-bit receivers must NOT fall into the is_int_tag shortcut below:
+    // __fern_i32_to_string reads only the low 32 bits of its arg slot, so a
+    // wide i64/u64 silently truncated (1234567890123 printed as 1912276171).
+    // Route to the width-correct runtime helpers, mirroring the u32 case.
+    if (fa.field == "to_string" && c.args.len() == 0 && asmcore.ty_is_i64(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    call __fn___fern_i64_to_string\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    pushq %rax\n");
+        s = s.mark_i64_to_string();
+        return s;
+    }
+    if (fa.field == "to_string" && c.args.len() == 0 && asmcore.ty_is_u64(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    call __fn___fern_u64_to_string\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    pushq %rax\n");
+        s = s.mark_u64_to_string();
+        return s;
+    }
     // Built-in `.to_string()` on i32 and string —
     // i32 routes to the existing runtime helper,
     // string returns the receiver unchanged. The
@@ -1409,10 +1429,17 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             && (asmcore.is_int_tag(prim_recv) || asmcore.ty_is_string(prim_recv))) {
         s = emit_expr(fa.obj, s);
         if (asmcore.is_int_tag(prim_recv)) {
-            s = s.write("    call __fn___fern_i32_to_string\n");
+            // The WIDTH-64 helper, not __fern_i32_to_string: this backend
+            // width-erases integers (an `as i64` cast reads as the i32 tag,
+            // and all int arithmetic runs on full 64-bit slots), so the
+            // receiver slot may hold a genuine 64-bit value — the i32 helper
+            // read only its low 32 bits and truncated (1234567890123 printed
+            // as 1912276171). A real i32 formats identically through the
+            // 64-bit path (its slot is sign-extended by the 64-bit ALU ops).
+            s = s.write("    call __fn___fern_i64_to_string\n");
             s = s.write("    addq $8, %rsp\n");
             s = s.write("    pushq %rax\n");
-            s = s.mark_i32_to_string();
+            s = s.mark_i64_to_string();
         }
         return s;
     }
@@ -1487,10 +1514,19 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    popq %rcx\n");
             s = s.write("    popq %rax\n");
-            // If rcx < rax, swap rax with rcx so
-            // rax ends up holding the smaller.
+            // If rcx < rax, swap rax with rcx so rax ends up holding the
+            // smaller. UNSIGNED cmova when either operand is u32/u64-typed:
+            // a cast receiver width-erases to the i32 tag (so `(5 as
+            // u64).min(umax())` lands here, not on u64.min), and the signed
+            // cmovg read umax as -1 and kept it. Checking the ARG's type too
+            // recovers the unsigned intent whenever either side is typed.
             s = s.write("    cmpq %rcx, %rax\n");
-            s = s.write("    cmovgq %rcx, %rax\n");
+            if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(fa.obj, s))
+                    || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[0], s))) {
+                s = s.write("    cmovaq %rcx, %rax\n");
+            } else {
+                s = s.write("    cmovgq %rcx, %rax\n");
+            }
             s = s.write("    pushq %rax\n");
             return s;
         }
@@ -1520,10 +1556,15 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    popq %rcx\n");
             s = s.write("    popq %rax\n");
-            // Keep rax if it's the larger; else
-            // pick rcx.
+            // Keep rax if it's the larger; else pick rcx. UNSIGNED cmovb
+            // when either operand is u32/u64-typed — see min above.
             s = s.write("    cmpq %rcx, %rax\n");
-            s = s.write("    cmovlq %rcx, %rax\n");
+            if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(fa.obj, s))
+                    || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[0], s))) {
+                s = s.write("    cmovbq %rcx, %rax\n");
+            } else {
+                s = s.write("    cmovlq %rcx, %rax\n");
+            }
             s = s.write("    pushq %rax\n");
             return s;
         }
@@ -1534,12 +1575,18 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = s.write("    popq %rdx\n");   // hi
             s = s.write("    popq %rcx\n");   // lo
             s = s.write("    popq %rax\n");   // n
+            // Unsigned cmovs when any operand is u32/u64-typed — see min.
+            var clamp_uns: boolean = asmcore.is_unsigned_tag(asmcore.infer_expr_type(fa.obj, s))
+                || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[0], s))
+                || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[1], s));
             // n = max(n, lo)
             s = s.write("    cmpq %rcx, %rax\n");
-            s = s.write("    cmovlq %rcx, %rax\n");
+            if (clamp_uns) { s = s.write("    cmovbq %rcx, %rax\n"); }
+            else { s = s.write("    cmovlq %rcx, %rax\n"); }
             // n = min(n, hi)
             s = s.write("    cmpq %rdx, %rax\n");
-            s = s.write("    cmovgq %rdx, %rax\n");
+            if (clamp_uns) { s = s.write("    cmovaq %rdx, %rax\n"); }
+            else { s = s.write("    cmovgq %rdx, %rax\n"); }
             s = s.write("    pushq %rax\n");
             return s;
         }
@@ -4456,6 +4503,14 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // via the raw-memory intrinsics; heap-only dep. See asmcore.rt_src_u32_to_string.
     if (s.has_need("u32_to_string")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
+    }
+    // __fern_i64_to_string / __fern_u64_to_string: width-correct siblings for
+    // 64-bit `.to_string()` receivers; heap-only deps. See asmcore.rt_src_*.
+    if (s.has_need("i64_to_string")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_i64_to_string(), s);
+    }
+    if (s.has_need("u64_to_string")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s);
     }
     // __fern_str_to_i32 is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_to_i32. Parses a borrowed string into an i32 (optional

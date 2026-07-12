@@ -1367,14 +1367,41 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.mark_u32_to_string();
         return s;
     }
+    // 64-bit receivers must NOT fall into the is_int_tag shortcut below:
+    // __fern_i32_to_string reads only the low 32 bits of its arg slot, so a
+    // wide i64/u64 silently truncated. Route to the width-correct runtime
+    // helpers, mirroring the u32 case (and the x86-64 backend).
+    if (fa.field == "to_string" && c.args.len() == 0 && asmcore.ty_is_i64(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    bl __fn___fern_i64_to_string\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_i64_to_string();
+        return s;
+    }
+    if (fa.field == "to_string" && c.args.len() == 0 && asmcore.ty_is_u64(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    bl __fn___fern_u64_to_string\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_u64_to_string();
+        return s;
+    }
     if (fa.field == "to_string" && c.args.len() == 0
             && (asmcore.is_int_tag(prim_recv) || asmcore.ty_is_string(prim_recv))) {
         s = emit_expr(fa.obj, s);
         if (asmcore.is_int_tag(prim_recv)) {
-            s = s.write("    bl __fn___fern_i32_to_string\n");
+            // The WIDTH-64 helper, not __fern_i32_to_string: this backend
+            // width-erases integers (an `as i64` cast reads as the i32 tag,
+            // and all int arithmetic runs on full 64-bit slots), so the
+            // receiver slot may hold a genuine 64-bit value — the i32 helper
+            // read only its low 32 bits and truncated. A real i32 formats
+            // identically through the 64-bit path (its slot is sign-extended
+            // by the 64-bit ALU ops). Mirrors the x86-64 backend.
+            s = s.write("    bl __fn___fern_i64_to_string\n");
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.mark_i32_to_string();
+            s = s.mark_i64_to_string();
         }
         return s;
     }
@@ -1445,7 +1472,16 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
             s = s.write("    cmp x0, x1\n");
-            s = s.write("    csel x0, x0, x1, lt\n");
+            // UNSIGNED csel (lo) when either operand is u32/u64-typed: a
+            // cast receiver width-erases to the i32 tag (so `(5 as
+            // u64).min(umax())` lands here, not on u64.min), and the signed
+            // lt read umax as -1 and kept it. Mirrors the x86-64 backend.
+            if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(fa.obj, s))
+                    || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[0], s))) {
+                s = s.write("    csel x0, x0, x1, lo\n");
+            } else {
+                s = s.write("    csel x0, x0, x1, lt\n");
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         }
@@ -1476,7 +1512,13 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
             s = s.write("    cmp x0, x1\n");
-            s = s.write("    csel x0, x0, x1, gt\n");
+            // UNSIGNED csel (hi) when either operand is u32/u64-typed — see min.
+            if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(fa.obj, s))
+                    || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[0], s))) {
+                s = s.write("    csel x0, x0, x1, hi\n");
+            } else {
+                s = s.write("    csel x0, x0, x1, gt\n");
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         }
@@ -1487,12 +1529,19 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = s.write("    ldr x2, [sp], #16\n");   // hi
             s = s.write("    ldr x1, [sp], #16\n");   // lo
             s = s.write("    ldr x0, [sp], #16\n");   // n
+            // Unsigned csel conditions when any operand is u32/u64-typed —
+            // see min above.
+            var clamp_uns: boolean = asmcore.is_unsigned_tag(asmcore.infer_expr_type(fa.obj, s))
+                || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[0], s))
+                || asmcore.is_unsigned_tag(asmcore.infer_expr_type(c.args[1], s));
             // n = max(n, lo) — keep n if n > lo, else lo
             s = s.write("    cmp x0, x1\n");
-            s = s.write("    csel x0, x0, x1, gt\n");
+            if (clamp_uns) { s = s.write("    csel x0, x0, x1, hi\n"); }
+            else { s = s.write("    csel x0, x0, x1, gt\n"); }
             // n = min(n, hi) — keep n if n < hi, else hi
             s = s.write("    cmp x0, x2\n");
-            s = s.write("    csel x0, x0, x2, lt\n");
+            if (clamp_uns) { s = s.write("    csel x0, x0, x2, lo\n"); }
+            else { s = s.write("    csel x0, x0, x2, lt\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         }
@@ -4875,6 +4924,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // asmcore.rt_src_u32_to_string.
     if (s.has_need("u32_to_string")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
+    }
+    // __fern_i64_to_string / __fern_u64_to_string: width-correct siblings for
+    // 64-bit `.to_string()` receivers; heap-only deps. See asmcore.rt_src_*.
+    if (s.has_need("i64_to_string")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_i64_to_string(), s);
+    }
+    if (s.has_need("u64_to_string")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s);
     }
     // __fern_str_to_i32 is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_to_i32, lowered through asm_arm64's normal function
