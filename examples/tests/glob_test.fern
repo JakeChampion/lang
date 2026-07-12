@@ -1,0 +1,68 @@
+import "std/test";
+import "std/glob" as glob;
+// examples/tests/glob_test.fern — pure-Fern coverage of std/glob's
+// shell-style matcher: literals, `*` (non-separator), `?`, `**`
+// (globstar, incl. the zero-directory elision), and `[...]` character
+// classes with ranges and negation.
+
+function test_literal(): test.TestOutcome {
+    return test.assert_true(glob.glob_match("abc", "abc") &&
+                            !glob.glob_match("abc", "abd"));
+}
+
+function test_star_no_cross(): test.TestOutcome {
+    // `*` matches within a segment, not across '/'.
+    return test.assert_true(glob.glob_match("*.fern", "a.fern") &&
+                            !glob.glob_match("*.fern", "src/a.fern") &&
+                            glob.glob_match("src/*.fern", "src/a.fern") &&
+                            !glob.glob_match("src/*.fern", "src/x/a.fern"));
+}
+
+function test_question(): test.TestOutcome {
+    return test.assert_true(glob.glob_match("a?c", "abc") &&
+                            !glob.glob_match("a?c", "ac") &&
+                            !glob.glob_match("a?c", "a/c"));
+}
+
+function test_globstar(): test.TestOutcome {
+    if (!glob.glob_match("src/**", "src/a")) { return test.fail("src/** vs src/a"); }
+    if (!glob.glob_match("src/**", "src/a/b/c")) { return test.fail("src/** deep"); }
+    // `**/` matches zero directories (elides the slash).
+    if (!glob.glob_match("**/*.fern", "a.fern")) { return test.fail("**/ zero dirs"); }
+    if (!glob.glob_match("**/*.fern", "src/x/a.fern")) { return test.fail("**/ deep"); }
+    if (glob.glob_match("**/*.fern", "a.txt")) { return test.fail("**/ wrong ext"); }
+    return test.pass();
+}
+
+function test_char_class(): test.TestOutcome {
+    if (!glob.glob_match("[abc]x", "bx")) { return test.fail("set member"); }
+    if (glob.glob_match("[abc]x", "dx")) { return test.fail("set non-member"); }
+    if (!glob.glob_match("[a-z]9", "m9")) { return test.fail("range"); }
+    if (glob.glob_match("[a-z]9", "M9")) { return test.fail("range case"); }
+    if (!glob.glob_match("file[0-9].log", "file7.log")) { return test.fail("digit range"); }
+    return test.pass();
+}
+
+function test_negated_class(): test.TestOutcome {
+    return test.assert_true(glob.glob_match("[!0-9]", "a") &&
+                            !glob.glob_match("[!0-9]", "5"));
+}
+
+function test_edges(): test.TestOutcome {
+    return test.assert_true(glob.glob_match("", "") &&
+                            !glob.glob_match("", "x") &&
+                            glob.glob_match("ab*", "ab") &&        // trailing * matches empty
+                            glob.glob_match("**", "any/thing"));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/glob");
+    r = r.it("literal",         test_literal());
+    r = r.it("star no-cross",   test_star_no_cross());
+    r = r.it("question",        test_question());
+    r = r.it("globstar",        test_globstar());
+    r = r.it("char class",      test_char_class());
+    r = r.it("negated class",   test_negated_class());
+    r = r.it("edges",           test_edges());
+    return r.finish();
+}
