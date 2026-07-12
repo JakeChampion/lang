@@ -66,6 +66,21 @@ func TestColorWrapsNote(t *testing.T) {
 	}
 }
 
+// TestColorRendersGutter asserts rich (colour) mode renders a
+// right-aligned line-number gutter with a box-drawing separator, replacing
+// the classic 4-space indent for the source + caret lines (#4413 Rec §7).
+func TestColorRendersGutter(t *testing.T) {
+	defer SetColor(SetColor(true))
+	err := &fakeCodedErr{
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		code:    "E001",
+	}
+	out := Format("", "function f() { return x; }\n", err)
+	if !strings.Contains(out, " 1 "+paint(ansiBlue, "│")) {
+		t.Errorf("rich mode should render a right-aligned line-number gutter, got:\n%q", out)
+	}
+}
+
 // TestSetColorReturnsPrevious pins the restore contract used by the
 // defer SetColor(SetColor(true)) idiom above.
 func TestSetColorReturnsPrevious(t *testing.T) {
