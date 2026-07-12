@@ -113,6 +113,14 @@ function main(): i32 {
 		{"f64-trunc-sub", "function main(): i32 { var a: f64 = 10.5; var b: f64 = 3.5; return (a - b) as i32; }", 7},
 		{"f64-trunc-sqrt", "function main(): i32 { var a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
 		{"f64-int-roundtrip", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
+		// A struct with a POINTER field generates a `__struct_drop_<T>` helper whose
+		// folded body reads the field via `(i32.load offset=8 …)`. watbin ignored
+		// the `offset=N` memarg — it hardcoded offset 0 AND recursed into the
+		// `offset=8` ATOM as if it were the address operand (its `items` is null →
+		// SIGSEGV). Any struct with a nested-struct / array / string field crashed
+		// the assembler (#4801). Pins the memarg parse on both the load and the
+		// field read.
+		{"struct-nested-field", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
 	}
 
 	for _, tc := range cases {
