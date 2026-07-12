@@ -3,7 +3,6 @@ package manifest
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -46,7 +45,7 @@ func TestParseErrors(t *testing.T) {
 		"no name":           "[package]\nversion = \"1\"\n",
 		"unknown section":   "[package]\nname = \"a\"\n[features]\n",
 		"unknown pkg key":   "[package]\nname = \"a\"\nedition = \"2026\"\n",
-		"version-only dep":  "[package]\nname = \"a\"\n[dependencies]\nfoo = \"1.2\"\n",
+		"malformed version": "[package]\nname = \"a\"\n[dependencies]\nfoo = \"1.2\"\n",
 		"dep unknown key":   "[package]\nname = \"a\"\n[dependencies]\nfoo = { git = \"x\" }\n",
 		"dep missing path":  "[package]\nname = \"a\"\n[dependencies]\nfoo = { }\n",
 		"key outside table": "name = \"a\"\n",
@@ -63,10 +62,32 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
-func TestVersionOnlyDepErrorPointsAtPathForm(t *testing.T) {
-	_, err := Parse("[package]\nname = \"a\"\n[dependencies]\nfoo = \"1.2\"\n")
-	if err == nil || !strings.Contains(err.Error(), "path") {
-		t.Errorf("want error mentioning the path form, got %v", err)
+func TestVersionDep(t *testing.T) {
+	m, err := Parse("[package]\nname = \"a\"\nindex = \"reg.toml\"\n[dependencies]\nfoo = \"1.2.0\"\nbar = { version = \"2.0.1\" }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Index != "reg.toml" {
+		t.Errorf("index = %q", m.Index)
+	}
+	if m.Deps["foo"].Version != "1.2.0" || m.Deps["bar"].Version != "2.0.1" {
+		t.Errorf("version deps parsed wrong: %+v", m.Deps)
+	}
+	if got := m.VersionDeps(); got["foo"] != "1.2.0" || got["bar"] != "2.0.1" || len(got) != 2 {
+		t.Errorf("VersionDeps = %v", got)
+	}
+}
+
+func TestVersionDepConflicts(t *testing.T) {
+	for label, src := range map[string]string{
+		"version+path": "[package]\nname = \"a\"\n[dependencies]\nfoo = { version = \"1.0.0\", path = \"../x\" }\n",
+		"version+url":  "[package]\nname = \"a\"\n[dependencies]\nfoo = { version = \"1.0.0\", url = \"https://x/y.tar.gz\" }\n",
+		"bad version":  "[package]\nname = \"a\"\n[dependencies]\nfoo = \"v1.2.3\"\n",
+		"two-part":     "[package]\nname = \"a\"\n[dependencies]\nfoo = \"1.2\"\n",
+	} {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected error", label)
+		}
 	}
 }
 

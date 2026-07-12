@@ -1,15 +1,15 @@
-# Packages: the `fern.toml` manifest (slices 1–7)
+# Packages: the `fern.toml` manifest (slices 1–8)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
 RESEARCH.md` Rec §1): local `path` dependencies, hash-addressed `url`
 dependencies fetched by an explicit `fern -fetch` into a
 content-addressed store, `fern -vendor` for fully-offline vendored
-builds, workspaces, and `fern -add` to declare a dependency (auto-
-hashing url sources). No registry, no version resolution, no lockfile
-yet — those layer on later per the research docs. Everything is opt-in:
-a program with no `fern.toml` anywhere up its directory tree loads
-exactly as before.
+builds, workspaces, `fern -add` to declare a dependency (auto-hashing
+url sources), and Minimum Version Selection over a version index
+(`fern -resolve` → `fern.lock`). No mandatory registry. Everything is
+opt-in: a program with no `fern.toml` anywhere up its directory tree
+loads exactly as before.
 
 ## Using it
 
@@ -47,8 +47,8 @@ webkit = { url = "https://example.com/webkit.tar.gz",
 
 The parser (`internal/manifest`) is a strict TOML subset — sections,
 quoted strings, inline tables — and rejects anything else with a
-pointed error. `helper = "1.2"` (a registry/version dep) errors today;
-that form is reserved for the MVS + lockfile slice.
+pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
+`helper = "1.2"` errors (versions are MAJOR.MINOR.PATCH).
 
 ## Hash-addressed dependencies + `fern -fetch` (slice 2)
 
@@ -167,42 +167,75 @@ Inside a manifest-governed package, an import resolves in this order:
    tree governs the package → `<vendor-root>/vendor/<name>/`. Vendored
    mode is offline and total: a declared dep missing from `vendor/`
    errors (re-run `fern -vendor`), never a fallback to path/url.
-5. First segment matches a **declared dependency** (no vendor tree) →
+5. First segment matches a **versioned (MVS) dependency** → the version
+   pinned in `fern.lock` (a local dir, or a url version in the store).
+6. First segment matches a **declared dependency** (no vendor tree) →
    into the dependency's directory (path dep) or content-addressed
    store (url dep). The manifest is the authority: a declared dep wins
    over a same-named sibling file.
-6. Otherwise, an existing file at the directory-relative path loads as
+7. Otherwise, an existing file at the directory-relative path loads as
    before (so adding a `fern.toml` never breaks a loading program).
-7. Nothing matches → error naming the governing `fern.toml` and the
+8. Nothing matches → error naming the governing `fern.toml` and the
    `[dependencies]` line to add.
 
-Rules 3/5/7 are the resolver-side isolation invariant from the
+Rules 3/5/6/8 are the resolver-side isolation invariant from the
 research: a package can only reach dependencies it declares — enforced
 in `resolveImport` (`internal/modload`), not by directory layout.
 Vendored mode (rule 4) and workspace mode (rule 3) both preserve it:
 only declared deps resolve.
 
-## Not yet (deliberately)
+## Versioned dependencies — MVS + `fern.lock` (slice 8)
 
-Version constraints + MVS resolution, `fern.lock` (for url deps the
-manifest hash already pins content; the lockfile matters once version
-deps resolve transitively). Workspace-wide `-check` and `-vendor` have
-landed. See `PACKAGE-MANAGEMENT-SOTA.md`
-for the design each of these follows.
+The research's headline resolution recommendation is **Minimum Version
+Selection** (Cox/Go): a dependency declares its *lowest* acceptable
+version, and resolution keeps, per package, the *maximum of the
+minimums* across the whole transitive graph. The constraint language is
+minimum-only (no ranges), so a solution always exists, is the unique
+lattice minimum, and is computed by deterministic graph reachability —
+no SAT solver, no conflict-explanation UX debt.
 
-**MVS / version deps — the open design fork.** Minimum Version
-Selection (the research's headline resolution recommendation) needs a
-*version source*: somewhere to discover a package's available versions
-and, per version, its own dependency manifest. The approach consistent
-with everything shipped here (hash-addressed, no mandatory registry) is
-a lightweight **index file** mapping `package → version → { url, hash }`
-— local or itself url+hash-fetched — with MVS computing max-of-minimums
-over the transitively-fetched manifests and writing the resolved
-`(name, version, url, hash)` set to `fern.lock`. That is the next
-substantial slice; it is deferred until a versioned ecosystem actually
-exists (today every dep is a single pinned point), and the index-vs-git-
-tags choice is recorded here so it isn't re-litigated.
+```toml
+[package]
+name = "app"
+index = "index.toml"    # the version source
+
+[dependencies]
+foo = "1.1.0"           # min version; MVS picks the exact one
+bar = { version = "1.0.0" }
+```
+
+The **version source** is a plain **index file** (no registry service —
+consistent with the shipped hash-addressing), mapping each package's
+available versions to a source:
+
+```toml
+[foo]
+"1.0.0" = { path = "foo-1.0.0" }                       # local monorepo
+"1.1.0" = { url = "https://…/foo-1.1.0.tar.gz", hash = "sha256:…" }
+[bar]
+"1.0.0" = { path = "bar-1.0.0" }
+"2.0.0" = { path = "bar-2.0.0" }
+```
+
+`fern -resolve [DIR]` runs MVS over the index (expanding each selected
+version's own versioned deps to a fixpoint), fetches + verifies any
+url-sourced versions into the content-addressed store, and writes the
+chosen `(name, version, source)` set to **`fern.lock`**. A demanded
+version absent from the index is a precise error, never a silent
+round-up. Example: root wants `foo >= 1.1.0` and `bar >= 1.0.0`, but
+`foo@1.1.0` requires `bar >= 2.0.0`, so the lock pins `bar = 2.0.0`.
+
+The build reads only `fern.lock` — never the index or the network (the
+no-build-time-network constraint). A versioned dep whose lock is missing
+errors pointing at `fern -resolve`; a locked url version absent from the
+store errors pointing at `fern -fetch` (which also populates url
+versions from a committed lock, for fresh-machine offline builds). MVS
+implementation: `internal/mvs` (semver, index parse, the fixpoint,
+lockfile read/write).
+
+## Not yet
 
 The self-hosted compiler's modloader (`examples/self_host/
-modloader.fern`) does not read manifests yet — a port slice, tracked
-with the rest in issue #4907.
+modloader.fern`) does not read manifests yet — a port so the
+self-hosted compiler understands `fern.toml`/`fern.lock` the way the
+native driver does. Tracked in issue #4907.

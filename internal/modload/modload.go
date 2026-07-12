@@ -46,6 +46,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/literate"
 	"github.com/jakechampion/lang/internal/manifest"
+	"github.com/jakechampion/lang/internal/mvs"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/pkgcache"
 	"github.com/jakechampion/lang/internal/stdlib"
@@ -657,6 +658,16 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 			return "", fmt.Errorf("dependency %q is not in the vendor directory %s — re-run `fern -vendor %s`", seg, filepath.Join(vr, "vendor"), filepath.Join(vr, manifest.FileName))
 		}
 	}
+	if d, isDep := man.Deps[seg]; isDep && d.Version != "" {
+		// Versioned (MVS) dependency: the concrete version was chosen by
+		// `fern -resolve` and pinned in fern.lock. Resolve through the lock
+		// — the compiler reads the lock, never the index or the network.
+		depDir, err := lockedDepDir(man.Dir, seg)
+		if err != nil {
+			return "", err
+		}
+		return resolveDepImport(depDir, rest, mans)
+	}
 	if d, isDep := man.Deps[seg]; isDep && d.URL != "" {
 		// Hash-addressed dependency: resolve through the content-addressed
 		// store, NEVER the network — `fern -fetch` is the only fetcher (the
@@ -704,6 +715,37 @@ func resolveDepImport(depDir, rest string, mans map[string]*manifest.Manifest) (
 		lib = depMan.Lib
 	}
 	return filepath.Abs(filepath.Join(depDir, lib))
+}
+
+// lockedDepDir resolves a versioned (MVS) dependency `name` through the
+// package's fern.lock: the lock pins an exact version and its source (a
+// local dir, or a url whose archive lives in the content-addressed
+// store). Missing lock → run `fern -resolve`; a locked url version
+// absent from the store → run `fern -fetch`/`-resolve`. The loader never
+// reads the index or the network.
+func lockedDepDir(manDir, name string) (string, error) {
+	locked, err := mvs.ReadLock(manDir)
+	if err != nil {
+		return "", err
+	}
+	if locked == nil {
+		return "", fmt.Errorf("dependency %q is versioned but %s has no %s — run `fern -resolve %s`", name, manDir, mvs.LockFileName, filepath.Join(manDir, manifest.FileName))
+	}
+	sel, ok := locked[name]
+	if !ok {
+		return "", fmt.Errorf("dependency %q is not in %s — run `fern -resolve %s`", name, filepath.Join(manDir, mvs.LockFileName), filepath.Join(manDir, manifest.FileName))
+	}
+	if sel.Source.Path != "" {
+		return sel.Source.Path, nil
+	}
+	dir, present, err := pkgcache.Dir(sel.Source.Hash)
+	if err != nil {
+		return "", fmt.Errorf("dependency %q: %w", name, err)
+	}
+	if !present {
+		return "", fmt.Errorf("dependency %q@%s (%s) is not in the package store — run `fern -fetch %s`", name, sel.Version, sel.Source.Hash, filepath.Join(manDir, manifest.FileName))
+	}
+	return dir, nil
 }
 
 // workspaceMemberDir finds the directory of the workspace member named

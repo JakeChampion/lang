@@ -64,14 +64,16 @@ all in the direction of *more* of the substrate existing:
    manager and the incremental-build cache should share the
    content-hashing substrate rather than inventing two.
 
-Also unchanged and load-bearing: module loading is intra-project
-only. `resolveImportPath` (`modload.go:556-575`) knows exactly two
-namespaces — `stdlib://` (embedded via `go:embed`) and
-importing-file-relative disk paths — plus, since this doc was first
-written, the `fern.toml` dependency namespace: the manifest + path-
-dependency slice is now implemented (see `PACKAGES.md`;
-`internal/manifest` + `resolveImport` in `internal/modload`). There
-is still no lockfile, remote fetch, vendoring, or registry.
+Update: since this doc was first written, most of its recommendations
+have shipped (see `PACKAGES.md`) — the `fern.toml` manifest, hash-
+addressed url deps + content-addressed store (`fern -fetch`), vendoring
+(`fern -vendor`), workspaces, `fern -add`, and **MVS version resolution
+over a version index with a `fern.lock`** (`fern -resolve`;
+`internal/manifest` + `internal/pkgcache` + `internal/mvs` +
+`resolveImport` in `internal/modload`). The MVS design below is no
+longer hypothetical — it is the shipped `internal/mvs`. What remains
+unbuilt: a hosted registry (deliberately — the index file needs no
+service) and the self-host modloader port.
 
 ## Resolution algorithms: the actual math
 
