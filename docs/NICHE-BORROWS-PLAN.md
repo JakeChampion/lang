@@ -215,7 +215,16 @@ or gate it behind target-supplied mode the self-host driver
 doesn't take yet). Roc's model (verified) is the design
 reference; this also advances `PLATFORM-RESEARCH.md` Phase 2.
 
-**D2. Crash-only native serve.** [status: not started]
+**D2. Crash-only native serve.** [status: design shipped —
+`docs/CRASH-ONLY-SERVE.md`; implementation (D2') pending a real
+native-serving consumer]
+Decision: supervisor shape (parent owns the listener, forks the
+accept-loop worker, waitpid + bounded-backoff refork, crash-loop
+give-up); in-process trap recovery permanently rejected as
+RC-unsound; fork-per-request deferred as an opt-in for untrusted
+inputs. D2' needs new native-only `proc_fork`/`proc_waitpid`
+builtins gated under a new `proc` capability (E066 machinery from
+D1). wasi-http needs nothing — wasmtime already isolates.
 wasi-http already has per-request isolation (wasmtime); native
 `tcp_serve` dies with the request. Erlang-inspired policy:
 isolate at the request boundary. Design doc first
