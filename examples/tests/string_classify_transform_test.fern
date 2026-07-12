@@ -95,6 +95,21 @@ function test_word_count(): test.TestOutcome {
     return test.assert_eq(n, 2);
 }
 
+// slugify: free-form text → URL slug (distinct from kebab_case, which
+// only folds camelCase identifiers and keeps punctuation).
+function test_slugify(): test.TestOutcome {
+    if ("Hello, World! 2024".slugify() != "hello-world-2024") { return test.fail("title"); }
+    if ("  --Foo__Bar--  ".slugify() != "foo-bar") { return test.fail("trim + collapse"); }
+    return test.assert_eq("already-a-slug".slugify(), "already-a-slug");
+}
+
+function test_slugify_edges(): test.TestOutcome {
+    // No alphanumerics → empty; non-ASCII bytes act as separators.
+    if ("!!!".slugify() != "") { return test.fail("all separators"); }
+    if ("".slugify() != "") { return test.fail("empty"); }
+    return test.assert_eq("café society".slugify(), "caf-society");
+}
+
 // ---- fitting / padding ----
 
 function test_pad_start(): test.TestOutcome {
@@ -131,6 +146,8 @@ function main(): i32 {
     r = r.it("snake_case space+cap", test_snake_case_space_cap());
     r = r.it("kebab_case",     test_kebab_case());
     r = r.it("kebab_case caps", test_kebab_case_caps());
+    r = r.it("slugify",        test_slugify());
+    r = r.it("slugify edges",  test_slugify_edges());
     r = r.it("word_count",     test_word_count());
     r = r.it("pad_start",      test_pad_start());
     r = r.it("pad_end",        test_pad_end());

@@ -111,7 +111,9 @@ Grouped by family:
   bogus index — consistent with `split_once` / `strip_prefix`.
 - **Casing / transform:** `capitalize`, `to_lower`, `to_upper`,
   `snake_case`, `kebab_case`, `title_case`, `to_acronym`,
-  `word_count`, `eq_ignore_ascii_case`
+  `word_count`, `eq_ignore_ascii_case`, `slugify` (free-form text →
+  URL slug: lowercased, non-`[a-z0-9]` runs collapsed to `-`, ends
+  trimmed — distinct from `kebab_case`, which only folds camelCase)
 - **Escape / encode:** `escape_html`, `escape_c`, `escape_shell`
 - **Strip / trim:** `strip_quotes`, `strip_prefix`,
   `strip_suffix`, `remove_prefix`, `remove_suffix`, `trim`,

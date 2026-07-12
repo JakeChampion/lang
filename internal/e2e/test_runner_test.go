@@ -423,7 +423,7 @@ func TestRunnerStringClassifyTransformExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/string classify + transform", "# pass 20", "# fail 0", "1..20"} {
+	for _, w := range []string{"# Suite: std/string classify + transform", "# pass 22", "# fail 0", "1..22"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
