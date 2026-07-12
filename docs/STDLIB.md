@@ -318,6 +318,15 @@ POSIX path manipulation (string-level only).
 - `base64_encode(s)` / `base64_decode(s)` / `base64_decode_strict(s)` — standard RFC 4648 alphabet, `=` padding.
 - `base64url_encode(s)` / `base64url_decode(s)` — URL-safe variant (`-`/`_` alphabet, no padding; decode tolerates padded input). The JWT / URL-token encoding.
 
+### `std/base32`
+
+RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
+
+- `base32_encode(s)` / `base32_decode(s)` — decode is lenient (stops at
+  the first non-base32 / non-`=` byte). Round-trips any content; the
+  case-insensitive, digit-safe alphabet suits TOTP secrets, filenames,
+  and DNS labels.
+
 ### `std/hex`
 
 Lowercase hex round-trip.

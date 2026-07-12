@@ -2835,6 +2835,23 @@ func TestRunnerRandExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/base32_test.fern` covers std/base32 against the
+// RFC 4648 §10 known-answer vectors (every padding length) plus decode
+// round-trips. Passing suite → exit 0; plan line `1..4`.
+func TestRunnerBase32ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/base32_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/base32", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
