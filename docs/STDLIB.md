@@ -356,6 +356,11 @@ against NIST / RFC 4231 known-answer vectors.
   material (a shared secret / random key), for key separation and
   subkey derivation. Distinct from PBKDF2, which stretches a low-entropy
   password.
+- `hotp_sha256(key, counter, digits)` /
+  `totp_sha256(key, unix_time, period, digits)` — one-time passwords for
+  2FA (RFC 4226 / RFC 6238, SHA-256 mode). `key` is the raw secret bytes
+  (base32-decode a base32 secret via `std/base32` first); returns the
+  code as an integer to zero-pad to `digits`.
 
 ### `std/url`
 
