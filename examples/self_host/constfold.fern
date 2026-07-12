@@ -108,7 +108,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             return parser.ExprLambda {
                 params: lm.params,
                 ret_type: lm.ret_type,
-                body: fold_block(lm.body)
+                body: fold_block(lm.body), use_infer: lm.use_infer
             };
         },
         parser.ExprUnknown(_) => { return e; },
@@ -231,7 +231,7 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
 function fold_stmt(st: parser.Stmt): parser.Stmt {
     match (st) {
         parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action), on_error: d.on_error }; },
-        parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col }; },
+        parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col, is_str: v.is_str }; },
         parser.StmtReturn(r) => { return parser.StmtReturn { value: fold_expr(r.value), line: r.line, col: r.col }; },
         parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value) }; },
         parser.StmtAssign(a) => { return parser.StmtAssign { target: a.target, value: fold_expr(a.value), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
@@ -285,7 +285,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
             ret_type: fd.ret_type,
             body: fold_block(fd.body),
             line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: []
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str
         });
         i = i + 1;
     }

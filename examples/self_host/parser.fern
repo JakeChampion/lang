@@ -53,7 +53,7 @@ pub struct ExprArray { elements: Expr[] }
 // b: T): U { body }` — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
 // just builds the AST node.
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[] }
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
@@ -103,7 +103,7 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // binds `sh` as TypeUnion("Shape") rather than the inferred
 // TypeStruct("Circle"). Interp / VM ignore it (annotations
 // are checker-only metadata).
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32 }
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean }
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 pub struct StmtExpr { value: Expr }
 // StmtIf models `if (cond) { then... } else { else... }`. else_body
@@ -210,7 +210,7 @@ pub struct ParamDecl { name: string, type_name: string, own: boolean, has_defaul
 // the checker can flag E021 generic-bound conformance at call sites
 // (#4842); it is checker-only and never read by codegen, so it is
 // fixpoint-neutral. Empty for non-generic functions.
-pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ParamDecl[], ret_type: string, body: Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, type_param_count: i32, bound_traits: string[] }
+pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ParamDecl[], ret_type: string, body: Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, type_param_count: i32, bound_traits: string[], fip: boolean, ret_str: boolean }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
 // Same simplifying assumption as FuncDecl: type names are
@@ -356,18 +356,18 @@ function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr 
     return ExprFieldAccess { obj: obj, field: field, line: line, col: col };
 }
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
-    return ExprLambda { params: params, ret_type: ret_type, body: body };
+    return ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false };
 }
 pub function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
 function s_var(name: string, type_name: string, init: Expr): Stmt {
-    return StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0 };
+    return StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, is_str: false };
 }
 // s_var_at is s_var with an explicit source position (used at the parse
 // site so a `var` declaration's diagnostics — E003 / E013 / E020 — point
 // at the `var` keyword).
 function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i32): Stmt {
-    return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col };
+    return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false };
 }
 function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
 // s_return_at carries the `return` keyword position so E002 / E012 point at it.
@@ -530,7 +530,7 @@ function maybe_desugar_array_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
                                 },
                                 _ => { return base; },
@@ -597,7 +597,7 @@ function maybe_desugar_map_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
                                 },
                                 _ => { return base; },
@@ -708,7 +708,7 @@ pub function resolve_labels_module(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits });
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str });
         i = i + 1;
     }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
@@ -2506,7 +2506,11 @@ function parse_block_body(p: Par): (Stmt[], Par) {
             p = rest_p;
             var cbparam: ParamDecl = ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
             var cbparams: ParamDecl[] = [cbparam];
-            var cb: Expr = e_lambda(cbparams, "", rest_body);
+            // use_infer marks the synthesised callback when the user wrote
+            // no `: TYPE` — the checker's E032 rule verifies the binding
+            // type is inferrable from the callee's signature (native
+            // inferUseParam). An annotated `use n: T <- …` never draws E032.
+            var cb: Expr = ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0 };
             match (usrc_expr) {
                 ExprCall(c) => {
                     var newargs: Expr[] = c.args.append(cb);
@@ -3336,8 +3340,17 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // / generics) is still a later milestone; for now just
         // the bare leading token.
         var type_name: string = "";
+        // A bare `var x: str = …` annotation is recorded on StmtVar.is_str
+        // BEFORE parse_type_name erases the spelling to "string" — the E065
+        // view-escape chase treats a `str` binding as a view of its
+        // initializer, but a `string` binding as owned backing storage.
+        var v_is_str: boolean = false;
         if (p.peek_punct() == ":") {
             p = p.advance();
+            if (p.peek_ident() == "str") {
+                var vstr_probe: Par = p.advance();
+                if (vstr_probe.peek_punct() == "=") { v_is_str = true; }
+            }
             var (vtr_name, vtr_ret_arr, vtr_fn_ret, vtr_p) = parse_type_name(p);
             p = vtr_p;
             type_name = vtr_name;
@@ -3384,7 +3397,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (s_var_at(name, type_name, init_expr, vline, vcol), p);
+        return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
@@ -4071,7 +4084,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     }
     var name: string = p.peek_member_name();
     if (name.len() == 0) {
-        return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names }, p);
+        return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names, fip: false, ret_str: false }, p);
     }
     p = p.advance();
     // Optional generic type parameters: `name[T]`, `name[T: Bound, U]`.
@@ -4136,7 +4149,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         if (p.peek_punct() == "]") { p = p.advance(); }
     }
     if (p.peek_punct() != "(") {
-        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names }, p);
+        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: false }, p);
     }
     p = p.advance();
     var params: ParamDecl[] = [];
@@ -4153,7 +4166,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
                 var (tpr_param, tpr_destr_names, tpr_line, tpr_col, tpr_p) = parse_tuple_param(p);
                 p = tpr_p;
                 if (tpr_destr_names.len() == 0) {
-                    return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names }, p);
+                    return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names, fip: false, ret_str: false }, p);
                 }
                 params = params.append(tpr_param);
                 pd_names = pd_names.append(tpr_destr_names);
@@ -4172,8 +4185,18 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
     var ret_type: string = "";
+    // A bare `str` return spelling is recorded on FuncDecl.ret_str BEFORE
+    // parse_type_name erases it to "string" — the E065 view-escape rule
+    // needs to know the function returns a borrowed view. Probe: the token
+    // after `str` must open the body (`{`) or end an extern decl (`;`), so
+    // `str.Foo` / `str[]` spellings keep their normal resolution.
+    var fn_ret_str: boolean = false;
     if (p.peek_punct() == ":") {
         p = p.advance();
+        if (p.peek_ident() == "str") {
+            var str_probe: Par = p.advance();
+            if (str_probe.peek_punct() == "{" || str_probe.peek_punct() == ";") { fn_ret_str = true; }
+        }
         var (fr_tr_name, fr_tr_ret_arr, fr_tr_fn_ret, fr_tr_p) = parse_type_name(p);
         p = fr_tr_p;
         ret_type = fr_tr_name;
@@ -4223,14 +4246,14 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // param has nothing to bind into, so degrade to the empty-name
         // FuncDecl the caller treats as a parse failure.
         if (pd_names.len() > 0) {
-            return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names }, p);
+            return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names, fip: false, ret_str: false }, p);
         }
-        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names }, p);
+        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: fn_ret_str }, p);
     }
     var (blk_body, blk_p) = parse_block(p);
     p = blk_p;
     var fbody: Stmt[] = prepend_param_destrs(blk_body, pd_names, pd_synths, pd_lines, pd_cols);
-    return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names }, p);
+    return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: fn_ret_str }, p);
 }
 
 // parse_module is the entry point that handles both function
@@ -4513,7 +4536,7 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
     body = body.append(s_return(er_expr));
     var noparams: ParamDecl[] = [];
     var notp: string[] = [];
-    return (FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] }, p);
+    return (FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false }, p);
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -5529,7 +5552,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         },
         ExprLambda(lm) => {
             var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins);
-            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts }, rins: bodyr.rins3 };
+            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts, use_infer: lm.use_infer }, rins: bodyr.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -5544,7 +5567,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             var iv: RExpr = mono_expr(v.init, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, ty), rins2: iv.rins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str }, renv: env.ebind(v.name, ty), rins2: iv.rins };
         },
         StmtReturn(r) => {
             var rv: RExpr = mono_expr(r.value, env, funcs, ins);
@@ -5742,7 +5765,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str }); },
             StmtReturn(r) => { out = out.append(StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
             StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts) }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -5822,7 +5845,7 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_str: v.is_str }); },
             StmtReturn(r) => { out = out.append(StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col }); },
             StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang) }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -5874,7 +5897,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
         params: nparams,
         ret_type: subst_ty(fd.ret_type, tparams, cts),
         body: subst_stmts(fd.body, tparams, cts), line: fd.line, col: fd.col,
-        import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits
+        import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str
     };
 }
 
@@ -5980,7 +6003,7 @@ pub function register_array_method_generics(mod: Module): Module {
                 params: nparams,
                 ret_type: fd.ret_type,
                 body: fd.body, line: fd.line, col: fd.col,
-                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: 1, bound_traits: []
+                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: 1, bound_traits: [], fip: false, ret_str: false
             });
         } else {
             out = out.append(fd);
@@ -6094,7 +6117,7 @@ pub function register_map_method_generics(mod: Module): Module {
                 params: nparams,
                 ret_type: fd.ret_type,
                 body: fd.body, line: fd.line, col: fd.col,
-                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: tps.len(), bound_traits: []
+                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: tps.len(), bound_traits: [], fip: false, ret_str: false
             });
         } else {
             out = out.append(fd);
@@ -6147,7 +6170,7 @@ pub function monomorphize_module(mod: Module): Module {
             rewritten = rewritten.append(FuncDecl {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
                 type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts, line: fd.line, col: fd.col,
-                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits
+                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str
             });
         }
         i = i + 1;
@@ -6177,7 +6200,7 @@ pub function monomorphize_module(mod: Module): Module {
             rewritten = rewritten.append(FuncDecl {
                 name: cl.name, receiver_name: "", receiver_type: "",
                 type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts, line: cl.line, col: cl.col,
-                import_iface: cl.import_iface, import_wit: cl.import_wit, type_param_count: cl.type_param_count, bound_traits: []
+                import_iface: cl.import_iface, import_wit: cl.import_wit, type_param_count: cl.type_param_count, bound_traits: [], fip: cl.fip, ret_str: cl.ret_str
             });
         }
         wi = wi + 1;
@@ -6447,7 +6470,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                 nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own, has_default: lm.params[pi].has_default, default_value: lm.params[pi].default_value, ret_arr: lm.params[pi].ret_arr, fn_ret: lm.params[pi].fn_ret });
                 pi = pi + 1;
             }
-            return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts }, rins: pcur };
+            return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -6525,7 +6548,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
             var ninit: Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -6612,7 +6635,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
         ffn: FuncDecl {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: rcv.ty,
             type_params: fn.type_params, params: nparams, ret_type: rt.ty, body: br.rstmts, line: fn.line, col: fn.col,
-            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: []
+            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str
         },
         fins: cur
     };
@@ -6664,7 +6687,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
         name: m.name, receiver_name: m.receiver_name, receiver_type: mang,
         type_params: notp, params: nparams, ret_type: rt,
         body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), line: m.line, col: m.col,
-        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: []
+        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str
     };
 }
 
@@ -6761,7 +6784,7 @@ pub function monomorphize_structs(mod: Module): Module {
                     nfuncs = nfuncs.append(FuncDecl {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
                         type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col,
-                        import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count, bound_traits: []
+                        import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count, bound_traits: [], fip: clm.fip, ret_str: clm.ret_str
                     });
                 }
                 mi = mi + 1;
@@ -7187,7 +7210,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         },
         ExprLambda(lm) => {
             var lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
-            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs), body: lb.rstmts }, rins: lb.rins3 };
+            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs), body: lb.rstmts, use_infer: lm.use_infer }, rins: lb.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -7362,7 +7385,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
             var vty: string = v.type_name;
             if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, structs, funcs); }
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, vty), rins2: cins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         StmtReturn(r) => {
             var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -7502,7 +7525,7 @@ pub function monomorphize_enums(mod: Module): Module {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
             type_params: fn.type_params, params: me_rewrite_params(fn.params, mod.enums, mod.funcs),
             ret_type: me_rewrite_ty(fn.ret_type, mod.enums, mod.funcs), body: rb.rstmts, line: fn.line, col: fn.col,
-            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: []
+            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str
         });
         fi = fi + 1;
     }
@@ -8100,7 +8123,7 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): (S
                                 name: v.name, receiver_name: "", receiver_type: "",
                                 type_params: notp, params: new_params, ret_type: lam.ret_type,
                                 body: lifted_body, line: v.line, col: v.col,
-                                import_iface: "", import_wit: "", type_param_count: 0, bound_traits: []
+                                import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false
                             });
                             if (caps.len() > 0) { acc_lifts = acc_lifts.append(CapLift { name: v.name, caps: caps }); }
                         }
@@ -8182,7 +8205,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
             type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: fn_body,
             line: fn.line, col: fn.col, import_iface: fn.import_iface, import_wit: fn.import_wit,
-            type_param_count: fn.type_param_count, bound_traits: []
+            type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str
         });
         i = i + 1;
     }
@@ -8237,7 +8260,7 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
     return FuncDecl {
         name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
         type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body, line: fn.line, col: fn.col,
-        import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: []
+        import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str
     };
 }
 
@@ -8439,7 +8462,7 @@ pub function insert_resource_drops(mod: Module): Module {
         out_funcs = out_funcs.append(FuncDecl {
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
             type_params: no_tp, params: hp, ret_type: "void", body: no_body,
-            line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0, bound_traits: []
+            line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0, bound_traits: [], fip: false, ret_str: false
         });
         k = k + 1;
     }
@@ -8543,7 +8566,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
 }
 
 pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
-    return FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_ranges_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits };
+    return FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_ranges_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
 }
 
 pub function desugar_ranges_module(mod: Module): Module {
@@ -8588,7 +8611,7 @@ pub function desugar_prepass_module(mod: Module): Module {
         var body: Stmt[] = resolve_labels_block(fd.body, none);
         if (need_fda) { body = fda_stmts(body, mod.funcs); }
         body = desugar_ranges_block(body);
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: body, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits });
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: body, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str });
         i = i + 1;
     }
     var tops: Stmt[] = resolve_labels_block(mod.top_stmts, none);
@@ -8957,7 +8980,7 @@ pub function fill_default_args_module(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits });
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str });
         i = i + 1;
     }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
@@ -9101,7 +9124,7 @@ function irt_set_ret(funcs: FuncDecl[], idx: i32, rt: string): FuncDecl[] {
     while (i < funcs.len()) {
         if (i == idx) {
             var f: FuncDecl = funcs[i];
-            out = out.append(FuncDecl { name: f.name, receiver_name: f.receiver_name, receiver_type: f.receiver_type, type_params: f.type_params, params: f.params, ret_type: rt, body: f.body, line: f.line, col: f.col, import_iface: f.import_iface, import_wit: f.import_wit, type_param_count: f.type_param_count, bound_traits: f.bound_traits });
+            out = out.append(FuncDecl { name: f.name, receiver_name: f.receiver_name, receiver_type: f.receiver_type, type_params: f.type_params, params: f.params, ret_type: rt, body: f.body, line: f.line, col: f.col, import_iface: f.import_iface, import_wit: f.import_wit, type_param_count: f.type_param_count, bound_traits: f.bound_traits, fip: f.fip, ret_str: f.ret_str });
         } else {
             out = out.append(funcs[i]);
         }
@@ -9301,7 +9324,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: cf_rw_expr(sl.base, f, target), line: sl.line, col: sl.col };
         },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: cf_rw_expr(fa.obj, f, target), field: fa.field, line: fa.line, col: fa.col }; },
-        ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: cf_rw_stmts(lm.body, f, target) }; },
+        ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: cf_rw_stmts(lm.body, f, target), use_infer: lm.use_infer }; },
         _ => { return e; }
     }
     return e;
@@ -9309,7 +9332,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
 
 function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
     match (st) {
-        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col }; },
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col, is_str: v.is_str }; },
         StmtReturn(r) => { return StmtReturn { value: cf_rw_expr(r.value, f, target), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target) }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
@@ -9487,7 +9510,7 @@ function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
                             if (cf_all_zero_arg_fn_elems(arr.elements, funcs) && cf_decl_count(out, v.name) == 1) {
                                 var asc: CFScan = cf_arr_scan_stmts(out, v.name);
                                 if (asc.vals == 0 && asc.calls >= 1) {
-                                    keep = StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col };
+                                    keep = StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col, is_str: v.is_str };
                                 }
                             }
                         },
@@ -9512,7 +9535,7 @@ pub function inline_callonly_fn_values(mod: Module): Module {
             name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
             type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type,
             body: cf_inline_fn_body(fd.body, mod.funcs), line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str
         });
         i = i + 1;
     }
@@ -9647,7 +9670,7 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
                 match (v.init) {
                     ExprIdent(rid) => {
                         if (fnv_is_struct_ret_zero_arg(funcs, structs, rid.name) && fnv_name_called_in_block(whole, v.name)) {
-                            return StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col };
+                            return StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col, is_str: v.is_str };
                         }
                     },
                     _ => {}
@@ -9678,7 +9701,7 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
         var nbody: Stmt[] = fnv_rewrite_block(fd.body, fd.body, mod.funcs, mod.structs);
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits });
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str });
         i = i + 1;
     }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
@@ -9790,7 +9813,7 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // dv_debug_render builds the Debug rendering of a single value of static
@@ -9841,7 +9864,7 @@ function synth_struct_debug(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_struct_eq: field-wise `<f-eq> && …` (true for an empty struct),
@@ -9858,7 +9881,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
-    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_struct_ord: lexicographic `cmp` — first non-zero field cmp wins.
@@ -9879,7 +9902,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     stmts = stmts.append(s_return(e_number("0", "", false)));
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
-    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_struct_hash: field-wise `h = h * 31 + self.f.hash()` fold from a
@@ -9898,7 +9921,7 @@ function synth_struct_hash(sd: StructDecl): FuncDecl {
     stmts = stmts.append(s_return(e_ident("__h")));
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_struct_json: field-wise `to_json` rendering a struct as a JSON
@@ -9918,7 +9941,7 @@ function synth_struct_json(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
@@ -9943,7 +9966,7 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_debug: `to_debug` rendering `Variant` / `Variant(<debug
@@ -9969,7 +9992,7 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_eq: match self, then match other — same variant compares
@@ -9996,7 +10019,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
-    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_ord: variant-wise `cmp` — a variant declared earlier sorts
@@ -10042,7 +10065,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
-    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_hash: variant-wise `hash` — seed the accumulator with the
@@ -10070,7 +10093,7 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_json: variant-wise `to_json` — a unit variant renders as
@@ -10095,7 +10118,7 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // enum_default_derivable reports whether an enum has a derivable default: it
@@ -10133,7 +10156,7 @@ function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_return(value)];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
@@ -10336,7 +10359,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
     // monomorphiser clones it per instantiation and substitutes `T` using the
     // STRUCT's type params (clone_struct_method) — so a generic body's
     // `T.default()` becomes `Concrete.default()`.
-    return FuncDecl { name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] };
+    return FuncDecl { name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_derives appends the synthesised methods for each derivable trait
@@ -10784,7 +10807,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
             params: aparams,
             ret_type: rt,
             body: m.body, line: m.line, col: m.col,
-            import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: []
+            import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str
         };
     }
     // Receiver method: peel the first param (`self`) into the receiver
@@ -10810,7 +10833,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
         params: newparams,
         ret_type: rt,
         body: m.body, line: m.line, col: m.col,
-        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: []
+        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str
     };
 }
 
@@ -11009,10 +11032,29 @@ pub function parse_module(toks: lexer.Token[]): Module {
             }
             continue;
         }
+        // `fip` is a contextual modifier on a function decl (`fip function
+        // …` / `pub fip function …`): stamp FuncDecl.fip so the checker can
+        // verify the fully-in-place no-allocation guarantee (E053).
+        // Recognised only when directly followed by `function`, so `fip`
+        // stays usable as an ordinary identifier everywhere else — the
+        // exact rule the native parser uses.
+        var decl_fip: boolean = false;
+        if (p.peek_ident() == "fip") {
+            var fip_probe: Par = p.advance();
+            if (fip_probe.peek_keyword() == "function") {
+                p = fip_probe;
+                kw = "function";
+                decl_fip = true;
+            }
+        }
         if (kw == "function") {
             var (fr_func, fr_p) = parse_func_decl(p);
             p = fr_p;
-            funcs = funcs.append(fr_func);
+            if (decl_fip) {
+                funcs = funcs.append(FuncDecl { ...fr_func, fip: true });
+            } else {
+                funcs = funcs.append(fr_func);
+            }
             continue;
         }
         if (kw == "struct") {
@@ -11204,7 +11246,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
             params: fd.params,
             ret_type: fd.ret_type,
             body: fd.body, line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str
         });
         fi = fi + 1;
     }

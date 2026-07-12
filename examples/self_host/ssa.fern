@@ -1408,7 +1408,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                         var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0 }];
                         binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0 }, args: oargs, line: 0, col: 0, type_argc: 0 };
                     }
-                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0 });
+                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false });
                 }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
@@ -1488,12 +1488,12 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var i_name: string = "$i" + uid;
 
     // var $arrN = arr;
-    var decl_arr: parser.Stmt = parser.StmtVar { name: arr_name, type_name: "", init: fr.iter, line: 0, col: 0 };
+    var decl_arr: parser.Stmt = parser.StmtVar { name: arr_name, type_name: "", init: fr.iter, line: 0, col: 0, is_str: false };
     // var $iN = 0 - 1;   (sentinel: the top-of-body increment yields 0 first)
     var decl_i: parser.Stmt = parser.StmtVar { name: i_name, type_name: "",
         init: parser.ExprBinary { line: 0, col: 0, op: "-",
             left: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0 };
+            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false };
 
     // guard: $iN + 1 < $arrN.len()
     var guard: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "<",
@@ -1526,19 +1526,19 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0, is_str: false };
         var vargs: parser.Expr[] = [];
         vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0, is_str: false };
         wbody = wbody.append(bind_k);
         wbody = wbody.append(bind_v);
     } else {
         var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
             init: parser.ExprIndex {
                 array: parser.ExprIdent { name: arr_name, line: 0, col: 0 },
-                index: parser.ExprIdent { name: i_name, line: 0, col: 0 } }, line: 0, col: 0 };
+                index: parser.ExprIdent { name: i_name, line: 0, col: 0 } }, line: 0, col: 0, is_str: false };
         wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;
@@ -2043,7 +2043,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             if (caps.len() == 0) {
                                 // No captures: lift verbatim. Called directly
                                 // (fast path) or via a 1-slot box (env ignored).
-                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] });
+                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false });
                             } else {
                             // Capturing: the closure is boxed [fn_addr, cap…] at
                             // its binding; the lifted body reads captures back
@@ -2080,12 +2080,12 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
                                     var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: int_str(cj + 1), line: 0, col: 0 };
-                                    ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0 });
+                                    ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false });
                                     cj = cj + 1;
                                 }
                                 var bk: i32 = 0;
                                 while (bk < lam.body.len()) { ebody = ebody.append(lam.body[bk]); bk = bk + 1; }
-                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [] });
+                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false });
                             }
                             }
                         },
