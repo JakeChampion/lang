@@ -56,6 +56,33 @@ function test_roundtrip(): test.TestOutcome {
     return test.assert_eq(unicode.to_lower(unicode.to_upper(s)), unicode.to_lower(s));
 }
 
+function test_is_letter(): test.TestOutcome {
+    // Latin, Greek, and CJK are letters; a digit is not.
+    return test.assert_true(unicode.is_letter(97) && unicode.is_letter(945) &&
+                            unicode.is_letter(0x4E2D) && !unicode.is_letter(48));
+}
+
+function test_is_digit(): test.TestOutcome {
+    // ASCII 0, Arabic-Indic 9 (U+0669) are digits; a letter is not.
+    return test.assert_true(unicode.is_digit(48) && unicode.is_digit(0x0669) &&
+                            !unicode.is_digit(97));
+}
+
+function test_is_alnum_whitespace(): test.TestOutcome {
+    if (!unicode.is_alnum(97) || !unicode.is_alnum(48)) { return test.fail("alnum"); }
+    if (unicode.is_alnum(32)) { return test.fail("space is not alnum"); }
+    // space, tab, and NBSP (U+00A0) are whitespace; a letter is not.
+    if (!unicode.is_whitespace(32) || !unicode.is_whitespace(9) ||
+        !unicode.is_whitespace(0xA0)) { return test.fail("whitespace"); }
+    return test.assert_false(unicode.is_whitespace(97));
+}
+
+function test_is_upper_lower(): test.TestOutcome {
+    return test.assert_true(unicode.is_upper(65) && !unicode.is_upper(97) &&
+                            unicode.is_lower(97) && !unicode.is_lower(65) &&
+                            unicode.is_upper(0x391) && unicode.is_lower(0x3B1));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/unicode");
     r = r.it("ascii",             test_ascii());
@@ -67,5 +94,9 @@ function main(): i32 {
     r = r.it("sharp-s unchanged", test_sharp_s_unchanged());
     r = r.it("eq_ignore_case",    test_eq_ignore_case());
     r = r.it("roundtrip",         test_roundtrip());
+    r = r.it("is_letter",         test_is_letter());
+    r = r.it("is_digit",          test_is_digit());
+    r = r.it("is_alnum/space",    test_is_alnum_whitespace());
+    r = r.it("is_upper/lower",    test_is_upper_lower());
     return r.finish();
 }

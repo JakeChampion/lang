@@ -412,8 +412,10 @@ public API is designed to carry over unchanged.
 
 ### 17. `std/unicode` — Unicode case mapping · small · ☑
 
-**Surface**: `std/unicode` — `to_upper(s)` / `to_lower(s)`,
-`to_upper_char(cp)` / `to_lower_char(cp)`, `eq_ignore_case(a, b)`.
+**Surface**: `std/unicode` — case mapping (`to_upper(s)` /
+`to_lower(s)`, `to_upper_char(cp)` / `to_lower_char(cp)`,
+`eq_ignore_case(a, b)`) and character classes (`is_letter`, `is_digit`,
+`is_alnum`, `is_whitespace`, `is_upper`, `is_lower`).
 
 **Why**: closes the July-review "ASCII-only casing" gap —
 `std/string`'s byte-wise `to_upper`/`to_lower` remap only A–Z, so
