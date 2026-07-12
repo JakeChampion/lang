@@ -72,6 +72,26 @@ function test_decode_strict_rejects(): test.TestOutcome {
         && b64_is_none("=="));
 }
 
+// URL-safe variant: the `-`/`_` alphabet, no `=` padding.
+function test_url_alphabet(): test.TestOutcome {
+    // 0xFFFFFF → standard "////" → url-safe "____"; no '+' '/' '=' anywhere.
+    var s: string = string_from_bytes([255 as u8, 255 as u8, 255 as u8]);
+    return test.assert_eq(base64.base64url_encode(s), "____");
+}
+
+function test_url_no_padding(): test.TestOutcome {
+    // "Hi" is 2 bytes → standard "SGk=" (one pad); url-safe drops it.
+    return test.assert_eq(base64.base64url_encode("Hi"), "SGk");
+}
+
+function test_url_roundtrip(): test.TestOutcome {
+    var payload: string = "Hello, World! ~ tokens+need/url-safety";
+    var enc: string = base64.base64url_encode(payload);
+    // Decoding accepts the unpadded url-safe form back to the original.
+    return test.assert_true(base64.base64url_decode(enc) == payload &&
+                            base64.base64url_decode("SGk=") == "Hi");  // padded input tolerated
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/base64");
     r = r.it("encode (no pad)", test_encode_no_pad());
@@ -86,5 +106,8 @@ function main(): i32 {
     r = r.it("roundtrip", test_roundtrip());
     r = r.it("decode_strict valid", test_decode_strict_valid());
     r = r.it("decode_strict rejects", test_decode_strict_rejects());
+    r = r.it("url alphabet", test_url_alphabet());
+    r = r.it("url no padding", test_url_no_padding());
+    r = r.it("url roundtrip", test_url_roundtrip());
     return r.finish();
 }

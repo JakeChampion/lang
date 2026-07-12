@@ -152,3 +152,54 @@ pub function base64_decode_strict(s: string): Option[string] {
     }
     return Some(string_from_bytes(buf));
 }
+
+// std/base64 url-safe variant (RFC 4648 §5): the same base64 with the
+// two alphabet characters `+` `/` replaced by `-` `_` (so the output is
+// safe in URLs and filenames), and no `=` padding on encode. This is the
+// encoding JWTs and most URL tokens use.
+//
+// Implemented by reusing the standard core: encode then translate the
+// two distinct characters and drop padding; decode by translating back
+// and handing off to `base64_decode`, which already tolerates missing
+// padding (it decodes the leading run of valid characters). Round-trips
+// with `base64url_encode` for any byte content.
+
+function __b64_std_to_url(s: string): string {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c == 43) { out = out.append(45 as u8); }        // '+' → '-'
+        else if (c == 47) { out = out.append(95 as u8); }   // '/' → '_'
+        else if (c == 61) { }                                // drop '=' padding
+        else { out = out.append(s[i] as u8); }
+        i = i + 1;
+    }
+    return string_from_bytes(out);
+}
+
+function __b64_url_to_std(s: string): string {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c == 45) { out = out.append(43 as u8); }        // '-' → '+'
+        else if (c == 95) { out = out.append(47 as u8); }   // '_' → '/'
+        else { out = out.append(s[i] as u8); }
+        i = i + 1;
+    }
+    return string_from_bytes(out);
+}
+
+// `base64url_encode(s)` — URL-safe base64 of `s`, no `=` padding.
+pub function base64url_encode(s: string): string {
+    return __b64_std_to_url(base64_encode(s));
+}
+
+// `base64url_decode(s)` — inverse of `base64url_encode`. Accepts input
+// with or without `=` padding (padding is ignored). Lenient like
+// `base64_decode`: stops at the first character that is neither a
+// url-safe base64 digit nor padding.
+pub function base64url_decode(s: string): string {
+    return base64_decode(__b64_url_to_std(s));
+}
