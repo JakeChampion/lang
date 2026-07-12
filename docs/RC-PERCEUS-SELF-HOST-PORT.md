@@ -4197,3 +4197,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `var nparams: ParamDecl[] = [ParamDecl {…}]`, all escape into a FuncDecl, so
   body_unsafe_for excludes them). Remaining nearby: `string[][][]` deep free,
   map string K/V (#4353).
+
+- 2026-07-12: **#4353 scoping — register-backend map string K/V deep-release
+  (design, not yet implemented).** Investigation of the last-standing reclaim
+  item. STATE: wasm's `$__fern_map_release` already deep-releases string K/V
+  (occupancy-aware `used[]` walk over its 40-byte box, gated by the `kis@+20` /
+  `vis@+28` flags — each occupied slot's key/value `arr_dec`'d before the
+  buffers). The REGISTER backends (x86 `asm_ir`, arm64) do NOT: `__fern_map_free`
+  frees the keys/vals buffers via `__fern_arr_dec` + returns the raw 16-byte box
+  to the freelist, but the string boxes HELD in those buffers leak one level.
+  KEY LAYOUT DIFFERENCE (why wasm's body can't be mirrored): the register map box
+  is a RAW 16-byte `{keys@0, vals@8}` — a LINEAR PARALLEL-ARRAY map (not
+  open-addressing): `__fern_map_set` linear-scans keys, and on miss
+  `__fern_arr_push`es key+val. So occupancy is DENSE (`0 .. keys.len()`, no
+  tombstones / no `used[]`), which makes the element walk trivial — but
+  `__fern_map_set` stores the key/val pointer with NO `__fern_rc_inc`. So the map
+  does not own a counted ref to its string K/V.
+  THE SOUNDNESS FORK (a dec-on-release alone would double-free an aliased key):
+    1. **Native-discipline port (general, risky).** Native incs the string
+       key/value on insert (`ir.go` balances `__drop_map_str_keys` /
+       `__drop_map_str_values` against that inc). Porting means adding a
+       string-K/V `__fern_rc_inc` to the register `__fern_map_set` (which needs a
+       val-kind flag alongside the existing key-kind arg) AND the dec-walk to
+       release. Touches the generic map runtime used by EVERY map — including the
+       compiler's own heavy map use — so an imbalance miscompiles the self-compile
+       (caught by the fixpoint, hard to bisect). Highest coverage, highest risk.
+    2. **Fresh-K/V subset (bounded, sound, recommended first cut).** Deep-release
+       only when every string K/V put into a reclaimable map is provably FRESH
+       (literal / concat / fresh producer — the same discipline the "SARR"
+       string[]-element reclaim uses): then the map is the sole rc=1 owner and a
+       dec-on-release balances the alloc with NO `map_set` inc change. REUSE: the
+       map's keys buffer (string-K) IS a `string[]`, so freeing it via the
+       EXISTING `__fern_str_arr_free` (walk + per-element rc-aware free + buffer)
+       instead of `__fern_arr_dec` deep-releases it — no new element-walk asm.
+  PROPOSED SHAPE for cut (2): per-string-column `__fern_map_free` variants
+  (`_ks` / `_vs` / `_kvs` — swap the string column's `__fern_arr_dec` for
+  `__fern_str_arr_free`, keep the box free) on x86 + arm64; wasm keeps routing to
+  its existing deep `$__fern_map_release`. `emit_map_buffers_free` picks the
+  variant from the map slot's K/V string-ness (`map_type` value tag + key kind)
+  AND a new `map_kv_fresh` gate (walk every `m.set(...)` / `Map{…}` entry for the
+  map; require each string K/V arg fresh). NEW ANALYSIS = the `map_kv_fresh` gate;
+  everything else is routing + small asm variants. TEST PLAN: churn
+  `Map[string,i32]` / `Map[i32,string]` / `Map[string,string]` built from fresh
+  concats (flat at detector zero); an ALIASED-K/V exclusion case (a `m.set(local,
+  …)` keeps the sound leak, no over-release); x86 + arm64 + wasm (wasm already
+  green), fixpoint byte-identical (the compiler's own maps are `i32`/interned-key,
+  and any string-valued map with a non-fresh value stays excluded → inert).
