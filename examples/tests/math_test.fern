@@ -79,6 +79,24 @@ function test_parse_rgb_hex_invalid(): test.TestOutcome {
     return test.assert_eq(pr("#"), -1);
 }
 
+function test_rgb_luminance(): test.TestOutcome {
+    // Extremes, and the BT.601 weighting (green > red > blue at equal value).
+    if (math.rgb_luminance(math.pack_rgb(255, 255, 255)) != 255) { return test.fail("white"); }
+    if (math.rgb_luminance(math.pack_rgb(0, 0, 0)) != 0) { return test.fail("black"); }
+    var green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
+    var red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
+    var blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
+    return test.assert_true(green > red && red > blue);
+}
+
+function test_rgb_is_dark(): test.TestOutcome {
+    // Dark backgrounds want white text; light ones want black.
+    if (!math.rgb_is_dark(math.pack_rgb(0, 0, 0))) { return test.fail("black is dark"); }
+    if (!math.rgb_is_dark(math.pack_rgb(0, 0, 255))) { return test.fail("blue is dark"); }
+    if (math.rgb_is_dark(math.pack_rgb(255, 255, 255))) { return test.fail("white is light"); }
+    return test.assert_false(math.rgb_is_dark(math.pack_rgb(255, 136, 0)));
+}
+
 // random_int's contract — deterministic even though the draw isn't.
 // Regression guard for the 24-bit truncation bug: before random_int
 // drew a full 32 bits, any range > 2^24 was silently capped to the
@@ -134,6 +152,8 @@ function main(): i32 {
     r = r.it("pack_rgb wraps",          test_pack_rgb_wraps());
     r = r.it("parse_rgb_hex",           test_parse_rgb_hex());
     r = r.it("parse_rgb_hex invalid",   test_parse_rgb_hex_invalid());
+    r = r.it("rgb_luminance",           test_rgb_luminance());
+    r = r.it("rgb_is_dark",             test_rgb_is_dark());
     r = r.it("random_int range",        test_random_int_range());
     r = r.it("random_int empty",        test_random_int_empty());
     return r.finish();

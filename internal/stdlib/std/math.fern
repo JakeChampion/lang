@@ -130,3 +130,23 @@ pub function parse_rgb_hex(s: string): Option[i32] {
     }
     return None;
 }
+
+// `rgb_luminance(rgb)` — perceived brightness (0..255) of a packed RGB
+// colour, via the ITU-R BT.601 luma weights (0.299 R + 0.587 G +
+// 0.114 B), scaled to integers (299/587/114 per 1000) so it's exact on
+// every backend. The standard cheap "how bright does this look?"
+// measure — brighter greens read lighter than equally-valued blues.
+pub function rgb_luminance(rgb: i32): i32 {
+    var r: i32 = (rgb >> 16) & 255;
+    var g: i32 = (rgb >> 8) & 255;
+    var b: i32 = rgb & 255;
+    return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+// `rgb_is_dark(rgb)` — true when a colour is dark enough that white text
+// reads better on it than black (luma < 128, the midpoint of 0..255).
+// The one-call helper for picking a readable foreground over a coloured
+// background: `if (rgb_is_dark(bg)) { white } else { black }`.
+pub function rgb_is_dark(rgb: i32): boolean {
+    return rgb_luminance(rgb) < 128;
+}
