@@ -1242,6 +1242,34 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if needsParens {
 				f.b.WriteByte('(')
 			}
+			// PipeHole > 0: the LHS was substituted at the `_`
+			// placeholder (1-based index) instead of prepended —
+			// re-render it as the LHS and put the `_` back in its
+			// slot. Parens are always printed in this form (`x |>
+			// f(_)`), since the hole is only expressible inside an
+			// arg list.
+			if x.PipeHole > 0 && x.PipeHole <= len(x.Args) {
+				lhs := x.PipeHole - 1
+				f.formatExpr(x.Args[lhs], precPipe)
+				f.b.WriteString(" |> ")
+				f.formatExpr(x.Callee, precPrimary)
+				f.b.WriteByte('(')
+				for i, a := range x.Args {
+					if i > 0 {
+						f.b.WriteString(", ")
+					}
+					if i == lhs {
+						f.b.WriteByte('_')
+					} else {
+						f.formatExpr(a, precLowest)
+					}
+				}
+				f.b.WriteByte(')')
+				if needsParens {
+					f.b.WriteByte(')')
+				}
+				return
+			}
 			f.formatExpr(x.Args[0], precPipe)
 			f.b.WriteString(" |> ")
 			f.formatExpr(x.Callee, precPrimary)

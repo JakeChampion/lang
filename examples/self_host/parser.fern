@@ -2366,12 +2366,42 @@ function pipe_prepend(head: Expr, tail: Expr[]): Expr[] {
 }
 
 // pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
-// call's args → `f(x, a, b)`; `x |> f` (a bare callee) wraps it as a
-// single-arg call → `f(x)`. Mirrors the Go parser's parsePipe, lowering
-// to the same ExprCall the rest of the pipeline already handles.
+// call's args → `f(x, a, b)`; `x |> f(a, _)` substitutes x at the `_`
+// topic placeholder instead → `f(a, x)` (at most one `_`, direct args
+// only — the native parser rejects two with P004, so a native-valid
+// program has at most one; this mirror substitutes at the first);
+// `x |> f` (a bare callee) wraps it as a single-arg call → `f(x)`.
+// Mirrors the Go parser's parsePipe, lowering to the same ExprCall the
+// rest of the pipeline already handles.
 function pipe_desugar(left: Expr, right: Expr): Expr {
     match (right) {
-        ExprCall(c) => { return e_call(c.callee, pipe_prepend(left, c.args)); },
+        ExprCall(c) => {
+            var hole: i32 = 0 - 1;
+            var hi: i32 = 0;
+            while (hi < c.args.len()) {
+                if (hole < 0) {
+                    match (c.args[hi]) {
+                        ExprIdent(id) => { if (id.name == "_") { hole = hi; } },
+                        _ => {}
+                    }
+                }
+                hi = hi + 1;
+            }
+            if (hole >= 0) {
+                var subst: Expr[] = [];
+                var si: i32 = 0;
+                while (si < c.args.len()) {
+                    if (si == hole) {
+                        subst = subst.append(left);
+                    } else {
+                        subst = subst.append(c.args[si]);
+                    }
+                    si = si + 1;
+                }
+                return e_call(c.callee, subst);
+            }
+            return e_call(c.callee, pipe_prepend(left, c.args));
+        },
         _ => {
             var one: Expr[] = [left];
             return e_call(right, one);

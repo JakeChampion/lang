@@ -83,7 +83,14 @@ body and keep the build green).
   usability), checker divergence test, e2e interp + wasm run
   (exit code + stderr), self-host parser case, format round-trip.
 
-**A2. Pipe topic placeholder `_`.** [status: not started]
+**A2. Pipe topic placeholder `_`.** [status: shipped]
+Shipped as designed: native `parsePipe` + self-host `pipe_desugar`
+scan the piped call's direct args for a bare `_`; substitution
+replaces prepending, `Call.PipeHole` (1-based; 0 = prepended)
+drives the formatter round-trip, two holes are a parse error
+(P004), nested `_` stays an ordinary identifier (checker E001),
+and holes compose across nested/chained pipes (an inner pipe
+consumes its own `_` before the outer scan runs).
 `x |> f(a, _)` calls `f(a, x)` — completes `|>` for the minority
 of callees that don't take the data first.
 

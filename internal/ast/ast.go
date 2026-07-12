@@ -1550,6 +1550,14 @@ type Call struct {
 	// any other Call; only the formatter checks the flag so it
 	// can re-render the pipe form on the way out.
 	IsPipe bool
+	// PipeHole records where the pipe's LHS landed when the piped
+	// call used the `_` topic placeholder (`x |> f(a, _)` — LHS
+	// substitutes at the hole instead of being prepended). It is
+	// the 1-BASED index into Args of the substituted slot; 0 means
+	// "no placeholder, LHS was prepended as Args[0]" (the default
+	// data-first form). Like IsPipe, only the formatter reads it —
+	// to re-render `x |> f(a, _)` instead of the prepended form.
+	PipeHole int
 	// TypeArgs is filled by the checker when the callee resolves
 	// to a generic function (FuncDecl with non-empty TypeParams).
 	// Each entry is the inferred concrete type for the

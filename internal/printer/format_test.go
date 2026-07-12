@@ -943,3 +943,30 @@ func TestFormatTodoRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// The pipe topic placeholder (`x |> f(a, _)`) must round-trip: the
+// formatter re-renders the LHS from the substituted slot (Call.PipeHole)
+// and puts the `_` back, instead of printing the desugared prepended-arg
+// form. Nested holes and the plain prepended form must survive alongside.
+func TestFormatPipeHoleRoundTrip(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{`function main(): i32 { var x: i32 = 3; return x |> sub(10, _); }`, `x |> sub(10, _)`},
+		{`function main(): i32 { var x: i32 = 3; return x |> sub(_, 1); }`, `x |> sub(_, 1)`},
+		{`function main(): i32 { var x: i32 = 3; return 20 |> sub(_, x |> sub(5, _)); }`, `20 |> sub(_, x |> sub(5, _))`},
+		// No hole: the existing prepended rendering is unchanged.
+		{`function main(): i32 { var x: i32 = 3; return x |> sub(10); }`, `x |> sub(10)`},
+	}
+	for _, c := range cases {
+		got := formatSrc(t, c.src)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("formatted output for %q lost the pipe form (want %q):\n%s", c.src, c.want, got)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("format not idempotent for %q:\nfirst:\n%s\nsecond:\n%s", c.src, got, again)
+		}
+	}
+}
