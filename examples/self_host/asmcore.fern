@@ -278,6 +278,36 @@ pub function rt_src_u32_to_string(): string {
     return "function __fern_u32_to_string(n: i32): string { var v: i64 = (n as i64) & (4294967295 as i64); if (v == (0 as i64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: i64 = v; while (t > (0 as i64)) { nd = nd + 1; t = t / (10 as i64); } var p: i32 = __raw_alloc(nd); var i: i32 = nd - 1; while (v > (0 as i64)) { __raw_store8(p, i, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
+pub function (s: EmitState) mark_i64_to_string(): EmitState {
+    return s.need("heap").need("i64_to_string");
+}
+
+// rt_src_i64_to_string backs (n).to_string() on an i64 receiver. The old
+// is_int_tag shortcut sent 64-bit receivers to __fern_i32_to_string, which
+// reads only the low 32 bits of its arg slot — a wide value silently
+// truncated (1234567890123 → 1912276171, its low-32 reading). The magnitude
+// is formatted with UNSIGNED u64 digit arithmetic (the divq path), which
+// also makes the INT64_MIN negation exact: `(0 as i64) - n` wraps to
+// INT64_MIN, whose u64 reading is 2^63 — the true magnitude. The same trick
+// core/int's __int_to_string_u64 uses. Heap is its sole dep. Import-free:
+// i64.to_string works without `import \"std/i64\"`, as the i32 builtin did.
+pub function rt_src_i64_to_string(): string {
+    return "function __fern_i64_to_string(n: i64): string { var neg: i32 = 0; var m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } var v: u64 = m as u64; if (v == (0 as u64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var total: i32 = nd + neg; var p: i32 = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, total); }";
+}
+
+pub function (s: EmitState) mark_u64_to_string(): EmitState {
+    return s.need("heap").need("u64_to_string");
+}
+
+// rt_src_u64_to_string backs (n).to_string() on a u64 receiver — the full
+// unsigned 64-bit range, so a value with bit 63 set formats as its true
+// magnitude rather than a negative i64 reading. Pure u64 digit loop
+// (unsigned divq). Heap is its sole dep; never negative, so no sign
+// branch. Import-free like the u32 sibling.
+pub function rt_src_u64_to_string(): string {
+    return "function __fern_u64_to_string(n: u64): string { var v: u64 = n; if (v == (0 as u64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var p: i32 = __raw_alloc(nd); var i: i32 = nd - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, nd); }";
+}
+
 pub function (s: EmitState) mark_str_to_i32(): EmitState {
     return s.need("str_to_i32");
 }
@@ -1710,7 +1740,19 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
                 var ct: str = u.op[3:u.op.len()];
                 if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
-                if (ct == "i32" || ct == "u32" || ct == "u8" || ct == "i64" || ct == "u64" || ct == "usize") { return ty_i32(); }
+                // A cast HAS the named type. u32/i64/u64 used to erase to
+                // i32 here (all ints ride 64-bit slots, so arithmetic is
+                // width-agnostic) — but the TAG drives method dispatch,
+                // signed-vs-unsigned compares, and divq/idivq selection, so
+                // erasing sent `(3 as u64).checked_sub(10 as u64)` to
+                // std/i32's SIGNED method (no underflow at -7) and compared
+                // u64 values with setl. Type the cast truthfully; u8/usize
+                // stay on the i32 tag (subword/pointer-size — no distinct
+                // dispatch surface).
+                if (ct == "i32" || ct == "u8" || ct == "usize") { return ty_i32(); }
+                if (ct == "u32") { return ty_u32(); }
+                if (ct == "i64") { return ty_i64(); }
+                if (ct == "u64") { return ty_u64(); }
                 // `E as T` type ascription (non-numeric T): the value HAS
                 // type T. This arm used to return i32 for every non-float
                 // target, so `None as Option[i32]` read as i32 and the
@@ -2204,7 +2246,7 @@ pub function runtime_need_deps(name: string): string[] {
     // heap, even though only take allocates.
     var heap: string[] = ["heap"];
     if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
-        || name == "u32_to_string"
+        || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
         || name == "chr" || name == "args" || name == "read_file" || name == "random_bytes"
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
         || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
