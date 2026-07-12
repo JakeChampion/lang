@@ -4243,3 +4243,38 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   …)` keeps the sound leak, no over-release); x86 + arm64 + wasm (wasm already
   green), fixpoint byte-identical (the compiler's own maps are `i32`/interned-key,
   and any string-valued map with a non-fresh value stays excluded → inert).
+
+- 2026-07-12: **#4353 — cut-2 attempt found a DEEPER PREREQUISITE: the register
+  map's keys/vals BUFFERS don't recycle at all.** Implemented the cut-2 fresh-K/V
+  value-column deep-release end-to-end (a `map_kv_fresh`-style gate crediting a
+  `Map[K, string]`-with-fresh-values local "MAPVS:", routing `emit_map_buffers_
+  free` to a new `__fern_map_free_vs` that freed the vals column via the existing
+  `__fern_str_arr_free` on x86 + arm64; wasm routed to its already-deep
+  `$__fern_map_release`). It compiled on all three backends and the SOUNDNESS
+  cases passed (no over-release / no corruption / aliased-value exclusion), and
+  the emitted asm carried the expected `__fern_map_free_vs` calls — **but the
+  value boxes still leaked**. Root-causing (helper-function churn — a map declared
+  directly in a loop is NOT freed per iteration, a separate pre-existing gap, so
+  the map must be built in a callee to be swept per call; and a `> 2000`-byte
+  boolean growth check because a raw `b2 - b1` exit code wraps mod 256 and 96000 %
+  256 == 0, which masked the leak as "flat" through several probes — a trap worth
+  remembering) showed the value column can't be the culprit: **the existing
+  SHALLOW `__fern_map_free` already leaks even an `Map[i32, i32]`'s keys/vals
+  buffers.** `__fern_map_new` allocs the empty keys/vals via `__fern_alloc_u8(0)`
+  and `__fern_map_set` grows them with `__fern_arr_push`; at reclaim
+  `__fern_map_free`'s `__fern_arr_dec` on each buffer is a **no-op** (it does not
+  reach the rc==1 free path — the buffer is either not rc-headed the way arr_dec
+  expects, or the map holds it at rc>1), so the buffers (and thus any string
+  elements inside them) are never returned to the freelist. The existing map-
+  reclaim tests only assert RESULTS (6 / 14 / 55), never heap flatness, so this
+  was uncaught. **Consequence:** the value deep-release is blocked on this deeper
+  fix — a `str_arr_free` element walk can't fire while the buffer itself never
+  hits rc==1. NEXT STEP for #4353 must FIRST make the register map's keys/vals
+  buffers reclaim (audit `__fern_alloc_u8` → `__fern_arr_push` rc handling: does
+  the grown buffer carry cap@[b-16]/rc@[b-8] and rc==1 at drop? if not, either
+  route map buffers through `__fern_arr_box` on first push or free them
+  unconditionally in `__fern_map_free` given the MAP sole-ownership gate), THEN
+  layer the string-value element walk on top (the cut-2 code, reverted here,
+  applies unchanged once buffers recycle). The non-working cut-2 patch was
+  reverted to keep the tree clean; this entry preserves the diagnosis so the
+  next attempt starts from the real blocker, not the value column.
