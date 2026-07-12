@@ -233,15 +233,42 @@ versions from a committed lock, for fresh-machine offline builds). MVS
 implementation: `internal/mvs` (semver, index parse, the fixpoint,
 lockfile read/write).
 
-## Self-hosted compiler (slice 9)
+## Native vs self-hosted coverage
 
-The self-hosted compiler's module loader (`examples/self_host/
-modloader.fern`) reads `fern.toml` **path dependencies** too, via a
-manifest parser written in Fern (`examples/self_host/fern_toml.fern`):
-a bare `import "dep"` in a program compiled by the self-hosted compiler
+The two compilers are **not** at parity. The **native** compiler
+(`internal/*`, the `fern` CLI) implements the whole surface below; the
+**self-hosted** compiler's module loader
+(`examples/self_host/modloader.fern` + `fern_toml.fern`) implements a
+subset.
+
+| Capability | Native | Self-hosted |
+| --- | --- | --- |
+| `path` deps + resolver-side isolation | ✅ | ✅ |
+| `[workspace]` + `workspace = true` deps | ✅ | ⏳ planned (disk-only) |
+| vendored mode (`vendor/`) | ✅ | ⏳ planned |
+| versioned deps via `fern.lock` (`path` source) | ✅ | ⏳ planned |
+| `url`+hash deps + content-addressed store | ✅ | ❌ blocked (see below) |
+| versioned deps whose lock source is a `url` | ✅ | ❌ blocked (see below) |
+| CLI commands `-fetch` / `-vendor` / `-add` / `-check` / `-resolve` | ✅ | n/a — the self-host build is a *compiler driver*, not the `fern` CLI |
+
+Today the self-hosted loader (`examples/self_host/modloader.fern` +
+`fern_toml.fern`) resolves **`path` dependencies only**: a bare
+`import "dep"` in a program compiled by the self-hosted compiler
 resolves through a declared `dep = { path = "../dep" }` to that
-dependency's lib module (honouring its own `lib` key). The wiring is
-additive — consulted only when a `fern.toml` is present — so the
-compiler's own manifest-less bootstrap is byte-for-byte unchanged.
-url/workspace/version deps remain native-only on the self-host path for
-now (they fall back to on-disk resolution).
+dependency's lib module (honouring its own `lib` key). Every other
+declared form (`workspace`, `url`, versioned) currently falls back to
+plain on-disk resolution on the self-host path.
+
+The **disk-resolvable** forms (workspaces, vendored mode, `fern.lock`
+with a `path` source) are portable to the self-host loader and planned.
+The **store-backed** forms (`url` deps, and versioned deps whose lock
+source is a `url`) are *blocked*: they live in the per-machine
+content-addressed store (`$FERN_CACHE_DIR|<user-cache>/fern/pkgs/<hex>/`),
+and the self-host runtime has `read_file`/`read_dir`/`stat`/`args()` but
+**no `getenv`/home-dir access**, so it cannot compute the store path.
+Closing that gap needs a new runtime builtin (a `getenv`/cache-dir
+intrinsic), not a loader change.
+
+The self-host wiring is **additive** throughout — consulted only when a
+`fern.toml` is actually present — so the compiler's own manifest-less
+bootstrap is byte-for-byte unchanged.
