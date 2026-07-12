@@ -90,7 +90,7 @@ function trim(s: string): string {
     var b: i32 = s.len();
     while (a < b && is_hspace(s[a])) { a = a + 1; }
     while (b > a && is_hspace(s[b - 1])) { b = b - 1; }
-    return s[a:b];
+    return s[a:b] + "";
 }
 
 // leading_ws returns the run of leading spaces/tabs (the indentation
@@ -99,7 +99,7 @@ function leading_ws(s: string): string {
     var k: i32 = 0;
     var n: i32 = s.len();
     while (k < n && (s[k] == 32 || s[k] == 9)) { k = k + 1; }
-    return s[0:k];
+    return s[0:k] + "";
 }
 
 // split_lines splits on '\n', mirroring Go's strings.Split: a trailing
@@ -158,7 +158,7 @@ function fence_lang(line: string): string {
     var j: i32 = 0;
     var m: i32 = info.len();
     while (j < m && info[j] != 32 && info[j] != 9) { j = j + 1; }
-    return info[0:j];
+    return info[0:j] + "";
 }
 
 // fence_info returns the trimmed info string after a fence's backtick
@@ -191,7 +191,7 @@ function fence_file(line: string): string {
     var words: string[] = split_ws(fence_info(line));
     var i: i32 = 0;
     while (i < words.len()) {
-        if (starts_with(words[i], "file=")) { return words[i][5:words[i].len()]; }
+        if (starts_with(words[i], "file=")) { return words[i][5:words[i].len()] + ""; }
         i = i + 1;
     }
     return "";
@@ -228,7 +228,7 @@ function is_fence_close(line: string, open_len: i32): boolean {
 // header `<<NAME>>=` with a non-empty NAME free of `>>`.
 function is_header(t: string): boolean {
     if (!starts_with(t, "<<") || !ends_with(t, ">>=")) { return false; }
-    var inner: string = t[2:t.len() - 3];
+    var inner: str = t[2:t.len() - 3];
     if (contains(inner, ">>")) { return false; }
     return trim(inner).len() > 0;
 }
@@ -241,7 +241,7 @@ function header_name(t: string): string {
 // A header ends in `>>=` (not `>>`), so headers are excluded here.
 function is_ref(t: string): boolean {
     if (!starts_with(t, "<<") || !ends_with(t, ">>")) { return false; }
-    var inner: string = t[2:t.len() - 2];
+    var inner: str = t[2:t.len() - 2];
     if (inner.len() == 0) { return false; }
     if (contains(inner, "<<") || contains(inner, ">>")) { return false; }
     return true;

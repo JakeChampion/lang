@@ -1166,7 +1166,7 @@ function arm64_gas_trim(s: string): string {
     while (j > i && (s[j - 1] == 32 || s[j - 1] == 9)) {
         j = j - 1;
     }
-    return s[i:j];
+    return s[i:j] + "";
 }
 
 // arm64_gas_atoi parses a signed integer token: optional '-', decimal or
@@ -1209,7 +1209,7 @@ function arm64_gas_atoi(tok: string): i32 {
 function arm64_gas_imm(tok: string): i32 {
     var s: string = arm64_gas_trim(tok);
     if (s.len() > 0 && s[0] == 35) { // '#'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     return arm64_gas_atoi(s);
 }
@@ -1310,7 +1310,7 @@ function arm64_gas_mem(op: string): Arm64Mem {
     var rb: i32 = arm64_str_indexof(s, "]");
     var inner: string = s;
     if (lb >= 0 && rb > lb) {
-        inner = s[lb + 1:rb];
+        inner = s[lb + 1:rb] + "";
     }
     var parts: string[] = arm64_gas_operands(inner);
     var base: i32 = arm64_gas_reg(parts[0]);
@@ -1741,7 +1741,7 @@ function arm64_gas_strip_at(tok: string): string {
     var s: string = arm64_gas_trim(tok);
     var at: i32 = arm64_str_indexof(s, "@");
     if (at >= 0) {
-        s = s[0:at];
+        s = s[0:at] + "";
     }
     return arm64_gas_trim(s);
 }
@@ -1753,7 +1753,7 @@ function arm64_gas_strip_lo12(tok: string): string {
     var s: string = arm64_gas_trim(tok);
     var at: i32 = arm64_str_indexof(s, ":lo12:");
     if (at >= 0) {
-        s = s[at + 6 : s.len()];
+        s = s[at + 6 : s.len()] + "";
     }
     return arm64_gas_trim(s);
 }
@@ -1996,7 +1996,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         li = li + 1;
         var cm: i32 = arm64_str_indexof(raw, "//");
         if (cm >= 0) {
-            raw = raw[0:cm];
+            raw = raw[0:cm] + "";
         }
         var line: string = arm64_gas_trim(raw);
         if (line.len() == 0) {
@@ -2005,7 +2005,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // label prefix `name:`
         var colon: i32 = arm64_str_indexof(line, ":");
         if (colon > 0) {
-            var before: string = line[0:colon];
+            var before: str = line[0:colon];
             if (arm64_str_indexof(before, " ") < 0 && arm64_str_indexof(before, ",") < 0) {
                 if (section == 1) {
                     p = Arm64GasProg { ...p, dlab_names: p.dlab_names.append(before) };
@@ -2052,7 +2052,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         var mnem: string = line;
         var rest: string = "";
         if (sp >= 0) {
-            mnem = line[0:sp];
+            mnem = line[0:sp] + "";
             rest = arm64_gas_trim(line[sp + 1:line.len()]);
         }
         // `ldr Xd, =N` (literal-pool load): emit an LDR-literal placeholder

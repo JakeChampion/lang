@@ -129,17 +129,17 @@ function is_valid_numeric_suffix(s: string): boolean {
 // `..` never clashes with field access or fractions.
 function match_multipunct(src: string, i: i32, n: i32): string {
     if (i + 3 <= n) {
-        var s3: string = src[i:i + 3];
-        if (s3 == "<<=" || s3 == ">>=" || s3 == "..." || s3 == "..=") { return s3; }
+        var s3: str = src[i:i + 3];
+        if (s3 == "<<=" || s3 == ">>=" || s3 == "..." || s3 == "..=") { return s3 + ""; }
     }
     if (i + 2 <= n) {
-        var s2: string = src[i:i + 2];
+        var s2: str = src[i:i + 2];
         if (s2 == "==" || s2 == "!=" || s2 == "<=" || s2 == ">="
             || s2 == "&&" || s2 == "||" || s2 == "<<" || s2 == ">>"
             || s2 == "=>" || s2 == "|>" || s2 == ".." || s2 == "::"
             || s2 == "+=" || s2 == "-=" || s2 == "*=" || s2 == "/="
             || s2 == "%=" || s2 == "&=" || s2 == "|=" || s2 == "^=") {
-            return s2;
+            return s2 + "";
         }
     }
     return "";
@@ -375,7 +375,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
             l = l.advance_to(ee);
         }
     }
-    var text: string = l.src[begin:l.i];
+    var text: str = l.src[begin:l.i];
     // Optional typed suffix: i32/i64/u8/u32/u64/f32/f64.
     // The suffix character set is a closed list, so misspellings
     // like `42i33` / a truncated `42i` fail here rather than
@@ -390,7 +390,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
             se = se + 1;
         }
         l = l.advance_to(se);
-        suffix = l.src[s_begin:l.i];
+        suffix = l.src[s_begin:l.i] + "";
         if (!is_valid_numeric_suffix(suffix)) {
             return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
         }
@@ -417,7 +417,7 @@ function scan_ident(l: Lex, start_line: i32, start_col: i32): NumResult {
         e = e + 1;
     }
     l = l.advance_to(e);
-    var text: string = l.src[begin:l.i];
+    var text: str = l.src[begin:l.i];
     var tok: Token = ident_tok(text, start_line, start_col);
     if (is_keyword(text)) {
         tok = keyword_tok(text, start_line, start_col);
@@ -596,12 +596,12 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             if (depth != 0) {
                 return NumResult { lex: l, tok: error_tok("unterminated `{` in f-string", start_line, start_col) };
             }
-            var expr_text: string = l.src[expr_start:l.i];
+            var expr_text: str = l.src[expr_start:l.i];
             l = l.advance();   // closing }
             if (is_blank_range(expr_text)) {
                 return NumResult { lex: l, tok: error_tok("empty `{}` in f-string", start_line, start_col) };
             }
-            parts = parts.append(FStringPart { lit: "", expr: expr_text, is_expr: true });
+            parts = parts.append(FStringPart { lit: "", expr: expr_text + "", is_expr: true });
             continue;
         }
         if (c == 125) {   // }
@@ -694,9 +694,9 @@ pub function tokenize(src: string): Token[] {
             continue;
         }
         if (is_single_punct(b)) {
-            var text: string = l.src[l.i:l.i + 1];
+            var text: str = l.src[l.i:l.i + 1];
             l = l.advance();
-            out = out.append(TokPunct { text: text, line: start_line, col: start_col });
+            out = out.append(TokPunct { text: text + "", line: start_line, col: start_col });
             after_dot = (text == ".");
             continue;
         }

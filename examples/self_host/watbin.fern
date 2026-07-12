@@ -153,7 +153,7 @@ function wat_tokenize(src: string): WatTok[] {
                     j = j + 1;
                 }
             }
-            toks = toks.append(WatTok { kind: 3, text: src[start:j] });
+            toks = toks.append(WatTok { kind: 3, text: src[start:j] + "" });
             i = j + 1;
         } else {
             // Atom: run up to the next whitespace, paren, or quote.
@@ -165,7 +165,7 @@ function wat_tokenize(src: string): WatTok[] {
                 }
                 i = i + 1;
             }
-            toks = toks.append(WatTok { kind: 2, text: src[astart:i] });
+            toks = toks.append(WatTok { kind: 2, text: src[astart:i] + "" });
         }
     }
     return toks;

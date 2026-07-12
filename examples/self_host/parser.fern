@@ -429,7 +429,7 @@ function array_builder_elem(t: string): string {
         if (t[i] != prefix[i]) { return ""; }
         i = i + 1;
     }
-    return t[pl : t.len() - 1];
+    return t[pl : t.len() - 1] + "";
 }
 
 // is_builder_mutation is true when `c` is `b.append(...)` / `b.with(...)` /
@@ -560,7 +560,7 @@ function map_builder_inner(t: string): string {
         if (t[i] != prefix[i]) { return ""; }
         i = i + 1;
     }
-    return t[pl : t.len() - 1];
+    return t[pl : t.len() - 1] + "";
 }
 
 // maybe_desugar_map_build lowers `Map.build(function(b: MapBuilder[K, V]):
@@ -3445,7 +3445,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 if (is_compound) {
                     // `x += y` desugars to `x = x + y`. Strip the
                     // trailing `=` off the op to recover the operator.
-                    var op: string = assign_op[0:assign_op.len() - 1];
+                    var op: str = assign_op[0:assign_op.len() - 1];
                     rhs2 = e_binary(op, e_ident(id.name), rhs);
                 }
                 return (s_assign_at(id.name, rhs2, aline, acol, id.line, id.col), p);
@@ -3456,7 +3456,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 // `arr[idx] <op> y`.
                 var irhs: Expr = rhs;
                 if (is_compound) {
-                    var iop: string = assign_op[0:assign_op.len() - 1];
+                    var iop: str = assign_op[0:assign_op.len() - 1];
                     irhs = e_binary(iop, e_index(ix.array, ix.index), rhs);
                 }
                 var sargs: Expr[] = [];
@@ -3473,7 +3473,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 // simple lvalues that use this).
                 var frhs: Expr = rhs;
                 if (is_compound) {
-                    var fop: string = assign_op[0:assign_op.len() - 1];
+                    var fop: str = assign_op[0:assign_op.len() - 1];
                     frhs = e_binary(fop, e_field_access(fa.obj, fa.field), rhs);
                 }
                 var fargs: Expr[] = [];
@@ -3566,7 +3566,7 @@ function is_nominal_ret_name(n: string): boolean {
     var base: string = n;
     var bi: i32 = 0;
     while (bi < n.len()) {
-        if (n[bi] == 91) { base = n[0 : bi]; bi = n.len(); }
+        if (n[bi] == 91) { base = n[0 : bi] + ""; bi = n.len(); }
         else { bi = bi + 1; }
     }
     if (base.len() == 0) { return false; }
@@ -4798,7 +4798,7 @@ function split_top_commas(s: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: string = s[i : i + 1];
+        var c: str = s[i : i + 1];
         if (c == "[" || c == "(") { depth = depth + 1; }
         if (c == "]" || c == ")") { depth = depth - 1; }
         if (depth == 0 && c == "," && i + 1 < s.len() && s[i + 1 : i + 2] == " ") {
@@ -4859,7 +4859,7 @@ pub function parse_type_ref(sin: string): TypeRef {
     // content ("Map[…]") and a tuple ends with ")", so neither ends in "[]".
     while (s.len() >= 2 && s[s.len() - 2] == 91 && s[s.len() - 1] == 93) {
         depth = depth + 1;
-        s = s[0 : s.len() - 2];
+        s = s[0 : s.len() - 2] + "";
     }
     // Tuple "(…)": base "", args are the (recursively parsed) elements.
     if (s.len() >= 2 && s[0] == 40 && s[s.len() - 1] == 41) {
@@ -4882,7 +4882,7 @@ pub function parse_type_ref(sin: string): TypeRef {
         var gargs: TypeRef[] = [];
         var gi: i32 = 0;
         while (gi < gsegs.len()) { gargs = gargs.append(parse_type_ref(gsegs[gi])); gi = gi + 1; }
-        return TypeRef { base: s[0 : lb], args: gargs, array_depth: depth, is_tuple: false };
+        return TypeRef { base: s[0 : lb] + "", args: gargs, array_depth: depth, is_tuple: false };
     }
     // Plain scalar / named type (incl. opaque "dyn …" / "own …" spellings).
     return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false };
@@ -5024,11 +5024,11 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     // key as one arg (it may itself be a mangled nested clone); a multi-param
     // pattern splits unambiguously.
     if (pb > 0 && pattern[pattern.len() - 1 : pattern.len()] == "]" && cb < 0) {
-        var pbase: string = pattern[0 : pb];
+        var pbase: str = pattern[0 : pb];
         var mpfx: string = pbase + "__";
         if (concrete.len() > mpfx.len() && concrete[0 : mpfx.len()] == mpfx) {
             var pp: string[] = split_top_commas(pattern[pb + 1 : pattern.len() - 1]);
-            var ckey: string = concrete[mpfx.len() : concrete.len()];
+            var ckey: str = concrete[mpfx.len() : concrete.len()];
             var cp: string[] = [ckey];
             if (pp.len() != 1) { cp = split_dunder(ckey); }
             if (pp.len() == cp.len()) {
@@ -5181,7 +5181,7 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
             // operand's "i32", so a bounded-generic `assert_eq((x).min(y), 3 as
             // i64)` bound `T = i32` and the i64-valued clone failed to lower
             // (#3457: i64/u64 `.min`/`.max`/`.abs`/`.clamp` + i64 array reductions).
-            if (u.op.len() > 3 && u.op[0:3] == "as_") { return u.op[3:u.op.len()]; }
+            if (u.op.len() > 3 && u.op[0:3] == "as_") { return u.op[3:u.op.len()] + ""; }
             return mono_infer(u.operand, env, funcs);
         },
         ExprStructLit(sl) => { return sl.type_name; },
@@ -5242,7 +5242,7 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                     if (amgi >= 0) {
                         var recvt: string = mono_infer(cfa.obj, env, funcs);
                         if (type_ends_arr(recvt)) {
-                            var el: string = recvt[0 : recvt.len() - 2];
+                            var el: str = recvt[0 : recvt.len() - 2];
                             return subst_ty(funcs[amgi].ret_type, funcs[amgi].type_params, [el]);
                         }
                     }
@@ -5571,7 +5571,7 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
     }
     var lb: i32 = first_bracket(name);
     if (lb > 0 && name[name.len() - 1 : name.len()] == "]") {
-        var inner: string = name[lb + 1 : name.len() - 1];
+        var inner: str = name[lb + 1 : name.len() - 1];
         var parts: string[] = split_top_commas(inner);
         var ninner: string = "";
         var j: i32 = 0;
@@ -5856,7 +5856,7 @@ function looks_type_var(s: string): boolean {
 function is_generic_array_method(fd: FuncDecl): boolean {
     if (fd.receiver_name.len() == 0) { return false; }
     if (!type_ends_arr(fd.receiver_type)) { return false; }
-    var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
+    var elem: str = fd.receiver_type[0 : fd.receiver_type.len() - 2];
     if (!looks_type_var(elem)) { return false; }
     // The only bounded type param permitted is the receiver element var
     // itself (a bounded receiver); any other bounded param can't be erased
@@ -5890,7 +5890,7 @@ pub function register_array_method_generics(mod: Module): Module {
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
         if (is_generic_array_method(fd)) {
-            var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
+            var elem: str = fd.receiver_type[0 : fd.receiver_type.len() - 2];
             var tps: string[] = [elem];
             // Fold the receiver into a leading param named after the
             // receiver, so the body's references to it resolve normally.
@@ -6160,7 +6160,7 @@ function gstruct_index(gstructs: StructDecl[], base: string): i32 {
 // base name: `Box` / `Box[T]` / `Box[i32]` all yield "Box".
 function strip_struct_base(ty: string): string {
     var lb: i32 = first_bracket(ty);
-    if (lb > 0) { return ty[0 : lb]; }
+    if (lb > 0) { return ty[0 : lb] + ""; }
     return ty;
 }
 
@@ -6189,8 +6189,8 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     }
     var lb: i32 = first_bracket(ty);
     if (lb > 0 && ty[ty.len() - 1 : ty.len()] == "]") {
-        var base: string = ty[0 : lb];
-        var inner: string = ty[lb + 1 : ty.len() - 1];
+        var base: str = ty[0 : lb];
+        var inner: str = ty[lb + 1 : ty.len() - 1];
         var parts: string[] = split_top_commas(inner);
         if (gstruct_index(gstructs, base) >= 0) {
             var cur: Insts = ins;
@@ -6851,11 +6851,11 @@ function ge_inst_of(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): GEInst {
     var lb: i32 = first_bracket(ty);
     if (lb <= 0) { return GEInst { ok: false, base: "", key: "", mang: "" }; }
     if (ty[ty.len() - 1 : ty.len()] != "]") { return GEInst { ok: false, base: "", key: "", mang: "" }; }
-    var base: string = ty[0 : lb];
+    var base: str = ty[0 : lb];
     if (!genum_is_mono(enums, funcs, base)) { return GEInst { ok: false, base: "", key: "", mang: "" }; }
     var key: string = genum_key_from_anno(ty, base, enums, funcs);
     if (key.len() == 0) { return GEInst { ok: false, base: "", key: "", mang: "" }; }
-    return GEInst { ok: true, base: base, key: key, mang: base + "__" + key };
+    return GEInst { ok: true, base: base + "", key: key, mang: base + "__" + key };
 }
 
 // ge_targ_mangle mangles ONE generic-enum type argument to its `__` symbol
@@ -6895,7 +6895,7 @@ function me_rewrite_ty(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): string
 // references gets generated in phase 2.
 function me_collect_anno(ty: string, enums: EnumDecl[], funcs: FuncDecl[], ins: Insts): Insts {
     var t: string = ty;
-    if (type_ends_arr(t)) { t = t[0 : t.len() - 2]; }
+    if (type_ends_arr(t)) { t = t[0 : t.len() - 2] + ""; }
     var gi: GEInst = ge_inst_of(t, enums, funcs);
     if (!gi.ok) { return ins; }
     var cur: Insts = ins.iadd(gi.base, gi.key);
@@ -7055,7 +7055,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             // element (`Nn`, no payload to infer from) still pins its
             // instantiation. Strip one `[]` off the expected array type.
             var elexp: string = "";
-            if (type_ends_arr(expected)) { elexp = expected[0 : expected.len() - 2]; }
+            if (type_ends_arr(expected)) { elexp = expected[0 : expected.len() - 2] + ""; }
             var nels: Expr[] = [];
             var cur: Insts = ins;
             var i: i32 = 0;
@@ -7131,7 +7131,7 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
             var simple: string = pv.type_name;
             var k: i32 = 0;
             while (k < pv.type_name.len()) {
-                if (pv.type_name[k] == 46) { simple = pv.type_name[k + 1 : pv.type_name.len()]; }
+                if (pv.type_name[k] == 46) { simple = pv.type_name[k + 1 : pv.type_name.len()] + ""; }
                 k = k + 1;
             }
             var vn: string[] = ed.variant_names;
@@ -7180,7 +7180,7 @@ function me_fn_ret_spelling(t: string): string {
         i = i + 1;
     }
     if (last < 0) { return ""; }
-    return t[last + 4 : t.len()];
+    return t[last + 4 : t.len()] + "";
 }
 
 // me_scrutinee_type recovers the (original-spelling) type of a match scrutinee
@@ -7212,7 +7212,7 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
         },
         ExprIndex(ix) => {
             var at: string = me_scrutinee_type(ix.array, env, structs, funcs);
-            if (type_ends_arr(at)) { return at[0 : at.len() - 2]; }
+            if (type_ends_arr(at)) { return at[0 : at.len() - 2] + ""; }
             return "";
         },
         ExprFieldAccess(fa) => {
@@ -7238,7 +7238,7 @@ function me_bind_pat_vars(pat: Pattern, ed: EnumDecl, arg0: string, structs: Str
             var simple: string = pv.type_name;
             var k: i32 = 0;
             while (k < pv.type_name.len()) {
-                if (pv.type_name[k] == 46) { simple = pv.type_name[k + 1 : pv.type_name.len()]; }
+                if (pv.type_name[k] == 46) { simple = pv.type_name[k + 1 : pv.type_name.len()] + ""; }
                 k = k + 1;
             }
             var vidx: i32 = variant_struct_index(structs, simple, ed.name);
@@ -7322,7 +7322,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // off the iterable's tracked type.
             var itty: string = me_scrutinee_type(fr.iter, env, structs, funcs);
             var elty: string = "";
-            if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2]; }
+            if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2] + ""; }
             var benv: MEnv = env.ebind(fr.var_name, elty);
             var fb: RStmts = me_stmts(fr.body, benv, ret_ty, enums, structs, funcs, it.rins);
             return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
@@ -8196,7 +8196,7 @@ function resource_drop_fn_name(res: string): string { return "__resource_drop_" 
 // handle_resource_of returns R for an owned-handle spelling "own R", else "".
 function handle_resource_of(type_name: string): string {
     if (type_name.len() >= 4 && type_name[0:4] == "own ") {
-        return type_name[4 : type_name.len()];
+        return type_name[4 : type_name.len()] + "";
     }
     return "";
 }
@@ -9679,7 +9679,7 @@ function derive_simple_name(name: string): string {
         if (name[i] == 46) { last_dot = i; }
         i = i + 1;
     }
-    if (last_dot >= 0) { return name[last_dot + 1 : name.len()]; }
+    if (last_dot >= 0) { return name[last_dot + 1 : name.len()] + ""; }
     return name;
 }
 
@@ -10517,7 +10517,7 @@ function enclosing_bracket_base(ty: string, pos: i32): string {
             if (bal == 0) {
                 var st: i32 = i;
                 while (st > 0 && ident_byte(ty[st - 1])) { st = st - 1; }
-                return ty[st : i];
+                return ty[st : i] + "";
             }
             bal = bal - 1;
         }
@@ -10615,9 +10615,9 @@ function token_at_paren_depth0(ty: string, name: string): boolean {
 function token_in_tuple_param(ty: string, name: string): boolean {
     if (name.len() == 0) { return false; }
     var t: string = ty;
-    while (type_ends_arr(t)) { t = t[0 : t.len() - 2]; }   // strip array markers
+    while (type_ends_arr(t)) { t = t[0 : t.len() - 2] + ""; }   // strip array markers
     if (t.len() < 2 || t[0:1] != "(" || t[t.len() - 1 : t.len()] != ")") { return false; }
-    var inner: string = t[1 : t.len() - 1];
+    var inner: str = t[1 : t.len() - 1];
     var i: i32 = 0;
     var nl: i32 = name.len();
     while (i < inner.len()) {

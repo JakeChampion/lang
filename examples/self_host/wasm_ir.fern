@@ -475,7 +475,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
             // must be a struct_drop type too. Add it here (the index-driven loop then
             // expands X's own reclaimable fields transitively).
             if (irlower.is_struct_array_field_type(structs, ft)) {
-                var aelem: string = ft[0 : ft.len() - 2];
+                var aelem: str = ft[0 : ft.len() - 2];
                 if (irlower.nested_field_deep_drop_ok(structs, aelem)) {
                     if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem); }
                 }
@@ -503,7 +503,7 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
         while (k < fc) {
             var ft: string = irlower.decl_field_type_at(structs, sdt[i], k);
             if (irlower.is_struct_array_field_type(structs, ft)) {
-                var elem: string = ft[0 : ft.len() - 2];
+                var elem: str = ft[0 : ft.len() - 2];
                 if (irlower.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
                     out = out.append(elem);
                 }
@@ -938,13 +938,13 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 pub function pipe_before(s: string): string {
     var i: i32 = 0;
     while (i < s.len() && s[i] != 124) { i = i + 1; }   // '|'
-    return s[0:i];
+    return s[0:i] + "";
 }
 pub function pipe_after(s: string): string {
     var i: i32 = 0;
     while (i < s.len() && s[i] != 124) { i = i + 1; }
     if (i >= s.len()) { return ""; }
-    return s[i + 1 : s.len()];
+    return s[i + 1 : s.len()] + "";
 }
 
 pub function fn_value_table(cache: irlower.LowerResult[]): string[] {

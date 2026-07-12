@@ -1009,7 +1009,7 @@ function variant_simple_name(name: string): string {
         if (name[i] == 46) { last_dot = i; }
         i = i + 1;
     }
-    if (last_dot >= 0) { return name[last_dot + 1 : name.len()]; }
+    if (last_dot >= 0) { return name[last_dot + 1 : name.len()] + ""; }
     return name;
 }
 

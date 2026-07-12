@@ -752,7 +752,7 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
     while (i <= pbound.len()) {
         if (i == pbound.len() || pbound[i] == 43) {
             if (i > start) {
-                var tr: string = pbound[start:i];
+                var tr: str = pbound[start:i];
                 var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
                 if (tidx >= 0 && !e021_conforms(s, tr, tidx, cty)) {
                     out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
@@ -4348,8 +4348,8 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                             var cdp: i32 = dot_index(cpv.type_name);
                                             if (cdp >= 0) {
                                                 // Qualified pattern `Qual.Variant`.
-                                                var cqual: string = cpv.type_name[0:cdp];
-                                                var cbare: string = cpv.type_name[cdp + 1:cpv.type_name.len()];
+                                                var cqual: str = cpv.type_name[0:cdp];
+                                                var cbare: str = cpv.type_name[cdp + 1:cpv.type_name.len()];
                                                 if (cqual == mun.name) {
                                                     // Correctly qualified — an UNGUARDED arm covers
                                                     // the bare variant. A guarded arm may fall
@@ -5893,9 +5893,9 @@ function e021_object_unsafe_method(mod: parser.Module, trait_name: string): stri
 // `dyn T[]` array) is stripped so the element trait is classified.
 function e021_dyn_target(type_name: string): string {
     if (type_name.len() < 5 || type_name[0:4] != "dyn ") { return ""; }
-    var t: string = type_name[4:type_name.len()];
+    var t: str = type_name[4:type_name.len()];
     while (t.len() >= 2 && t[t.len() - 2] == 91 && t[t.len() - 1] == 93) { t = t[0:t.len() - 2]; }
-    return t;
+    return t + "";
 }
 
 // e021_object_safety_diags reports E021 for a `dyn T` annotation whose trait T
@@ -5941,9 +5941,9 @@ function e021_object_safety_diags(mod: parser.Module): Diag[] {
 // ident, is the dyn value; neither check applies to the array ident).
 function e060_dyn_set_of(type_name: string): string {
     if (type_name.len() < 5 || type_name[0:4] != "dyn ") { return ""; }
-    var t: string = type_name[4:type_name.len()];
+    var t: str = type_name[4:type_name.len()];
     if (t.len() >= 2 && t[t.len() - 2] == 91 && t[t.len() - 1] == 93) { return ""; }   // "[]"
-    return t;
+    return t + "";
 }
 
 // e060_split_traits splits "A + B [+ C…]" into trait names (trimmed on the
@@ -6027,7 +6027,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
         var e: string = dyns[i];
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }
-        if (e[0:bar] == name) { return e[bar + 1:e.len()]; }
+        if (e[0:bar] == name) { return e[bar + 1:e.len()] + ""; }
         i = i + 1;
     }
     return "";
@@ -6056,7 +6056,7 @@ function e060_e062_expr(e: parser.Expr, dyns: string[], mod: parser.Module, acc:
                     parser.ExprIdent(id) => {
                         var set: string = e060_set_of_name(dyns, id.name);
                         if (set.len() > 0) {
-                            var tgt: string = u.op[4:u.op.len()];
+                            var tgt: str = u.op[4:u.op.len()];
                             if (e060_is_primitive_name(tgt)) {
                                 out = out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
                             } else if ((e060_decl_is_plain_struct(mod, tgt) || e060_decl_is_enum(mod, tgt))) {
