@@ -4483,3 +4483,50 @@ func TestStrViewPromoteRejected(t *testing.T) {
 		}
 	}
 }
+
+// TestStrEscapeRejected: E065 (#4814) — a `str` view of function-local
+// string storage must not escape via return; the local's box is reclaimed
+// at exit and the escaped view dangles (the #4294 corruption class).
+func TestStrEscapeRejected(t *testing.T) {
+	for _, src := range []string{
+		// local string returned as a str (direct borrow escape)
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); return s; }`,
+		// view of a local, bound then returned
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = s; return v; }`,
+		// chained view-of-view of a local
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = s; var w: str = v; return w; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("%q: expected E065, got nil", src)
+			continue
+		}
+		if !hasCode(err, "E065") {
+			t.Errorf("%q: want diagnostic stamped E065, got %v", src, err)
+		}
+		if !strings.Contains(err.Error(), "dangling view") {
+			t.Errorf("%q: want dangling-view error, got %v", src, err)
+		}
+	}
+}
+
+// TestStrEscapeAllowed: param-sourced and 'static (literal) views outlive
+// the function, so returning them is fine; an owned .to_owned() result is
+// a move, not a view.
+func TestStrEscapeAllowed(t *testing.T) {
+	for _, src := range []string{
+		// param passthrough
+		`function f(v: str): str { return v; }`,
+		// param through a local view binding
+		`function f(p: str): str { var v: str = p; return v; }`,
+		// literal directly and via a binding ('static)
+		`function f(): str { return "s"; }`,
+		`function f(): str { var v: str = "s"; return v; }`,
+		// owned fresh call result (a move; call results are not chased)
+		`function mk(): string { return "a" + "b"; } function f(): str { return mk(); }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: expected OK, got %v", src, err)
+		}
+	}
+}
