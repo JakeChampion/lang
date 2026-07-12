@@ -1,0 +1,3 @@
+E013_dup_var.fern:1:35: error[E013]: variable "x" already declared in this scope
+    function main(): i32 { var x = 1; var x = 2; return x; }
+                                      ^

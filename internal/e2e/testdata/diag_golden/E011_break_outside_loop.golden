@@ -1,0 +1,3 @@
+E011_break_outside_loop.fern:1:24: error[E011]: break outside of a loop
+    function main(): i32 { break; return 0; }
+                           ^
