@@ -4393,3 +4393,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   closed. Remaining #4353: the orthogonal register-side arr_push grow-leak (goal-2
   reuse routing); the wasm overwrite-with-fresh-KEY case still leaks the discarded
   key temp by one (rare — a duplicate fresh key in one literal; sound, not a UAF).
+
+- 2026-07-12: **#4353 wasm map — overwrite-with-fresh-key reclaim (the word-count
+  tail of bug 2).** The bug-2 fix reclaimed fresh keys/values on the INSERT path,
+  but the OVERWRITE path (an existing key is re-`set`) discards the incoming key
+  (the slot keeps its original) — and a FRESH discarded key temp was abandoned,
+  leaking one key box per overwrite. This is the classic word-count / histogram
+  shape `m.set(computed_key, n)` where the same computed key recurs, so it is a
+  realistic leak, not a pathological one: measured differentially, a
+  `Map[string,i32]` doing 8 re-inserts of `"wo"+"rd"` / call leaked 64 000 B / 500
+  calls (8 × 16 B key boxes) over the i32-keyed baseline. FIX (wasm.fern
+  `map_helpers` only, one gated line): in the overwrite branch, `(if $kconsume
+  (drop (call $__fern_arr_dec $k)))` frees the discarded fresh key (sole-owned,
+  now dead). An ALIASED recurring key (`$kconsume` 0) is left untouched — its
+  source local's sweep owns it; an immortal literal key arr_dec's as a guarded
+  no-op. Post-fix the string-key overwrite churn is flat (0), reads back the LAST
+  value with len 1, and `__rc_underflow()==0` (no over-release); the aliased
+  recurring-key case stays valid through the overwrites. This is a wasm-only delta
+  (the register/arm64 backends don't use the per-insert consume model — their
+  overwrite-key reclaim rides the separate MAPKS credit + the still-open arr_push
+  reuse routing), so ir.fern / irlower.fern / the register asm are untouched and
+  the fixpoint stays byte-identical. Tests: three cases added to
+  `TestSelfHostMapKsReclaimWasmIR` (overwrite fresh-key flatness / correctness /
+  aliased-key soundness). Net: the wasm map key+value reclaim story is now
+  complete for both insert AND overwrite. Remaining #4353: only the orthogonal
+  register-side arr_push grow-leak (goal-2 reuse routing).

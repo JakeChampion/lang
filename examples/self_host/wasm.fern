@@ -8641,6 +8641,13 @@ pub function map_helpers(): string {
     // released above unconditionally when vis.
     o = o + "            (if (i32.eqz (local.get $vconsume)) (then (drop (call $__fern_rc_inc (local.get $v)))))))\n";
     o = o + "          (i32.store (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))) (local.get $v))\n";
+    // Overwrite discards the incoming KEY (the slot keeps its existing key). A
+    // FRESH new-key temp ($kconsume) is sole-owned and now dead, so free it —
+    // otherwise the classic word-count `m.set(computed_key, n)` on a recurring
+    // key leaks one key box per overwrite. An aliased key (kconsume=0) is left
+    // untouched (its source local's sweep owns it); an immortal literal key
+    // arr_dec's as a guarded no-op.
+    o = o + "          (if (local.get $kconsume) (then (drop (call $__fern_arr_dec (local.get $k)))))\n";
     o = o + "          (br $d)))))\n";
     // Remember the first tombstone so we can reclaim it once the chain ends.
     o = o + "      (if (i32.and (i32.eq (local.get $u) (i32.const 2)) (i32.lt_s (local.get $ff) (i32.const 0))) (then (local.set $ff (local.get $idx))))\n";
