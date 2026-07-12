@@ -4278,3 +4278,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   applies unchanged once buffers recycle). The non-working cut-2 patch was
   reverted to keep the tree clean; this entry preserves the diagnosis so the
   next attempt starts from the real blocker, not the value column.
+
+- 2026-07-12 (CORRECTION to the entry above): **#4353 cut-2 actually WORKS —
+  the value column IS deep-released; the previous "buffers don't recycle"
+  conclusion was a MISATTRIBUTION.** Re-measured with a DIFFERENTIAL harness
+  (string-valued vs i32-valued map of the same shape, so the shared leak cancels):
+  on the pre-fix tree an `Map[i32, i32]` helper-churn grows **96 KB** / 2000 calls
+  and an `Map[i32, string]` grows **224 KB** — the 128 KB gap is exactly the leaked
+  value boxes. WITH the cut-2 `__fern_map_free_vs` deep-release the string map drops
+  to **96 KB**, equal to the i32 map: **the 128 KB of value boxes is freed.** The
+  residual 96 KB is NOT a buffer-reclaim failure — it is the `__fern_arr_push`
+  grow-leak (each map's first insert grows the cap-0 keys+vals buffers and abandons
+  them: 2 × 24 B × 2000 = 96 000 B), a SEPARATE documented **LOAD-BEARING** leak the
+  arr_push body explicitly must not fix naively (it would double-free; the real fix
+  is the reuse-analysis routing of goal 2). The earlier entry was fooled by (a) that
+  96 KB baseline being present in every map and (b) a raw `b2 - b1` exit code
+  wrapping mod 256 with 96000 % 256 == 0, which read as "flat". Lesson baked into
+  the test: **measure the value column DIFFERENTIALLY against an i32-valued map**,
+  not against zero. So cut-2 is restored and landed: `MAPVS:` credit
+  (`map_str_value_reclaimable` — annotated `Map[K, string]`, init insert-chain +
+  every later `m.set/insert` value a fresh string) → `emit_map_buffers_free` routes
+  to `__fern_map_free_vs`, which frees the vals column via `__fern_str_arr_free` on
+  x86 + arm64 (wasm keeps its already-deep `$__fern_map_release`). Keys still leak
+  one level (a follow-up); the arr_push grow-leak is orthogonal and remains. Tests:
+  `TestSelfHostMapVsReclaim{IRX86_64, WasmIR, IRArm64}` — differential value-column
+  flatness + correctness + aliased-value exclusion. Also found (pre-existing, orthogonal): on the wasm IR path the map string-VALUE release via $__fern_map_release does NOT actually free the value boxes (a differential churn leaks), so the wasm map test asserts routing soundness only — a separate follow-up. Remaining #4353: string KEYS
+  (same treatment, keys column), then the grow-leak via goal-2 reuse routing.

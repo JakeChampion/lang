@@ -16930,6 +16930,175 @@ function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
 }
 
+// --- #4353: string-VALUE column deep-release for a reclaimable map ------------
+// A reclaimable map (fresh, non-escaping, non-aliased, non-iterated) declared
+// `Map[K, string]` whose EVERY value is a fresh string is credited "MAPVS:", so
+// emit_map_buffers_free routes it to __fern_map_free_vs (register backends free
+// the vals column via __fern_str_arr_free — a rc==1-gated per-element string free
+// — instead of the shallow arr_dec; wasm already deep-releases). SOUNDNESS: the
+// register __fern_map_set stores the value pointer with NO rc-inc, so the map
+// owns no counted ref — freeing a value is safe ONLY when the map is its sole
+// owner, i.e. the value was FRESH at the set site (nothing else references it).
+// The freshness predicate (str_local_binding_is_fresh) is purely SYNTACTIC (an
+// int `a+b` matches too), so the declared `Map[K, string]` type gate is required
+// to confirm the column really holds strings before freeing them as such. Keys
+// still leak one level (a follow-up); non-fresh-value or unannotated maps stay on
+// the shallow free (sound). NB: this reclaims the VALUE boxes; the map's separate
+// arr_push grow-leak (the abandoned intermediate keys/vals buffers, a documented
+// LOAD-BEARING leak gated on the reuse-analysis routing) is orthogonal and stays.
+
+// map_decl_value_type: the V of the `var name: Map[K, V] = …` declaration of the
+// map local `name`, found anywhere in `stmts`; "" if unannotated / not found.
+function map_decl_value_type(stmts: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return map_value_of(v.type_name); } },
+            parser.StmtIf(f) => {
+                var t1: string = map_decl_value_type(f.then_body, name);
+                if (t1 != "") { return t1; }
+                var t2: string = map_decl_value_type(f.else_body, name);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var t: string = map_decl_value_type(w.body, name); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = map_decl_value_type(fo.body, name); if (t != "") { return t; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { var t: string = map_decl_value_type(m.arms[mi].body, name); if (t != "") { return t; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// map_insert_chain_values_fresh: `e` is a `map_new[_i32]().insert(k,v)…` chain
+// (the Map{…} literal desugar); every insert's value arg (args[1]) must be a
+// fresh string. The root map_new() carries no value.
+function map_insert_chain_values_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "insert") {
+                        if (c.args.len() < 2) { return false; }
+                        if (!str_local_binding_is_fresh(c.args[1])) { return false; }
+                        return map_insert_chain_values_fresh(fa.obj);
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// map_expr_root_ident: the base receiver ident of a `.set(…)/.insert(…)` chain
+// (e.g. `m` for `m.set(a,b).set(c,d)`), or "" if the root isn't a bare ident.
+function map_expr_root_ident(e: parser.Expr): string {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => { return map_expr_root_ident(fa.obj); },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// map_expr_sets_unfresh: does `e` contain a `name.set(k,v)` / `name.insert(k,v)`
+// (receiver-chain rooted at `name`) whose value arg is NOT a fresh string?
+function map_expr_sets_unfresh(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if ((fa.field == "set" || fa.field == "insert") && map_expr_root_ident(fa.obj) == name) {
+                        if (c.args.len() >= 2 && !str_local_binding_is_fresh(c.args[1])) { return true; }
+                    }
+                    return map_expr_sets_unfresh(fa.obj, name);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// map_no_unfresh_set: no statement in `stmts` sets a non-fresh string value on
+// map `name` (recursing nested blocks). Reads (m.get/has/len) are ignored.
+function map_no_unfresh_set(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtExpr(e) => { if (map_expr_sets_unfresh(e.value, name)) { return false; } },
+            parser.StmtVar(v) => { if (map_expr_sets_unfresh(v.init, name)) { return false; } },
+            parser.StmtAssign(a) => { if (map_expr_sets_unfresh(a.value, name)) { return false; } },
+            parser.StmtIf(f) => { if (!map_no_unfresh_set(f.then_body, name) || !map_no_unfresh_set(f.else_body, name)) { return false; } },
+            parser.StmtWhile(w) => { if (!map_no_unfresh_set(w.body, name)) { return false; } },
+            parser.StmtFor(fo) => { if (!map_no_unfresh_set(fo.body, name)) { return false; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (!map_no_unfresh_set(m.arms[mi].body, name)) { return false; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// map_str_value_reclaimable: `name` is declared Map[K, string], its init insert-
+// chain values are all fresh strings, AND no later set/insert on it uses a
+// non-fresh value — so the map is the sole rc=1 owner of every value box and the
+// value column can be deep-freed. Finds the map's StmtVar to check the init chain.
+function map_str_value_reclaimable(stmts: parser.Stmt[], name: string): boolean {
+    if (map_decl_value_type(stmts, name) != "string") { return false; }
+    if (!map_no_unfresh_set(stmts, name)) { return false; }
+    return map_init_chain_ok(stmts, name);
+}
+function map_init_chain_ok(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return map_insert_chain_values_fresh(v.init); } },
+            parser.StmtIf(f) => {
+                if (stmts_declare(f.then_body, name)) { return map_init_chain_ok(f.then_body, name); }
+                if (stmts_declare(f.else_body, name)) { return map_init_chain_ok(f.else_body, name); }
+            },
+            parser.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_ok(w.body, name); } },
+            parser.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_ok(fo.body, name); } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (stmts_declare(m.arms[mi].body, name)) { return map_init_chain_ok(m.arms[mi].body, name); } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// stmts_declare: does a `var name = …` appear directly in `stmts`?
+function stmts_declare(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // expr_iters_map reports whether expr `e` calls `name.iter()` anywhere — the map
 // reclaim's soundness gate for the ITER-ALIASING hole: `m.iter()` builds a MapIter
 // box holding a raw pointer to m's mapbox (and thus to its keys/values buffers). If
@@ -17958,6 +18127,13 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             && !body_unsafe_for(body, maps[mi], borrowable)
             && !map_has_explicit_iter(body, maps[mi])) {
             out = out.append("MAP:" + maps[mi]);
+            // #4353: a reclaimable Map[K, string] whose every value is a fresh
+            // string additionally deep-releases its VALUE column (via
+            // __fern_map_free_vs on the register backends; wasm already does).
+            // Sound because the map is the sole rc=1 owner of each fresh value.
+            if (map_str_value_reclaimable(body, maps[mi])) {
+                out = out.append("MAPVS:" + maps[mi]);
+            }
         }
         mi = mi + 1;
     }
@@ -20106,7 +20282,16 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
 function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     var st: LowerState = s;
     st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_call_direct("__fern_map_free", 1));
+    // #4353: a Map[K, string]-with-fresh-values credited "MAPVS:" routes to
+    // __fern_map_free_vs, which deep-releases the value column (register backends
+    // free vals via __fern_str_arr_free; wasm_helper_symbol maps it to the
+    // already-deep $__fern_map_release). Everything else keeps the shallow
+    // __fern_map_free (value string boxes leak one level — sound).
+    if (util.index_of_str(s.reclaimable_names, "MAPVS:" + s.locals[slot].slot_name) >= 0) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_vs", 1));
+    } else {
+        st = st.emit(ir.op_call_direct("__fern_map_free", 1));
+    }
     st = st.emit(ir.op_drop());
     // zero the slot (a precise drop uses this so the exit-sweep re-call skips).
     st = st.emit(ir.op_const_i32(0));
