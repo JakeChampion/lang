@@ -1068,6 +1068,16 @@ pub function (s: string) indent(prefix: string): string {
     return string_from_bytes(buf);
 }
 
+// to_owned materialises an OWNED `string` from a borrowed `str` view
+// (#4813): `str` shares the `string` method surface, so a view receiver
+// dispatches here. `s + ""` is a fresh-owned producer on EVERY backend and
+// path -- unlike slicing, which is a zero-copy immortal view on the asm-IR
+// path (#4294) and would hand back another view instead of a copy. On an
+// already-owned `string` receiver it is a plain (cheap) copy.
+pub function (s: string) to_owned(): string {
+    return s + "";
+}
+
 pub function (s: string) trim(): string {
     var n: i32 = s.len();
     var low: i32 = 0;

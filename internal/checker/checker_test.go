@@ -4437,3 +4437,49 @@ func hasCode(err error, code string) bool {
 	}
 	return walk(err)
 }
+
+// TestStrViewBorrowAllowed: the `str` view type (#4813). An owned `string`
+// freely borrows INTO a `str` (var init, argument, array element); a `str`
+// flows into a `string` PARAMETER (params are borrowed by default); the
+// string method surface (builtin .len()) dispatches on a view receiver.
+func TestStrViewBorrowAllowed(t *testing.T) {
+	for _, src := range []string{
+		// string → str var init (borrow)
+		`function f() { var s: string = "x"; var v: str = s; }`,
+		// string literal → str param
+		`function g(v: str): i32 { return v.len(); } function f(): i32 { return g("abc"); }`,
+		// str → string param (borrowed position)
+		`function t(o: string): i32 { return o.len(); } function f(v: str): i32 { return t(v); }`,
+		// str[] literal from string elements; element method call
+		`function f(): i32 { var vs: str[] = ["ab"]; return vs[0].len(); }`,
+		// str → str passthrough return
+		`function f(v: str): str { return v; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: expected OK, got %v", src, err)
+		}
+	}
+}
+
+// TestStrViewPromoteRejected: a `str` never silently promotes to an owned
+// `string` — the owning sinks (var init, return) must materialise a fresh
+// copy via .to_owned(). This is the type-level guard for the #4294 bug
+// class: an owned sink may be freed by the RC passes, and freeing a view
+// corrupts the source.
+func TestStrViewPromoteRejected(t *testing.T) {
+	for _, src := range []string{
+		// str → string var init
+		`function f(v: str) { var o: string = v; }`,
+		// str → string return
+		`function f(v: str): string { return v; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("%q: expected rejection, got nil", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "str") {
+			t.Errorf("%q: want the str/string mismatch surfaced, got %v", src, err)
+		}
+	}
+}

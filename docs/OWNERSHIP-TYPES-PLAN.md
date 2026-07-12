@@ -255,12 +255,29 @@ precompute shape.
 
 ### Phase A — the `str` view type (user-facing), layered on C
 
-- **A1.** `str` as the borrowed-string sibling of `SliceType`: `string` owned,
-  `str` a `{data,len}` view. `s[a:b]: str`, `.trim(): str`, zero-copy;
-  `.to_owned()` to materialise.
-- **A2.** Dangling rule: a `str` may not escape unless its source is a
-  parameter / `'static` (extend the existing `sliceBorrowsLocal` analysis to
-  strings).
+- **A1 (#4813) — slice 1 LANDED (native surface).** `str` as the borrowed
+  view of `string`. Representation decision (recorded on #4813): a **distinct
+  `ast.StrType`**, NOT `SliceType{Elem: u8}` — a string view's runtime shape
+  is the #4294 immortal rc=-1 *string box*, not the slice `{data,len}` fat
+  pointer, so `str` lowers exactly like `string` and is **erased to
+  StringType at the LowerWith choke point** (`ir/erase_str.go`, mirroring
+  HandleType erasure; no backend sees it). Spelled as a **contextual type
+  name**, not a lexer keyword (std/log's `.str` method + `str` identifiers
+  keep working). Semantics: `string` freely borrows INTO `str` (var init,
+  argument, element); `str` flows into `string` *parameters* (borrowed-by-
+  default positions, `argAssignable`); `str` never silently promotes into an
+  owning sink (var/field/return — strict `assignable`); `.to_owned()`
+  (std/string, `s + ""` — fresh-owned on every path) materialises the copy;
+  `str` shares the whole `string` method surface (`methodTypeName` maps it).
+  `StructuralOwnership(StrType) = View` — the C1 axis's first surface
+  citizen. Coverage: parser + ownership + checker tests, `TestInterpStrView`
+  + `TestX86_64StrView` e2e. **Deferred to later A1 slices:** producers
+  (`s[a:b]: str`, `.trim(): str` — the zero-copy flip, gated behind A2), the
+  `own`-param tightening, and self-host compiler acceptance of `str`
+  (native-only surface for now — a #4451 debt entry).
+- **A2 (#4814).** Dangling rule: a `str` may not escape unless its source is
+  a parameter / `'static` (extend the existing `sliceBorrowsLocal` analysis
+  to strings). Prerequisite for the producer flip.
 
 ## Validation discipline (learned from #4294 / the A2 attempts)
 
