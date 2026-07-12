@@ -26,6 +26,9 @@
 // Phase 6: Span vs Duration calendar arithmetic.
 
 import "core/int";
+// `relative_to` renders magnitudes via (i64) `.to_string()`; declare
+// std/i64 so that method registers under no-prelude.
+import "std/i64";
 // std/time dispatches string methods (.index_of) when parsing
 // ISO timestamps; declare the source module so they resolve under
 // no-prelude (the auto-prelude used to make them universally visible).
@@ -1077,4 +1080,49 @@ pub function timezone_observes_dst(name: string): boolean {
     if (name == "Australia/Melbourne") { return true; }
     if (name == "Pacific/Auckland") { return true; }
     return false;
+}
+
+// __rel_unit(n, unit) — "<n> <unit>", pluralising the unit noun
+// unless n is exactly 1 (e.g. "1 hour", "3 hours", "0 seconds").
+function __rel_unit(n: i64, unit: string): string {
+    var s: string = n.to_string() + " " + unit;
+    if (n != (1 as i64)) { s = s + "s"; }
+    return s;
+}
+
+// __rel_phrase(secs) — bare magnitude phrase for a non-negative
+// second count, picking the largest unit that fits: seconds →
+// minutes → hours → days → months (≈30 days) → years (365 days).
+// Approximate calendar units (no month-length or leap handling) —
+// good enough for the "X ago" / "in X" humanised shape, not for
+// exact arithmetic (use Span / Duration for that).
+function __rel_phrase(secs: i64): string {
+    if (secs < (60 as i64)) { return __rel_unit(secs, "second"); }
+    var mins: i64 = secs / (60 as i64);
+    if (mins < (60 as i64)) { return __rel_unit(mins, "minute"); }
+    var hours: i64 = mins / (60 as i64);
+    if (hours < (24 as i64)) { return __rel_unit(hours, "hour"); }
+    var days: i64 = hours / (24 as i64);
+    if (days < (30 as i64)) { return __rel_unit(days, "day"); }
+    var months: i64 = days / (30 as i64);
+    if (months < (12 as i64)) { return __rel_unit(months, "month"); }
+    var years: i64 = days / (365 as i64);
+    return __rel_unit(years, "year");
+}
+
+// `(i: Instant).relative_to(now)` — humanised relative time, the
+// `fromNow` shape: describe `i` as seen from `now`. Past instants
+// read "5 minutes ago", future ones "in 2 days", and anything
+// within 5 seconds either way is "just now". Only the whole-second
+// delta matters (sub-second nsec is ignored). Units are coarse
+// approximations (month ≈ 30 days, year = 365 days) — for exact
+// intervals use `duration_since` / Span arithmetic instead.
+pub function (i: Instant) relative_to(now: Instant): string {
+    var raw: i64 = i.sec - now.sec;
+    var mag: i64 = raw;
+    if (mag < (0 as i64)) { mag = (0 as i64) - mag; }
+    if (mag < (5 as i64)) { return "just now"; }
+    var phrase: string = __rel_phrase(mag);
+    if (raw < (0 as i64)) { return phrase + " ago"; }
+    return "in " + phrase;
 }

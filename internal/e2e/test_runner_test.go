@@ -512,6 +512,24 @@ func TestRunnerTimeTimezoneExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/time_relative_test.fern` covers std/time's
+// Instant.relative_to humaniser — the "just now" window, past/future
+// direction, singular vs plural units, and the unit ladder. Passing →
+// exit 0; plan line `1..4`.
+func TestRunnerTimeRelativeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/time_relative_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time relative_to", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/json_roundtrip_test.fern")
