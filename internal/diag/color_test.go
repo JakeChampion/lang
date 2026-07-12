@@ -104,6 +104,30 @@ func TestASCIIGutterFallback(t *testing.T) {
 	}
 }
 
+// TestColorGuttersSecondaryLabel asserts a multi-label diagnostic's
+// secondary line also gets a line-number gutter in rich mode, so the whole
+// diagnostic reads as one consistently-guttered block (#4413 Rec §7).
+func TestColorGuttersSecondaryLabel(t *testing.T) {
+	defer SetColor(SetColor(true))
+	src := "function f(): i32 {\n    var x: i32 = 1;\n    x = \"oops\";\n    return x;\n}\n"
+	err := &fakeLabeledErr{
+		fakeErr: fakeErr{pos: ast.Position{Line: 3, Col: 9}, msg: "cannot assign string to i32"},
+		labels: []Label{
+			{Pos: ast.Position{Line: 3, Col: 9}, Length: 6, Message: "expected i32 here", Kind: LabelPrimary},
+			{Pos: ast.Position{Line: 2, Col: 12}, Length: 3, Message: "declared with this type", Kind: LabelSecondary},
+		},
+	}
+	out := Format("", src, err)
+	// The secondary (line 2) source line carries its own gutter.
+	if !strings.Contains(out, " 2 "+paint(ansiBlue, "│")) {
+		t.Errorf("secondary label should be guttered in rich mode, got:\n%q", out)
+	}
+	// Its underline stays `-` (distinct from the primary caret).
+	if !strings.Contains(out, paint(ansiBlue, "---")) {
+		t.Errorf("secondary underline should be blue `---`, got:\n%q", out)
+	}
+}
+
 // TestSetColorReturnsPrevious pins the restore contract used by the
 // defer SetColor(SetColor(true)) idiom above.
 func TestSetColorReturnsPrevious(t *testing.T) {
