@@ -30,8 +30,11 @@ var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*)[
 // explanation.
 func TestEmittedCodesHaveExplanations(t *testing.T) {
 	// Test runs in the package dir (internal/diag); the emitters are its
-	// siblings. modload/parser share the same emission helpers as checker.
-	dirs := []string{"../checker", "../parser", "../modload"}
+	// siblings. modload/parser share the same emission helpers as checker;
+	// cmd/fern emits E066 (capability enforcement) via checker.Error, and
+	// internal/platforms owns that pass — scan both so new codes there
+	// can't ship without explanations either.
+	dirs := []string{"../checker", "../parser", "../modload", "../platforms", "../../cmd/fern"}
 	emitted := map[string]string{} // code -> first source file it's emitted from
 	for _, d := range dirs {
 		files, err := filepath.Glob(filepath.Join(d, "*.go"))

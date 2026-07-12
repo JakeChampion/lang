@@ -179,7 +179,25 @@ maps + recursion).
 ### Phase D — platform & runtime architecture
 
 **D1. Capability enforcement (platforms Phase 2 slice).**
-[status: not started]
+[status: shipped]
+Shipped with two reality adjustments: (1) the gate table lives in
+`internal/platforms/enforce.go` (builtin → capability: subprocess,
+stdin/read_line, the tcp/udp family, the fs family) and native +
+wasm descriptors were extended to declare what their runtimes
+actually wire — which surfaced that **`subprocess` is interp-only**
+(no codegen backend lowers it), so no compiled target grants it
+and E066 replaces the old "undefined label" assembler failure;
+(2) enforcement runs in `cmd/fern run()` (not the checker) after
+a pre-shake that mirrors each backend's own treeshake (dyn roots,
+-shared exports, WIT-export roots, and wasi-http's drop of the
+synthesised tcp_serve main), so unused imported stdlib wrappers
+never trip gates and bare `-check` stays target-neutral. E066 is
+positioned for entry-module call sites and position-less-but-named
+for imported-module sites; `fern explain E066` documents it. The
+diag catalogue-completeness gate now also scans cmd/fern +
+internal/platforms. Self-host parity: not needed by construction —
+E066 is emitted on the Go CLI's compile path only, never by either
+checker, so the differential checker-codes gate is unaffected.
 Make `internal/platforms.Descriptor.Capabilities` real: compiling
 for a target rejects, at **check time**, calls to runtime
 primitives the target's descriptor doesn't grant (first concrete
