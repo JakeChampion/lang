@@ -4418,3 +4418,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   aliased-key soundness). Net: the wasm map key+value reclaim story is now
   complete for both insert AND overwrite. Remaining #4353: only the orthogonal
   register-side arr_push grow-leak (goal-2 reuse routing).
+
+- 2026-07-12: **#4353 register map grow-leak — root-caused the soundness blocker
+  (it is NOT a naive arr_push_owned swap; keys()/values() alias the buffer).**
+  The register map's `__fern_map_set` grows its keys/vals buffers via the shared
+  LEAK-ONLY `__fern_arr_push`, abandoning the superseded cap-0 buffer — the
+  documented 48 B/build grow-leak (measured exactly: 96 000 B / 2000 map builds =
+  2 × 24 B cap-0 buffers). The obvious fix — route the two appends through the
+  existing sole-owner `__fern_arr_push_owned` (which frees the old buffer on an
+  rc==1 grow, the sanctioned "safe form" already used for unaliased `a =
+  a.append(v)`) — DOES close the leak (re-measured: 96 000 → 0, no over-release)
+  and mirrors the wasm map's grow-frees-old-buffers. **But it is UNSOUND as-is:**
+  register `map_keys` / `map_values` (IR op kinds 131/132) return the RAW `keys@0`
+  / `vals@8` buffer pointer with NO rc-inc — an UNCOUNTED alias (confirmed: `var
+  ks = m.keys(); m.set(k,v); ks.len()` observably tracks the live buffer, unlike
+  the wasm backend which snapshot-copies). So a live `keys()`/`values()` result
+  followed by a growing `m.set` would let `arr_push_owned` (seeing the sole box
+  reference, rc==1) FREE the buffer `ks` still points to — a use-after-free. The
+  leak is load-bearing: it keeps that buffer alive and masks the hazard. This
+  SHARPENS the old "gated on goal-2 reuse routing" note into a concrete blocker
+  with a concrete fix order: **first** make register `map_keys`/`map_values`
+  snapshot-copy (allocate + copy, matching the wasm `$__fern_map_snapshot` — also
+  fixes the latent aliasing correctness bug where a snapshot tracks later
+  mutations), OR give the alias proper counted-rc accounting; **then** the
+  `arr_push_owned` swap in `map_set` becomes sound and the grow-leak closes. Left
+  a guard comment at the `map_set` append site so the swap isn't re-attempted
+  naively. The measured-but-reverted swap proves the leak is fully recoverable
+  once the alias is made safe. NEXT concrete slice: register keys/values
+  snapshot-copy (the wasm map already does this), which both fixes the aliasing
+  correctness gap and unblocks the last #4353 grow-leak.
