@@ -75,6 +75,11 @@ func StructuralOwnership(t Type) Ownership {
 	switch h := t.(type) {
 	case SliceType:
 		return View
+	case StrType:
+		// `str` (#4813) is the string-side structural View, the surface
+		// citizen of this axis: a borrowed-string view must never be freed
+		// by its holder.
+		return View
 	case HandleType:
 		if h.Borrowed {
 			return Borrowed

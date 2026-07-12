@@ -2682,6 +2682,11 @@ func methodTypeName(t ast.Type) (string, bool) {
 		return rt.Name, true
 	case ast.StringType:
 		return "string", true
+	case ast.StrType:
+		// `str` (#4813) shares the `string` method surface: every string
+		// receiver method (builtin len/as_bytes and the std/string family)
+		// dispatches on a view too -- methods borrow their receiver.
+		return "string", true
 	case ast.NumberType:
 		switch {
 		case rt.NormalWidth() == 64 && rt.IsSigned():
@@ -3166,7 +3171,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	for i, arg := range n.Args {
 		at := c.checkExpr(arg, s)
 		want := ast.SubstSelf(wantParams[i].Type, dt)
-		if at != nil && !c.assignable(want, at) {
+		if at != nil && !c.argAssignable(want, at) {
 			c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 		}
 	}
@@ -4442,6 +4447,8 @@ func displayDispatchTypeName(t ast.Type) string {
 	case ast.EnumType:
 		return x.Name
 	case ast.StringType:
+		return "string"
+	case ast.StrType:
 		return "string"
 	case ast.BoolType:
 		return "boolean"
@@ -6370,6 +6377,21 @@ func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
 	return strings.Join(missing, " + ")
 }
 
+// argAssignable is assignable plus the `str` borrow rule (#4813): a `str`
+// view may flow into a `string` PARAMETER -- params are borrowed by default
+// (OwnedByDefault), so the callee never frees its argument and lending a
+// view is safe. Owning sinks stay on the strict assignable. `own` params
+// are not yet distinguished here (FuncSigs carry types only); that
+// tightening rides the A2 escape slice (#4814).
+func (c *checker) argAssignable(want, got ast.Type) bool {
+	if c.assignable(want, got) {
+		return true
+	}
+	_, gotStr := got.(ast.StrType)
+	_, wantString := want.(ast.StringType)
+	return gotStr && wantString
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -6380,6 +6402,20 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// type-checks for every T (#4522).
 	if _, ok := src.(ast.NeverType); ok {
 		return true
+	}
+	// `str` (#4813): the borrowed-string view. An owned `string` freely
+	// borrows INTO a `str` destination; a `str` never silently promotes to
+	// an owned `string` -- an owning sink (var init, struct field, array
+	// element, return) must materialise a fresh copy via .to_owned().
+	// str==str is Equal above. Argument positions get a borrow carve-out
+	// (argAssignable) since params are borrowed by default; tightening for
+	// `own`-annotated params rides the A2 escape slice (#4814).
+	if _, ok := dst.(ast.StrType); ok {
+		_, srcIsString := src.(ast.StringType)
+		return srcIsString
+	}
+	if _, ok := src.(ast.StrType); ok {
+		return false
 	}
 	// Trait-object coercion (boxing): a concrete value whose type
 	// implements `Trait` coerces to `dyn Trait`. This is the single
@@ -9684,7 +9720,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							for i, arg := range n.Args {
 								at := c.checkExpr(arg, s)
 								want := ast.SubstSelf(tm.Params[i].Type, tp)
-								if at != nil && !c.assignable(want, at) {
+								if at != nil && !c.argAssignable(want, at) {
 									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 								}
 							}
@@ -9862,7 +9898,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				for i, arg := range n.Args {
 					at := c.checkExpr(arg, s)
 					want := ast.SubstSelf(wantParams[i].Type, tt)
-					if at != nil && !c.assignable(want, at) {
+					if at != nil && !c.argAssignable(want, at) {
 						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 					}
 				}
@@ -9885,6 +9921,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			case ast.EnumType:
 				typeName = t.Name
 			case ast.StringType:
+				_ = t
+				typeName = "string"
+			case ast.StrType:
+				// `str` (#4813) shares the `string` method surface --
+				// methods borrow their receiver, so dispatching a view
+				// through the string method table is sound.
 				_ = t
 				typeName = "string"
 			case ast.NumberType:
@@ -10148,7 +10190,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if !c.unifyType(expected, at, sub) {
 						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 					}
-				} else if !c.assignable(expected, at) {
+				} else if !c.argAssignable(expected, at) {
 					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 				}
 			}

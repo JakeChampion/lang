@@ -3155,3 +3155,49 @@ func TestParseControlFlowInBlockExpr(t *testing.T) {
 			prog2.Funcs[0].Body.Stmts[0].(*ast.Var).Init)
 	}
 }
+
+// TestParseStrViewType: `str` (#4813) is the contextual borrowed-string view
+// type — an Ident claimed only in TYPE position, deliberately not a lexer
+// keyword, so `str` locals and `.str(...)` methods in expression position
+// keep working.
+func TestParseStrViewType(t *testing.T) {
+	prog, err := Parse(`function f(v: str, vs: str[]): str {
+    var w: str = v;
+    return w;
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	if _, ok := fn.Params[0].Type.(ast.StrType); !ok {
+		t.Errorf("param v: got %T, want ast.StrType", fn.Params[0].Type)
+	}
+	arr, ok := fn.Params[1].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("param vs: got %T, want ArrayType", fn.Params[1].Type)
+	}
+	if _, ok := arr.Elem.(ast.StrType); !ok {
+		t.Errorf("param vs elem: got %T, want ast.StrType", arr.Elem)
+	}
+	if _, ok := fn.ReturnType.(ast.StrType); !ok {
+		t.Errorf("return: got %T, want ast.StrType", fn.ReturnType)
+	}
+	if got := fn.ReturnType.String(); got != "str" {
+		t.Errorf("String() = %q, want \"str\"", got)
+	}
+
+	// Expression position is untouched: `str` as a plain local identifier.
+	if _, err := Parse(`function g(): i32 { var str: i32 = 2; return str; }`); err != nil {
+		t.Errorf("`str` as an identifier: %v", err)
+	}
+	// A module-qualified struct reference `str.Foo` stays on the nominal
+	// path (the `str.` guard) rather than parsing as the view type.
+	prog2, err := Parse(`function h(x: str.Foo) {}`)
+	if err != nil {
+		t.Fatalf("str.Foo: %v", err)
+	}
+	st, ok := prog2.Funcs[0].Params[0].Type.(ast.StructType)
+	if !ok || st.Name != "str.Foo" {
+		t.Errorf("str.Foo: got %#v, want StructType{Name: \"str.Foo\"}", prog2.Funcs[0].Params[0].Type)
+	}
+}

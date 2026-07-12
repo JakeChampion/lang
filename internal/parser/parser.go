@@ -1975,6 +1975,18 @@ func (p *parser) parseType() (ast.Type, error) {
 		// through to the trailing-`[]` suffix loop like any base type.
 		p.advance()
 		base = ast.SelfType{}
+	case t.Kind == lexer.Ident && t.Text == "str" &&
+		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
+		// `str` is the contextual borrowed-string view type (#4813). An
+		// Ident, deliberately NOT a lexer keyword: `.str` methods
+		// (std/log's field-attach API) and `str` locals in expression
+		// position are untouched; only type position is claimed. The
+		// `str.` guard keeps a module-qualified struct reference
+		// (`str.Foo`) on the bare-identifier path below. A user struct
+		// named exactly `str` is shadowed in type position (reserved,
+		// like Self).
+		p.advance()
+		base = ast.StrType{}
 	case t.Kind == lexer.Ident:
 		// Bare identifier is a struct type reference. The checker
 		// validates that the name actually resolves to a struct.

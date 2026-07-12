@@ -87,6 +87,21 @@ type BoolType struct{}
 type VoidType struct{}
 type StringType struct{}
 
+// StrType is the borrowed-string VIEW type `str` (#4813 / #4297 Option A) --
+// the string sibling of the ArrayType-vs-SliceType precedent. `string` owns
+// its heap box; a `str` is a non-owning view of some string's bytes: it must
+// never be freed by its holder. In this first slice no producer yields `str`
+// yet -- the type exists so signatures can declare borrowed-string intent: an
+// owned `string` freely borrows INTO a `str` (assignable; any argument
+// position), while `str` never silently promotes to an owned `string`
+// (.to_owned() materialises a fresh copy). `str` shares the `string` method
+// surface (methodTypeName maps it to "string"). Runtime shape: identical to
+// StringType (the #4294 immortal rc=-1 view box IS the runtime `str`), so it
+// is ERASED to StringType at the LowerWith choke point (ir/erase_str.go),
+// mirroring HandleType erasure -- no backend or width classification ever
+// sees it. The escape/dangling rule is the A2 slice (#4814).
+type StrType struct{}
+
 // NeverType is the bottom type: the type of an expression that never
 // yields a value because every control-flow path through it exits
 // early (`return` / `break` / `continue`). It arises only internally
@@ -414,6 +429,7 @@ func (BoolType) isType()     {}
 func (VoidType) isType()     {}
 func (NeverType) isType()    {}
 func (StringType) isType()   {}
+func (StrType) isType()      {}
 func (FloatType) isType()    {}
 func (ArrayType) isType()    {}
 func (StreamType) isType()   {}
@@ -439,6 +455,7 @@ func (BoolType) String() string   { return "boolean" }
 func (VoidType) String() string   { return "void" }
 func (NeverType) String() string  { return "never" }
 func (StringType) String() string { return "string" }
+func (StrType) String() string    { return "str" }
 func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
@@ -1143,7 +1160,7 @@ var CodegenMu sync.Mutex
 // target.
 func IsPointerType(t Type) bool {
 	switch t.(type) {
-	case StringType, ArrayType, SliceType, TupleType,
+	case StringType, StrType, ArrayType, SliceType, TupleType,
 		StructType, EnumType:
 		return true
 	case *FuncType:
@@ -1174,6 +1191,9 @@ func Equal(a, b Type) bool {
 		return ok
 	case StringType:
 		_, ok := b.(StringType)
+		return ok
+	case StrType:
+		_, ok := b.(StrType)
 		return ok
 	case FloatType:
 		y, ok := b.(FloatType)

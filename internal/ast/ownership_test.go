@@ -39,6 +39,16 @@ func TestStructuralOwnership(t *testing.T) {
 		t.Errorf("StructuralOwnership([i32]) = %s, want view", got)
 	}
 
+	// StrType (#4813) is the string-side structural view — the borrowed
+	// `str` sibling of `[T]`: a holder must never free the viewed bytes.
+	if got := StructuralOwnership(StrType{}); got != View {
+		t.Errorf("StructuralOwnership(str) = %s, want view", got)
+	}
+	// The owned string stays Owned — the axis distinguishes the pair.
+	if got := StructuralOwnership(StringType{}); got != Owned {
+		t.Errorf("StructuralOwnership(string) = %s, want owned", got)
+	}
+
 	// A borrow-handle carries its borrow bit in the type; an owning handle
 	// (and any other pointer-shaped or scalar type) defaults to Owned.
 	if got := StructuralOwnership(HandleType{Resource: "R", Borrowed: true}); got != Borrowed {
