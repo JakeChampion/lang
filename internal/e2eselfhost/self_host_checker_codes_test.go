@@ -209,6 +209,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// Bare no-payload enum variant used as a value (#4346 piece 2). A unit
+		// variant (`Red`) types to its enum's union, so a matching declared
+		// type is clean and a MISMATCHED one draws E003 (Color not assignable
+		// to i32) — the same code the Go checker emits. Before the slice the
+		// self-host typed `Red` as unknown, so E003 never fired here (the
+		// mismatch went silently un-reported, invisible to this codes gate);
+		// the mismatch case is what actively verifies the variant now types to
+		// its union. The clean-accept cases (no over-reject) are pinned by the
+		// self_host_cli_test `-check` exit-code tests, since a silent
+		// over-reject also emits no codes and would pass this gate regardless.
+		{"enum-value-mismatch", "enum Color { Red, Green }\nfunction main(): i32 { var x: i32 = Red; return x; }\n", []string{"E003"}},
+		{"enum-value-assign-clean", "enum Color { Red, Green }\nfunction main(): i32 { var c: Color = Red; return 0; }\n", nil},
+		{"enum-value-return-clean", "enum Color { Red, Green }\nfunction pick(): Color { return Green; }\nfunction main(): i32 { var c: Color = pick(); return 0; }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
