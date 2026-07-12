@@ -1472,6 +1472,18 @@ type Index struct {
 	// for i32, etc.). nil falls back to the historical 4-byte
 	// stride.
 	ElemType Type
+	// Unchecked, when set, tells the IR to lower an ARRAY index
+	// (not string/slice) without the per-access bounds check —
+	// the caller has statically proven `0 <= Idx < len(Array)`.
+	// Currently set only by DesugarForEachArray on its synthetic
+	// `iter[idx]` element read: `idx` starts at 0, steps +1, the
+	// loop guard is `idx < iter.len()` (captured once), and both
+	// `iter` and `idx` are compiler-generated names user code
+	// cannot touch — and Fern arrays never shrink in place — so
+	// the access is provably in bounds every iteration (#4380
+	// lever 3). Honoured on the array path only; string/slice
+	// indexing ignores it and keeps its check.
+	Unchecked bool
 }
 
 // SliceExpr is `arr[a:b]`, `arr[a:]`, or `arr[:b]` — produces a
@@ -2076,7 +2088,13 @@ func DesugarForEachArray(fe *ForEach) *Block {
 	declIter := &Var{P: kw, Name: iterName, Init: fe.Iter}
 	declLen := &Var{P: kw, Name: lenName, Init: &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "len", FieldPos: kw}}}
 	declIdx := &Var{P: kw, Name: idxName, Init: mkNum(0)}
-	bindUser := &Var{P: fe.VarPos, Name: fe.Var, Init: &Index{P: fe.VarPos, Array: mkIdent(iterName), Idx: mkIdent(idxName)}}
+	// The element read is provably in bounds — idx starts at 0, the loop
+	// guard is `idx < len` (len captured once from iter), idx/iter are
+	// synthetic names, and Fern arrays never shrink in place — so mark it
+	// Unchecked to drop the per-iteration bounds check (#4380 lever 3).
+	// Honoured only when the checker resolves it to an ARRAY index; string
+	// iteration keeps its __str_idx check.
+	bindUser := &Var{P: fe.VarPos, Name: fe.Var, Init: &Index{P: fe.VarPos, Array: mkIdent(iterName), Idx: mkIdent(idxName), Unchecked: true}}
 	stepStmt := &ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(idxName), Value: &Binary{P: kw, Op: "+", Left: mkIdent(idxName), Right: mkNum(1)}}}
 
 	innerStmts := []Stmt{bindUser}

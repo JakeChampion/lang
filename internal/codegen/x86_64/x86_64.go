@@ -2196,6 +2196,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		case "stderr":
 			target = "__fern_stderr"
 		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_8",
+			"__arr_idx_nc", "__arr_idx_1_nc", "__arr_idx_8_nc",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. Inline as a plain
@@ -3419,6 +3420,19 @@ func (g *generator) emitSliceBoundsCheck() {
 // directly for scale 1/2/4/8 — strictly faster than
 // arm64's `add rN, rN, rN, lsl #M` for the same job.
 func (g *generator) emitInlineIdxHelper(name string) error {
+	// Bounds-check elision (#4380 lever 3): a `_nc` suffix names the same
+	// address compute minus the len-load + compare + trap. Strip it and
+	// remember to skip emitArrBoundsCheck for the array cases below.
+	checked := true
+	if strings.HasSuffix(name, "_nc") {
+		checked = false
+		name = strings.TrimSuffix(name, "_nc")
+	}
+	arrBounds := func() {
+		if checked {
+			g.emitArrBoundsCheck()
+		}
+	}
 	// Pop in the order the OpCallDirect dispatch would
 	// use: rhs (idx, top of stack) first, lhs (base, next)
 	// second.
@@ -3464,13 +3478,13 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// idx. Split from __str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `test rax, 1` check.
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("lea rax, [rax + rcx]")
 	case "__arr_idx":
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__arr_idx_8":
-		g.emitArrBoundsCheck()
+		arrBounds()
 		g.emit("lea rax, [rax + rcx*8]")
 	// Slice indexing first bounds-checks `i` against the slice
 	// header's len (at [slice+8]), then dereferences its data_ptr

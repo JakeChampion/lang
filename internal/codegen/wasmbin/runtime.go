@@ -592,6 +592,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__arr_idx_8":
 					// Stride-8 i64 / f64 array indexing.
 					needs.add("__arr_idx_8")
+				case "__arr_idx_nc":
+					needs.add("__arr_idx_nc")
+				case "__arr_idx_1_nc":
+					needs.add("__arr_idx_1_nc")
+				case "__arr_idx_8_nc":
+					needs.add("__arr_idx_8_nc")
 				case "__str_slice":
 					// (base_data, base_len, low, high) → (data, len)
 					// — copy bytes [low..high] into a fresh string.
@@ -1562,6 +1568,24 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrIdx8Body,
+	},
+	// Bounds-check-elided variants (#4380 lever 3): same address compute
+	// minus the trap blocks, emitted when the caller proved the index in
+	// range (ForEach desugar's synthetic `iter[idx]`).
+	"__arr_idx_nc": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdxNCBody,
+	},
+	"__arr_idx_1_nc": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdx1NCBody,
+	},
+	"__arr_idx_8_nc": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdx8NCBody,
 	},
 	"__str_slice": {
 		// (base_data, base_len, low, high) → (data, len). Builds
@@ -4241,6 +4265,30 @@ func buildArrIdxStride(stride int32) func(map[string]uint32) []byte {
 
 func buildArrIdx1Body(idxs map[string]uint32) []byte { return buildArrIdxStride(1)(idxs) }
 func buildArrIdx8Body(idxs map[string]uint32) []byte { return buildArrIdxStride(8)(idxs) }
+
+// buildArrIdxStrideNC is buildArrIdxStride minus the two trap blocks — the
+// bounds-check-elided (`_nc`) variant used when the caller has statically
+// proven the index in range (the ForEach desugar's synthetic `iter[idx]`,
+// #4380 lever 3). Just `base + i*stride`.
+func buildArrIdxStrideNC(stride int32) func(map[string]uint32) []byte {
+	return func(_ map[string]uint32) []byte {
+		var body []byte
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		if stride == 1 {
+			body = numeric.InstI32Add(body)
+		} else {
+			body = inst.InstI32Const(body, stride)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+		}
+		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	}
+}
+
+func buildArrIdxNCBody(idxs map[string]uint32) []byte  { return buildArrIdxStrideNC(4)(idxs) }
+func buildArrIdx1NCBody(idxs map[string]uint32) []byte { return buildArrIdxStrideNC(1)(idxs) }
+func buildArrIdx8NCBody(idxs map[string]uint32) []byte { return buildArrIdxStrideNC(8)(idxs) }
 
 // buildStringFromBytesBody — (bs) → (data, len). bs is a u8[]
 // heap pointer; length lives at [bs-4]. Output is the two-word
