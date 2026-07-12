@@ -13351,10 +13351,27 @@ function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: stri
     return st.emit(ir.op_store_local(slot));
 }
 
+// path_child returns a FRESH array = a copy of `path` with `k` appended. It never
+// mutates `path`. This matters because the tuple deep-drop recursions call the
+// child-path builder TWICE per nested element (once to recurse, once to reload the
+// box), and Perceus REUSE makes a plain `path.append(k)` on a uniquely-owned array
+// mutate the buffer IN PLACE on the compiled backends — so two `path.append(k)`
+// calls on the same `path`, plus the recursion's own appends, aliased and corrupted
+// the deep path (a leak on 3+-level nesting that the AST interpreter — which appends
+// functionally — never exhibited; #4810 nested-tuple-deep). Copying into a fresh
+// `out` each call removes the aliasing: `path` is only read, never appended to.
+function path_child(path: i32[], k: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < path.len()) { out = out.append(path[i]); i = i + 1; }
+    return out.append(k);
+}
+
 // emit_load_tuple_path loads the tuple box in `slot` and chains op_tuple_get
 // for each index in `path`, leaving the value reached by that path on the
 // stack (a pointer for an array / nested-tuple element, since tuple elements
-// are pointer-width slots). An empty path leaves the box itself.
+// are pointer-width slots). An empty path leaves the box itself. Reads `path`
+// only (no mutation).
 function emit_load_tuple_path(st: LowerState, slot: i32, path: i32[]): LowerState {
     var s: LowerState = st.emit(ir.op_load_local(slot));
     var i: i32 = 0;
@@ -13378,13 +13395,14 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
     while (k < tup.elements.len()) {
         match (tup.elements[k]) {
             parser.ExprArray(_) => {
-                s = emit_load_tuple_path(s, slot, path.append(k));       // array ptr
+                s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
                 s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
                 s = s.emit(ir.op_drop());
             },
             parser.ExprTuple(inner) => {
-                s = emit_tuple_child_drops(s, slot, path.append(k), inner);   // free inner's children first
-                s = emit_load_tuple_path(s, slot, path.append(k));       // inner box ptr
+                var cp: i32[] = path_child(path, k);
+                s = emit_tuple_child_drops(s, slot, cp, inner);          // free inner's children first
+                s = emit_load_tuple_path(s, slot, cp);                   // inner box ptr
                 s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the inner tuple box
                 s = s.emit(ir.op_drop());
             },
@@ -13412,12 +13430,13 @@ function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], tty
         var tag: string = tuple_type_elem_tag(ttype, k);
         if (tag == "") { return s; }
         if (is_leaksafe_array_field(tag)) {
-            s = emit_load_tuple_path(s, slot, path.append(k));       // array ptr
+            s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
             s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
             s = s.emit(ir.op_drop());
         } else if (tag.len() >= 2 && tag[0:1] == "(") {
-            s = emit_tuple_type_child_drops(s, slot, path.append(k), tag);   // inner children first
-            s = emit_load_tuple_path(s, slot, path.append(k));       // inner box ptr
+            var cpt: i32[] = path_child(path, k);
+            s = emit_tuple_type_child_drops(s, slot, cpt, tag);      // inner children first
+            s = emit_load_tuple_path(s, slot, cpt);                  // inner box ptr
             s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the inner tuple box
             s = s.emit(ir.op_drop());
         }
