@@ -42,14 +42,14 @@ function x86_gas_trim(s: string): string {
     while (b > a && (s[b - 1] == 32 || s[b - 1] == 9)) {
         b = b - 1;
     }
-    return s[a:b];
+    return s[a:b] + "";
 }
 
 // x86_gas_reg maps a register token (`%rax` or `rax`) to its number, or -1.
 function x86_gas_reg(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == 37) { // '%'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     if (s == "rax") { return 0; }
     if (s == "rcx") { return 1; }
@@ -96,7 +96,7 @@ function x86_gas_reg(tok: string): i32 {
 function x86_gas_reg8(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == 37) { // '%'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     if (s == "al") { return 0; }
     if (s == "cl") { return 1; }
@@ -122,7 +122,7 @@ function x86_gas_reg8(tok: string): i32 {
 function x86_gas_reg32(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == 37) { // '%'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     if (s == "eax") { return 0; }
     if (s == "ecx") { return 1; }
@@ -190,7 +190,7 @@ function x86_gas_is_xmm(tok: string): boolean {
 function x86_gas_xmm(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == 37) { // '%'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     if (s.len() < 4) {
         return 0 - 1;
@@ -305,7 +305,7 @@ function x86_gas_ascii(buf: i32[], line: string): i32[] {
 function x86_gas_atoi(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == 36) { // '$'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     var neg: boolean = false;
     var i: i32 = 0;
@@ -351,7 +351,7 @@ function x86_gas_atoi(tok: string): i32 {
 function x86_gas_atoi64(tok: string): i64 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == 36) { // '$'
-        s = s[1:s.len()];
+        s = s[1:s.len()] + "";
     }
     var neg: boolean = false;
     var i: i32 = 0;
@@ -393,10 +393,10 @@ function x86_gas_parse_mem(op: string): GasMem {
         // corrupt slice); callers gate on `.contains("(")` so this is rare.
         return GasMem { is_rip: false, label: "", base: x86_gas_reg(op), disp: 0, has_index: false, index: 0, scale: 1 };
     }
-    var disp_str: string = op[0:lp];
-    var inner: string = op[lp + 1:op.len() - 1]; // between ( and )
+    var disp_str: str = op[0:lp];
+    var inner: str = op[lp + 1:op.len() - 1]; // between ( and )
     if (inner == "%rip") {
-        return GasMem { is_rip: true, label: disp_str, base: 0, disp: 0, has_index: false, index: 0, scale: 1 };
+        return GasMem { is_rip: true, label: disp_str + "", base: 0, disp: 0, has_index: false, index: 0, scale: 1 };
     }
     var d: i32 = 0;
     if (disp_str.len() > 0) {
@@ -641,7 +641,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "imulq") {
         var c1: i32 = x86_gas_top_comma(rest);
         var op0: string = x86_gas_trim(rest[0:c1]);
-        var remn: string = rest[c1 + 1:rest.len()];
+        var remn: str = rest[c1 + 1:rest.len()];
         var c2: i32 = x86_gas_top_comma(remn);
         if (c2 >= 0) {
             var rs: string = x86_gas_trim(remn[0:c2]);       // %src
@@ -656,7 +656,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "roundsd") {
         var rc1: i32 = x86_gas_top_comma(rest);
         var rmode: string = x86_gas_trim(rest[0:rc1]);
-        var rrem: string = rest[rc1 + 1:rest.len()];
+        var rrem: str = rest[rc1 + 1:rest.len()];
         var rc2: i32 = x86_gas_top_comma(rrem);
         var rsrc: string = x86_gas_trim(rrem[0:rc2]);
         var rdst: string = x86_gas_trim(rrem[rc2 + 1:rrem.len()]);
@@ -800,7 +800,7 @@ function x86_gas_assemble(src: string): X86Asm {
         li = li + 1;
         var hash: i32 = raw.index_of("#");
         if (hash >= 0) {
-            raw = raw[0:hash];
+            raw = raw[0:hash] + "";
         }
         var line: string = x86_gas_trim(raw);
         if (line.len() == 0) {
@@ -811,7 +811,7 @@ function x86_gas_assemble(src: string): X86Asm {
         // token (no space / paren / comma) before the first ':'.
         var colon: i32 = line.index_of(":");
         if (colon > 0) {
-            var before: string = line[0:colon];
+            var before: str = line[0:colon];
             if (before.index_of(" ") < 0 && before.index_of("(") < 0 && x86_gas_top_comma(before) < 0) {
                 if (section == 1) {
                     a = x86_rodata_label(a, before);
@@ -872,7 +872,7 @@ function x86_gas_assemble(src: string): X86Asm {
         var mnem: string = line;
         var rest: string = "";
         if (sp >= 0) {
-            mnem = line[0:sp];
+            mnem = line[0:sp] + "";
             rest = x86_gas_trim(line[sp + 1:line.len()]);
         }
         a = x86_gas_emit(a, mnem, rest);

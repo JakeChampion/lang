@@ -130,14 +130,14 @@ function last_slash(p: string): i32 {
 function dir_of(p: string): string {
     var ls: i32 = last_slash(p);
     if (ls < 0) { return ""; }
-    return p[0:ls];
+    return p[0:ls] + "";
 }
 
 // module_name maps an import path to its bundle name: the final path
 // segment (`./a/lexer` → `lexer`, `./parser` → `parser`).
 function module_name(import_path: string): string {
     var ls: i32 = last_slash(import_path);
-    if (ls >= 0) { return import_path[ls + 1:import_path.len()]; }
+    if (ls >= 0) { return import_path[ls + 1:import_path.len()] + ""; }
     return import_path;
 }
 

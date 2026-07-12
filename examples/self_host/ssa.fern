@@ -319,7 +319,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     // resolves, a string-returning call's `.len()` dispatches,
                     // and a function-returning call is a function value ("fn").
                     var cgt: string = s.get_var_type(cid.name);
-                    if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()]; }
+                    if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()] + ""; }
                 },
                 parser.ExprFieldAccess(fa2) => {
                     if (fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
@@ -330,9 +330,9 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     if (mrt.len() > 0) {
                         var mm: string = s.get_var_type(mrt + "#" + fa2.field);
                         if (mm.len() > 2 && mm[0:2] == "m:") {
-                            var mrest: string = mm[2 : mm.len()];
+                            var mrest: str = mm[2 : mm.len()];
                             var mcolon: i32 = index_of_byte(mrest, 58);
-                            if (mcolon >= 0) { return mrest[mcolon + 1 : mrest.len()]; }
+                            if (mcolon >= 0) { return mrest[mcolon + 1 : mrest.len()] + ""; }
                         }
                     }
                 },
@@ -353,7 +353,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             // a[i] has the array's element type: strip one trailing "[]".
             var at: string = type_of_expr(ix.array, s);
             var n: i32 = at.len();
-            if (n >= 2 && at[n - 2 : n] == "[]") { return at[0 : n - 2]; }
+            if (n >= 2 && at[n - 2 : n] == "[]") { return at[0 : n - 2] + ""; }
             return "";
         },
         _ => { return ""; }
@@ -848,10 +848,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var cap_csv: string = "";
                     var cfnty: string = s.get_var_type(cid.name);
                     if (cfnty.len() > 3 && cfnty[0:3] == "fn:") {
-                        var crest: string = cfnty[3 : cfnty.len()];
+                        var crest: str = cfnty[3 : cfnty.len()];
                         var cbar: i32 = index_of_byte(crest, 124);   // '|'
-                        if (cbar >= 0) { callee_name = crest[0 : cbar]; cap_csv = crest[cbar + 1 : crest.len()]; }
-                        else { callee_name = crest; }
+                        if (cbar >= 0) { callee_name = crest[0 : cbar] + ""; cap_csv = crest[cbar + 1 : crest.len()] + ""; }
+                        else { callee_name = crest + ""; }
                     }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
@@ -885,10 +885,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     if (urt.len() > 0) {
                         var um: string = s.get_var_type(urt + "#" + fa.field);
                         if (um.len() > 2 && um[0:2] == "m:") {
-                            var urest: string = um[2 : um.len()];
+                            var urest: str = um[2 : um.len()];
                             var ucolon: i32 = index_of_byte(urest, 58);   // ':' before ret type
-                            var usym: string = urest;
-                            if (ucolon >= 0) { usym = urest[0 : ucolon]; }
+                            var usym: string = urest + "";
+                            if (ucolon >= 0) { usym = urest[0 : ucolon] + ""; }
                             s = build_expr(fa.obj, s);
                             if (!s.ok) { return s; }
                             var uargs: i32[] = [s.cur_id()];
@@ -1516,8 +1516,8 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     // to the entry count). A plain name iterates an array element by index.
     var comma: i32 = index_of_byte(fr.var_name, 44);   // ','
     if (comma >= 0) {
-        var kname: string = fr.var_name[0:comma];
-        var vname: string = fr.var_name[comma + 1 : fr.var_name.len()];
+        var kname: str = fr.var_name[0:comma];
+        var vname: str = fr.var_name[comma + 1 : fr.var_name.len()];
         // Arg lists are built with .push (which coerces each element into the
         // Expr union) rather than an array literal `[ExprIdent{…}, …]`: a
         // literal of concrete struct values assigned to a union-typed array
@@ -1525,12 +1525,12 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         var kargs: parser.Expr[] = [];
         kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
-        var bind_k: parser.Stmt = parser.StmtVar { name: kname, type_name: "",
+        var bind_k: parser.Stmt = parser.StmtVar { name: kname + "", type_name: "",
             init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
         var vargs: parser.Expr[] = [];
         vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
-        var bind_v: parser.Stmt = parser.StmtVar { name: vname, type_name: "",
+        var bind_v: parser.Stmt = parser.StmtVar { name: vname + "", type_name: "",
             init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
         wbody = wbody.append(bind_k);
         wbody = wbody.append(bind_v);

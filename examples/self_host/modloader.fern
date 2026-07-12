@@ -33,7 +33,7 @@ pub function dirname(path: string): string {
         if (path[i] == 47) { cut = i + 1; }   // '/'
         i = i + 1;
     }
-    return path[0:cut];
+    return path[0:cut] + "";
 }
 
 // base_name strips the directory and the import-relative `./` prefix from
@@ -45,7 +45,7 @@ pub function base_name(path: string): string {
         if (path[i] == 47) { start = i + 1; }   // '/'
         i = i + 1;
     }
-    return path[start:path.len()];
+    return path[start:path.len()] + "";
 }
 
 // contains reports membership of `name` in `xs`.
@@ -61,7 +61,7 @@ function contains(xs: string[], name: string): boolean {
 // rel_path strips a leading import-relative `./` so the path joins cleanly
 // onto the entry directory: "./lexer" → "lexer", "std/io" → "std/io".
 function rel_path(path: string): string {
-    if (path.len() >= 2 && path[0:2] == "./") { return path[2:path.len()]; }
+    if (path.len() >= 2 && path[0:2] == "./") { return path[2:path.len()] + ""; }
     return path;
 }
 

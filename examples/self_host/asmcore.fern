@@ -1460,7 +1460,7 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
 
 pub function generic_value_ty(name: string, start: i32): Ty {
     if (name.len() <= start + 1) { return ty_unknown(); }
-    var inner: string = name[start : name.len() - 1];
+    var inner: str = name[start : name.len() - 1];
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
         if (inner[i] == 44 && inner[i + 1] == 32) {
@@ -1473,7 +1473,7 @@ pub function generic_value_ty(name: string, start: i32): Ty {
 
 pub function generic_key_is_i32(name: string, start: i32): boolean {
     if (name.len() <= start + 1) { return false; }
-    var inner: string = name[start : name.len() - 1];
+    var inner: str = name[start : name.len() - 1];
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
         if (inner[i] == 44 && inner[i + 1] == 32) {
@@ -1708,7 +1708,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             if (u.op == "!") { return ty_bool(); }
             if (u.op == "-") { return infer_expr_type(u.operand, s); }
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
-                var ct: string = u.op[3:u.op.len()];
+                var ct: str = u.op[3:u.op.len()];
                 if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
                 if (ct == "i32" || ct == "u32" || ct == "u8" || ct == "i64" || ct == "u64" || ct == "usize") { return ty_i32(); }
                 // `E as T` type ascription (non-numeric T): the value HAS

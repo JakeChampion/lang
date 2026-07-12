@@ -23,7 +23,7 @@ function ref_trim(s: string): string {
     while (lo < n && s[lo] == 32) { lo = lo + 1; }
     var hi: i32 = n;
     while (hi > lo && s[hi - 1] == 32) { hi = hi - 1; }
-    return s[lo:hi];
+    return s[lo:hi] + "";
 }
 function ref_sum_supported(t: string): boolean {
     if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
@@ -31,7 +31,7 @@ function ref_sum_supported(t: string): boolean {
         return p == "i32" || p == "u32";
     }
     if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
-        var inner: string = t[7:t.len() - 1];
+        var inner: str = t[7:t.len() - 1];
         var i: i32 = 0;
         var depth: i32 = 0;
         while (i < inner.len()) {

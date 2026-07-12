@@ -2708,7 +2708,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // a cast masks (unsigned) or sign-extends (signed) to the
             // target width; i64/u64/usize and anything else are no-ops.
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
-                var ty: string = u.op[3:u.op.len()];
+                var ty: str = u.op[3:u.op.len()];
                 var src_ty: asmcore.Ty = asmcore.infer_expr_type(u.operand, s);
                 var to_float: boolean = ty == "f64" || ty == "f32" || ty == "float";
                 s = emit_expr(u.operand, s);
@@ -3419,8 +3419,8 @@ function emit_block(body: parser.Stmt[], s: asmcore.EmitState): asmcore.EmitStat
 // small.
 function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32): asmcore.EmitState {
     var iter_ty: asmcore.Ty = asmcore.infer_expr_type(f.iter, s);
-    var kvk: string = f.var_name[0 : kv_comma];
-    var kvv: string = f.var_name[kv_comma + 1 : f.var_name.len()];
+    var kvk: str = f.var_name[0 : kv_comma];
+    var kvv: str = f.var_name[kv_comma + 1 : f.var_name.len()];
     var kvk_ty: asmcore.Ty = asmcore.ty_string();
     if (asmcore.map_key_is_i32(iter_ty)) { kvk_ty = asmcore.ty_i32(); }
     var kvv_ty: asmcore.Ty = asmcore.map_val(iter_ty);
@@ -3625,7 +3625,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 var td_pos: i32 = 0;
                 while (td_pos <= v.name.len()) {
                     if (td_pos == v.name.len() || v.name[td_pos] == 44) {
-                        var td_nm: string = v.name[td_seg : td_pos];
+                        var td_nm: str = v.name[td_seg : td_pos];
                         var td_tag: asmcore.Ty = asmcore.tuple_destructure_tag_at(v.init, td_idx, s);
                         s = s.bind_local_typed(td_nm, td_tag);
                         var td_off: i32 = s.lookup_local(td_nm);

@@ -1221,7 +1221,7 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                     // the element boxes + buffer. Enum-array elements have no $__struct_drop,
                     // so they keep the plain arr_dec_ptr (one level).
                     if (irlower.is_struct_array_field_type(cx.structs, ft)) {
-                        var elem_ty: string = ft[0 : ft.len() - 2];
+                        var elem_ty: str = ft[0 : ft.len() - 2];
                         if (irlower.nested_field_deep_drop_ok(cx.structs, elem_ty)) {
                             o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
                         }
@@ -1381,7 +1381,7 @@ function struct_release_field_inner(pe: string, sty: string, cx: Ctx): string {
             // Array field: a STRUCT-element array deep-releases each element
             // (Stage B, $__fern_arr_release_<Elem>); a string-element (or other
             // pointer) array frees one level (arr_dec_ptr); a scalar array flat.
-            var elem: string = ft[0:ft.len() - 2];
+            var elem: str = ft[0:ft.len() - 2];
             if (is_struct_type(cx.structs, elem) || (is_enum_type_name(cx, elem) && elem != "Option" && elem != "Result")) {
                 inner = inner + " (drop (call $__fern_arr_release_" + elem + " " + load + "))";
             } else if (array_field_elem_is_ptr(ft, cx)) {
@@ -2212,7 +2212,7 @@ function array_method_field(name: string): string {
         i = i + 1;
     }
     if (found < 0) { return ""; }
-    return name[found + ml : name.len()];
+    return name[found + ml : name.len()] + "";
 }
 
 // wasm_find_array_method returns the exact in-scope name of the std/array
@@ -2873,7 +2873,7 @@ function is_cast_op(op: string): boolean {
 }
 
 function cast_target(op: string): string {
-    return op[3:];
+    return op[3:] + "";
 }
 
 // is_f64_math_builtin names the math intrinsics with a direct wasm f64
@@ -3085,7 +3085,7 @@ function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
 // extern_byte_array_param for that path.
 function extern_array_param_supported(t: string): boolean {
     if (t.len() <= 2 || t[t.len() - 2:t.len()] != "[]") { return false; }
-    var k: string = t[0:t.len() - 2];
+    var k: str = t[0:t.len() - 2];
     return k == "i32" || k == "u32" || k == "i64" || k == "u64" || k == "f32" || k == "f64";
 }
 
@@ -4054,7 +4054,7 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
             // with the elements contiguous at their stride; rebuild the self-host
             // array ([len@0], elements at +8 in native slots — see the import
             // array-result wrapper) and pass its block base to the Fern func.
-            var akind: string = params[j].type_name[0:params[j].type_name.len() - 2];
+            var akind: str = params[j].type_name[0:params[j].type_name.len() - 2];
             var assz: string = util.i32_to_string(elem_slot_size(akind));
             var ablkS: string = util.i32_to_string(blk);
             var aiS: string = util.i32_to_string(i_local);
@@ -4094,7 +4094,7 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
         // wrapper — copy the elements into a fresh 8-aligned buffer, then write
         // the 4-byte-aligned [buf,len] return area the Go composer's memory lift
         // reads.
-        var rk: string = ret[0:ret.len() - 2];
+        var rk: str = ret[0:ret.len() - 2];
         var ss: string = util.i32_to_string(elem_slot_size(rk));
         var aS: string = util.i32_to_string(arr_arr);
         var lnS: string = util.i32_to_string(arr_alen);
@@ -4283,7 +4283,7 @@ function extern_wrappers(mod: parser.Module): string {
                     var cppn: string = "$ep" + util.i32_to_string(ci);
                     var bn: string = "$ab" + util.i32_to_string(ci);
                     var tn: string = f.params[ci].type_name;
-                    var k: string = tn[0:tn.len() - 2];
+                    var k: str = tn[0:tn.len() - 2];
                     var ss: string = util.i32_to_string(elem_slot_size(k));
                     var lbl: string = util.i32_to_string(ci);
                     out = out + "    (local.set $an (i32.load (local.get " + cppn + ")))\n";
@@ -4606,7 +4606,7 @@ function extern_wrappers(mod: parser.Module): string {
                 // numeric array list<T>: the slot size equals the canonical
                 // element size, so copy each element straight into its slot at
                 // +8 (no byte-expansion as for u8[]).
-                var rk: string = f.ret_type[0:f.ret_type.len() - 2];
+                var rk: str = f.ret_type[0:f.ret_type.len() - 2];
                 var rss: string = util.i32_to_string(elem_slot_size(rk));
                 out = out + "    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n";
                 out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
@@ -4839,13 +4839,13 @@ function comma_index(s: string): i32 {
 function before_comma(s: string): string {
     var c: i32 = comma_index(s);
     if (c < 0) { return s; }
-    return s[0:c];
+    return s[0:c] + "";
 }
 
 function after_comma(s: string): string {
     var c: i32 = comma_index(s);
     if (c < 0) { return ""; }
-    return s[c + 1 : s.len()];
+    return s[c + 1 : s.len()] + "";
 }
 
 // split_commas breaks a comma-joined name list ("a,b,c") into its parts.
@@ -5017,7 +5017,7 @@ function str_trim_spaces(s: string): string {
     while (a < s.len() && s[a] == 32) { a = a + 1; }
     var b: i32 = s.len();
     while (b > a && s[b - 1] == 32) { b = b - 1; }
-    return s[a:b];
+    return s[a:b] + "";
 }
 
 // nth_tuple_type_elem parses a tuple-type spelling "(A, B, …)" and returns the
@@ -5045,13 +5045,13 @@ function nth_csv_elem(csv: string, idx: i32): string {
     var i: i32 = 0;
     while (i < csv.len()) {
         if (csv[i] == 44) {
-            if (cur == idx) { return csv[start:i]; }
+            if (cur == idx) { return csv[start:i] + ""; }
             cur = cur + 1;
             start = i + 1;
         }
         i = i + 1;
     }
-    if (cur == idx) { return csv[start:csv.len()]; }
+    if (cur == idx) { return csv[start:csv.len()] + ""; }
     return "";
 }
 
@@ -5133,8 +5133,8 @@ function struct_array_elem_type(e: parser.Expr, cx: Ctx): string {
             if (ot.len() == 0) { return ""; }
             var ft: string = struct_field_type(cx.structs, ot, fa.field);
             if (ft.len() > 2 && ft[ft.len() - 2:ft.len()] == "[]") {
-                var elem: string = ft[0:ft.len() - 2];
-                if (is_struct_type(cx.structs, elem)) { return elem; }
+                var elem: str = ft[0:ft.len() - 2];
+                if (is_struct_type(cx.structs, elem)) { return elem + ""; }
             }
             return "";
         },
@@ -10902,7 +10902,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     while (sap < f.params.len()) {
         var pt: string = f.params[sap].type_name;
         if (pt.len() > 2 && pt[pt.len() - 2:pt.len()] == "[]") {
-            var pe: string = pt[0:pt.len() - 2];
+            var pe: str = pt[0:pt.len() - 2];
             if (is_struct_type(structs, pe) && !contains_str(san, f.params[sap].name)) {
                 san = san.append(f.params[sap].name);
                 sat = sat.append(pe);

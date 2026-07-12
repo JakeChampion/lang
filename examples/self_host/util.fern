@@ -186,7 +186,7 @@ pub function has_str(xs: string[], s: string): boolean {
 pub function base_type_name(t: string): string {
     var i: i32 = 0;
     while (i < t.len()) {
-        if (t[i] == 91) { return t[0:i]; }   // 91 = '['
+        if (t[i] == 91) { return t[0:i] + ""; }   // 91 = '['
         i = i + 1;
     }
     return t;

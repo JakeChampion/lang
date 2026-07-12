@@ -178,7 +178,7 @@ pub function is_struct_drop_name(name: string): boolean {
 
 // struct_drop_type returns the struct type T from a "__struct_drop_<T>" name.
 pub function struct_drop_type(name: string): string {
-    return name[14 : name.len()];
+    return name[14 : name.len()] + "";
 }
 
 // is_field_reclaim_name reports whether a call_direct callee is a per-type
@@ -189,7 +189,7 @@ pub function is_field_reclaim_name(name: string): boolean {
 
 // field_reclaim_type returns the struct type T from a "__field_reclaim_<T>" name.
 pub function field_reclaim_type(name: string): string {
-    return name[16 : name.len()];
+    return name[16 : name.len()] + "";
 }
 
 // is_c_call reports whether a call_direct callee is an FFI shim of the
@@ -204,9 +204,9 @@ pub function field_reclaim_type(name: string): string {
 pub function is_c_call(name: string): boolean {
     if (name.len() < 9) { return false; }
     if (name[0:8] != "__c_call") { return false; }
-    var d: string = name[8:9];
+    var d: str = name[8:9];
     if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
-    var rest: string = name[9 : name.len()];
+    var rest: str = name[9 : name.len()];
     return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
@@ -214,7 +214,7 @@ pub function is_c_call(name: string): boolean {
 // callee name (the digit at index 8). The shim body depends only on n, not on
 // the return-type suffix.
 pub function c_call_arity(name: string): i32 {
-    var d: string = name[8:9];
+    var d: str = name[8:9];
     if (d == "1") { return 1; }
     if (d == "2") { return 2; }
     if (d == "3") { return 3; }
@@ -5596,7 +5596,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             // frameless stack arg 8(%rsp) afterwards. Enum-array elements have no
             // __struct_drop (enums aren't structs), so they stay shallow.
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                var elem_ty: string = fdt[0 : fdt.len() - 2];
+                var elem_ty: str = fdt[0 : fdt.len() - 2];
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                     var esan: string = asmcore.sanitize_label(elem_ty);
                     s = s.need("struct_arr_elems_drop:" + elem_ty);

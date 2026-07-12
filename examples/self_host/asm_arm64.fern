@@ -2522,7 +2522,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // sign-extend (signed) to the target width; i64/u64/usize
             // and anything else are no-ops.
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
-                var ty: string = u.op[3:u.op.len()];
+                var ty: str = u.op[3:u.op.len()];
                 var src_ty: asmcore.Ty = asmcore.infer_expr_type(u.operand, s);
                 var to_float: boolean = ty == "f64" || ty == "f32" || ty == "float";
                 s = emit_expr(u.operand, s);
@@ -3144,8 +3144,8 @@ function emit_block(body: parser.Stmt[], s: asmcore.EmitState): asmcore.EmitStat
 // so the StmtFor arm stays small.
 function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32): asmcore.EmitState {
     var iter_ty: asmcore.Ty = asmcore.infer_expr_type(f.iter, s);
-    var kvk: string = f.var_name[0 : kv_comma];
-    var kvv: string = f.var_name[kv_comma + 1 : f.var_name.len()];
+    var kvk: str = f.var_name[0 : kv_comma];
+    var kvv: str = f.var_name[kv_comma + 1 : f.var_name.len()];
     var kvk_ty: asmcore.Ty = asmcore.ty_string();
     if (asmcore.map_key_is_i32(iter_ty)) { kvk_ty = asmcore.ty_i32(); }
     var kvv_ty: asmcore.Ty = asmcore.map_val(iter_ty);
@@ -3345,7 +3345,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 var td_pos: i32 = 0;
                 while (td_pos <= v.name.len()) {
                     if (td_pos == v.name.len() || v.name[td_pos] == 44) {
-                        var td_nm: string = v.name[td_seg : td_pos];
+                        var td_nm: str = v.name[td_seg : td_pos];
                         var td_tag: asmcore.Ty = asmcore.tuple_destructure_tag_at(v.init, td_idx, s);
                         s = s.bind_local_typed(td_nm, td_tag);
                         var td_off: i32 = s.lookup_local(td_nm);
@@ -4101,7 +4101,7 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             // (entry pushed one stp frame), mirroring the k_struct deep-drop arm.
             // Enum-array elements have no __struct_drop, so they stay shallow.
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                var elem_ty: string = fdt[0 : fdt.len() - 2];
+                var elem_ty: str = fdt[0 : fdt.len() - 2];
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                     var esan: string = asmcore.sanitize_label(elem_ty);
                     s = s.need("struct_arr_elems_drop:" + elem_ty);
@@ -9214,7 +9214,7 @@ function darwin_starts_with(s: string, p: string): boolean {
 function darwin_lstrip(s: string): string {
     var i: i32 = 0;
     while (i < s.len() && s[i] == 32) { i = i + 1; }
-    return s[i:s.len()];
+    return s[i:s.len()] + "";
 }
 
 // darwin_index_of returns the first index of sub in s, or -1.
@@ -9275,11 +9275,11 @@ pub function darwinize(asm: string): string {
     var norm_n: i32 = 0;   // fresh-label counter for errno normalisation
     while (i <= n) {
         if (i == n || asm[i] == 10) {
-            var line: string = asm[start:i];
+            var line: str = asm[start:i];
             var has_nl: boolean = (i < n);
             var body: string = darwin_lstrip(line);
             var keep: boolean = true;
-            var out_line: string = line;
+            var out_line: string = line + "";
             var this_sys_num: i32 = 0 - 1;
 
             if (darwin_starts_with(body, ".type ") || darwin_starts_with(body, ".size ")) {
