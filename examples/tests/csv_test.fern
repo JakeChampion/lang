@@ -79,6 +79,42 @@ function test_parse_multibyte_and_growth(): test.TestOutcome {
         ["", "Glóin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Þórin"]);
 }
 
+// csv_parse — the full multi-record document parser.
+function test_doc_multi_record(): test.TestOutcome {
+    var rows: string[][] = csv.csv_parse("a,b,c\n1,2,3");
+    if (rows.len() != 2) { return test.fail("row count " + rows.len().to_string()); }
+    if (!(rows[0][0] == "a" && rows[0][1] == "b" && rows[0][2] == "c")) { return test.fail("row 0"); }
+    return test.assert_eq_array(rows[1], ["1", "2", "3"]);
+}
+
+function test_doc_embedded_newline(): test.TestOutcome {
+    // A newline inside a quoted field does NOT end the record.
+    var rows: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
+    if (rows.len() != 1) { return test.fail("row count " + rows.len().to_string()); }
+    return test.assert_eq_array(rows[0], ["a,b", "line1\nline2", "z"]);
+}
+
+function test_doc_crlf_and_trailing(): test.TestOutcome {
+    // CRLF separators + a trailing terminator → no spurious empty record.
+    var rows: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
+    if (rows.len() != 2) { return test.fail("row count " + rows.len().to_string()); }
+    return test.assert_eq_array(rows[1], ["c", "d"]);
+}
+
+function test_doc_empty_and_trailing_field(): test.TestOutcome {
+    if (csv.csv_parse("").len() != 0) { return test.fail("empty input"); }
+    // Trailing comma → a present empty final field.
+    return test.assert_eq_array(csv.csv_parse("a,")[0], ["a", ""]);
+}
+
+function test_doc_serialize_roundtrip(): test.TestOutcome {
+    var rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
+    var back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
+    if (back.len() != 2) { return test.fail("row count"); }
+    if (!(back[0][0] == "x" && back[0][1] == "y,z")) { return test.fail("row 0"); }
+    return test.assert_eq_array(back[1], ["1", "two\nlines"]);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/csv");
     r = r.it("escape plain",            test_escape_plain());
@@ -95,5 +131,10 @@ function main(): i32 {
     r = r.it("parse empty",             test_parse_empty());
     r = r.it("round-trip join/parse",   test_roundtrip());
     r = r.it("parse multibyte + growth", test_parse_multibyte_and_growth());
+    r = r.it("doc multi-record",        test_doc_multi_record());
+    r = r.it("doc embedded newline",    test_doc_embedded_newline());
+    r = r.it("doc CRLF + trailing",     test_doc_crlf_and_trailing());
+    r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field());
+    r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip());
     return r.finish();
 }
