@@ -2117,6 +2117,30 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
         if (unions[j].name == name) { return t_union(name); }
         j = j + 1;
     }
+    // Unknown-BASE generic `Foo[T]` (non-tuple, non-Map, base declared
+    // nowhere): the Go checker's resolveType keeps this shape as an
+    // `ast.EnumType{Foo}` — an *unknown enum* — so a match / if-let /
+    // let-else on a value of this type draws E023 ("unknown enum") rather
+    // than dissolving to unknown and staying silent. Mirror it: resolve to
+    // a name-only union carrying the BASE name; `lookup_union` misses for
+    // it, which is exactly the state the E023 emission keys off. A generic
+    // whose base IS a declared struct or union keeps today's conservative
+    // unknown resolution (the Go checker resolves those to the declared
+    // type — no E023 — so they must not take this branch).
+    if (!r.is_tuple && r.args.len() > 0 && r.base != "Map") {
+        var bk: boolean = false;
+        var bs: i32 = 0;
+        while (bs < structs.len()) {
+            if (structs[bs].name == r.base) { bk = true; }
+            bs = bs + 1;
+        }
+        var bu: i32 = 0;
+        while (bu < unions.len()) {
+            if (unions[bu].name == r.base) { bk = true; }
+            bu = bu + 1;
+        }
+        if (!bk) { return t_union(r.base); }
+    }
     return t_unknown("unrecognised type name: " + name);
 }
 
@@ -4378,15 +4402,30 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                 // arm) must additionally diverge.
                 if (m.origin == "if_let" || m.origin == "let_else") {
                     var src_is_enum: boolean = false;
+                    var src_unknown_enum: boolean = false;
                     match (mst) {
-                        TypeUnion(_) => { src_is_enum = true; },
+                        TypeUnion(su) => {
+                            src_is_enum = true;
+                            // E023: the source types to an enum the checker
+                            // doesn't know — the unknown-BASE generic
+                            // annotation shape (`s: Statuus[i32]`), which
+                            // type_from_ref_su resolves to a name-only union
+                            // that lookup_union misses. The Go checker reports
+                            // E023 at the source and skips the binding checks.
+                            // Reserved builtin enums (Option/Result/…) are
+                            // always known to the Go checker — never E023.
+                            if (cur.lookup_union(su.name).name.len() == 0 && !is_reserved_enum_name(su.name)) {
+                                src_unknown_enum = true;
+                                out = out.append(dg_at("E023", "unknown enum \"" + su.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                            }
+                        },
                         _ => { }
                     }
                     var kind_label: string = "if-let";
                     if (m.origin == "let_else") { kind_label = "let-else"; }
                     if (!src_is_enum && !is_unknown(mst)) {
                         out = out.append(dg_at("E022", kind_label + " source must be an enum value, got " + type_label(mst), expr_line(m.scrutinee), expr_col(m.scrutinee)));
-                    } else if (m.origin == "let_else" && src_is_enum) {
+                    } else if (m.origin == "let_else" && src_is_enum && !src_unknown_enum) {
                         // The else block is the synthesised trailing `_` arm; it
                         // must diverge (return / break / continue) so the
                         // bindings are live for the fall-through path.
@@ -4420,6 +4459,16 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                 match (mst) {
                     TypeUnion(mun) => {
                         var usig: UnionSig = cur.lookup_union(mun.name);
+                        // E023: a plain `match` on a value whose type is an
+                        // enum the checker doesn't know (the unknown-BASE
+                        // generic annotation shape — see type_from_ref_su).
+                        // Reported at the scrutinee, like the Go checker's
+                        // checkMatch/checkMatchExpr; the arm checks below are
+                        // skipped (usig missed). if-let / let-else report
+                        // theirs in the origin block above — don't double up.
+                        if (usig.name.len() == 0 && !is_reserved_enum_name(mun.name) && m.origin == "") {
+                            out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                        }
                         if (usig.name.len() > 0) {
                             var saw_wild: boolean = false;
                             var covered: string[] = [];
@@ -5766,23 +5815,39 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
 //   - a bare leaf falls through to the same conservative e064_unknown_bare.
 // The callers restrict this to NON-generic, NON-method decls, so an inner bare
 // name is never an erased type parameter — a genuine typo, matching the oracle.
-function e064_unknown_name(type_name: string, struct_names: string[], union_names: string[]): string {
-    return e064_unknown_name_tref(parser.parse_type_ref(type_name), struct_names, union_names);
+function e064_unknown_name(type_name: string, struct_names: string[], union_names: string[], extra_known: string[]): string {
+    return e064_unknown_name_tref(parser.parse_type_ref(type_name), struct_names, union_names, extra_known);
 }
 
-function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], union_names: string[]): string {
+function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], union_names: string[], extra_known: string[]): string {
     // Array `E[]` → element E (peel one level, keeping the base/args).
     if (tr.array_depth > 0) {
         var elem: parser.TypeRef = parser.TypeRef { base: tr.base, args: tr.args, array_depth: tr.array_depth - 1, is_tuple: tr.is_tuple };
-        return e064_unknown_name_tref(elem, struct_names, union_names);
+        return e064_unknown_name_tref(elem, struct_names, union_names, extra_known);
     }
     // Tuple: out of scope for the array/generic-arg widening.
     if (tr.is_tuple) { return ""; }
-    // Generic instantiation `G[a, b]`: check each arg (never the base).
+    // Generic instantiation `G[a, b]`: check the BASE, then each arg. The
+    // Go checker's checkTypeKnown flags an undeclared generic base
+    // (`Statuus[i32]` → E064 "Statuus") exactly like a bare unknown name —
+    // knownTypeName accepts any declared struct / enum / trait / resource.
+    // The builtin generic containers (Map / Cell) and the reserved builtin
+    // enums (Option / Result / …) are registered types natively, so they are
+    // allowlisted here; declared traits and resources arrive via extra_known
+    // (they aren't in the struct/union name sets this resolver models).
     if (tr.args.len() > 0) {
+        if (tr.base != "Map" && tr.base != "Cell" && !is_reserved_enum_name(tr.base)) {
+            var kx: boolean = false;
+            var xi: i32 = 0;
+            while (xi < extra_known.len()) {
+                if (extra_known[xi] == tr.base) { kx = true; }
+                xi = xi + 1;
+            }
+            if (!kx && e064_unknown_bare(tr.base, struct_names, union_names)) { return tr.base; }
+        }
         var i: i32 = 0;
         while (i < tr.args.len()) {
-            var u: string = e064_unknown_name_tref(tr.args[i], struct_names, union_names);
+            var u: string = e064_unknown_name_tref(tr.args[i], struct_names, union_names, extra_known);
             if (u.len() > 0) { return u; }
             i = i + 1;
         }
@@ -5800,36 +5865,204 @@ function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], unio
 // caller restricts this to functions with no type parameters, so a plain
 // identifier that resolves to unknown is a genuine typo, never an erased
 // generic parameter.
-function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_names: string[]): Diag[] {
+function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_names: string[], extra_known: string[]): Diag[] {
     var out: Diag[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                var vu: string = e064_unknown_name(v.type_name, struct_names, union_names);
+                var vu: string = e064_unknown_name(v.type_name, struct_names, union_names, extra_known);
                 if (vu.len() > 0) {
                     out = out.append(dg_at("E064", "unknown type \"" + vu + "\"", v.line, v.col));
                 }
             },
             parser.StmtIf(f) => {
-                out = append_diags(out, e064_var_diags(f.then_body, struct_names, union_names));
-                out = append_diags(out, e064_var_diags(f.else_body, struct_names, union_names));
+                out = append_diags(out, e064_var_diags(f.then_body, struct_names, union_names, extra_known));
+                out = append_diags(out, e064_var_diags(f.else_body, struct_names, union_names, extra_known));
             },
-            parser.StmtWhile(w) => { out = append_diags(out, e064_var_diags(w.body, struct_names, union_names)); },
-            parser.StmtFor(fr) => { out = append_diags(out, e064_var_diags(fr.body, struct_names, union_names)); },
+            parser.StmtWhile(w) => { out = append_diags(out, e064_var_diags(w.body, struct_names, union_names, extra_known)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e064_var_diags(fr.body, struct_names, union_names, extra_known)); },
             parser.StmtMatch(m) => {
                 var a: i32 = 0;
-                while (a < m.arms.len()) { out = append_diags(out, e064_var_diags(m.arms[a].body, struct_names, union_names)); a = a + 1; }
+                while (a < m.arms.len()) { out = append_diags(out, e064_var_diags(m.arms[a].body, struct_names, union_names, extra_known)); a = a + 1; }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                out = append_diags(out, e064_var_diags(one, struct_names, union_names));
+                out = append_diags(out, e064_var_diags(one, struct_names, union_names, extra_known));
             },
             _ => { }
         }
         i = i + 1;
     }
     return out;
+}
+
+// e044_diags ports the Go checker's capture-eligibility rule (E044): a
+// closure may capture scalars and pointer-shaped values, but NOT a value
+// with no runtime representation — natively ast.VoidType (a `void` call
+// result bound to a var) or ast.ParamType (an erased generic type
+// parameter), the only two shapes the native captureSink rejects
+// (checker.go E044). The self-host type model erases both to `unknown`,
+// so this walk works SYNTACTICALLY and stays deliberately narrow (it must
+// never false-positive on the bundle):
+//   - void suspect: a body `var x = f();` whose callee is a declared free
+//     function with an explicit `void` return type;
+//   - param-type suspect: in a GENERIC function only, a parameter or body
+//     var whose annotation is a bare unknown identifier — a generic's
+//     `x: T` is exactly the shape the native checker types as ParamType.
+// A lambda (incl. a desugared local `function`) that mentions a suspect —
+// without a same-named lambda param shadowing it — draws E044 at the
+// enclosing statement, naming the suspect's annotation spelling like
+// native ("T" / "void"). Nested blocks re-walk with a copy of the suspect
+// set so block-scoped vars don't leak.
+function e044_lambda_check(lam: parser.ExprLambda, line: i32, col: i32, suspects: string[], labels: string[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < suspects.len()) {
+        var shadowed: boolean = false;
+        var pi: i32 = 0;
+        while (pi < lam.params.len()) {
+            if (lam.params[pi].name == suspects[i]) { shadowed = true; }
+            pi = pi + 1;
+        }
+        if (!shadowed && parser.stmts_mention(lam.body, suspects[i])) {
+            out = out.append(dg_at("E044", "captured variable \"" + suspects[i] + "\" has unsupported type " + labels[i], line, col));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function e044_expr(e: parser.Expr, line: i32, col: i32, suspects: string[], labels: string[]): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprLambda(lm) => {
+            // Report and stop: stmts_mention already recursed into any
+            // nested lambda, so descending again would double-report.
+            out = append_diags(out, e044_lambda_check(lm, line, col, suspects, labels));
+        },
+        parser.ExprBinary(b) => {
+            out = append_diags(out, e044_expr(b.left, line, col, suspects, labels));
+            out = append_diags(out, e044_expr(b.right, line, col, suspects, labels));
+        },
+        parser.ExprUnary(u) => { out = append_diags(out, e044_expr(u.operand, line, col, suspects, labels)); },
+        parser.ExprCall(c) => {
+            out = append_diags(out, e044_expr(c.callee, line, col, suspects, labels));
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, e044_expr(c.args[i], line, col, suspects, labels)); i = i + 1; }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, e044_expr(a.elements[i], line, col, suspects, labels)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, e044_expr(t.elements[i], line, col, suspects, labels)); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            out = append_diags(out, e044_expr(ix.array, line, col, suspects, labels));
+            out = append_diags(out, e044_expr(ix.index, line, col, suspects, labels));
+        },
+        parser.ExprSlice(sl) => {
+            out = append_diags(out, e044_expr(sl.array, line, col, suspects, labels));
+            out = append_diags(out, e044_expr(sl.start, line, col, suspects, labels));
+            out = append_diags(out, e044_expr(sl.end, line, col, suspects, labels));
+        },
+        parser.ExprFieldAccess(fa) => { out = append_diags(out, e044_expr(fa.obj, line, col, suspects, labels)); },
+        parser.ExprStructLit(s) => {
+            if (s.has_base) { out = append_diags(out, e044_expr(s.base, line, col, suspects, labels)); }
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { out = append_diags(out, e044_expr(s.field_values[i], line, col, suspects, labels)); i = i + 1; }
+        },
+        _ => { }
+    }
+    return out;
+}
+
+function e044_stmts(stmts: parser.Stmt[], is_generic: boolean, struct_names: string[], union_names: string[], void_fns: string[], suspects0: string[], labels0: string[]): Diag[] {
+    var out: Diag[] = [];
+    var suspects: string[] = suspects0;
+    var labels: string[] = labels0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                out = append_diags(out, e044_expr(v.init, v.line, v.col, suspects, labels));
+                // A `var x = f();` binding of a void call is a void suspect.
+                var is_void_init: boolean = false;
+                match (v.init) {
+                    parser.ExprCall(c) => {
+                        match (c.callee) {
+                            parser.ExprIdent(id) => {
+                                var vfi: i32 = 0;
+                                while (vfi < void_fns.len()) {
+                                    if (void_fns[vfi] == id.name) { is_void_init = true; }
+                                    vfi = vfi + 1;
+                                }
+                            },
+                            _ => { }
+                        }
+                    },
+                    _ => { }
+                }
+                if (is_void_init && v.type_name.len() == 0) {
+                    suspects = suspects.append(v.name);
+                    labels = labels.append("void");
+                } else if (is_generic && e064_unknown_bare(v.type_name, struct_names, union_names)) {
+                    suspects = suspects.append(v.name);
+                    labels = labels.append(v.type_name);
+                }
+            },
+            parser.StmtReturn(r) => { out = append_diags(out, e044_expr(r.value, r.line, r.col, suspects, labels)); },
+            parser.StmtExpr(e) => { out = append_diags(out, e044_expr(e.value, 0, 0, suspects, labels)); },
+            parser.StmtAssign(a) => { out = append_diags(out, e044_expr(a.value, a.line, a.col, suspects, labels)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e044_expr(f.cond, 0, 0, suspects, labels));
+                out = append_diags(out, e044_stmts(f.then_body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+                out = append_diags(out, e044_stmts(f.else_body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, e044_expr(w.cond, 0, 0, suspects, labels));
+                out = append_diags(out, e044_stmts(w.body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, e044_expr(fr.iter, 0, 0, suspects, labels));
+                out = append_diags(out, e044_stmts(fr.body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, e044_expr(m.scrutinee, m.line, m.col, suspects, labels));
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    out = append_diags(out, e044_stmts(m.arms[a].body, is_generic, struct_names, union_names, void_fns, suspects, labels));
+                    a = a + 1;
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e044_stmts(one, is_generic, struct_names, union_names, void_fns, suspects, labels));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: string[], void_fns: string[]): Diag[] {
+    var suspects: string[] = [];
+    var labels: string[] = [];
+    var is_generic: boolean = efn.type_params.len() > 0 || efn.type_param_count > 0;
+    if (is_generic) {
+        var pi: i32 = 0;
+        while (pi < efn.params.len()) {
+            if (e064_unknown_bare(efn.params[pi].type_name, struct_names, union_names)) {
+                suspects = suspects.append(efn.params[pi].name);
+                labels = labels.append(efn.params[pi].type_name);
+            }
+            pi = pi + 1;
+        }
+    }
+    return e044_stmts(efn.body, is_generic, struct_names, union_names, void_fns, suspects, labels);
 }
 
 // e021_diags reports E021 (#4347): an `impl Trait for Type` block that omits a
@@ -6454,6 +6687,17 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var union_names: string[] = [];
     var uni: i32 = 0;
     while (uni < unions.len()) { union_names = union_names.append(unions[uni].name); uni = uni + 1; }
+    // Known-in-another-role names for the E064 generic-BASE check: declared
+    // trait names (via requirement records and impl headers) and resource
+    // names. The Go checker's knownTypeName accepts any declared struct /
+    // enum / trait / resource, so the base check must not flag these.
+    var e064_extra: string[] = [];
+    var xtri: i32 = 0;
+    while (xtri < mod.trait_reqs.len()) { e064_extra = e064_extra.append(mod.trait_reqs[xtri].trait_name); xtri = xtri + 1; }
+    var ximi: i32 = 0;
+    while (ximi < mod.impls.len()) { e064_extra = e064_extra.append(mod.impls[ximi].trait_name); ximi = ximi + 1; }
+    var xrsi: i32 = 0;
+    while (xrsi < mod.resources.len()) { e064_extra = e064_extra.append(mod.resources[xrsi].name); xrsi = xrsi + 1; }
     var efi: i32 = 0;
     while (efi < mod.funcs.len()) {
         var efn: parser.FuncDecl = mod.funcs[efi];
@@ -6464,20 +6708,36 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         if (efn.type_params.len() == 0 && efn.type_param_count == 0 && efn.receiver_name.len() == 0) {
             var epi: i32 = 0;
             while (epi < efn.params.len()) {
-                var pu: string = e064_unknown_name(efn.params[epi].type_name, struct_names, union_names);
+                var pu: string = e064_unknown_name(efn.params[epi].type_name, struct_names, union_names, e064_extra);
                 if (pu.len() > 0) {
                     body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"", efn.line, efn.col));
                 }
                 epi = epi + 1;
             }
-            var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names);
+            var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names, e064_extra);
             if (ru.len() > 0) {
                 body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"", efn.line, efn.col));
             }
             // Body `var x: T` annotations (same non-generic scope).
-            body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names));
+            body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names, e064_extra));
         }
         efi = efi + 1;
+    }
+    // E044: a closure capture of a value with no runtime representation —
+    // a `void` call result or an erased generic type parameter. Runs for
+    // EVERY function (generic ones are where the ParamType shape lives).
+    var e044_void_fns: string[] = [];
+    var vfj: i32 = 0;
+    while (vfj < mod.funcs.len()) {
+        if (mod.funcs[vfj].receiver_name.len() == 0 && mod.funcs[vfj].ret_type == "void") {
+            e044_void_fns = e044_void_fns.append(mod.funcs[vfj].name);
+        }
+        vfj = vfj + 1;
+    }
+    var e44i: i32 = 0;
+    while (e44i < mod.funcs.len()) {
+        body_diags = append_diags(body_diags, e044_diags(mod.funcs[e44i], struct_names, union_names, e044_void_fns));
+        e44i = e44i + 1;
     }
     var esi: i32 = 0;
     while (esi < mod.structs.len()) {
@@ -6485,7 +6745,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
             var efj: i32 = 0;
             while (efj < esd.fields.len()) {
-                var fu: string = e064_unknown_name(esd.fields[efj].type_name, struct_names, union_names);
+                var fu: string = e064_unknown_name(esd.fields[efj].type_name, struct_names, union_names, e064_extra);
                 if (fu.len() > 0) {
                     body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"", esd.line, esd.col));
                 }

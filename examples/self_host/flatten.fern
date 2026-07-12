@@ -436,7 +436,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             return parser.ExprLambda {
                 params: rewrite_params(lm.params, ctx),
                 ret_type: rewrite_type_name(lm.ret_type, ctx),
-                body: rewrite_block(lm.body, lctx)
+                body: rewrite_block(lm.body, lctx), use_infer: false
             };
         },
         _ => { return e; }
@@ -461,7 +461,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
                 name: v.name,
                 type_name: rewrite_type_name(v.type_name, ctx),
                 init: rewrite_expr(v.init, ctx),
-                line: v.line, col: v.col
+                line: v.line, col: v.col, is_str: v.is_str
             };
         },
         parser.StmtReturn(r) => {
@@ -646,7 +646,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             ret_type: rewrite_type_name(fd.ret_type, ctx),
             body: rewrite_block(fd.body, bctx),
             line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: []
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: false, ret_str: false
         });
         i = i + 1;
     }
