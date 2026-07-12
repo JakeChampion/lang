@@ -71,5 +71,8 @@ func FormatExplain(code, body string) string {
 		return ""
 	}
 	canonical := strings.ToUpper(strings.TrimSpace(code))
-	return fmt.Sprintf("error %s:\n\n%s\n", canonical, body)
+	// Colour the header to match the diagnostic renderer's error label
+	// (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7); off by default, so piped /
+	// non-interactive output stays plain.
+	return fmt.Sprintf("%s\n\n%s\n", paint(ansiRedBld, "error "+canonical+":"), body)
 }
