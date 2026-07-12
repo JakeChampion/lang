@@ -71,9 +71,14 @@ addressed url deps + content-addressed store (`fern -fetch`), vendoring
 over a version index with a `fern.lock`** (`fern -resolve`;
 `internal/manifest` + `internal/pkgcache` + `internal/mvs` +
 `resolveImport` in `internal/modload`). The MVS design below is no
-longer hypothetical — it is the shipped `internal/mvs`. What remains
-unbuilt: a hosted registry (deliberately — the index file needs no
-service) and the self-host modloader port.
+longer hypothetical — it is the shipped `internal/mvs`. That is the
+**native** compiler; the **self-hosted** compiler's loader currently
+resolves `path` deps only (see `PACKAGES.md ▸ Native vs self-hosted
+coverage` for the exact matrix and the `getenv` blocker on the url
+forms). What remains unbuilt: a hosted registry (deliberately — the
+index file needs no service), the self-host loader's disk-parity forms
+(workspaces / vendored / lock-`path`), and — blocked on a self-host
+`getenv`/cache-dir builtin — the self-host url/store forms.
 
 ## Resolution algorithms: the actual math
 
