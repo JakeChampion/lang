@@ -1,0 +1,60 @@
+import "std/test";
+import "std/dotenv" as dotenv;
+import "core/map";
+// examples/tests/dotenv_test.fern — pure-Fern coverage of std/dotenv:
+// KEY=VALUE parsing, whitespace trimming, comments / blank lines, the
+// `export` prefix, double- and single-quoted values (with escapes),
+// last-key-wins, and malformed-line skipping.
+
+function test_basic(): test.TestOutcome {
+    var m: Map[string, string] = dotenv.parse("HOST=localhost\nPORT = 8080\n");
+    return test.assert_true(m.get_or("HOST", "?") == "localhost" &&
+                            m.get_or("PORT", "?") == "8080");        // trimmed around '='
+}
+
+function test_comments_blanks(): test.TestOutcome {
+    var m: Map[string, string] = dotenv.parse("# a comment\n\nKEY=val\n# another\n");
+    return test.assert_true(m.len() == 1 && m.get_or("KEY", "?") == "val");
+}
+
+function test_export_prefix(): test.TestOutcome {
+    var m: Map[string, string] = dotenv.parse("export TOKEN=abc123\n");
+    return test.assert_eq(m.get_or("TOKEN", "?"), "abc123");
+}
+
+function test_double_quoted(): test.TestOutcome {
+    // Quotes removed; \n \t escapes interpreted; inner spaces kept.
+    var m: Map[string, string] = dotenv.parse("MSG=\"a b\\nc\"\n");
+    return test.assert_eq(m.get_or("MSG", "?"), "a b\nc");
+}
+
+function test_single_quoted_literal(): test.TestOutcome {
+    // Single quotes are literal — no escape processing.
+    var m: Map[string, string] = dotenv.parse("RAW='a\\nb $x'\n");
+    return test.assert_eq(m.get_or("RAW", "?"), "a\\nb $x");
+}
+
+function test_last_wins_and_empty(): test.TestOutcome {
+    var m: Map[string, string] = dotenv.parse("A=1\nEMPTY=\nA=2\n");
+    return test.assert_true(m.get_or("A", "?") == "2" &&
+                            m.get_or("EMPTY", "?") == "" &&
+                            m.has("EMPTY"));
+}
+
+function test_skips_malformed(): test.TestOutcome {
+    // A line with no '=' and a line with an empty key are both dropped.
+    var m: Map[string, string] = dotenv.parse("no_equals_here\n=novalue\nGOOD=ok\n");
+    return test.assert_true(m.len() == 1 && m.get_or("GOOD", "?") == "ok");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/dotenv");
+    r = r.it("basic + trim",       test_basic());
+    r = r.it("comments/blanks",    test_comments_blanks());
+    r = r.it("export prefix",      test_export_prefix());
+    r = r.it("double-quoted",      test_double_quoted());
+    r = r.it("single-quoted",      test_single_quoted_literal());
+    r = r.it("last wins + empty",  test_last_wins_and_empty());
+    r = r.it("skips malformed",    test_skips_malformed());
+    return r.finish();
+}
