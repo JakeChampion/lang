@@ -2535,6 +2535,503 @@ function slice_escape_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
     return slc_walk(stmts, s, localarr, tainted);
 }
 
+// ---------------------------------------------------------------------------
+// E067 — `@must_consume` obligation checking (docs/MUST-CONSUME.md).
+// Port of the native walk in internal/checker/mustconsume.go: a value whose
+// struct/enum type carries `@must_consume` must be CONSUMED at least once on
+// every control-flow path before its binding leaves scope. Consuming uses:
+// call-argument position, `return x`, `match (x)`, `var y = x` / `y = x`
+// (the obligation transfers), or storing into another marked type. Storing
+// into an UNMARKED container (array/tuple literal, unmarked struct/enum) is
+// a violation at the store site (the obligation would be laundered out of
+// the checked world), as is capturing the binding in a lambda. Loop bodies
+// are opaque to the path analysis; `own` params are exempt (the own checker
+// makes the callee the sink). Function names mirror the native mc* family.
+
+// mc_any_marked reports whether the module declares ANY @must_consume type —
+// the fast path that keeps the walk free for the (overwhelmingly common)
+// unmarked-module case, e.g. the self-host compiler's own sources.
+function mc_any_marked(structs: parser.StructDecl[], enums: parser.EnumDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) { if (structs[i].must_consume) { return true; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < enums.len()) { if (enums[j].must_consume) { return true; } j = j + 1; }
+    return false;
+}
+
+// mc_struct_marked reports whether `name` is a declared struct carrying
+// `@must_consume` (the native mustConsumeStructName).
+function mc_struct_marked(name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return structs[i].must_consume; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// mc_enum_marked reports whether `name` is a declared enum carrying
+// `@must_consume`.
+function mc_enum_marked(name: string, enums: parser.EnumDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (enums[i].name == name) { return enums[i].must_consume; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// mc_marked_type_name resolves a type-annotation spelling to the marked
+// struct/enum name it denotes, or "" when the type isn't marked. Exact
+// nominal match only — `Ticket[]` (an array OF a marked type) is not itself
+// marked, same as the native mustConsumeTypeName (StructType/EnumType only).
+function mc_marked_type_name(tn: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): string {
+    if (tn.len() == 0) { return ""; }
+    if (mc_struct_marked(tn, structs)) { return tn; }
+    if (mc_enum_marked(tn, enums)) { return tn; }
+    return "";
+}
+
+// mc_is_binding reports whether `e` is the bare binding ident.
+function mc_is_binding(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// mc_mentions_list / mc_mentions_expr / mc_mentions_stmts report whether the
+// expression / statement tree references `name` at all — the lambda-capture
+// test (the native mcMentions).
+function mc_mentions_list(list: parser.Expr[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < list.len()) { if (mc_mentions_expr(list[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+
+function mc_mentions_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprBinary(b) => { return mc_mentions_expr(b.left, name) || mc_mentions_expr(b.right, name); },
+        parser.ExprUnary(u) => { return mc_mentions_expr(u.operand, name); },
+        parser.ExprCall(c) => { return mc_mentions_expr(c.callee, name) || mc_mentions_list(c.args, name); },
+        parser.ExprArray(ar) => { return mc_mentions_list(ar.elements, name); },
+        parser.ExprTuple(tp) => { return mc_mentions_list(tp.elements, name); },
+        parser.ExprIndex(ix) => { return mc_mentions_expr(ix.array, name) || mc_mentions_expr(ix.index, name); },
+        parser.ExprSlice(sl) => { return mc_mentions_expr(sl.array, name) || mc_mentions_expr(sl.start, name) || mc_mentions_expr(sl.end, name); },
+        parser.ExprStructLit(st) => {
+            if (st.has_base && mc_mentions_expr(st.base, name)) { return true; }
+            return mc_mentions_list(st.field_values, name);
+        },
+        parser.ExprFieldAccess(fa) => { return mc_mentions_expr(fa.obj, name); },
+        parser.ExprLambda(lm) => { return mc_mentions_stmts(lm.body, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function mc_mentions_stmts(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (mc_mentions_expr(v.init, name)) { return true; } },
+            parser.StmtReturn(r) => { if (mc_mentions_expr(r.value, name)) { return true; } },
+            parser.StmtExpr(es) => { if (mc_mentions_expr(es.value, name)) { return true; } },
+            parser.StmtAssign(a) => {
+                if (a.target == name) { return true; }
+                if (mc_mentions_expr(a.value, name)) { return true; }
+            },
+            parser.StmtIf(f) => {
+                if (mc_mentions_expr(f.cond, name)) { return true; }
+                if (mc_mentions_stmts(f.then_body, name)) { return true; }
+                if (mc_mentions_stmts(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (mc_mentions_expr(w.cond, name)) { return true; }
+                if (mc_mentions_stmts(w.body, name)) { return true; }
+            },
+            parser.StmtFor(fr) => {
+                if (mc_mentions_expr(fr.iter, name)) { return true; }
+                if (mc_mentions_stmts(fr.body, name)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (mc_mentions_expr(m.scrutinee, name)) { return true; }
+                var a2: i32 = 0;
+                while (a2 < m.arms.len()) {
+                    if (m.arms[a2].has_guard && mc_mentions_expr(m.arms[a2].guard, name)) { return true; }
+                    if (mc_mentions_stmts(m.arms[a2].body, name)) { return true; }
+                    a2 = a2 + 1;
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (mc_mentions_stmts(one, name)) { return true; }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// mc_list_consumes scans an expression list for a consuming use (recursing —
+// the direct bare-binding checks happen in the callers before this).
+function mc_list_consumes(list: parser.Expr[], name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < list.len()) {
+        var (c2, d2) = mc_expr_consumes(list[i], name, tname, report, structs, enums);
+        out = append_diags(out, d2);
+        if (c2) { return (true, out); }
+        i = i + 1;
+    }
+    return (false, out);
+}
+
+// mc_call_consumes: a bare binding in ARGUMENT position transfers the
+// obligation to the callee. A variant-constructor call (`Reply(t)`) is the
+// self-host spelling of the native EnumLit: storing into a MARKED enum
+// consumes; an unmarked enum launders the obligation (violation at the
+// store site, still treated as consuming so it reports exactly once).
+function mc_call_consumes(c: parser.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
+    var none: Diag[] = [];
+    var owner: string = "";
+    match (c.callee) {
+        parser.ExprIdent(cid) => {
+            owner = mx_enum_of(cid.name, enums);
+            if (owner.len() == 0) { owner = mx_builtin_enum_of(cid.name); }
+        },
+        _ => { }
+    }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        if (mc_is_binding(c.args[i], name)) {
+            if (owner.len() == 0 || mc_enum_marked(owner, enums)) { return (true, none); }
+            var d: Diag[] = [];
+            if (report) {
+                d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into unmarked enum \"" + owner + "\" — the consumption obligation is lost; mark \"" + owner + "\" @must_consume or consume the value directly", c.line, c.col));
+            }
+            return (true, d);
+        }
+        i = i + 1;
+    }
+    // An immediately-invoked lambda — the parser's desugar of a
+    // value-position `match` / `if` expression, `(function(): RT { … })()`
+    // — runs its body exactly once inline, so a consuming use in the body
+    // counts (the native MatchExpr-tag rule), NOT as a closure capture.
+    // Consumption must hold on all body paths (mc_seq), which covers the
+    // dominant shape: a value-match destructuring the binding itself.
+    match (c.callee) {
+        parser.ExprLambda(ilm) => {
+            var (bc, bdv, bd) = mc_seq(ilm.body, 0, name, tname, structs, enums);
+            if (report) { return (bc, bd); }
+            return (bc, none);
+        },
+        _ => { }
+    }
+    var (kc, kd) = mc_expr_consumes(c.callee, name, tname, report, structs, enums);
+    if (kc) { return (true, kd); }
+    return mc_list_consumes(c.args, name, tname, report, structs, enums);
+}
+
+// mc_structlit_consumes: storing the binding into a MARKED struct consumes;
+// an unmarked struct launders (violation at the store site). The `...base`
+// spread is neutral for the bare binding (a functional update reads the old
+// value, it doesn't discharge it) — only recursed for nested uses.
+function mc_structlit_consumes(sl: parser.ExprStructLit, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
+    var none: Diag[] = [];
+    var i: i32 = 0;
+    while (i < sl.field_values.len()) {
+        if (mc_is_binding(sl.field_values[i], name)) {
+            if (mc_struct_marked(sl.type_name, structs)) { return (true, none); }
+            var d: Diag[] = [];
+            if (report) {
+                d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into unmarked struct \"" + sl.type_name + "\" — the consumption obligation is lost; mark \"" + sl.type_name + "\" @must_consume or consume the value directly", sl.line, sl.col));
+            }
+            return (true, d);
+        }
+        i = i + 1;
+    }
+    if (sl.has_base) {
+        var (bc, bd) = mc_expr_consumes(sl.base, name, tname, report, structs, enums);
+        if (bc) { return (true, bd); }
+    }
+    return mc_list_consumes(sl.field_values, name, tname, report, structs, enums);
+}
+
+// mc_expr_consumes scans an expression tree for a consuming use of the bare
+// binding (the native mcExprConsumes). Laundering into an array/tuple
+// literal and lambda capture are violations reported here, treated as
+// consuming so each misuse reports exactly once. Field reads are neutral.
+function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
+    var none: Diag[] = [];
+    match (e) {
+        parser.ExprCall(c) => { return mc_call_consumes(c, name, tname, report, structs, enums); },
+        parser.ExprStructLit(sl) => { return mc_structlit_consumes(sl, name, tname, report, structs, enums); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) {
+                if (mc_is_binding(ar.elements[i], name)) {
+                    var d: Diag[] = [];
+                    if (report) {
+                        d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into an array literal — arrays cannot carry consumption obligations; consume the value directly", expr_line(ar.elements[i]), expr_col(ar.elements[i])));
+                    }
+                    return (true, d);
+                }
+                i = i + 1;
+            }
+            return mc_list_consumes(ar.elements, name, tname, report, structs, enums);
+        },
+        parser.ExprTuple(tp) => {
+            var j: i32 = 0;
+            while (j < tp.elements.len()) {
+                if (mc_is_binding(tp.elements[j], name)) {
+                    var d2: Diag[] = [];
+                    if (report) {
+                        d2 = d2.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into a tuple — tuples cannot carry consumption obligations; consume the value directly", tp.line, tp.col));
+                    }
+                    return (true, d2);
+                }
+                j = j + 1;
+            }
+            return mc_list_consumes(tp.elements, name, tname, report, structs, enums);
+        },
+        parser.ExprLambda(lm) => {
+            if (mc_mentions_stmts(lm.body, name)) {
+                var d3: Diag[] = [];
+                if (report) {
+                    d3 = d3.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" captured by a closure — obligations cannot flow into closures; consume the value directly", 0, 0));
+                }
+                return (true, d3);
+            }
+            return (false, none);
+        },
+        parser.ExprBinary(b) => {
+            var (lc, ld) = mc_expr_consumes(b.left, name, tname, report, structs, enums);
+            if (lc) { return (true, ld); }
+            var (rc, rd) = mc_expr_consumes(b.right, name, tname, report, structs, enums);
+            return (rc, append_diags(ld, rd));
+        },
+        parser.ExprUnary(u) => { return mc_expr_consumes(u.operand, name, tname, report, structs, enums); },
+        parser.ExprIndex(ix) => {
+            var (ac, ad) = mc_expr_consumes(ix.array, name, tname, report, structs, enums);
+            if (ac) { return (true, ad); }
+            return mc_expr_consumes(ix.index, name, tname, report, structs, enums);
+        },
+        parser.ExprSlice(sl2) => {
+            var (sc, sd) = mc_expr_consumes(sl2.array, name, tname, report, structs, enums);
+            if (sc) { return (true, sd); }
+            var (stc, std) = mc_expr_consumes(sl2.start, name, tname, report, structs, enums);
+            if (stc) { return (true, std); }
+            return mc_expr_consumes(sl2.end, name, tname, report, structs, enums);
+        },
+        parser.ExprFieldAccess(fa) => { return mc_expr_consumes(fa.obj, name, tname, report, structs, enums); },
+        _ => { return (false, none); }
+    }
+    return (false, none);
+}
+
+// mc_stmt_consumes reports whether the statement definitely contains a
+// consuming use of the binding (the native mcStmtConsumesImpl). `report`
+// false is the detection-only variant the overwrite re-scan uses.
+function mc_stmt_consumes(st: parser.Stmt, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
+    var none: Diag[] = [];
+    match (st) {
+        parser.StmtExpr(es) => { return mc_expr_consumes(es.value, name, tname, report, structs, enums); },
+        parser.StmtVar(v) => {
+            // `var y = x;` — the obligation transfers to y (tracked at its
+            // own binding site when its type is marked).
+            if (mc_is_binding(v.init, name)) { return (true, none); }
+            return mc_expr_consumes(v.init, name, tname, report, structs, enums);
+        },
+        parser.StmtReturn(r) => {
+            if (mc_is_binding(r.value, name)) { return (true, none); }
+            return mc_expr_consumes(r.value, name, tname, report, structs, enums);
+        },
+        parser.StmtAssign(a) => {
+            // `y = x;` — the obligation transfers to y (the native Assign
+            // case of mcExprConsumes; assignment is a statement here).
+            if (mc_is_binding(a.value, name)) { return (true, none); }
+            return mc_expr_consumes(a.value, name, tname, report, structs, enums);
+        },
+        parser.StmtMatch(m) => {
+            if (mc_is_binding(m.scrutinee, name)) { return (true, none); }
+            return (false, none);
+        },
+        _ => { return (false, none); }
+    }
+    return (false, none);
+}
+
+// mc_seq returns (consumed_on_all_paths, diverged_unconsumed, diags) for the
+// statement sequence starting at `from` (the native mcSeq). A path that
+// returns / breaks / continues out of the scope without a consuming use sets
+// the second flag; falling off the end unconsumed reports false for the
+// first (the caller decides that's the scope-exit violation). Loop bodies
+// are opaque; defer is neutral.
+function mc_seq(stmts: parser.Stmt[], from: i32, name: string, tname: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, boolean, Diag[]) {
+    var out: Diag[] = [];
+    var i: i32 = from;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        var (con, cd) = mc_stmt_consumes(st, name, tname, true, structs, enums);
+        out = append_diags(out, cd);
+        if (con) { return (true, false, out); }
+        match (st) {
+            parser.StmtReturn(_) => { return (false, true, out); },
+            parser.StmtBreak(_) => { return (false, true, out); },
+            parser.StmtContinue(_) => { return (false, true, out); },
+            parser.StmtIf(f) => {
+                var (tc, tv, td) = mc_seq(f.then_body, 0, name, tname, structs, enums);
+                out = append_diags(out, td);
+                var ec: boolean = false;
+                var ev: boolean = false;
+                if (f.else_body.len() > 0) {
+                    var (ec2, ev2, ed) = mc_seq(f.else_body, 0, name, tname, structs, enums);
+                    out = append_diags(out, ed);
+                    ec = ec2;
+                    ev = ev2;
+                }
+                if (tv || ev) { return (false, true, out); }
+                if (tc && f.else_body.len() > 0 && ec) { return (true, false, out); }
+                // Some path through the if did not consume — the rest of
+                // the sequence must cover it (at-least-once checker).
+            },
+            parser.StmtMatch(m) => {
+                // The scrutinee-is-binding case already returned via
+                // mc_stmt_consumes above. A parser-desugared if-let /
+                // let-else (origin != "") mirrors the native IfLet/LetElse:
+                // only the source-destructure consumes; its arms don't
+                // participate in the all-arms path logic.
+                if (m.origin == "") {
+                    var all: boolean = m.arms.len() > 0;
+                    var a: i32 = 0;
+                    while (a < m.arms.len()) {
+                        var (ac, av, ad) = mc_seq(m.arms[a].body, 0, name, tname, structs, enums);
+                        out = append_diags(out, ad);
+                        if (av) { return (false, true, out); }
+                        if (!ac) { all = false; }
+                        a = a + 1;
+                    }
+                    if (all) { return (true, false, out); }
+                }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return (false, false, out);
+}
+
+// mc_check_binding runs the at-least-once analysis for one binding over the
+// remainder of its scope, plus the straight-line overwrite scan (the native
+// mcCheckBinding).
+function mc_check_binding(stmts: parser.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): Diag[] {
+    var (con, div, out) = mc_seq(stmts, from, name, tname, structs, enums);
+    if (!con || div) {
+        out = out.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" bound to \"" + name + "\" may go out of scope without being consumed — pass it, return it, match on it, or store it into another @must_consume type on every path", bline, bcol));
+        return out;
+    }
+    // Overwrite scan (same block, straight-line): re-assigning the binding
+    // before any consuming use silently drops the old value. Detection-only
+    // (report=false) — the pass above already emitted any laundering /
+    // capture errors for these statements.
+    var i: i32 = from;
+    while (i < stmts.len()) {
+        var (q, qd) = mc_stmt_consumes(stmts[i], name, tname, false, structs, enums);
+        if (q) { return out; }
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    out = out.append(dg_at("E067", "overwriting \"" + name + "\" while it still holds an unconsumed @must_consume \"" + tname + "\" value — consume the old value first", a.line, a.col));
+                    return out;
+                }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// mc_var_type_name resolves the marked type name of a `var` binding: the
+// annotation when present, otherwise the inferred init type (the native
+// falls back to info.VarTypes). Returns "" when the type isn't marked.
+function mc_var_type_name(v: parser.StmtVar, cur: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): string {
+    var tn: string = v.type_name;
+    if (tn.len() == 0) {
+        match (check_expr(v.init, cur)) {
+            TypeStruct(ts) => { tn = ts.name; },
+            TypeUnion(tu) => { tn = tu.name; },
+            _ => { return ""; }
+        }
+    }
+    return mc_marked_type_name(tn, structs, enums);
+}
+
+// mc_walk_body finds marked-type `var` bindings at every block depth and
+// checks each against the remainder of ITS block (the native mcWalkBlock).
+// The scope is threaded like slc_walk so an unannotated binding's init type
+// resolves.
+function mc_walk_body(stmts: parser.Stmt[], s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => {
+                var tn: string = mc_var_type_name(v, cur, structs, enums);
+                if (tn.len() > 0) {
+                    out = append_diags(out, mc_check_binding(stmts, i + 1, v.name, tn, v.line, v.col, structs, enums));
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, mc_walk_body(f.then_body, cur, structs, enums));
+                out = append_diags(out, mc_walk_body(f.else_body, cur, structs, enums));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, mc_walk_body(w.body, cur, structs, enums)); },
+            parser.StmtFor(fr) => { out = append_diags(out, mc_walk_body(fr.body, cur, structs, enums)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    out = append_diags(out, mc_walk_body(m.arms[a].body, cur, structs, enums));
+                    a = a + 1;
+                }
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+// must_consume_diags is the per-function E067 entry point (the native
+// checkMustConsume): parameters of marked type carry the obligation in from
+// the caller (their scope is the whole body) — EXCEPT `own` params, whose
+// function is the value's sink (E050/E051 enforce affine use there; the
+// caller-side at-least-once plus the sink-side at-most-once compose to
+// exactly-once across the call boundary). Then walk the body for local
+// bindings.
+function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): Diag[] {
+    var out: Diag[] = [];
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var p: parser.ParamDecl = fn.params[pi];
+        if (!p.own) {
+            var tn: string = mc_marked_type_name(p.type_name, structs, enums);
+            if (tn.len() > 0) {
+                out = append_diags(out, mc_check_binding(fn.body, 0, p.name, tn, fn.line, fn.col, structs, enums));
+            }
+        }
+        pi = pi + 1;
+    }
+    out = append_diags(out, mc_walk_body(fn.body, s, structs, enums));
+    return out;
+}
+
 // lret_expr walks an expression looking for lambdas and, for each one
 // that declares a return type, checks the lambda body's `return`s against
 // THAT type (not the enclosing function's) by reusing ret_diags. This is
@@ -7084,6 +7581,10 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
     var body_diags: Diag[] = [];
     var ambig: string[] = ambiguous_variants(mod.enums);
+    // E067 runs only when the module declares a @must_consume type — the
+    // fast path that keeps the obligation walk free for unmarked modules
+    // (e.g. the self-host compiler's own sources).
+    var mc_on: boolean = mc_any_marked(mod.structs, mod.enums);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) { well_typed = false; }
@@ -7110,6 +7611,12 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // (a use-after-free once the frame is reclaimed). Runs for every
         // function — a slice can escape from an inferred-return body too.
         body_diags = append_diags(body_diags, slice_escape_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
+        // E067: a value of a @must_consume struct/enum type must be consumed
+        // on every path before its binding leaves scope (the native
+        // checkMustConsume — docs/MUST-CONSUME.md).
+        if (mc_on) {
+            body_diags = append_diags(body_diags, must_consume_diags(mod.funcs[i], build_func_scope(mod.funcs[i], sigs, structs, unions, methods), mod.structs, mod.enums));
+        }
         // E002 (lambda bodies): return-type mismatch inside a lambda is
         // checked against the lambda's own declared return type, not the
         // enclosing function's. Runs for every function (even void ones —

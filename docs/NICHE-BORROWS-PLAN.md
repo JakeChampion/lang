@@ -243,8 +243,21 @@ reset while the server keeps answering subsequent requests.
 
 ### Phase E — type-system & Perceus-adjacent
 
-**E1. `@must_consume` marker types.** [status: slice 1 shipped
-(native E067); self-host checker port queued]
+**E1. `@must_consume` marker types.** [status: SHIPPED — native +
+self-host]
+Complete: native E067 (previous slice) plus the self-host port —
+the attribute is stamped through the self-host parser's
+struct/enum decls (must_consume field, propagated through the
+flatten/bundle rewrites), the `mc_*` walk family in checker.fern
+mirrors internal/checker/mustconsume.go function-for-function
+(gated by mc_any_marked so unmarked modules pay nothing), and
+"E067" joined selfHostImplementedCodes with 21 mc-* fixtures in
+the differential codes gate — both checkers emit identical code
+sets per fixture, cross-checked against the Go oracle. Port
+deviations (enum-variant-as-ExprCall, value-position match's IIFE
+desugar strictness, position-less lambda diags) are documented in
+docs/SELFHOST-CHECKER-PORT.md. Fixpoint self-compiles green with
+the new checker in the loop.
 Shipped: `@must_consume` on struct/enum decls (both parsers — the
 self-host parser parse-tolerates and drops it pending its checker
 port), the native E067 walk (at-least-once on every path;
