@@ -45,6 +45,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/literate"
+	"github.com/jakechampion/lang/internal/manifest"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/stdlib"
 )
@@ -125,7 +126,7 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	stack := map[string]bool{}          // path → true while in flight (cycle detection)
 	srcs := map[string]string{}         // path → source text (for diag formatting)
 	lit := map[string]*LiterateModule{} // path → literate provenance (tangled imports)
-	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit); err != nil {
+	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit, map[string]*manifest.Manifest{}); err != nil {
 		// Return the partial source map (loadRecursive stamps srcs[path]
 		// BEFORE parsing each file, so the failing file's source is already
 		// captured) so the CLI/LSP formatter can render the offending line +
@@ -191,7 +192,7 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 			return nil, fmt.Errorf("LoadStdlibFlat: %q is not a stdlib path (must start with `std/` or `core/`)", p)
 		}
 		canonical := resolveImportPath("", p)
-		if err := loadRecursive(canonical, loaded, stack, srcs, nil, map[string]*LiterateModule{}); err != nil {
+		if err := loadRecursive(canonical, loaded, stack, srcs, nil, map[string]*LiterateModule{}, map[string]*manifest.Manifest{}); err != nil {
 			return nil, err
 		}
 	}
@@ -349,7 +350,7 @@ type pubUseEntry struct {
 // not to enforce a strict DAG). When a stdlib cycle is detected
 // we just return without recursing; the back-edge's `imports`
 // pointer is patched up in the second pass below.
-func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string, overrides map[string]string, lit map[string]*LiterateModule) error {
+func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string, overrides map[string]string, lit map[string]*LiterateModule, mans map[string]*manifest.Manifest) error {
 	if _, done := loaded[path]; done {
 		return nil
 	}
@@ -398,8 +399,11 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	}
 	childPaths := make([]string, len(prog.Imports))
 	for i, imp := range prog.Imports {
-		childPaths[i] = resolveImportPath(dir, imp.Path)
-		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides, lit); err != nil {
+		childPaths[i], err = resolveImport(dir, imp.Path, mans, overrides)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides, lit, mans); err != nil {
 			return err
 		}
 	}
@@ -409,8 +413,11 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	// prefixes are known.
 	pubUsePaths := make([]string, len(prog.PubUses))
 	for i, pu := range prog.PubUses {
-		pubUsePaths[i] = resolveImportPath(dir, pu.Path)
-		if err := loadRecursive(pubUsePaths[i], loaded, stack, srcs, overrides, lit); err != nil {
+		pubUsePaths[i], err = resolveImport(dir, pu.Path, mans, overrides)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if err := loadRecursive(pubUsePaths[i], loaded, stack, srcs, overrides, lit, mans); err != nil {
 			return err
 		}
 	}
@@ -572,6 +579,96 @@ func resolveImportPath(importingDir, importPath string) string {
 		return resolved
 	}
 	return abs
+}
+
+// resolveImport is resolveImportPath plus the fern.toml dependency
+// namespace (docs/PACKAGE-MANAGEMENT-SOTA.md — manifest slice). The
+// added rule: when the importing file is governed by a manifest (the
+// nearest fern.toml up the directory tree) and a bare import's first
+// segment names a DECLARED dependency, the import resolves into that
+// dependency's directory — `import "helper"` to its lib module
+// (manifest `lib`, default lib.fern), `import "helper/sub"` to
+// `<dep-dir>/sub.fern`. Everything else — stdlib paths, `./`/`../`
+// relatives, manifest-less programs, and bare paths that resolve to an
+// existing sibling file — keeps today's behaviour, so the manifest is
+// strictly opt-in. A bare import that matches neither a declared
+// dependency nor an existing file errors here, naming the manifest:
+// the resolver, not the cache layout, is what enforces that a package
+// only reaches its declared dependencies.
+//
+// mans caches per-directory manifest lookups for the whole load (nil
+// value = "no manifest governs this directory"); overrides is the
+// LoadWith in-memory file set, consulted so existence checks agree
+// with what readModuleSource will actually see.
+func resolveImport(importingDir, importPath string, mans map[string]*manifest.Manifest, overrides map[string]string) (string, error) {
+	if stdlib.IsStdlibPath(importPath) || importingDir == "" ||
+		strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
+		return resolveImportPath(importingDir, importPath), nil
+	}
+	man, err := manifestFor(importingDir, mans)
+	if err != nil {
+		return "", err
+	}
+	if man == nil {
+		return resolveImportPath(importingDir, importPath), nil
+	}
+	seg, rest, _ := strings.Cut(importPath, "/")
+	if depDir, ok := man.DepDir(seg); ok {
+		if rest == "" {
+			depMan, err := manifestFor(depDir, mans)
+			if err != nil {
+				return "", err
+			}
+			lib := manifest.DefaultLib
+			// Only the dependency's OWN manifest names its lib module — a
+			// manifest in some ancestor directory doesn't speak for it.
+			if depMan != nil && depMan.Dir == depDir {
+				lib = depMan.Lib
+			}
+			return filepath.Abs(filepath.Join(depDir, lib))
+		}
+		return resolveImportPath(depDir, rest), nil
+	}
+	// Not a declared dependency: a bare path that resolves to an existing
+	// module keeps working (pre-manifest programs use `import "sub/mod"`
+	// for subdirectories). Only a path that resolves to NOTHING becomes a
+	// manifest error, so adding a fern.toml can't break a loading program.
+	p := resolveImportPath(importingDir, importPath)
+	if moduleExists(p, overrides) {
+		return p, nil
+	}
+	return "", fmt.Errorf("import %q: not found relative to %s, and %q is not a declared dependency in %s (add it under [dependencies], e.g. %s = { path = \"../%s\" })",
+		importPath, importingDir, seg, filepath.Join(man.Dir, manifest.FileName), seg, seg)
+}
+
+// manifestFor returns the manifest governing dir (nearest fern.toml at
+// or above it), caching both hits and misses in mans.
+func manifestFor(dir string, mans map[string]*manifest.Manifest) (*manifest.Manifest, error) {
+	if m, ok := mans[dir]; ok {
+		return m, nil
+	}
+	m, err := manifest.FindForDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	mans[dir] = m
+	return m, nil
+}
+
+// moduleExists reports whether readModuleSource would find source for
+// a resolved disk path: an in-memory override, the file itself, or its
+// literate `.fern.md` sibling.
+func moduleExists(path string, overrides map[string]string) bool {
+	if _, ok := overrides[path]; ok {
+		return true
+	}
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	if _, err := os.Stat(path + ".md"); err == nil {
+		return true
+	}
+	return false
 }
 
 // stdlibPrefix tags a path as referring to the embedded stdlib
