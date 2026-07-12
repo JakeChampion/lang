@@ -1183,6 +1183,22 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
     return "Map[" + ktag + ", " + vtag + "]";
 }
 
+// insert_value_is_ptr: does the map-insert VALUE expr `e` produce a heap POINTER
+// (string / struct / string-array)? It drives the wasm `vis` flag —
+// $__fern_map_set retains a pointer value and $__fern_map_release deep-releases
+// it. Mirrors the wasm AST path's `is_string_expr || struct || array` check. Used
+// at the insert-lowering sites IN ADDITION to the receiver-derived map value
+// type, because the FIRST insert of a chain (`map_new_i32().insert(k, v)`) has a
+// receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
+// so a string value there would otherwise emit vis=0 and leak — its box is then
+// never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
+function insert_value_is_ptr(e: parser.Expr, s: LowerState): boolean {
+    if (expr_is_str(e, s)) { return true; }
+    if (expr_struct_type(e, s).len() > 0) { return true; }
+    if (expr_is_strarr(e, s)) { return true; }
+    return false;
+}
+
 pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_i64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
 }
@@ -6685,7 +6701,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[1], mset);
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)), meqfn));
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), meqfn));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -6784,7 +6800,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             emset = lower_expr(c.args[1], emset);
                             if (!emset.ok) { return emset; }
                             var emtt: string = expr_map_type_tag(fa.obj, s);
-                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)), map_key_eqfn(emtt)));
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), map_key_eqfn(emtt)));
                         }
                     }
                     // Qualified built-in Option/Result construction:

@@ -4325,3 +4325,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (the compiler's own maps are i32/interned-key). Remaining #4353: the wasm-IR
   `$__fern_map_release` string-K/V release gap, and the orthogonal arr_push
   grow-leak (goal-2 reuse routing).
+
+- 2026-07-12: **#4353 wasm-IR value-release gap — root-caused into TWO bugs; fixed
+  bug 1 (first-insert vis flag).** The wasm IR path leaked a `Map[i32, string]`'s
+  values even though it routes the free to `$__fern_map_release` (which
+  deep-releases the value column when the box's `vis@28` flag is set). BUG 1
+  (fixed here): a `Map{…}` literal desugars to `map_new_i32().insert(k0,v0)
+  .insert(k1,v1)…`, and irlower computes the wasm `vis` flag on each `op_map_set`
+  from the RECEIVER-derived map value type. The FIRST insert's receiver is the
+  bare `map_new_i32()` call, whose value type isn't inferred yet (defaults to
+  i32), so a string first value emitted **vis=0** — the map never retained it and
+  `$__fern_map_release` never freed it (a wat probe showed vis = 0,1 across a
+  two-entry string map instead of 1,1). This is also a latent **correctness** bug:
+  an ALIASED pointer value at the first insert with vis=0 is a use-after-free
+  (#3495 for the non-first entries). Fixed by OR-ing an `insert_value_is_ptr`
+  (string / struct / string-array — mirrors the wasm AST path's
+  `is_string_expr || struct || array`) on the value ARG into the vis computation
+  at both insert-lowering sites; register-safe (the register `op_map_set` ignores
+  the flag — only i32_imm/keykind + eqfn), so the fixpoint stays byte-identical
+  and the register map suites are unaffected. BUG 2 (deeper, NOT fixed —
+  documented for the next pass): even with vis=1 the fresh value still leaks by
+  one, because the wasm map's retain-on-set model is UNBALANCED for a FRESH value
+  consumed by the set — `$__fern_map_set` retains (value rc 1→2) but nothing decs
+  the consumed temp's original reference, so `$__fern_map_release`'s dec only
+  brings it back to 1. The register backend avoids this by NOT retaining (the map
+  takes the single ref; the MAPVS gate frees it at rc 1→0). To make wasm flat for
+  fresh values, the wasm set site must dec the consumed fresh temp after a
+  retaining set (a freshness-gated consume, the wasm twin of the register MAPVS
+  analysis) — a real slice, out of scope here. So the wasm map tests stay on
+  routing-soundness + correctness (not column flatness) until bug 2 lands.
