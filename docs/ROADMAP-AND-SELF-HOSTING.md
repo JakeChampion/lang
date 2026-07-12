@@ -1,5 +1,12 @@
 # Roadmap: tech debt + self-hosting readiness
 
+> **Status: historical snapshot (2026-05-15).** Self-hosting has since
+> shipped; several Part-1 items are struck through as RESOLVED inline. The
+> live roadmap is `CLAUDE.md` (goal 1: full IR in the self-host; goal 2: the
+> Perceus port) plus the GitHub issue tracker — roadmap-shaped residue from
+> this doc is consolidated in
+> [#4368](https://github.com/JakeChampion/lang/issues/4368).
+
 Captures the state of the codebase as of 2026-05-15. Combines
 two audits — current tech debt (what's wrong / behind / risky)
 and self-hosting readiness (what's missing to rewrite the

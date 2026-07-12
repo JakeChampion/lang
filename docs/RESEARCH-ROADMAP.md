@@ -1,5 +1,15 @@
 # Research roadmap — reading + implementation order
 
+> **Status: superseded by the issue tracker.** The actionable
+> recommendations from these surveys are now filed as
+> [#4412](https://github.com/JakeChampion/lang/issues/4412) (performance),
+> [#4413](https://github.com/JakeChampion/lang/issues/4413) (diagnostics),
+> [#4414](https://github.com/JakeChampion/lang/issues/4414) (platform),
+> [#4415](https://github.com/JakeChampion/lang/issues/4415) (IDE
+> compilation) and [#4416](https://github.com/JakeChampion/lang/issues/4416)
+> (stdlib ergonomics). This doc remains useful only as a reading-order
+> guide to the research docs themselves.
+
 The eight `*-RESEARCH.md` docs in this directory were written
 as standalone surveys; each one stands on its own. This doc
 is the meta-index: **what order to read them, what order to

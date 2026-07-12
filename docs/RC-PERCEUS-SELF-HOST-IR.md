@@ -1,6 +1,9 @@
 # Would a native-shaped IR help the self-host Perceus port?
 
-Status: **design note / feasibility assessment** (2026-06-09).
+Status: **superseded** — this early feasibility note answered "yes"; the
+actual rebuild + port are tracked in `RC-PERCEUS-SELF-HOST-IR-REBUILD.md`
+(design + rollout) and `RC-PERCEUS-SELF-HOST-PORT.md` (the active goal-2
+tracker). Kept as the original assessment (2026-06-09).
 Question raised: the native (Go) compiler lowers AST → IR (`[]Op`) and
 the self-host compiler goes AST → asm directly with no IR. Since the
 remaining Perceus work (precise drops, move cancellation, reuse tokens,

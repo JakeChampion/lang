@@ -1,5 +1,9 @@
 # Packed-operand-stack migration plan
 
+> **Status: not started** — tracked as
+> [#4111](https://github.com/JakeChampion/lang/issues/4111) (8-byte stack
+> slots + real push/pop on the native backends).
+
 Captures the multi-PR migration strategy for BACKEND-PARITY
 perf item #3 (Pack the operand-stack into 8-byte slots).
 Same shape as the SSO plan — the change is mechanical but

@@ -1,5 +1,10 @@
 # LSP integration plan
 
+> **Status: MVP shipped** — `cmd/fern-lsp` exists (diagnostics, hover,
+> go-to-def, completion) and the playground wires it via `cmd/fern-wasm`.
+> Post-MVP performance work is surveyed in `IDE-COMPILATION-RESEARCH.md`
+> and tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
+
 ## Goal
 
 Ship a Language Server Protocol implementation for `fern` and surface it in

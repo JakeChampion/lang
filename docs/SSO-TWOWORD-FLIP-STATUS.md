@@ -1,9 +1,14 @@
-# SSO Two-Word ABI Atomic Flip — In Progress (Draft)
+# SSO Two-Word ABI Atomic Flip — historical mid-flip journal
 
-Companion to `docs/SSO-TWOWORD-EXEC.md`. This branch carries
-**incomplete** atomic-flip work. The doc exists so the next
-session opens with a precise read of what's done, what's
-broken, and what's left.
+> **Status: SHIPPED.** The wasm two-word flip completed (see
+> `SSO-TWOWORD-EXEC.md`) and the native mirror shipped too
+> (`SSO-NATIVE-FLIP-STATUS.md`). This journal recorded the in-progress
+> state mid-flip and is kept only as the implementation diary.
+
+Companion to `docs/SSO-TWOWORD-EXEC.md`. This branch carried
+the atomic-flip work while it was incomplete. The doc existed so the next
+session opened with a precise read of what was done, what was
+broken, and what was left.
 
 ## Progress snapshot
 

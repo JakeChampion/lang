@@ -1,6 +1,10 @@
 # RC + Perceus implementation plan
 
-> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857).
+> **Open follow-ups tracked in GitHub:**
+> [#2704](https://github.com/JakeChampion/lang/issues/2704) (safe-leak
+> classes), [#2705](https://github.com/JakeChampion/lang/issues/2705)
+> (`Drop` trait), [#4113](https://github.com/JakeChampion/lang/issues/4113)
+> (wide-struct in-place reuse). The old coarse tracker #2857 is closed.
 > This doc is a living progress log — verify the latest slice before picking up
 > an item.
 

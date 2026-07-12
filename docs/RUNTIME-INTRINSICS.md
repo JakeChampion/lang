@@ -5,17 +5,22 @@ This is the **implementation design** for the primitive floor sketched in
 The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 `str_to_i32`, `str_cmp`, the `str_search` predicates, `str_eq`,
 `arr_str_index_of`, `arr_str_join`, `str_trim`, `str_lines`, `str_bytes`,
-`str_chars` — are now Fern runtime functions. What remains hand-written is
-**Tier 2**: helpers that build a *fresh* string/array byte-by-byte
-(`chr`, `str_concat`, `i32_to_string`, `str_to_upper`/`_lower`, `str_repeat`,
-`str_reverse`, `str_replace`) plus the leaves that syscall (`read_file`, the
-clocks, `random_bytes`) and `__fern_alloc` itself.
+`str_chars` — are now Fern runtime functions.
 
-They are stuck for one reason: **Fern has no way to write a byte to a
-computed heap address.** `s[i]` *reads* a byte; there is no `s[i] = b`, and no
-way to allocate N raw bytes and fill them. That write capability is the floor.
-This doc defines the minimal intrinsic set that supplies it, how each backend
-lowers it, and the migration order.
+> **Status update (2026-07): the intrinsics below shipped and the Tier-2
+> migration is complete.** `chr`, `str_concat`, `i32_to_string`,
+> `str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
+> `string_from_bytes` and `str_split` all lower as Fern functions via these
+> raw-memory intrinsics. What remains hand-written (the residue tracked by
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the
+> syscalling leaves (`read_file`, the clocks, `random_bytes`),
+> `__fern_alloc` itself, and the map/array mutator core.
+
+Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
+to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
+and no way to allocate N raw bytes and fill them. That write capability is
+the floor. This doc defines the minimal intrinsic set that supplies it, how
+each backend lowers it, and the migration order.
 
 ## Design goals
 
