@@ -4495,3 +4495,60 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   now reclaim the overwrite-discarded fresh key, matching wasm #4876. The
   value-side overwrite leak and the cap-0 grow-leak (keys/values snapshot-copy)
   remain the open #4353 items.
+
+- 2026-07-12: **#4353 remaining-work plan — the clean map-reclaim frontier is
+  DONE; what's left is intricate, prioritized here.** After the 5-PR overwrite +
+  insert fresh-key/value arc (wasm #4869/#4876; register x86 #4881; arm64 #4885;
+  grow-leak root-cause #4877), the fresh string key/value word-count/histogram
+  leak is closed on ALL backends for both insert and overwrite. The two remaining
+  register-only items were each investigated to a concrete design; both are
+  deferred on ENGINEERING JUDGEMENT (risk/ROI vs. a narrow leak, at bootstrap-
+  adjacent surface), NOT inability. Recommended order + approaches:
+
+  1. **Register value-side overwrite leak** (measured ~256 B/call: a string-valued
+     map, same key re-`set` with fresh values — a re-computing cache). Freeing the
+     OLD value on overwrite is sound only if it was solely-owned, but the register
+     stores values UNCOUNTED, so `str_free`'s rc-awareness can't save an aliased
+     value (its rc reflects only the source). The per-insert `vconsume` flag
+     (o.width bit 0, already computed) proves the CURRENT value's freshness, not
+     the OLD one's — so gating the old-value free on current vconsume is UNSOUND
+     for a map whose key k first got an aliased value then a fresh one. SOUND
+     options, each with a cost:
+     (a) **Per-slot owned-bits** — a 3rd parallel i32 array on the register map box
+         ({keys@0, vals@8} → +owned@16); map_set appends vconsume on insert, reads
+         it on overwrite (free old iff owned), map_free frees the buffer; get/has/
+         keys/values/iter/delete untouched. Bounded (~3 sites × x86+arm64) and no
+         pointer-escape risk, BUT allocates an extra array on EVERY register map
+         incl. the compiler's own i32 maps (hot-path overhead for a narrow leak).
+         Could be gated to pointer-valued maps only, but map_new is type-agnostic.
+     (b) **Pointer-tag the value** — store `v|1` in vals[] for fresh values, free
+         `old&~1` on overwrite iff tagged. No extra array, but EVERY value reader
+         (map_get / map_get_or / map_values snapshot / mapiter_value / the MAPVS
+         str_arr_free) must mask `&~1`; a missed site leaks a tagged pointer into
+         user code → crash. High escape-risk across a pervasively-used runtime.
+     (c) **Adopt the wasm inc-on-set model** on the register (inc every value on
+         set, dec on overwrite/death) — uniform + no per-slot state, but a large
+         refactor of the value model + the MAPVS/vconsume analyses.
+     RECOMMENDATION: (a) with lazy owned[] allocation (allocate only once a vconsume
+     insert happens, so pure-scalar maps pay nothing) — the least-risk sound path.
+     Wasm already frees the old value on overwrite (vis-gated arr_dec, sound via
+     inc-on-set), so this is register-only (x86 + arm64).
+
+  2. **Cap-0 grow-leak** (48 B/build). The `__fern_arr_push_owned` swap in map_set
+     closes it (measured 96000→0) but UAFs a live `keys()`/`values()` alias
+     (register map_keys/map_values return the RAW buffer, uncounted — #4877). BLOCKED
+     on FIRST making register keys/values SNAPSHOT-COPY (alloc + copy; for string
+     columns, inc each element so the fresh array genuinely owns them, matching
+     irlower's existing "fresh owned array (rc=1)" assumption at
+     `var ks = m.keys()`) — which ALSO fixes the latent aliasing correctness bug
+     (a snapshot must not track later mutations; the wasm map already snapshots via
+     `$__fern_map_snapshot`). THEN the arr_push_owned swap becomes sound. The
+     snapshot needs reclaim-wiring too (today keys() results aren't reclaimed → a
+     naive snapshot would leak its buffer). Multi-part (snapshot helper + element
+     rc + reclaim flip + arr_push_owned swap) × (x86 + arm64).
+
+  Lower-value nearby (rare types / narrow): `string[][][]` deep-free (a depth-3
+  extension of `__fern_strarrarr_free` — new helper × 3 backends + an is_arrarrarr
+  classifier; string[][][] is rare), and the map DELETE value/key leak (same
+  ownership question as value-overwrite). None is a clean win; all await the
+  ownership-tracking or snapshot-copy foundations above.
