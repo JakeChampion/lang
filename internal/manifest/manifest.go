@@ -34,11 +34,19 @@ const FileName = "fern.toml"
 // the dependency's directory when its manifest doesn't set `lib`.
 const DefaultLib = "lib.fern"
 
-// Dep is one declared dependency. Path is the only supported source
-// in this slice: a directory containing the dependency package,
-// relative to the manifest's own directory (or absolute).
+// Dep is one declared dependency, from exactly one source:
+//   - Path: a directory containing the dependency package, relative to
+//     the manifest's own directory (or absolute).
+//   - URL + Hash: a hash-addressed remote archive (.tar.gz). THE HASH
+//     IS THE IDENTITY — `sha256:<hex>` of the archive bytes; the URL is
+//     just a mirror hint (the Zig/Roc model the research settled on,
+//     closing trust-on-first-use with zero infrastructure). Fetching is
+//     an explicit `fern fetch` step into the content-addressed cache;
+//     the compiler never touches the network.
 type Dep struct {
 	Path string
+	URL  string
+	Hash string // "sha256:<64 hex>" — of the archive bytes
 }
 
 // Manifest is a parsed fern.toml.
@@ -194,13 +202,13 @@ func parseString(val string) (string, error) {
 	return s, nil
 }
 
-// parseDep accepts the two declared-dependency forms this slice
-// supports: an inline table `{ path = "…" }`, and nothing else —
-// version-only deps (`dep = "1.2"`) belong to the registry/MVS slice
-// and error with a pointer at what IS supported.
+// parseDep accepts the declared-dependency forms this slice supports:
+// `{ path = "…" }` and `{ url = "…", hash = "sha256:…" }` — version-only
+// deps (`dep = "1.2"`) belong to the registry/MVS slice and error with a
+// pointer at what IS supported.
 func parseDep(val string) (Dep, error) {
 	if !strings.HasPrefix(val, "{") || !strings.HasSuffix(val, "}") {
-		return Dep{}, fmt.Errorf("only path dependencies are supported in this slice — write `{ path = \"../dir\" }`")
+		return Dep{}, fmt.Errorf("only path and url+hash dependencies are supported in this slice — write `{ path = \"../dir\" }` or `{ url = \"https://…/pkg.tar.gz\", hash = \"sha256:…\" }`")
 	}
 	body := strings.TrimSpace(val[1 : len(val)-1])
 	dep := Dep{}
@@ -213,24 +221,54 @@ func parseDep(val string) (Dep, error) {
 		if !ok {
 			return Dep{}, fmt.Errorf("expected `key = value` in inline table, got %q", part)
 		}
+		s, err := parseString(v)
+		if err != nil {
+			return Dep{}, fmt.Errorf("%s: %w", k, err)
+		}
 		switch k {
 		case "path":
-			s, err := parseString(v)
-			if err != nil {
-				return Dep{}, err
-			}
 			if s == "" {
 				return Dep{}, fmt.Errorf("path must not be empty")
 			}
 			dep.Path = filepath.FromSlash(s)
+		case "url":
+			if !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+				return Dep{}, fmt.Errorf("url must be http(s), got %q", s)
+			}
+			dep.URL = s
+		case "hash":
+			hex, ok := strings.CutPrefix(s, "sha256:")
+			if !ok || len(hex) != 64 || !isHex(hex) {
+				return Dep{}, fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", s)
+			}
+			dep.Hash = s
 		default:
-			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path)", k)
+			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash)", k)
 		}
 	}
-	if dep.Path == "" {
-		return Dep{}, fmt.Errorf("missing `path`")
+	switch {
+	case dep.Path != "" && (dep.URL != "" || dep.Hash != ""):
+		return Dep{}, fmt.Errorf("a dependency is either `path` or `url`+`hash`, not both")
+	case dep.Path != "":
+		return dep, nil
+	case dep.URL != "" && dep.Hash != "":
+		return dep, nil
+	case dep.URL != "" || dep.Hash != "":
+		return Dep{}, fmt.Errorf("url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint")
+	default:
+		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`)")
 	}
-	return dep, nil
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validDepName(s string) bool {

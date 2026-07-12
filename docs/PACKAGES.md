@@ -1,11 +1,13 @@
-# Packages: the `fern.toml` manifest (slice 1 — path dependencies)
+# Packages: the `fern.toml` manifest (slices 1–2 — path + hash-addressed deps)
 
-The first implemented slice of the package-management design
+The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
-RESEARCH.md` Rec §1). Local `path` dependencies only: no network, no
-registry, no lockfile yet — those layer on later per the research
-docs. Everything is opt-in: a program with no `fern.toml` anywhere up
-its directory tree loads exactly as before.
+RESEARCH.md` Rec §1): local `path` dependencies, and hash-addressed
+`url` dependencies fetched by an explicit `fern -fetch` into a
+content-addressed store. No registry, no version resolution, no
+lockfile yet — those layer on later per the research docs. Everything
+is opt-in: a program with no `fern.toml` anywhere up its directory
+tree loads exactly as before.
 
 ## Using it
 
@@ -36,13 +38,34 @@ version = "0.1.0"     # informational for now
 lib = "lib.fern"      # entry module for `import "<name>"` (default)
 
 [dependencies]
-helper = { path = "../helper" }   # path is the only supported source
+helper = { path = "../helper" }                    # local directory
+webkit = { url = "https://example.com/webkit.tar.gz",
+           hash = "sha256:<64 hex of the archive bytes>" }
 ```
 
 The parser (`internal/manifest`) is a strict TOML subset — sections,
-quoted strings, inline `{ path = "…" }` tables — and rejects anything
-else with a pointed error. `helper = "1.2"` (a registry/version dep)
-errors today; that form is reserved for the MVS + lockfile slice.
+quoted strings, inline tables — and rejects anything else with a
+pointed error. `helper = "1.2"` (a registry/version dep) errors today;
+that form is reserved for the MVS + lockfile slice.
+
+## Hash-addressed dependencies + `fern -fetch` (slice 2)
+
+A `url` dependency is identified by its **hash**, not its URL — the
+`sha256:` of the archive bytes; the URL is just a mirror hint (the
+Zig/Roc model: trust-on-first-use is closed with zero infrastructure,
+an expired domain can't substitute code, and nothing ever needs
+re-checking). `fern -fetch [DIR]` is the ONLY command that touches the
+network: it walks the governing manifest and its dependencies'
+manifests transitively, downloads missing archives, verifies each
+against its declared hash (a mismatch fails the run and nothing is
+unpacked), and unpacks into the per-machine content-addressed store —
+`$FERN_CACHE_DIR|<user-cache>/fern/pkgs/<hex>/`, shared by every
+project that references the hash. Archives are `.tar.gz` of the
+package directory (a single top-level directory is stripped); entries
+that escape the root or aren't plain files/dirs are rejected.
+`build`/`check`/`interp` read the store and error with a pointer at
+`fern -fetch` when a url dependency hasn't been fetched — the compiler
+never fetches (the no-build-time-network constraint).
 
 ## Resolution + isolation rules
 
@@ -64,8 +87,9 @@ package can only reach dependencies it declares — enforced in
 
 ## Not yet (deliberately)
 
-Version constraints + MVS resolution, `fern.lock` content hashes,
-remote (hash-addressed) fetching, vendoring, workspaces, `fern add`.
+Version constraints + MVS resolution, `fern.lock` (for url deps the
+manifest hash already pins content; the lockfile matters once version
+deps resolve transitively), vendoring, workspaces, `fern add`.
 See `PACKAGE-MANAGEMENT-SOTA.md` for the design each of these follows.
 The self-hosted compiler's modloader (`examples/self_host/
 modloader.fern`) does not read manifests yet — a port slice, tracked

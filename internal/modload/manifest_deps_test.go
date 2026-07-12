@@ -176,3 +176,46 @@ func TestLoadManifestParseErrorSurfaces(t *testing.T) {
 		t.Fatalf("expected a manifest parse error naming fern.toml, got %v", err)
 	}
 }
+
+// Hash-addressed url dependencies resolve through the content-addressed
+// package store (FERN_CACHE_DIR/pkgs/<hex>), and an unfetched one errors
+// pointing at `fern -fetch` — the loader itself never touches the network.
+func TestLoadManifestURLDepFromStore(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("FERN_CACHE_DIR", cache)
+	hex64 := strings.Repeat("ab", 32)
+	store := filepath.Join(cache, "pkgs", hex64)
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "lib.fern"), []byte("pub function eight(): i32 { return 8; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := writeTree(t, map[string]string{
+		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { url = \"https://example.com/h.tar.gz\", hash = \"sha256:" + hex64 + "\" }\n",
+		"app/main.fern": `import "helper";` + "\n" + `function main(): i32 { return helper.eight(); }`,
+	})
+	prog, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "lib__eight" {
+			return
+		}
+	}
+	t.Fatal("url dependency's lib module was not loaded from the store")
+}
+
+func TestLoadManifestURLDepUnfetchedErrors(t *testing.T) {
+	t.Setenv("FERN_CACHE_DIR", t.TempDir())
+	hex64 := strings.Repeat("cd", 32)
+	root := writeTree(t, map[string]string{
+		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { url = \"https://example.com/h.tar.gz\", hash = \"sha256:" + hex64 + "\" }\n",
+		"app/main.fern": `import "helper";` + "\n" + `function main(): i32 { return 0; }`,
+	})
+	_, _, err := Load(filepath.Join(root, "app", "main.fern"))
+	if err == nil || !strings.Contains(err.Error(), "-fetch") {
+		t.Fatalf("want an error pointing at `fern -fetch`, got %v", err)
+	}
+}

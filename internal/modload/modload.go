@@ -47,6 +47,7 @@ import (
 	"github.com/jakechampion/lang/internal/literate"
 	"github.com/jakechampion/lang/internal/manifest"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/pkgcache"
 	"github.com/jakechampion/lang/internal/stdlib"
 )
 
@@ -613,21 +614,22 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 		return resolveImportPath(importingDir, importPath), nil
 	}
 	seg, rest, _ := strings.Cut(importPath, "/")
-	if depDir, ok := man.DepDir(seg); ok {
-		if rest == "" {
-			depMan, err := manifestFor(depDir, mans)
-			if err != nil {
-				return "", err
-			}
-			lib := manifest.DefaultLib
-			// Only the dependency's OWN manifest names its lib module — a
-			// manifest in some ancestor directory doesn't speak for it.
-			if depMan != nil && depMan.Dir == depDir {
-				lib = depMan.Lib
-			}
-			return filepath.Abs(filepath.Join(depDir, lib))
+	if d, isDep := man.Deps[seg]; isDep && d.URL != "" {
+		// Hash-addressed dependency: resolve through the content-addressed
+		// store, NEVER the network — `fern -fetch` is the only fetcher (the
+		// no-build-time-network constraint). Absent from the store is a
+		// user-actionable error, not a download.
+		depDir, present, err := pkgcache.Dir(d.Hash)
+		if err != nil {
+			return "", fmt.Errorf("dependency %q: %w", seg, err)
 		}
-		return resolveImportPath(depDir, rest), nil
+		if !present {
+			return "", fmt.Errorf("dependency %q (%s) is not in the package store — run `fern -fetch %s` to download and verify it", seg, d.Hash, filepath.Join(man.Dir, manifest.FileName))
+		}
+		return resolveDepImport(depDir, rest, mans)
+	}
+	if depDir, ok := man.DepDir(seg); ok {
+		return resolveDepImport(depDir, rest, mans)
 	}
 	// Not a declared dependency: a bare path that resolves to an existing
 	// module keeps working (pre-manifest programs use `import "sub/mod"`
@@ -639,6 +641,26 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 	}
 	return "", fmt.Errorf("import %q: not found relative to %s, and %q is not a declared dependency in %s (add it under [dependencies], e.g. %s = { path = \"../%s\" })",
 		importPath, importingDir, seg, filepath.Join(man.Dir, manifest.FileName), seg, seg)
+}
+
+// resolveDepImport resolves an import INTO a dependency directory:
+// a bare `import "<dep>"` (rest == "") reaches the dependency's lib
+// module — named by ITS OWN manifest's `lib` (an ancestor manifest
+// doesn't speak for it), default lib.fern — and `import "<dep>/sub"`
+// reaches `<dep-dir>/sub.fern`.
+func resolveDepImport(depDir, rest string, mans map[string]*manifest.Manifest) (string, error) {
+	if rest != "" {
+		return resolveImportPath(depDir, rest), nil
+	}
+	depMan, err := manifestFor(depDir, mans)
+	if err != nil {
+		return "", err
+	}
+	lib := manifest.DefaultLib
+	if depMan != nil && depMan.Dir == depDir {
+		lib = depMan.Lib
+	}
+	return filepath.Abs(filepath.Join(depDir, lib))
 }
 
 // manifestFor returns the manifest governing dir (nearest fern.toml at
