@@ -11443,6 +11443,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (slot_is_reclaimable_optstruct(sb, slot)) {
         return emit_optstruct_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
     }
+    // A reclaimable Option[<scalar-arr-of-arr>] LOOP-LOCAL (#4365): the arr-of-arr sibling —
+    // deep-drop the prior iteration's Some payload (inner buffers + outer via
+    // __fern_arrarr_free) + the option box before the store.
+    if (slot_is_reclaimable_optarrarr(sb, slot)) {
+        return emit_optarrarr_reclaim_store(sb, slot);
+    }
     // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
     // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
     // + "x" }; }`): the loop-rebind must DEEP-drop the prior box's STRING too, else
@@ -14731,6 +14737,18 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         osj = osj + 1;
     }
+    // Reclaimable Option[<scalar-arr-of-arr>] locals (#4365): deep-free the final live box
+    // (Some payload via __fern_arrarr_free + option box) via the same inline path the
+    // loop-rebind uses. Entry-zeroed via arr_slots_of (slot_is_reclaimable_optarrarr).
+    var oaj: i32 = st.n_params;
+    while (oaj < st.locals.len()) {
+        if (!slot_list_has(keeps, oaj) && slot_is_reclaimable_optarrarr(st, oaj)) {
+            st = emit_optarrarr_deep_free(st, oaj);
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(oaj));
+        }
+        oaj = oaj + 1;
+    }
     // Reclaimable (<tuple-with-array>)[] locals (#4365): deep-free the final live
     // structure (per-element tuple deep-drop + tuple box, then the outer buffer) via
     // the same inline element-walk the loop-rebind uses. An arrtup slot is is_arr but
@@ -15277,7 +15295,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -17726,6 +17744,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (osi < oss.len()) {
         out = out.append("OPTSTRUCT:" + oss[osi]);
         osi = osi + 1;
+    }
+    // Fresh Option[<scalar-arr-of-arr>] locals (#4365): `var o: Option[i32[][]] =
+    // Some([[i, i+1], ...])` consumed by a borrow-only match — the arr-of-arr sibling of
+    // OPTSTRUCT. Credited "OPTARRARR:" so slot_is_reclaimable_optarrarr routes the loop-rebind
+    // + exit sweep through emit_optarrarr_deep_free (tag-check -> __fern_arrarr_free payload ->
+    // option box dec). collect_fresh_optarrarr_names is self-gating (block-level consuming-match
+    // analysis), so credit its names directly.
+    var oas: string[] = collect_fresh_optarrarr_names(body, []);
+    var oasi: i32 = 0;
+    while (oasi < oas.len()) {
+        out = out.append("OPTARRARR:" + oas[oasi]);
+        oasi = oasi + 1;
     }
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -20875,6 +20905,292 @@ function emit_optstruct_reclaim_store(se: LowerState, slot: i32, sty: string): L
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
     st = emit_optstruct_deep_free(st, slot, sty);    // free old box + payload
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// ── OPTARRARR: reclaim `Option[<scalar-arr-of-arr>]` locals (#4365) ──
+// The arr-of-arr sibling of OPTSTRUCT: the Some payload is an arr-of-arr box, freed whole by
+// the backend-complete __fern_arrarr_free (inner scalar buffers + outer). Scalar-inner only
+// (i32[][]/boolean[][]/…); a string-inner arr-of-arr would need __fern_strarrarr_free
+// (deferred). opt_type carries the full Option[T[][]] for this annotated binding.
+
+// optarrarr_ann_is: `type_name` is `Option[<scalar-arr>[]]` — Option of an arr-of-arr whose
+// inner element is a leak-safe scalar array.
+function optarrarr_ann_is(type_name: string): boolean {
+    var inner: string = opttup_inner_type(type_name);
+    var n: i32 = inner.len();
+    if (n < 4) { return false; }
+    if (inner[n - 2 : n] != "[]") { return false; }
+    return is_leaksafe_array_field(inner[0 : n - 2]);   // inner-inner is a scalar array (i32[]/…)
+}
+
+// optarrarr_init_is_fresh: `Some(<fresh arr-of-arr literal>)` (arrarr_lit_is_fresh) or None.
+function optarrarr_init_is_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" && c.args.len() == 1) { return arrarr_lit_is_fresh(c.args[0]); }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(nid) => { return nid.name == "None"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optarrarr_arm_expr_escapes: does `e` use the Some-payload arr-of-arr binding `g` in an
+// escaping way? g[i][j] (scalar read), g.len() and g[i].len() are borrows; a bare `g`
+// (outer buffer) or a bare `g[i]` (an inner row buffer) extracted escapes. Erring toward
+// rejection is a safe leak, never an over-release.
+function optarrarr_arm_expr_escapes(e: parser.Expr, g: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == g; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIndex(inner) => {
+                    match (inner.array) {
+                        parser.ExprIdent(iid) => {
+                            if (iid.name == g) { return optarrarr_arm_expr_escapes(inner.index, g) || optarrarr_arm_expr_escapes(ix.index, g); }
+                        },
+                        _ => {}
+                    }
+                },
+                parser.ExprIdent(aid) => { if (aid.name == g) { return true; } },   // bare g[i] row escapes
+                _ => {}
+            }
+            return optarrarr_arm_expr_escapes(ix.array, g) || optarrarr_arm_expr_escapes(ix.index, g);
+        },
+        parser.ExprFieldAccess(fa) => { return optarrarr_arm_expr_escapes(fa.obj, g); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        var recv_ok: boolean = false;
+                        match (cfa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == g) { recv_ok = true; } },
+                            parser.ExprIndex(rix) => {
+                                match (rix.array) {
+                                    parser.ExprIdent(riid) => { if (riid.name == g) { recv_ok = true; } },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                        if (recv_ok) {
+                            match (cfa.obj) {
+                                parser.ExprIndex(rix2) => { if (optarrarr_arm_expr_escapes(rix2.index, g)) { return true; } },
+                                _ => {}
+                            }
+                            var ai: i32 = 0;
+                            while (ai < c.args.len()) { if (optarrarr_arm_expr_escapes(c.args[ai], g)) { return true; } ai = ai + 1; }
+                            return false;
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (optarrarr_arm_expr_escapes(c.callee, g)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (optarrarr_arm_expr_escapes(c.args[ci], g)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return optarrarr_arm_expr_escapes(b.left, g) || optarrarr_arm_expr_escapes(b.right, g); },
+        parser.ExprUnary(u) => { return optarrarr_arm_expr_escapes(u.operand, g); },
+        parser.ExprSlice(sl) => { return optarrarr_arm_expr_escapes(sl.array, g) || optarrarr_arm_expr_escapes(sl.start, g) || optarrarr_arm_expr_escapes(sl.end, g); },
+        parser.ExprArray(ar) => { var i: i32 = 0; while (i < ar.elements.len()) { if (optarrarr_arm_expr_escapes(ar.elements[i], g)) { return true; } i = i + 1; } return false; },
+        parser.ExprTuple(t) => { var i: i32 = 0; while (i < t.elements.len()) { if (optarrarr_arm_expr_escapes(t.elements[i], g)) { return true; } i = i + 1; } return false; },
+        parser.ExprStructLit(slb) => {
+            if (slb.has_base && optarrarr_arm_expr_escapes(slb.base, g)) { return true; }
+            var i: i32 = 0;
+            while (i < slb.field_values.len()) { if (optarrarr_arm_expr_escapes(slb.field_values[i], g)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function optarrarr_arm_stmt_escapes(st: parser.Stmt, g: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return optarrarr_arm_expr_escapes(v.init, g); },
+        parser.StmtReturn(r) => { return optarrarr_arm_expr_escapes(r.value, g); },
+        parser.StmtExpr(e) => { return optarrarr_arm_expr_escapes(e.value, g); },
+        parser.StmtAssign(a) => { return optarrarr_arm_expr_escapes(a.value, g); },
+        parser.StmtIf(f) => {
+            if (optarrarr_arm_expr_escapes(f.cond, g)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (optarrarr_arm_stmt_escapes(f.then_body[ti], g)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (optarrarr_arm_stmt_escapes(f.else_body[ei], g)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (optarrarr_arm_expr_escapes(w.cond, g)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (optarrarr_arm_stmt_escapes(w.body[i], g)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (optarrarr_arm_expr_escapes(fo.iter, g)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (optarrarr_arm_stmt_escapes(fo.body[i], g)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (optarrarr_arm_expr_escapes(m.scrutinee, g)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && optarrarr_arm_expr_escapes(m.arms[ai].guard, g)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (optarrarr_arm_stmt_escapes(m.arms[ai].body[bi], g)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return optarrarr_arm_stmt_escapes(d.action, g); },
+        _ => { return false; }
+    }
+    return false;
+}
+function optarrarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var is_scrut: boolean = false;
+                match (m.scrutinee) {
+                    parser.ExprIdent(sid) => { if (sid.name == name) { is_scrut = true; } },
+                    _ => {}
+                }
+                if (is_scrut) {
+                    var ai: i32 = 0;
+                    while (ai < m.arms.len()) {
+                        match (m.arms[ai].pattern) {
+                            parser.PatVariant(pv) => {
+                                var vn: string = pv.type_name;
+                                var vc: i32 = 0;
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()]; } vc = vc + 1; }
+                                if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
+                                    if (m.arms[ai].has_guard && optarrarr_arm_expr_escapes(m.arms[ai].guard, pv.binding)) { return true; }
+                                    var bi: i32 = 0;
+                                    while (bi < m.arms[ai].body.len()) { if (optarrarr_arm_stmt_escapes(m.arms[ai].body[bi], pv.binding)) { return true; } bi = bi + 1; }
+                                }
+                            },
+                            _ => {}
+                        }
+                        ai = ai + 1;
+                    }
+                }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (optarrarr_payload_escapes(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+            },
+            parser.StmtIf(f) => { if (optarrarr_payload_escapes(f.then_body, name) || optarrarr_payload_escapes(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (optarrarr_payload_escapes(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (optarrarr_payload_escapes(fo.body, name)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_fresh_optarrarr_names: the arr-of-arr sibling of collect_fresh_opttup_names — a
+// fresh Some(<arr-of-arr lit>)/None under an Option[<scalar-arr-of-arr>] annotation, consumed
+// by exactly one borrow-only match in the same block, not reassigned, not escaping.
+function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (optarrarr_ann_is(v.type_name)
+                    && optarrarr_init_is_fresh(v.init)
+                    && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < stmts.len()) {
+                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi
+                        && !match_arms_use_name(stmts[match_idx], v.name)
+                        && !optarrarr_payload_escapes(stmts, v.name)
+                        && !name_used_after(stmts, v.name, match_idx)
+                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        a = push_str_unique(a, v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, a); a = collect_fresh_optarrarr_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_optarrarr_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
+// slot_is_reclaimable_optarrarr: slot i holds a fresh, non-escaping
+// `Option[<scalar-arr-of-arr>]` local, credited "OPTARRARR:" by reclaimable_names_of.
+function slot_is_reclaimable_optarrarr(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    // An option-box slot (opt_type set — inference may collapse the arr-of-arr payload a
+    // level, so match on the CREDIT, not the opt_type shape). The credit is granted only by
+    // collect_fresh_optarrarr_names on the authoritative Option[<scalar-arr-of-arr>]
+    // annotation, so it uniquely identifies genuine arr-of-arr option slots.
+    if (s.locals[i].opt_type.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "OPTARRARR:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_optarrarr_deep_free frees the option box in `slot`: null-guarded, if Some
+// (op_opt_tag == 0) it extracts the arr-of-arr payload and frees it whole via
+// __fern_arrarr_free (inner buffers + outer), then decs the option box. A None box skips to
+// the box dec. Leaves the slot dangling.
+function emit_optarrarr_deep_free(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());               // arr-of-arr box ptr
+    st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));       // free inner buffers + outer
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-Some
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_optarrarr_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD box, store new.
+function emit_optarrarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$oar" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_optarrarr_deep_free(st, slot);         // free old box + payload
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
