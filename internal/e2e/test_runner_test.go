@@ -226,7 +226,7 @@ func TestRunnerHexExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/hex", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/hex", "# pass 13", "# fail 0", "1..13"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
