@@ -2906,6 +2906,24 @@ func TestRunnerTextwrapExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/format_duration_parse_test.fern` covers
+// std/format.parse_duration_ms — single units, multi-part durations
+// with/without spaces, the i64 range beyond i32, and the None
+// rejections. Passing suite → exit 0; plan line `1..4`.
+func TestRunnerFormatDurationParseExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/format_duration_parse_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/format parse_duration_ms", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

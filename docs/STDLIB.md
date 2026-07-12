@@ -306,6 +306,10 @@ sets, not for large collections.
   specs (`{:>8}`, `{:*^10}`, `{:.3}`, `{:>8.2}`).
 - `format_bytes(n)` — `"1024 → 1 KiB"` shape (binary prefixes).
 - `format_duration_ms(ms)` — `"1h 23m 45s"` shape.
+- `parse_duration_ms(s)` — inverse of `format_duration_ms`: parse a
+  `<int><unit>` sequence (units `ms`/`s`/`m`/`h`/`d`, space-optional,
+  e.g. `"1h30m"`, `"1h 30m"`, `"500ms"`) into `Option[i64]` milliseconds;
+  `None` on empty input, a missing/unknown unit, or a part with no number.
 
 ### `std/csv`
 
