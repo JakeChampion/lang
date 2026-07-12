@@ -1,0 +1,3 @@
+P001_parse_error.fern:1:34: error[P001]: unexpected token ";"
+    function main(): i32 { return 1 +; }
+                                     ^
