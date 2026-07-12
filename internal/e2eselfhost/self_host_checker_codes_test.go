@@ -271,6 +271,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"impl-supertrait-missing", "trait A { function a(self: Self): i32; }\ntrait B: A { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-supertrait-multi-missing", "trait A { function a(self: Self): i32; }\ntrait C { function c(self: Self): i32; }\ntrait B: A + C { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function a(self: Self): i32 { return 2; } }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-supertrait-satisfied-ok", "trait A { function a(self: Self): i32; }\ntrait B: A { function b(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function a(self: Self): i32 { return 2; } }\nimpl B for S { function b(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// E021 generic-bound conformance AT CALL SITES (#4842): calling
+		// `f[T: Tr](x)` with an argument whose concrete type doesn't implement
+		// Tr draws E021 — the last unported E021 shape (the impl-side family
+		// above is #4347). A struct or primitive with no `impl Tr` fails; an
+		// explicit impl, an `@derive(Tr)` (whose synthesised methods witness
+		// conformance), and an argument that stays generic (an opaque type
+		// param — the checker can't know its instantiation, so it never fires)
+		// are all clean. A `T: A + B` bound missing either trait fails. Each
+		// verified against the Go oracle (the native checker emits the same set).
+		{"bound-struct-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T, b: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p, p); return r.x; }\n", []string{"E021"}},
+		{"bound-prim-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { return pick(3); }\n", []string{"E021"}},
+		{"bound-struct-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nimpl Ord for Foo { function cmp(self: Self, other: Self): i32 { return 0; } }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
 		// object-safe draws E021 — T has an associated function (no self) or a
 		// Self-returning method, neither of which can dispatch through a dyn

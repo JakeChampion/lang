@@ -333,7 +333,11 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
 // the module, then read at every ExprCall site. ret_type is a
 // Type (post type-name resolution); param_types parallels the
 // FuncDecl's params in declaration order.
-pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32 }
+// param_bound runs PARALLEL to param_types: param_bound[i] holds the
+// `+`-joined trait bound(s) when parameter i's declared type is exactly a
+// bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
+// generic-bound conformance check at call sites (#4842) — see call_diags.
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_bound: string[] }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -373,7 +377,16 @@ pub struct Scope {
     // to catch return-type mismatches. TypeUnknown means
     // "no enclosing function" (top-level stmts) — returns there
     // skip the check.
-    ret_type: Type
+    ret_type: Type,
+    // impls / trait_reqs carry the module's `impl … for …` table and its
+    // trait requirement records, populated (via with_impls) only on the
+    // scope used for the call-diagnostic walk. They drive the E021
+    // generic-bound conformance check at call sites (#4842): a bounded
+    // type param `T: Tr` whose call-site argument type neither has an
+    // `impl Tr` nor provides Tr's required methods (e.g. via @derive) is
+    // flagged. Empty on every other scope (the check no-ops).
+    impls: parser.ImplInfo[],
+    trait_reqs: parser.TraitReq[]
 }
 
 function new_scope(): Scope {
@@ -383,7 +396,7 @@ function new_scope(): Scope {
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
+    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
 function new_scope_with_sigs(sigs: FuncSig[]): Scope {
@@ -392,7 +405,7 @@ function new_scope_with_sigs(sigs: FuncSig[]): Scope {
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
 function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
@@ -400,26 +413,32 @@ function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Sco
     var ts: Type[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
 function new_scope_with_sigs_structs_unions(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
 function new_scope_full(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.append(name);
     var ts: Type[] = s.types.append(t);
-    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type };
+    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs };
+}
+// with_impls attaches the module's impl table + trait requirement records
+// to a scope so call_diags can run the E021 generic-bound conformance
+// check (#4842). Applied to the func-body scope in check_module.
+function (s: Scope) with_impls(impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
+    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs };
 }
 
 // defines reports whether `name` is bound in scope (param, receiver,
@@ -602,11 +621,11 @@ function for_iter_is_range(iter: parser.Expr): boolean {
 }
 
 function (s: Scope) enter_loop(): Scope {
-    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type };
+    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs };
 }
 
 function (s: Scope) with_ret_type(rt: Type): Scope {
-    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt };
+    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -629,7 +648,121 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     // Sentinel: empty name + empty param list + unknown ret_type
     // tells callers the name isn't a function.
     var empty: Type[] = [];
-    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0 };
+    var nob: string[] = [];
+    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_bound: nob };
+}
+
+// tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
+// a parameter's declared type names, when that type is EXACTLY a bare
+// bounded type param (`x: T` with `T: Tr`), else "". type_params and
+// bound_traits run parallel (parser.parse_func_decl); a promoted unbounded
+// param has an empty bound_traits entry and yields "". Conservative by
+// design — anything but a bare `T` (e.g. `T[]`, `Box[T]`) yields "" and is
+// not conformance-checked, so the call-site check (#4842) never fires on a
+// shape whose concrete type argument it can't read directly.
+function tp_bound_for(ptype: string, type_params: string[], bound_traits: string[]): string {
+    var k: i32 = 0;
+    while (k < type_params.len()) {
+        if (type_params[k] == ptype) {
+            if (k < bound_traits.len()) { return bound_traits[k]; }
+            return "";
+        }
+        k = k + 1;
+    }
+    return "";
+}
+
+// e021_trait_idx returns the index of trait `tr`'s requirement record in
+// trait_reqs, or -1 if `tr` names no trait declared in this module. The
+// E021 call-site conformance check (#4842) gates on a hit so a bound whose
+// trait name doesn't resolve here (e.g. an import-qualified spelling that
+// never matched a local trait) is skipped rather than mis-flagged.
+function e021_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
+    var i: i32 = 0;
+    while (i < trait_reqs.len()) {
+        if (trait_reqs[i].trait_name == tr) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// e021_conforms decides whether concrete type `cty` satisfies trait bound
+// `tr` — the parity-faithful conformance test. True when the module has an
+// explicit `impl tr for cty`, OR `cty` provides every required (abstract)
+// method of `tr` as a receiver method. The method-set arm captures
+// @derive(tr) — which synthesises exactly those methods — the same way the
+// native checker treats a derived impl as conformance. Biased toward TRUE
+// (a trait with no required methods relies solely on the explicit impl),
+// so it never flags a type the native checker would accept.
+function e021_conforms(s: Scope, tr: string, treq_idx: i32, cty: string): boolean {
+    if (e021_scope_has_impl(s.impls, tr, cty)) { return true; }
+    var reqs: string[] = s.trait_reqs[treq_idx].methods;
+    if (reqs.len() == 0) { return false; }
+    var mi: i32 = 0;
+    while (mi < reqs.len()) {
+        if (s.lookup_method(reqs[mi], cty).name.len() == 0) { return false; }
+        mi = mi + 1;
+    }
+    return true;
+}
+
+// e021_type_known reports whether `cty` is a type this module knows well
+// enough to reason about conformance for: a primitive, or a declared
+// struct / enum (union) name. The check stays silent on anything else,
+// keeping it from firing on an opaque or externally-defined type.
+function e021_type_known(cty: string, at: Type, s: Scope): boolean {
+    if (is_primitive_type(at)) { return true; }
+    var i: i32 = 0;
+    while (i < s.structs.len()) { if (s.structs[i].name == cty) { return true; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < s.unions.len()) { if (s.unions[j].name == cty) { return true; } j = j + 1; }
+    return false;
+}
+
+// e021_scope_has_impl is the scope-carried analogue of e021_has_impl: does
+// the module contain `impl <trait_name> for <impl_type>`?
+function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_type: string): boolean {
+    var i: i32 = 0;
+    while (i < impls.len()) {
+        if (impls[i].trait_name == trait_name && impls[i].impl_type == impl_type) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// e021_bound_call_diag emits E021 for a generic-bound conformance failure
+// at a call site (#4842): parameter `x: T` with `T: Tr` (pbound is the
+// `+`-joined bound list) whose call-site argument has concrete type `at`
+// that does not conform to Tr (no `impl Tr` and not @derive-provided).
+// Conservative gates (declared trait, known concrete type, bare-name
+// argument, method-set conformance) keep it from false-firing on the
+// self-host bundle's own pervasive bounded-generic calls, which all carry
+// their impls or derives. Mirrors native checker.go's call-site E021 arm.
+function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i32): Diag[] {
+    var out: Diag[] = [];
+    var cty: string = type_label(at);
+    if (cty.len() == 0) { return out; }
+    // A composite label (`Foo[]`, tuple/fn/map) can't be a bare type
+    // argument we look up an impl for — skip.
+    var bi: i32 = 0;
+    while (bi < cty.len()) { if (cty[bi] == 91) { return out; } bi = bi + 1; }
+    if (!e021_type_known(cty, at, s)) { return out; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= pbound.len()) {
+        if (i == pbound.len() || pbound[i] == 43) {
+            if (i > start) {
+                var tr: string = pbound[start:i];
+                var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
+                if (tidx >= 0 && !e021_conforms(s, tr, tidx, cty)) {
+                    out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
+                }
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // has_array_method reports whether an auto-discovered std/array method
@@ -1691,16 +1824,19 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
         // Skip receiver methods — they live in MethodSig table.
         if (fd.receiver_name.len() > 0) { i = i + 1; continue; }
         var pts: Type[] = [];
+        var pbnd: string[] = [];
         var j: i32 = 0;
         while (j < fd.params.len()) {
             pts = pts.append(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
+            pbnd = pbnd.append(tp_bound_for(fd.params[j].type_name, fd.type_params, fd.bound_traits));
             j = j + 1;
         }
         out = out.append(FuncSig {
             name: fd.name,
             param_types: pts,
             ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions),
-            type_param_count: fd.type_param_count
+            type_param_count: fd.type_param_count,
+            param_bound: pbnd
         });
         i = i + 1;
     }
@@ -3407,6 +3543,15 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 var ai: i32 = 0;
                                 while (ai < c.args.len()) {
                                     var at: Type = check_expr(c.args[ai], s);
+                                    // E021 (#4842): generic-bound conformance. When
+                                    // param ai is a bare bounded type param `x: T`
+                                    // (T: Tr), the argument's concrete type must
+                                    // provide `impl Tr`. Runs before the E038 skip
+                                    // because a bounded param's declared type is the
+                                    // erased-unknown T (E038 itself skips it).
+                                    if (ai < sig.param_bound.len() && sig.param_bound[ai].len() > 0 && !is_unknown(at)) {
+                                        out = append_diags(out, e021_bound_call_diag(sig.param_bound[ai], at, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
+                                    }
                                     // An unknown PARAM type is an opaque generic
                                     // parameter (`f[T](x: T)`, where T erases to
                                     // unknown) — the arg can't be checked against
@@ -6159,7 +6304,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, stmts_slit_diags(dbody, structs));
         // E004: free-function call arity (scope-threaded so a shadowing
         // local isn't mistaken for the function).
-        body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
+        body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods).with_impls(mod.impls, mod.trait_reqs)));
         // E003: assignment / annotated-var type mismatch (scope-threaded).
         body_diags = append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
         // E011 / E058: break / continue outside a loop, and a labeled
