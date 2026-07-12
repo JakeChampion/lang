@@ -9841,7 +9841,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
                 parser.ExprTuple(dte) => {
                     if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
-                    else if (tuple_lit_rc_reclaimable(es.value)) {
+                    else if (tuple_lit_rc_reclaimable(es.value, s.structs)) {
                         // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);` or
                         // the nested `((w, [w, w+1]), w);` — #4365): every element
                         // scalar-shaped, a DIRECT array literal, or a nested tuple
@@ -13583,6 +13583,25 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
                 s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the inner tuple box
                 s = s.emit(ir.op_drop());
             },
+            parser.ExprStructLit(slit) => {
+                // A fresh STRUCT-literal element (`(i, P { xs: [..] })`, #4365): the struct box
+                // sole-owns its rc-array field buffers. Deep-drop the struct's fields
+                // (__struct_drop_<P>, balanced by the construction alias-inc) then free the box.
+                // Inert on existing rc-tuples (they carry no struct-lit element); admission
+                // (tuple_lit_rc_reclaimable) only credits a tuple whose struct element routes
+                // field-reclaim.
+                var cps: i32[] = path_child(path, k);
+                var hn: string = "$tsx" + util.i32_to_string(s.locals.len());
+                s = s.add_local(hn);
+                var hslot: i32 = s.slot_of(hn);
+                s = s.mark_struct_type(hslot, slit.type_name);
+                s = emit_load_tuple_path(s, slot, cps);                  // struct box ptr
+                s = s.emit(ir.op_store_local(hslot));
+                s = emit_struct_field_drops(s, hslot);                   // free the struct's rc fields
+                s = s.emit(ir.op_load_local(hslot));
+                s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the struct box
+                s = s.emit(ir.op_drop());
+            },
             _ => {}
         }
         k = k + 1;
@@ -15676,7 +15695,7 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
 // (it aliases a live local, so freeing it would double-release) — that tuple stays
 // on the SHALLOW scalar-tuple path (leak-safe). String / struct pointer elements
 // are excluded too (a first cut to array elements); such a tuple stays shallow.
-function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
+function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
             if (tl.elements.len() == 0) { return false; }
@@ -15688,6 +15707,15 @@ function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
                     parser.ExprBool(_) => {},
                     parser.ExprIdent(_) => {},
                     parser.ExprArray(_) => { any_arr = true; },
+                    // A fresh STRUCT-literal element with an rc-array field (`(i, P { xs: [..] })`,
+                    // #4365): the struct box sole-owns its field buffers, so emit_tuple_child_drops
+                    // deep-drops it (__struct_drop_<P>) + frees the box. Only a reclaim-routing
+                    // struct qualifies; any other struct rejects the tuple (safe-leak).
+                    parser.ExprStructLit(slit) => {
+                        if (!decl_is_struct(structs, slit.type_name)) { return false; }
+                        if (!struct_has_reclaim_array_field(structs, slit.type_name)) { return false; }
+                        any_arr = true;
+                    },
                     // A NESTED tuple LITERAL element (`((i, [i,i+1]), j)`, #4365):
                     // admitted iff it is itself deep-reclaimable — every element a
                     // scalar / ident / array / deeper nested tuple literal — so
@@ -15698,8 +15726,8 @@ function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
                     // and stays leak-safe (skipped), so recursion only ever chases
                     // fresh boxes.
                     parser.ExprTuple(inner) => {
-                        if (!tuple_lit_rc_reclaimable(tl.elements[i])) { return false; }
-                        if (tuple_lit_has_array(inner)) { any_arr = true; }
+                        if (!tuple_lit_rc_reclaimable(tl.elements[i], structs)) { return false; }
+                        if (tuple_lit_has_array(inner, structs)) { any_arr = true; }
                     },
                     _ => { return false; }
                 }
@@ -15716,12 +15744,13 @@ function tuple_lit_rc_reclaimable(e: parser.Expr): boolean {
 // array-literal element anywhere — the "at least one buffer to free" test that
 // makes a nested tuple worth crediting (a purely-scalar nested tuple leaks
 // nothing an rc walk would reclaim, so it stays on the shallow path).
-function tuple_lit_has_array(tup: parser.ExprTuple): boolean {
+function tuple_lit_has_array(tup: parser.ExprTuple, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < tup.elements.len()) {
         match (tup.elements[i]) {
             parser.ExprArray(_) => { return true; },
-            parser.ExprTuple(inner) => { if (tuple_lit_has_array(inner)) { return true; } },
+            parser.ExprTuple(inner) => { if (tuple_lit_has_array(inner, structs)) { return true; } },
+            parser.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
             _ => {}
         }
         i = i + 1;
@@ -15802,33 +15831,257 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // element, then the box) fires, instead of the scalar-tuple shallow box dec that
 // leaks the array element. The escape gate (body_unsafe_for) is applied by
 // reclaimable_names_of before crediting, so an escaping tuple is never freed.
-function collect_fresh_rc_tuple_names(stmts: parser.Stmt[], acc: string[]): string[] {
+function collect_fresh_rc_tuple_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_rc_tuple_in_stmt(stmts[i], a); i = i + 1; }
+    while (i < stmts.len()) { a = collect_fresh_rc_tuple_in_stmt(stmts[i], structs, a); i = i + 1; }
     return a;
 }
-function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (tuple_lit_rc_reclaimable(v.init)) { return push_str_unique(acc, v.name); }
+            if (tuple_lit_rc_reclaimable(v.init, structs)) { return push_str_unique(acc, v.name); }
             return acc;
         },
         parser.StmtIf(iff) => {
-            var a: string[] = collect_fresh_rc_tuple_names(iff.then_body, acc);
-            return collect_fresh_rc_tuple_names(iff.else_body, a);
+            var a: string[] = collect_fresh_rc_tuple_names(iff.then_body, structs, acc);
+            return collect_fresh_rc_tuple_names(iff.else_body, structs, a);
         },
-        parser.StmtWhile(w) => { return collect_fresh_rc_tuple_names(w.body, acc); },
-        parser.StmtFor(f) => { return collect_fresh_rc_tuple_names(f.body, acc); },
+        parser.StmtWhile(w) => { return collect_fresh_rc_tuple_names(w.body, structs, acc); },
+        parser.StmtFor(f) => { return collect_fresh_rc_tuple_names(f.body, structs, acc); },
         parser.StmtMatch(m) => {
             var a: string[] = acc;
             var i: i32 = 0;
-            while (i < m.arms.len()) { a = collect_fresh_rc_tuple_names(m.arms[i].body, a); i = i + 1; }
+            while (i < m.arms.len()) { a = collect_fresh_rc_tuple_names(m.arms[i].body, structs, a); i = i + 1; }
             return a;
         },
-        parser.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, acc); },
+        parser.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, structs, acc); },
         _ => { return acc; },
     }
+}
+
+// rctuple_type_of_decl returns the declared TUPLE type of a fresh rc-tuple local
+// `name` (`var t: (i32, P) = …`), or "" when the binding is un-annotated / not found.
+// Used by the rc-tuple escape gate: with the tuple type in hand it can tell a scalar
+// element read (`t.0`, safe copy) from a whole POINTER-element extraction (`keep = t.1`,
+// an owned array / struct box the deep-drop would free — an escape).
+function rctuple_type_of_decl(stmts: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name && v.type_name.len() >= 2 && v.type_name[0:1] == "(") { return v.type_name; }
+            },
+            parser.StmtIf(f) => {
+                var t1: string = rctuple_type_of_decl(f.then_body, name);
+                if (t1 != "") { return t1; }
+                var t2: string = rctuple_type_of_decl(f.else_body, name);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var t: string = rctuple_type_of_decl(w.body, name); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = rctuple_type_of_decl(fo.body, name); if (t != "") { return t; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { var t: string = rctuple_type_of_decl(m.arms[mi].body, name); if (t != "") { return t; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// rctuple_esc_expr: does `e` use the fresh rc-tuple local `name` (declared tuple type
+// `ttype`) in a way that ESCAPES an owned pointer the whole-tuple deep-drop would free?
+// The tuple carries at least one owned pointer element (an array / a reclaim-struct box);
+// the deep-drop frees those, so a WHOLE element extracted bare would then be over-released.
+// Borrows (safe): a scalar element read `name.<i>` (by-value copy); an indexed array-element
+// read `name.<i>[j]`; a struct-element scalar-field read `name.<i>.<f>`; an indexed struct
+// array-field read `name.<i>.<f>[j]`; and the `.len()` of either. ESCAPES (true): a bare
+// `name`; a bare POINTER element `name.<i>` (array / struct box); a bare struct array-field
+// `name.<i>.<f>`. Erring toward escape is a safe leak, never an over-release. Mirrors
+// arrtup_elem_esc_expr, rooted at a bare-local tuple (`name.<i>`) instead of `name[k].<i>`.
+function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },   // bare whole tuple escapes
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name == name && util.is_all_digits(fa.field)) {
+                        var tag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(fa.field));
+                        if (is_scalar_type_name(tag)) { return false; }   // scalar element copy
+                        return true;                                      // pointer element extracted bare
+                    }
+                    return false;   // some other local's field: not our name
+                },
+                parser.ExprFieldAccess(pfa) => {
+                    // name.<i>.<f> : a struct-element field read.
+                    match (pfa.obj) {
+                        parser.ExprIdent(pid) => {
+                            if (pid.name == name && util.is_all_digits(pfa.field)) {
+                                var sty: string = tuple_type_elem_tag(ttype, util.digits_to_i32(pfa.field));
+                                var ft: string = decl_field_type(structs, sty, fa.field);
+                                if (is_scalar_type_name(ft)) { return false; }   // scalar struct-field copy
+                                return true;                                     // struct array/pointer field extracted bare
+                            }
+                        },
+                        _ => {}
+                    }
+                    return rctuple_esc_expr(fa.obj, name, ttype, structs);
+                },
+                _ => { return rctuple_esc_expr(fa.obj, name, ttype, structs); }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprFieldAccess(bfa) => {
+                    match (bfa.obj) {
+                        parser.ExprIdent(bid) => {
+                            // name.<i>[j] : indexed array-element read — safe; check the index.
+                            if (bid.name == name && util.is_all_digits(bfa.field)) {
+                                return rctuple_esc_expr(ix.index, name, ttype, structs);
+                            }
+                        },
+                        parser.ExprFieldAccess(ppfa) => {
+                            // name.<i>.<f>[j] : indexed struct array-field read — safe; check the index.
+                            match (ppfa.obj) {
+                                parser.ExprIdent(ppid) => {
+                                    if (ppid.name == name && util.is_all_digits(ppfa.field)) {
+                                        return rctuple_esc_expr(ix.index, name, ttype, structs);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },   // bare name[..]
+                _ => {}
+            }
+            return rctuple_esc_expr(ix.array, name, ttype, structs) || rctuple_esc_expr(ix.index, name, ttype, structs);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprFieldAccess(ofa) => {
+                                match (ofa.obj) {
+                                    parser.ExprIdent(oid) => {
+                                        // name.<i>.len() : array-element length borrow.
+                                        if (oid.name == name && util.is_all_digits(ofa.field)) {
+                                            var ci: i32 = 0;
+                                            while (ci < c.args.len()) { if (rctuple_esc_expr(c.args[ci], name, ttype, structs)) { return true; } ci = ci + 1; }
+                                            return false;
+                                        }
+                                    },
+                                    parser.ExprFieldAccess(o2) => {
+                                        // name.<i>.<f>.len() : struct array-field length borrow.
+                                        match (o2.obj) {
+                                            parser.ExprIdent(o2id) => {
+                                                if (o2id.name == name && util.is_all_digits(o2.field)) {
+                                                    var cj: i32 = 0;
+                                                    while (cj < c.args.len()) { if (rctuple_esc_expr(c.args[cj], name, ttype, structs)) { return true; } cj = cj + 1; }
+                                                    return false;
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (rctuple_esc_expr(c.callee, name, ttype, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { if (rctuple_esc_expr(c.args[ai], name, ttype, structs)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return rctuple_esc_expr(b.left, name, ttype, structs) || rctuple_esc_expr(b.right, name, ttype, structs); },
+        parser.ExprUnary(u) => { return rctuple_esc_expr(u.operand, name, ttype, structs); },
+        parser.ExprSlice(sl) => { return rctuple_esc_expr(sl.array, name, ttype, structs) || rctuple_esc_expr(sl.start, name, ttype, structs) || rctuple_esc_expr(sl.end, name, ttype, structs); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { if (rctuple_esc_expr(ar.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (rctuple_esc_expr(t.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (rctuple_esc_expr(sl.field_values[i], name, ttype, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return rctuple_esc_expr(v.init, name, ttype, structs); },
+        parser.StmtReturn(r) => { return rctuple_esc_expr(r.value, name, ttype, structs); },
+        parser.StmtExpr(e) => { return rctuple_esc_expr(e.value, name, ttype, structs); },
+        parser.StmtAssign(a) => { return rctuple_esc_expr(a.value, name, ttype, structs); },
+        parser.StmtIf(f) => {
+            if (rctuple_esc_expr(f.cond, name, ttype, structs)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (rctuple_esc_stmt(f.then_body[ti], name, ttype, structs)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (rctuple_esc_stmt(f.else_body[ei], name, ttype, structs)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (rctuple_esc_expr(w.cond, name, ttype, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (rctuple_esc_stmt(w.body[i], name, ttype, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (rctuple_esc_expr(fo.iter, name, ttype, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (rctuple_esc_stmt(fo.body[i], name, ttype, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (rctuple_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && rctuple_esc_expr(m.arms[ai].guard, name, ttype, structs)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (rctuple_esc_stmt(m.arms[ai].body[bi], name, ttype, structs)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return rctuple_esc_stmt(d.action, name, ttype, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+// rctuple_payload_escapes: any statement in `stmts` uses the rc-tuple local `name`
+// (tuple type `ttype`) in an escaping way per rctuple_esc_stmt. Only meaningful with a
+// tuple type annotation in hand; the credit site skips it when the type is unknown
+// (un-annotated bindings keep their prior behaviour).
+function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (rctuple_esc_stmt(stmts[i], name, ttype, structs)) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // collect_fresh_rcenum_names gathers LOCAL names bound from a FRESH rc-payload
@@ -17557,11 +17810,22 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // fresh ARRAY-literal element — credited "TUPRC:" so slot_is_reclaimable_rctuple
     // drives the DEEP loop-rebind reclaim (emit_tuple_deep_reinit_store: arr_dec each
     // fresh array element, then the box), instead of the scalar-tuple shallow box dec
-    // that leaks the array (#4357). Same body_unsafe_for non-escape gate.
-    var rctups: string[] = collect_fresh_rc_tuple_names(body, []);
+    // that leaks the array (#4357). Two non-escape gates: body_unsafe_for (no bare-tuple
+    // escape) AND — when a tuple type annotation is available — rctuple_payload_escapes,
+    // which rejects a WHOLE owned-pointer-element extraction (`keep = t.1`, an array or
+    // reclaim-struct box the deep-drop would free, leaving a live alias to over-release).
+    // A scalar read `t.0`, an indexed array read `t.1[j]`, a struct scalar-field read
+    // `t.1.y`, and their `.len()` stay borrows and still reclaim. Un-annotated bindings
+    // (no type) skip the second gate, preserving prior behaviour. #4365.
+    var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
     var rti: i32 = 0;
     while (rti < rctups.len()) {
-        if (!body_unsafe_for(body, rctups[rti], borrowable)) { out = out.append("TUPRC:" + rctups[rti]); }
+        if (!body_unsafe_for(body, rctups[rti], borrowable)) {
+            var rctty: string = rctuple_type_of_decl(body, rctups[rti]);
+            if (rctty == "" || !rctuple_payload_escapes(body, rctups[rti], rctty, structs)) {
+                out = out.append("TUPRC:" + rctups[rti]);
+            }
+        }
         rti = rti + 1;
     }
     // Fresh rc-payload ENUM locals (`var b = Full([i, i+1])` consumed by a match in
