@@ -207,6 +207,16 @@ Shell-style glob matching over a path-like string.
   zero directories), and `[abc]` / `[a-z]` / `[!…]` character classes.
   Anchored (whole text vs whole pattern).
 
+### `std/textwrap`
+
+Greedy word wrapping for terminal / help text.
+
+- `word_wrap(text, width): string` — break `text` into lines of at most
+  `width` code points, breaking only between words; preserves hard
+  newlines (blank lines stay blank), places an over-long word on its own
+  line unbroken, and collapses runs of spaces. Non-positive `width`
+  returns `text` unchanged.
+
 ### `std/table`
 
 Render rows of strings as a column-aligned text table (CLI output).

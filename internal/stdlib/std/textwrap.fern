@@ -1,0 +1,67 @@
+// std/textwrap — greedy word wrapping for terminal / help text.
+//
+// `word_wrap(text, width)` breaks `text` into lines no longer than
+// `width` code points, breaking only between words (runs of spaces).
+// Existing newlines are preserved as hard breaks (each line is wrapped
+// independently, so blank lines stay blank). A single word longer than
+// `width` is placed on its own line rather than split. Inter-word runs
+// of spaces collapse to a single space (standard word-wrap behaviour).
+// A non-positive `width` returns `text` unchanged.
+
+import "std/utf8";
+import "std/string";
+import "std/array";
+
+// __tw_words splits a line into its space-separated words, dropping the
+// empty strings that runs of spaces produce.
+function __tw_words(line: string): string[] {
+    var raw: string[] = line.split(" ");
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < raw.len()) {
+        if (raw[i].len() > 0) { out = out.append(raw[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// __tw_wrap_line greedily packs `words` into lines of at most `width`
+// code points, joined by newlines.
+function __tw_wrap_line(words: string[], width: i32): string {
+    var lines: string[] = [];
+    var cur: string = "";
+    var curw: i32 = 0;
+    var i: i32 = 0;
+    while (i < words.len()) {
+        var w: string = words[i];
+        var ww: i32 = utf8.codepoint_count(w);
+        if (curw == 0) {
+            cur = w;
+            curw = ww;
+        } else if (curw + 1 + ww <= width) {
+            cur = cur + " " + w;
+            curw = curw + 1 + ww;
+        } else {
+            lines = lines.append(cur);
+            cur = w;
+            curw = ww;
+        }
+        i = i + 1;
+    }
+    if (curw > 0) { lines = lines.append(cur); }
+    return lines.join("\n");
+}
+
+// `word_wrap(text, width)` — wrap `text` to `width` code points per
+// line, breaking on spaces and preserving hard newlines.
+pub function word_wrap(text: string, width: i32): string {
+    if (width <= 0) { return text; }
+    var paras: string[] = text.split("\n");
+    var out: string[] = [];
+    var p: i32 = 0;
+    while (p < paras.len()) {
+        out = out.append(__tw_wrap_line(__tw_words(paras[p]), width));
+        p = p + 1;
+    }
+    return out.join("\n");
+}
