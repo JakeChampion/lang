@@ -11409,6 +11409,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (slot_is_reclaimable_arrtup(sb, slot)) {
         return emit_arrtup_reclaim_store(sb, slot, sb.locals[slot].arrarr_elem);
     }
+    // Reclaimable (<struct-with-array>)[] LOOP-LOCAL (#4365): free the prior iteration's
+    // whole structure — each element struct's rc fields + struct box, then the outer
+    // buffer — before the store (the shallow emit_arr_store dec frees only the buffer).
+    if (slot_is_reclaimable_arrstruct(sb, slot)) {
+        return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
+    }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
 }
@@ -14359,7 +14365,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var st: LowerState = s;
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
+        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -14575,6 +14581,19 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_store_local(atj));
         }
         atj = atj + 1;
+    }
+    // Reclaimable (<struct-with-array>)[] locals (#4365): deep-free the final live
+    // structure (per-element struct deep-drop + struct box, then the outer buffer) via
+    // the same inline element-walk the loop-rebind uses. Excluded from the plain is_arr
+    // sweep above; entry-zeroed via arr_slots_of (is_arr).
+    var asj: i32 = st.n_params;
+    while (asj < st.locals.len()) {
+        if (!slot_list_has(keeps, asj) && slot_is_reclaimable_arrstruct(st, asj)) {
+            st = emit_arrstruct_deep_free(st, asj, st.struct_type_of_slot(asj));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(asj));
+        }
+        asj = asj + 1;
     }
     // (Reclaimable arr-of-arr locals are freed INSIDE the is_arr sweep above —
     // an arrarr slot is also is_arr, so a separate loop here double-freed;
@@ -17510,6 +17529,26 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("ARRTUP:" + ats[ati]);
         }
         ati = ati + 1;
+    }
+    // Fresh (<struct-with-array-field>)[] locals (#4365): `var ps: P[] = [P { xs: [..] },
+    // ...]` (P routes field-reclaim) — the struct sibling of ARRTUP. Credited
+    // "ARRSTRUCT:" so slot_is_reclaimable_arrstruct routes the loop-rebind + exit sweep
+    // through emit_arrstruct_deep_free (counted element walk: per element the struct-field
+    // deep-drop __struct_drop_<P> + struct box dec, then the outer buffer). Same gates as
+    // ARRTUP: no escape of ps itself, not reassigned, no ELEMENT alias (arrarr_row_escapes),
+    // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
+    // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
+    // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
+    var asts: string[] = collect_fresh_arrstruct_names(body, structs, []);
+    var asti: i32 = 0;
+    while (asti < asts.len()) {
+        if (!body_unsafe_for(body, asts[asti], borrowable)
+            && util.index_of_str(reassigned, asts[asti]) < 0
+            && !arrarr_row_escapes(body, asts[asti])
+            && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs)) {
+            out = out.append("ARRSTRUCT:" + asts[asti]);
+        }
+        asti = asti + 1;
     }
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
@@ -20527,6 +20566,338 @@ function emit_arrtup_reclaim_store(se: LowerState, slot: i32, ttype: string): Lo
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
     st = emit_arrtup_deep_free(st, slot, ttype);     // free old structure
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// ── ARRSTRUCT: reclaim `(<struct-with-array-field>)[]` array-of-structs locals (#4365) ──
+// The struct sibling of ARRTUP: an array whose elements are struct boxes each carrying
+// an rc-array field. The element struct type is already recorded on the (is_arr) slot
+// as struct_type (the array-of-structs binding sets struct_ty = <elem>[]-stripped), so
+// no extra marking is needed. Release reuses the ARRTUP counted element-walk but drops
+// each element via the struct-field deep-drop (__struct_drop_<T>, backend-complete)
+// instead of the tuple deep-drop.
+
+// arrstruct_elem_struct_type: for an array type `T[]` whose element T is a struct decl
+// that routes field-reclaim (has an rc-array / nested-struct / enum field), return T,
+// else "". `structs` is the decl table.
+function arrstruct_elem_struct_type(type_name: string, structs: parser.StructDecl[]): string {
+    var n: i32 = type_name.len();
+    if (n < 3) { return ""; }
+    if (type_name[n - 2 : n] != "[]") { return ""; }
+    var elem: string = type_name[0 : n - 2];
+    if (!decl_is_struct(structs, elem)) { return ""; }
+    if (!struct_has_reclaim_array_field(structs, elem)) { return ""; }
+    return elem;
+}
+
+// arrstruct_lit_is_fresh: `e` is a non-empty array literal whose EVERY element is a
+// fresh struct literal (is_fresh_struct_init — an ExprStructLit of a struct decl). The
+// struct construction's alias-inc balances the per-element __struct_drop, so a
+// freshly-built element box is sole-owned; a bare-ident element would alias a live
+// struct the free could dangle, so only literals qualify.
+function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < arr.elements.len()) {
+                if (!is_fresh_struct_init(arr.elements[i], structs)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
+// literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body.
+// Escape gates applied by reclaimable_names_of.
+function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, v.name); }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, structs, a); a = collect_fresh_arrstruct_names(f.else_body, structs, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, structs, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, structs, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_arrstruct_names(m.arms[mi].body, structs, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// arrstruct_elem_type_of_decl: find the element struct type of the `T[]` local `name`
+// from its declaration anywhere in the body (for the escape checker). "" if not an
+// array-of-structs declaration.
+function arrstruct_elem_type_of_decl(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { var t: string = arrstruct_elem_struct_type(v.type_name, structs); if (t != "") { return t; } } },
+            parser.StmtIf(f) => {
+                var t1: string = arrstruct_elem_type_of_decl(f.then_body, name, structs);
+                if (t1 != "") { return t1; }
+                var t2: string = arrstruct_elem_type_of_decl(f.else_body, name, structs);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var t: string = arrstruct_elem_type_of_decl(w.body, name, structs); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = arrstruct_elem_type_of_decl(fo.body, name, structs); if (t != "") { return t; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { var t: string = arrstruct_elem_type_of_decl(m.arms[mi].body, name, structs); if (t != "") { return t; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// arrstruct_elem_esc_expr: does `e` use the array-of-structs local `name` (element
+// struct type `sty`) in a way that ESCAPES an owned field the reclaim would free? The
+// leaf is an ELEMENT field access `name[i].f`: a scalar field is a safe value copy; an
+// ARRAY / nested-struct / enum field extracted bare escapes. `name[i].f[j]` (indexed
+// array-field read) and `name[i].f.len()` are borrows; a BARE `name[i]` element (the
+// struct box) or a bare `name` escapes.
+function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIndex(ix) => {
+                    match (ix.array) {
+                        parser.ExprIdent(aid) => {
+                            if (aid.name == name) {
+                                var ft: string = decl_field_type(structs, sty, fa.field);
+                                if (ft != "" && !is_scalar_type_name(ft)) { return true; }   // bare non-scalar field extract
+                                return arrstruct_elem_esc_expr(ix.index, name, sty, structs);
+                            }
+                        },
+                        _ => {}
+                    }
+                    return arrstruct_elem_esc_expr(fa.obj, name, sty, structs);
+                },
+                _ => { return arrstruct_elem_esc_expr(fa.obj, name, sty, structs); }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            // `name[i].f[j]`: indexed array-field read — safe; check both indices.
+            match (ix.array) {
+                parser.ExprFieldAccess(bfa) => {
+                    match (bfa.obj) {
+                        parser.ExprIndex(bix) => {
+                            match (bix.array) {
+                                parser.ExprIdent(bid) => {
+                                    if (bid.name == name) {
+                                        return arrstruct_elem_esc_expr(bix.index, name, sty, structs) || arrstruct_elem_esc_expr(ix.index, name, sty, structs);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                parser.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] struct box
+                _ => {}
+            }
+            return arrstruct_elem_esc_expr(ix.array, name, sty, structs) || arrstruct_elem_esc_expr(ix.index, name, sty, structs);
+        },
+        parser.ExprCall(c) => {
+            // `name[i].f.len()`: the one whitelisted borrow method — safe receiver, check args.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        parser.ExprFieldAccess(pfa) => {
+                            match (pfa.obj) {
+                                parser.ExprIndex(pix) => {
+                                    match (pix.array) {
+                                        parser.ExprIdent(pid) => {
+                                            if (pid.name == name && cfa.field == "len") {
+                                                if (arrstruct_elem_esc_expr(pix.index, name, sty, structs)) { return true; }
+                                                var ai: i32 = 0;
+                                                while (ai < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ai], name, sty, structs)) { return true; } ai = ai + 1; }
+                                                return false;
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            if (arrstruct_elem_esc_expr(c.callee, name, sty, structs)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return arrstruct_elem_esc_expr(b.left, name, sty, structs) || arrstruct_elem_esc_expr(b.right, name, sty, structs); },
+        parser.ExprUnary(u) => { return arrstruct_elem_esc_expr(u.operand, name, sty, structs); },
+        parser.ExprSlice(sl) => { return arrstruct_elem_esc_expr(sl.array, name, sty, structs) || arrstruct_elem_esc_expr(sl.start, name, sty, structs) || arrstruct_elem_esc_expr(sl.end, name, sty, structs); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { if (arrstruct_elem_esc_expr(ar.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (arrstruct_elem_esc_expr(t.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(slb) => {
+            if (slb.has_base && arrstruct_elem_esc_expr(slb.base, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < slb.field_values.len()) { if (arrstruct_elem_esc_expr(slb.field_values[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function arrstruct_elem_esc_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return arrstruct_elem_esc_expr(v.init, name, sty, structs); },
+        parser.StmtReturn(r) => { return arrstruct_elem_esc_expr(r.value, name, sty, structs); },
+        parser.StmtExpr(e) => { return arrstruct_elem_esc_expr(e.value, name, sty, structs); },
+        parser.StmtAssign(a) => { return arrstruct_elem_esc_expr(a.value, name, sty, structs); },
+        parser.StmtIf(f) => {
+            if (arrstruct_elem_esc_expr(f.cond, name, sty, structs)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (arrstruct_elem_esc_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (arrstruct_elem_esc_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (arrstruct_elem_esc_expr(w.cond, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (arrstruct_elem_esc_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (arrstruct_elem_esc_expr(fo.iter, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (arrstruct_elem_esc_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (arrstruct_elem_esc_expr(m.scrutinee, name, sty, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && arrstruct_elem_esc_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (arrstruct_elem_esc_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return arrstruct_elem_esc_stmt(d.action, name, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+function arrstruct_elem_payload_escapes(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (arrstruct_elem_esc_stmt(stmts[i], name, sty, structs)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// slot_is_reclaimable_arrstruct: slot i holds a fresh, non-escaping
+// `(<struct-with-array>)[]` local, credited "ARRSTRUCT:" by reclaimable_names_of. The
+// slot is plain is_arr with its struct_type set to the ELEMENT struct type (recorded at
+// the array-of-structs binding) that routes field-reclaim.
+function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_arr) { return false; }
+    if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0) { return false; }
+    if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
+    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
+// counted loop walks each element (a struct box ptr), deep-drops its rc fields
+// (emit_struct_field_drops -> __struct_drop_<sty>, balanced by the construction
+// alias-inc) then frees the struct box, and finally decs the outer buffer. Consumes no
+// operand; leaves the slot dangling. The element hidden local is marked struct_type=sty
+// so emit_struct_field_drops routes the per-type drop.
+function emit_arrstruct_deep_free(se: LowerState, slot: i32, sty: string): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // arr != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var idxn: string = "$astri" + util.i32_to_string(st.locals.len());
+    st = st.add_local(idxn);
+    var idxslot: i32 = st.slot_of(idxn);
+    var eln: string = "$astre" + util.i32_to_string(st.locals.len());
+    st = st.add_local(eln);
+    var elslot: i32 = st.slot_of(eln);
+    st = st.mark_struct_type(elslot, sty);           // so emit_struct_field_drops routes __struct_drop_<sty>
+    st = st.emit(ir.op_const_i32(0 - 1));            // index starts at -1 (advance-at-top)
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_block(0)).enter_loop();
+    st = st.emit(ir.op_loop(0));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_bin("add", 0, false));
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_bin("lt_s", 0, false));
+    st = st.emit(ir.op_bin("not", 0, false));
+    st = st.emit(ir.op_brif(1));                     // exit when idx >= len
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (struct box ptr)
+    st = st.emit(ir.op_store_local(elslot));
+    st = emit_struct_field_drops(st, elslot);        // deep-drop the struct's rc fields
+    st = st.emit(ir.op_load_local(elslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the struct box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_br(0));                       // back-edge
+    st = st.emit(ir.op_end());                       // end loop
+    st = st.emit(ir.op_end()).exit_loop();           // end block
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the outer buffer box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_arrstruct_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD
+// structure, store new. The null guard inside deep_free covers the first-iteration null.
+function emit_arrstruct_reclaim_store(se: LowerState, slot: i32, sty: string): LowerState {
+    var scratch: string = "$asr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_arrstruct_deep_free(st, slot, sty);    // free old structure
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
