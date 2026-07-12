@@ -1,0 +1,143 @@
+// examples/self_host/fern_toml.fern — a minimal fern.toml reader for the
+// self-hosted compiler's module loader, mirroring the native
+// internal/manifest for the one thing the self-host path needs today:
+// resolving a bare `import "<dep>"` through a declared PATH dependency.
+//
+// Scope (kept deliberately small, matching the native slice-1 shape):
+// the [dependencies] table's `name = { path = "../dir" }` entries, plus
+// the [package] `lib` key. url/workspace/version deps are native-only
+// for now — a self-host program using those still falls back to the
+// existing on-disk resolution. Uses only the self-host emitter's subset
+// (string index/slice/len/append, ==, match, Option, while, structs), so
+// it compiles with either compiler. Additive: the loader consults it
+// only when a fern.toml is present, so a manifest-less build (every
+// current compiler source) is byte-for-byte unchanged.
+
+// PathDep is one declared path dependency: the import name and the
+// directory it points at (relative to the manifest).
+pub struct PathDep {
+    name: string,
+    path: string,
+}
+
+// Manifest is the subset the loader reads: the [package] lib module
+// (empty ⇒ default "lib.fern") and the path dependencies.
+pub struct Manifest {
+    lib: string,
+    deps: PathDep[],
+}
+
+// trim strips leading and trailing ASCII spaces and tabs.
+function trim(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && (s[a] == 32 || s[a] == 9)) { a = a + 1; }
+    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9)) { b = b - 1; }
+    return s[a:b] + "";
+}
+
+// index_of returns the first index of the single-char needle `c` in `s`
+// at or after `from`, or -1.
+function index_of(s: string, c: i32, from: i32): i32 {
+    var i: i32 = from;
+    while (i < s.len()) {
+        if (s[i] == c) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// index_of_str returns the first index of substring `sub` in `s`, or -1.
+function index_of_str(s: string, sub: string): i32 {
+    if (sub.len() == 0) { return 0; }
+    var i: i32 = 0;
+    while (i + sub.len() <= s.len()) {
+        if (s[i:i + sub.len()] == sub) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// quoted_value extracts the first double-quoted string's contents that
+// appears at or after `from` in `s`, or None.
+function quoted_value(s: string, from: i32): Option[string] {
+    var q1: i32 = index_of(s, 34, from);   // '"'
+    if (q1 < 0) { return None; }
+    var q2: i32 = index_of(s, 34, q1 + 1);
+    if (q2 < 0) { return None; }
+    return Some(s[q1 + 1:q2] + "");
+}
+
+// split_lines splits `src` on '\n'.
+function split_lines(src: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < src.len()) {
+        if (src[i] == 10) {   // '\n'
+            out = out.append(src[start:i] + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    out = out.append(src[start:src.len()] + "");
+    return out;
+}
+
+// parse reads a fern.toml source into a Manifest: the [package] lib key
+// and every [dependencies] `name = { path = "..." }` entry. Non-path
+// dependency forms (url/workspace/version) are skipped here — the loader
+// handles those natively or falls back to on-disk resolution.
+pub function parse(src: string): Manifest {
+    var lib: string = "lib.fern";
+    var deps: PathDep[] = [];
+    var section: string = "";
+    var lines: string[] = split_lines(src);
+    var li: i32 = 0;
+    while (li < lines.len()) {
+        var line: string = trim(lines[li]);
+        li = li + 1;
+        if (line.len() == 0) { continue; }
+        if (line[0] == 35) { continue; }        // '#' comment
+        if (line[0] == 91) {                     // '[' section header
+            var close: i32 = index_of(line, 93, 0);   // ']'
+            if (close > 0) { section = line[1:close] + ""; }
+            continue;
+        }
+        var eq: i32 = index_of(line, 61, 0);     // '='
+        if (eq < 0) { continue; }
+        var key: string = trim(line[0:eq]);
+        var val: string = trim(line[eq + 1:line.len()]);
+        if (section == "package") {
+            if (key == "lib") {
+                match (quoted_value(val, 0)) {
+                    Some(v) => { lib = v; },
+                    None => { },
+                }
+            }
+            continue;
+        }
+        if (section == "dependencies") {
+            // Only path deps: the inline table must contain `path = "..."`.
+            var p: i32 = index_of_str(val, "path");
+            if (p < 0) { continue; }
+            var eq2: i32 = index_of(val, 61, p);   // '=' after path
+            if (eq2 < 0) { continue; }
+            match (quoted_value(val, eq2)) {
+                Some(pv) => { deps = deps.append(PathDep { name: key, path: pv }); },
+                None => { },
+            }
+        }
+    }
+    return Manifest { lib: lib, deps: deps };
+}
+
+// dep_path returns the declared path of dependency `name`, or None.
+pub function dep_path(m: Manifest, name: string): Option[string] {
+    var i: i32 = 0;
+    while (i < m.deps.len()) {
+        if (m.deps[i].name == name) { return Some(m.deps[i].path + ""); }
+        i = i + 1;
+    }
+    return None;
+}

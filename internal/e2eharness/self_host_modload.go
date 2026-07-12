@@ -20,7 +20,7 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
 		"ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64_ir.fern",
-		"flatten.fern", "modloader.fern", "builtins.fern", "asm_modload_run.fern",
+		"flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern",
 		"asm_arm64.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))

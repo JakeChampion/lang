@@ -29,7 +29,7 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "parser.fern", "flatten.fern",
-		"checker.fern", "modloader.fern", "checker_modload_run.fern",
+		"checker.fern", "modloader.fern", "fern_toml.fern", "checker_modload_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
