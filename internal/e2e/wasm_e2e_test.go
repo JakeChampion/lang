@@ -4232,6 +4232,57 @@ func TestWASMStringComparatorSort(t *testing.T) {
 	}
 }
 
+// #4816: the minimal trigger for the string-helper funcidx bug. A `string`
+// sourced from an ARRAY ELEMENT flows as an argument to a `call_indirect`
+// (closure) call, and `main`'s `string[]` local is reclaimed at scope exit,
+// pulling in `__fern_drop_arr_str`. That helper transitively needs
+// `__fern_str_dec`, whose body UNCONDITIONALLY frees the buffer via
+// `__fern_box_free` — but the drop_arr_str need-case omitted box_free, so
+// `helperIdxs["__fern_box_free"]` missed → 0, and str_dec's `call 0`
+// resolved to the user function at funcidx 0 (here the 5-slot comparator
+// `scmp`), producing "expected i32 but nothing on stack" invalid wasm.
+//
+// MUST use the BARE-CORE cli/run path (runNativeWasmCli), NOT runWasm: the
+// component path's result-printer wrapper (withResultPrinter) pulls in
+// __fern_box_free independently, masking the missing dep. Here main returns
+// 0 on success; the pre-fix invalid module fails to run → non-zero.
+func TestWASMArrayElemStringClosureArg(t *testing.T) {
+	src := `
+		function scmp(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } return 1; }
+		function g(arr: string[], cmp: (string, string) => i32): i32 { return cmp(arr[0], "zz"); }
+		function main(): i32 { var xs: string[] = ["a","bb"]; if (g(xs, scmp) == 0-1) { return 0; } return 1; }`
+	if got := runNativeWasmCli(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (scmp(\"a\",\"zz\")=-1) — #4816 string helper funcidx", got)
+	}
+}
+
+// #4816: two GENERIC `sort_by[string]` instantiations in one module (asc +
+// desc comparators) — the `prop_sort_strings`-shaped case. Before the fix
+// this failed to validate the moment the string sorts crossed the generic
+// closure-call body with the drop_arr_str helper present. Bare-core path
+// (see the note above); asc puts "a" first, desc puts a length-2 string
+// first; main returns 0 on success.
+func TestWASMGenericStringSortTwoInstantiations(t *testing.T) {
+	src := `
+		function asc(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } if (a.len() > b.len()) { return 1; } return 0; }
+		function desc(a: string, b: string): i32 { if (a.len() > b.len()) { return 0-1; } if (a.len() < b.len()) { return 1; } return 0; }
+		function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
+			var n: i32 = arr.len(); if (n < 2) { return arr; } var out: T[] = arr; var i: i32 = 1;
+			while (i < n) { var j: i32 = i; while (j > 0 && cmp(out[j], out[j-1]) < 0) { var t: T = out[j]; out = out.with(j, out[j-1]); out = out.with(j-1, t); j = j - 1; } i = i + 1; }
+			return out;
+		}
+		function main(): i32 {
+			var xs: string[] = ["cc","a","bb"];
+			var up: string[] = sort_by(xs, asc);
+			var dn: string[] = sort_by(xs, desc);
+			if (up[0] == "a" && dn[0].len() == 2) { return 0; }
+			return 1;
+		}`
+	if got := runNativeWasmCli(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (two sort_by[string] instantiations) — #4816", got)
+	}
+}
+
 func TestWASMFunctionValueInVar(t *testing.T) {
 	src := `
 		function dbl(x: i32): i32 { return x * 2; }
