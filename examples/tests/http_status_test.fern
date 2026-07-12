@@ -1,0 +1,46 @@
+import "std/test";
+import "std/http" as http;
+// examples/tests/http_status_test.fern — pure-Fern coverage of the
+// std/http status helpers: http_status_text reason phrases, the five
+// RFC 9110 status-class predicates (1xx-5xx), the combined
+// http_is_error (4xx/5xx), century boundaries, and the no-class result
+// for out-of-range codes.
+
+function test_status_text(): test.TestOutcome {
+    if (http.http_status_text(200) != "OK") { return test.fail("200"); }
+    if (http.http_status_text(404) != "Not Found") { return test.fail("404"); }
+    if (http.http_status_text(418) != "I'm a teapot") { return test.fail("418"); }
+    // Unknown codes return the empty string.
+    return test.assert_eq(http.http_status_text(299), "");
+}
+
+function test_classes(): test.TestOutcome {
+    if (!http.http_is_informational(100) || http.http_is_informational(200)) { return test.fail("1xx"); }
+    if (!http.http_is_success(200) || http.http_is_success(301)) { return test.fail("2xx"); }
+    if (!http.http_is_redirect(302) || http.http_is_redirect(200)) { return test.fail("3xx"); }
+    if (!http.http_is_client_error(404) || http.http_is_client_error(500)) { return test.fail("4xx"); }
+    return test.assert_true(http.http_is_server_error(503) && !http.http_is_server_error(404));
+}
+
+function test_is_error(): test.TestOutcome {
+    // 4xx and 5xx are errors; 2xx/3xx are not.
+    if (!http.http_is_error(404) || !http.http_is_error(500)) { return test.fail("error codes"); }
+    return test.assert_true(!http.http_is_error(200) && !http.http_is_error(302));
+}
+
+function test_boundaries_and_range(): test.TestOutcome {
+    // Century boundaries land in the right class.
+    if (!http.http_is_success(299) || http.http_is_success(300)) { return test.fail("2xx boundary"); }
+    if (!http.http_is_client_error(400) || !http.http_is_client_error(499)) { return test.fail("4xx boundary"); }
+    // Codes outside [100, 599] belong to no class.
+    return test.assert_true(!http.http_is_success(99) && !http.http_is_server_error(600));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/http status");
+    r = r.it("status text",        test_status_text());
+    r = r.it("class predicates",   test_classes());
+    r = r.it("is_error",           test_is_error());
+    r = r.it("boundaries + range", test_boundaries_and_range());
+    return r.finish();
+}

@@ -435,9 +435,12 @@ against NIST / RFC 4231 known-answer vectors.
 
 Percent-encoding, URL parsing, query parsing.
 
-- `url_encode(s)`, `url_decode(s)`
+- `url_encode(s)`, `url_decode(s)`, `form_encode(s)`, `form_decode(s)`
 - `url_parse(s) Option[Url]`
-- `query_parse(s) Map[string, string[]]`
+- `query_parse(s) Map[string, string[]]`, `query_encode(pairs)`
+- **Single-key query accessors** (scan the raw query string, no map
+  build): `query_get(query, key) Option[string]` (first value),
+  `query_get_all(query, key) string[]` (ordered), `query_has(query, key)`
 
 ### `std/json`
 
@@ -458,7 +461,10 @@ serializer.
   `http_response_bad_request`, `http_response_internal_error`,
   `http_response_redirect`, `http_response_no_content`
 - **Status / classifiers:** `http_status_text`,
-  `is_valid_http_status`
+  `is_valid_http_status`, and the RFC 9110 status-class predicates
+  `http_is_informational` / `http_is_success` / `http_is_redirect` /
+  `http_is_client_error` / `http_is_server_error` (1xx–5xx), plus
+  `http_is_error` (4xx or 5xx)
 - **Path / header / UA:** `http_path_segments`,
   `http_url_path_only`, `http_user_agent_is_bot`,
   `http_header_value`
