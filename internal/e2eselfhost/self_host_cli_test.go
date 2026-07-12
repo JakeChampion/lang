@@ -478,19 +478,44 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-generic-body-ok", func(t *testing.T) {
+		// #4346 piece 2 (generic-body slice): a generic function's body operates
+		// on opaque-typed values (`v: T` erases to unknown), which is expected,
+		// not an error — native accepts it. check_func_body no longer marks a
+		// generic body ill-typed on a TypeUnknown statement, so this native-valid
+		// declared-generic program passes self-host `-check` (exit 0) instead of
+		// the prior silent over-reject exit 1 — matching the issue's
+		// "declared-but-unused generic" example. (CALLING a generic and using its
+		// result, `return ident(3)`, still yields unknown at a non-generic call
+		// site: generic-call return-type inference is a separate future slice.)
+		srcPath := filepath.Join(dir, "generic_body.fern")
+		if err := os.WriteFile(srcPath, []byte("function ident[T](v: T): T { return v; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a declared-generic program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
-		// #4346: the partial checker's `Type` union still can't model a bare
-		// generic type parameter (`T`) or a `dyn Trait`, so an expression on one
-		// of those collapses to TypeUnknown and marks the module ill-typed — but
-		// no coded rule fires. Before piece 1 `-check` exited 1 with EMPTY output
-		// (silent reject). A declared generic `ident[T](v: T): T` is native-valid
-		// (exit 0) yet over-rejected here (T → unknown); piece 1 surfaces a
+		// #4346: the partial checker's `Type` union still can't model a
+		// `dyn Trait` annotation (the self-host has no dyn-trait Type), so a
+		// `var d: dyn Greet = …` binds `d` to TypeUnknown and marks the module
+		// ill-typed — but no coded rule fires (Greet is object-safe and the
+		// impl is valid, so E021/E059/E060 stay silent). Before piece 1 `-check`
+		// exited 1 with EMPTY output (silent reject). This program is
+		// native-valid (exit 0) yet over-rejected here; piece 1 surfaces a
 		// best-effort `error[type]` hint so the rejection is never silent. The
 		// native `fern` stays the full oracle (this asserts non-silence, not a
-		// code). (Option/Result values, once also over-rejected here, now type
-		// via the piece-2 slices — see check-option-result-value-ok above.)
+		// code). (Enum values, Option/Result, and generic bodies, once also
+		// over-rejected here, now type via the piece-2 slices — see the
+		// check-*-ok tests above; `dyn` is the last unmodelled shape.)
 		srcPath := filepath.Join(dir, "overreject.fern")
-		if err := os.WriteFile(srcPath, []byte("function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n"), 0o644); err != nil {
+		src := "trait Greet { function hi(self: Self): i32; }\n" +
+			"struct Dog { }\n" +
+			"impl Greet for Dog { function hi(self: Self): i32 { return 7; } }\n" +
+			"function main(): i32 { var d: dyn Greet = Dog { }; return 0; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()

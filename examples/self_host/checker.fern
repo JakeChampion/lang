@@ -2230,12 +2230,23 @@ function build_func_scope(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructS
 
 function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
     var s: Scope = build_func_scope(fd, sigs, structs, unions, methods);
+    // A GENERIC function's body operates on opaque-typed values — its type
+    // parameters erase to unknown in this partial type system, so `v: T`
+    // binds `v` to unknown and any expression over it infers unknown. That's
+    // expected, not an error: native defers such checks to monomorphisation
+    // and accepts the body. So a TypeUnknown statement here must NOT mark the
+    // module ill-typed (which over-rejected `ident[T](v: T): T { return v; }`
+    // under `-check`, #4346 piece 2). The CODED diagnostic passes still run —
+    // and already skip opaque-generic param types when flagging E038 / E003 —
+    // so genuine errors are unaffected; only the uncoded over-reject signal is
+    // suppressed for generic bodies. Non-generic bodies keep the strict check.
+    var generic: boolean = fd.type_params.len() > 0 || fd.type_param_count > 0;
     var ok: boolean = true;
     var j: i32 = 0;
     while (j < fd.body.len()) {
         var r: CheckResult = check_stmt(fd.body[j], s);
         s = r.scope;
-        if (is_unknown(r.ty)) { ok = false; }
+        if (!generic && is_unknown(r.ty)) { ok = false; }
         j = j + 1;
     }
     return ok;
