@@ -121,6 +121,14 @@ function main(): i32 {
 		// the assembler (#4801). Pins the memarg parse on both the load and the
 		// field read.
 		{"struct-nested-field", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
+		// An ESCAPING closure (returned from a function, capturing a param) is
+		// called via `call_indirect (type $c)` through the funcref table. The FLAT
+		// emitter's `call_indirect` was unhandled in enc_flat_body (only the folded
+		// enc_instr path had it), so the indirect call was DROPPED — the module
+		// validated but computed garbage. Pins the flat call_indirect encoding
+		// (#4801).
+		{"closure-capture-return", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
+		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply(function(x: i32): i32 { return x * 7; }, 6); }", 42},
 	}
 
 	for _, tc := range cases {
