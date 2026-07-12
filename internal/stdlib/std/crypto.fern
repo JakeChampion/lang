@@ -367,3 +367,74 @@ pub function pbkdf2_verify(password: string, salt: string, iterations: i32, expe
 pub function pbkdf2_verify_hex(password: string, salt: string, iterations: i32, expected_hex: string): boolean {
     return consteq(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2), expected_hex);
 }
+
+// === HKDF-SHA256 (RFC 5869) ===
+//
+// The HMAC-based key-derivation function: turn input keying material
+// (IKM) into one or more cryptographically strong subkeys. Two steps —
+// EXTRACT concentrates the entropy of IKM into a fixed-length pseudo-
+// random key (PRK); EXPAND stretches the PRK into `length` output bytes
+// bound to an application-specific `info` label. Unlike PBKDF2 (which
+// stretches a low-entropy PASSWORD with many iterations), HKDF assumes
+// already-high-entropy IKM (a shared secret, a random key) and is fast.
+// Built on the same HMAC-SHA256 core; verified against the RFC 5869
+// known-answer vectors.
+
+// HKDF-Extract: PRK = HMAC(salt, IKM). An empty salt is replaced by
+// hLen (32) zero bytes, per RFC 5869 §2.2.
+function __hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
+    var s: u8[] = salt;
+    if (salt.len() == 0) {
+        s = __alloc_u8(32);
+        var i: i32 = 0;
+        while (i < 32) { s = s.with(i, 0 as u8); i = i + 1; }
+    }
+    return __hmac_core(s, ikm);
+}
+
+// HKDF-Expand: OKM = T(1) || T(2) || … truncated to `length`, where
+// T(i) = HMAC(PRK, T(i-1) || info || byte(i)) and T(0) is empty
+// (RFC 5869 §2.3). `length` must be ≤ 255*32 (the counter is one byte).
+function __hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
+    var hLen: i32 = 32;
+    var okm: u8[] = __alloc_u8(length);
+    var t: u8[] = [];               // T(0)
+    var offset: i32 = 0;
+    var i: i32 = 1;
+    while (offset < length) {
+        var msg: u8[] = __alloc_u8(t.len() + info.len() + 1);
+        var p: i32 = 0;
+        var k: i32 = 0;
+        while (k < t.len())    { msg = msg.with(p, t[k]);    p = p + 1; k = k + 1; }
+        k = 0;
+        while (k < info.len()) { msg = msg.with(p, info[k]); p = p + 1; k = k + 1; }
+        msg = msg.with(p, (i & 255) as u8);
+        t = __hmac_core(prk, msg);
+        var c: i32 = 0;
+        while (c < hLen && offset + c < length) { okm = okm.with(offset + c, t[c]); c = c + 1; }
+        offset = offset + hLen;
+        i = i + 1;
+    }
+    return okm;
+}
+
+// hkdf_extract(salt, ikm) — the 32-byte PRK.
+pub function hkdf_extract(salt: string, ikm: string): string {
+    return string_from_bytes(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)));
+}
+
+// hkdf_expand(prk, info, length) — `length` output bytes from a PRK.
+pub function hkdf_expand(prk: string, info: string, length: i32): string {
+    return string_from_bytes(__hkdf_expand(__str_to_bytes(prk), __str_to_bytes(info), length));
+}
+
+// hkdf_sha256(salt, ikm, info, length) — the one-shot extract-then-
+// expand: derive `length` bytes of keying material from `ikm`.
+pub function hkdf_sha256(salt: string, ikm: string, info: string, length: i32): string {
+    return string_from_bytes(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
+}
+
+// hkdf_sha256_hex — the one-shot HKDF as a lowercase hex string.
+pub function hkdf_sha256_hex(salt: string, ikm: string, info: string, length: i32): string {
+    return __bytes_to_hex(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
+}

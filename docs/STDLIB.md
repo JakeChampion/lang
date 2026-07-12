@@ -300,6 +300,12 @@ against NIST / RFC 4231 known-answer vectors.
   `pbkdf2_verify_hex(...)` — re-derive and compare against a stored key
   in constant time (`consteq`). Use these to verify a password, never a
   plain `pbkdf2_sha256(...) == stored` (a timing oracle).
+- `hkdf_extract(salt, ikm)` / `hkdf_expand(prk, info, length)` /
+  `hkdf_sha256(salt, ikm, info, length)` / `hkdf_sha256_hex(...)` —
+  HKDF-SHA256 (RFC 5869) key derivation for high-entropy input keying
+  material (a shared secret / random key), for key separation and
+  subkey derivation. Distinct from PBKDF2, which stretches a low-entropy
+  password.
 
 ### `std/url`
 
