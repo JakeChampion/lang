@@ -285,3 +285,85 @@ pub function hmac_verify(key: string, msg: string, mac: string): boolean {
 pub function hmac_verify_hex(key: string, msg: string, mac_hex: string): boolean {
     return consteq(hmac_sha256_hex(key, msg), mac_hex);
 }
+
+// === PBKDF2-HMAC-SHA256 (RFC 8018 / RFC 2898) ===
+//
+// Password-based key derivation: stretch a low-entropy password into a
+// `dk_len`-byte key by iterating HMAC-SHA256 `iterations` times per
+// output block. Use a random per-password salt and a high iteration
+// count (tens of thousands+) for password storage. Verified against the
+// standard PBKDF2-HMAC-SHA256 known-answer vectors.
+
+// __pbkdf2_core derives `dk_len` bytes. For block i (1-based):
+//   U1 = HMAC(pw, salt || INT32_BE(i)); Uj = HMAC(pw, U(j-1));
+//   T_i = U1 xor U2 xor … xor U_iterations. DK = T_1 || T_2 || … .
+function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[] {
+    var hLen: i32 = 32;                 // SHA-256 output size
+    var dk: u8[] = __alloc_u8(dk_len);
+    var offset: i32 = 0;
+    var block_index: i32 = 1;
+    while (offset < dk_len) {
+        // msg = salt || INT32_BE(block_index)
+        var msg: u8[] = __alloc_u8(salt.len() + 4);
+        var s: i32 = 0;
+        while (s < salt.len()) { msg = msg.with(s, salt[s]); s = s + 1; }
+        msg = msg.with(salt.len(), ((block_index >> 24) & 255) as u8);
+        msg = msg.with(salt.len() + 1, ((block_index >> 16) & 255) as u8);
+        msg = msg.with(salt.len() + 2, ((block_index >> 8) & 255) as u8);
+        msg = msg.with(salt.len() + 3, (block_index & 255) as u8);
+        var u: u8[] = __hmac_core(pw, msg);
+        var t: u8[] = u;                // T = U1
+        var c: i32 = 1;
+        while (c < iterations) {
+            u = __hmac_core(pw, u);
+            var nt: u8[] = __alloc_u8(hLen);
+            var x: i32 = 0;
+            while (x < hLen) {
+                nt = nt.with(x, ((t[x] as i32) ^ (u[x] as i32)) as u8);
+                x = x + 1;
+            }
+            t = nt;
+            c = c + 1;
+        }
+        var k: i32 = 0;
+        while (k < hLen && offset + k < dk_len) {
+            dk = dk.with(offset + k, t[k]);
+            k = k + 1;
+        }
+        offset = offset + hLen;
+        block_index = block_index + 1;
+    }
+    return dk;
+}
+
+// pbkdf2_sha256(password, salt, iterations, dk_len) — the derived key as
+// a `dk_len`-byte string.
+pub function pbkdf2_sha256(password: string, salt: string, iterations: i32, dk_len: i32): string {
+    return string_from_bytes(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
+}
+
+// pbkdf2_sha256_hex — the derived key as a lowercase hex string
+// (`2 * dk_len` characters).
+pub function pbkdf2_sha256_hex(password: string, salt: string, iterations: i32, dk_len: i32): string {
+    return __bytes_to_hex(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
+}
+
+// pbkdf2_verify(password, salt, iterations, expected) — re-derive the key
+// for `password` and compare it, IN CONSTANT TIME (consteq), against the
+// stored `expected` bytes. This is the correct way to verify a password:
+// a plain `pbkdf2_sha256(...) == expected` short-circuits at the first
+// differing byte and is a timing oracle that leaks the stored key one
+// byte at a time — the same data-obliviousness rule that governs the KDF
+// itself. `dk_len` is taken from `expected`'s length. The derivation is
+// already oblivious to the password's byte *values* (SHA-256 word ops
+// only), so this check adds no new leak beyond `expected`'s length.
+pub function pbkdf2_verify(password: string, salt: string, iterations: i32, expected: string): boolean {
+    return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
+}
+
+// pbkdf2_verify_hex — pbkdf2_verify for a hex-encoded stored key. The
+// constant-time compare runs over the hex text; `dk_len` is
+// `expected_hex.len() / 2`.
+pub function pbkdf2_verify_hex(password: string, salt: string, iterations: i32, expected_hex: string): boolean {
+    return consteq(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2), expected_hex);
+}

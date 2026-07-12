@@ -67,6 +67,36 @@ function test_hmac_verify_hex(): test.TestOutcome {
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd9"));
 }
 
+// PBKDF2-HMAC-SHA256 against the standard known-answer vectors. Low
+// iteration counts only — this suite runs on the (unoptimized) interp
+// oracle; the compiled backends cover c=4096 in the Go differential test.
+function test_pbkdf2_c1(): test.TestOutcome {
+    return test.assert_eq(crypto.pbkdf2_sha256_hex("password", "salt", 1, 32),
+        "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+}
+
+function test_pbkdf2_c2(): test.TestOutcome {
+    return test.assert_eq(crypto.pbkdf2_sha256_hex("password", "salt", 2, 32),
+        "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+}
+
+function test_pbkdf2_truncated(): test.TestOutcome {
+    // A shorter dk_len is the prefix of the full-length output.
+    return test.assert_eq(crypto.pbkdf2_sha256_hex("password", "salt", 1, 16),
+        "120fb6cffcf8b32c43e7225256c4f837");
+}
+
+// pbkdf2_verify_hex accepts the right password and rejects a wrong one
+// (and a wrong stored key), comparing in constant time.
+function test_pbkdf2_verify(): test.TestOutcome {
+    var stored: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b";
+    if (!crypto.pbkdf2_verify_hex("password", "salt", 1, stored)) { return test.fail("should accept"); }
+    if (crypto.pbkdf2_verify_hex("wrongpw", "salt", 1, stored)) { return test.fail("wrong password accepted"); }
+    // wrong stored key (last nibble flipped) must be rejected
+    var tampered: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17a";
+    return test.assert_false(crypto.pbkdf2_verify_hex("password", "salt", 1, tampered));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/crypto");
     r = r.it("sha256 empty",       test_sha256_empty());
@@ -78,5 +108,9 @@ function main(): i32 {
     r = r.it("consteq",            test_consteq());
     r = r.it("hmac_verify",        test_hmac_verify());
     r = r.it("hmac_verify_hex",    test_hmac_verify_hex());
+    r = r.it("pbkdf2 c=1",         test_pbkdf2_c1());
+    r = r.it("pbkdf2 c=2",         test_pbkdf2_c2());
+    r = r.it("pbkdf2 truncated",   test_pbkdf2_truncated());
+    r = r.it("pbkdf2 verify",      test_pbkdf2_verify());
     return r.finish();
 }
