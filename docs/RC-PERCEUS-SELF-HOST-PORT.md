@@ -4354,3 +4354,42 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   retaining set (a freshness-gated consume, the wasm twin of the register MAPVS
   analysis) — a real slice, out of scope here. So the wasm map tests stay on
   routing-soundness + correctness (not column flatness) until bug 2 lands.
+
+- 2026-07-12: **#4353 wasm bug 2 LANDED — fresh key/value reclaim via a per-insert
+  `vconsume`/`kconsume` flag; the wasm map columns are now FLAT (both key + value).**
+  The previous entry's bug 2 (the fresh-value retain-imbalance) is fixed, and its
+  key-column twin along with it. The wasm map's retain-on-set model incs the
+  key/value on every `$__fern_map_set` (co-ownership, balanced by the SOURCE
+  local's exit sweep). A FRESH temp (`"a"+"b"` as a key or value) has NO source
+  local to sweep, so the inc left rc at 2 and `$__fern_map_release`'s per-slot dec
+  stranded it at 1 — a leak of one box per fresh key/value per map. FIX: a
+  per-insert consume flag, the wasm twin of the register MAPKS/MAPVS analyses but
+  applied at the INSERT granularity (not per-map): `op_map_set` now carries a
+  2-bit `width` field (bit 0 = value fresh, bit 1 = key fresh), computed by irlower
+  from `is_fresh_str_temp(c.args[1|0], s)` at both insert-lowering sites.
+  `$__fern_map_set` gained `$vconsume` / `$kconsume` params; when set it SKIPS the
+  construction-inc so the map TAKES the fresh temp's single ref, and the release-
+  side dec then reclaims it (rc 1→0). An ALIASED key/value (a bare local) is not
+  fresh → consume=0 → the map retains and the source local's sweep balances it, so
+  no over-release / no UAF. VERIFIED DIFFERENTIALLY (build-and-drop in a callee, NO
+  lookup — a `get_or(k, "")` / `has("a"+"b")` allocates a fresh default/lookup temp
+  that leaks independently): pre-fix a `Map[i32,string]` helper-churn grows 16 000 B
+  / 500 calls (32 B = 2 value boxes) over the `Map[i32,i32]` baseline and a
+  `Map[string,i32]` the same for keys; WITH the fix both drop to 0 (equal to the
+  i32 baseline — the wasm map has no arr_push grow-leak, its `$__fern_map_grow`
+  frees the old buffers, so the fully-reclaiming map keeps the bump high-water mark
+  flat). Correctness (values readable through churn), aliased key+value exclusion
+  (bare locals stay valid, `__rc_underflow()==0`), and the overwrite path
+  (duplicate fresh key → old value released, new taken, no over-release) all pass.
+  REGISTER-SAFE + fixpoint byte-identical: the x86-64 / arm64 `op_map_set` lowerings
+  read `i32_imm` (keykind) + `str` (eqfn) and IGNORE `width`, so their emitted asm
+  is unchanged; the compiler's own maps are i32/interned-key with non-fresh values,
+  so `width` stays 0 there anyway. The legacy wasm AST path keeps the retain-only
+  model (both flags 0 — a fresh key/value leaks by one as before; that path is
+  being retired in favour of the IR path). Tests: the wasm-IR Vs / Ks suites
+  (`TestSelfHostMapVsReclaimWasmIR`, `TestSelfHostMapKsReclaimWasmIR`) now assert
+  DIFFERENTIAL column flatness (value / key / both) on top of their prior
+  correctness + aliased-exclusion cases — the follow-up those tests deferred is
+  closed. Remaining #4353: the orthogonal register-side arr_push grow-leak (goal-2
+  reuse routing); the wasm overwrite-with-fresh-KEY case still leaks the discarded
+  key temp by one (rare — a duplicate fresh key in one literal; sound, not a UAF).

@@ -554,7 +554,20 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind_tag: 1
 // The x86-64 linear-scan runtime dispatches struct keys through it
 // (passed in %r8); wasm ignores it (its hash map still only supports
 // scalar/string keys — struct keys there are a separate slice). #2671.
-pub function op_map_set(keykind: i32, valptr: boolean, eqfn: string): Op { return Op { kind_tag: 125, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: valptr, str: eqfn }; }
+// `width` carries the wasm-only fresh-consume flags (bit 0 = `vconsume`, bit 1 =
+// `kconsume`): a set bit means the inserted VALUE (resp. KEY) is a FRESH pointer
+// temp with no other owner, so $__fern_map_set must TAKE its single ref instead
+// of retaining — the per-insert twin of the register MAPVS / MAPKS analyses.
+// This balances $__fern_map_release's per-slot dec so a fresh string key/value
+// is reclaimed rather than leaked by one (#4353 wasm bug 2). Only wasm reads
+// `width`; the x86-64 / arm64 runtimes ignore it for this op (their maps don't
+// rc-manage columns per-insert — the MAPVS/MAPKS credits free them at reclaim).
+pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, eqfn: string): Op {
+    var w: i32 = 0;
+    if (vconsume) { w = w + 1; }
+    if (kconsume) { w = w + 2; }
+    return Op { kind_tag: 125, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
+}
 pub function op_map_len(): Op { return op0("map_len"); }
 // `print_int` pops an i32 and writes its decimal text to stdout (no newline),
 // pushing a dummy result (the syscall return) so a statement-level drop balances.

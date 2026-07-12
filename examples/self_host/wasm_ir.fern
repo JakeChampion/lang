@@ -1685,7 +1685,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // / sibling-key aliasing (#3495). i32/scalar values stay vis=0.
             var vis: string = "0";
             if (o.unsigned) { vis = "1"; }
-            out = out + "    i32.const " + vis + "\n    call $__fern_map_set\n";
+            // Fresh-consume flags (o.width bit 0 = vconsume, bit 1 = kconsume): the
+            // inserted VALUE (resp. KEY) is a FRESH pointer temp with no other owner,
+            // so $__fern_map_set TAKES its single ref instead of retaining — the
+            // release-side per-slot dec then balances it (fresh string keys/values
+            // reclaim rather than leak by one, #4353 wasm bug 2). A consume implies
+            // its column is a pointer; an ALIASED key/value stays consume=0 so the
+            // map retains and the source local's own sweep balances the extra ref.
+            var vcons: string = "0";
+            if (o.width == 1 || o.width == 3) { vcons = "1"; }
+            var kcons: string = "0";
+            if (o.width == 2 || o.width == 3) { kcons = "1"; }
+            out = out + "    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    call $__fern_map_set\n";
         } else if (o.kind_tag == 126) {  // map_len
             // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
             out = out + "    i32.load\n";

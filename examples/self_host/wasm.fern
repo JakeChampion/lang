@@ -5866,7 +5866,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                             // elements one level, sound).
                             var visf: string = "(i32.const 0)";
                             if (is_string_expr(c.args[1], cx) || struct_type_of(c.args[1], cx).len() > 0 || insert_val_is_array(c.args[1], cx)) { visf = "(i32.const 1)"; }
-                            return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + " " + visf + ")";
+                            // vconsume / kconsume are the IR-path's fresh key/value
+                            // reclaim (#4353 wasm bug 2); the legacy AST path keeps the
+                            // retain-only model (both 0, a fresh key/value leaks by one
+                            // as before) — it is being retired in favour of the IR path,
+                            // which computes the flags from is_fresh_str_temp.
+                            return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + " " + visf + " (i32.const 0) (i32.const 0))";
                         }
                         if (fa.field == "get" && c.args.len() == 1) {
                             return "(call $__fern_map_get " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
@@ -8576,7 +8581,7 @@ pub function map_helpers(): string {
     o = o + "    (drop (call $__fern_arr_dec (local.get $ov)))\n";
     o = o + "    (drop (call $__fern_arr_dec (local.get $ou))))\n";
     // $__fern_map_set(box, k, v) → box. Grows at load factor 3/4.
-    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (result i32)\n";
+    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (param $vconsume i32) (param $kconsume i32) (result i32)\n";
     o = o + "    (local $cap i32) (local $keys i32) (local $vals i32) (local $used i32) (local $idx i32) (local $kis i32) (local $ff i32) (local $u i32) (local $slot i32)\n";
     // Record value-is-string on the box (homogeneous value type, so always the
     // same flag) so $__fern_map_release knows to release the value column.
@@ -8604,13 +8609,21 @@ pub function map_helpers(): string {
     // release it on the map's death; the inc is a guard no-op for an immortal
     // string literal. (A literal key is the common case; a heap key — e.g. a
     // word read from input — now reclaims.) i32 keys (kis 0) carry no rc.
-    o = o + "        (if (i32.eq (local.get $kis) (i32.const 1)) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
+    // EXCEPTION ($kconsume): a FRESH key temp has no source local to sweep, so the
+    // map TAKES its single ref (no inc) and release's dec balances it — the key-
+    // column twin of $vconsume (#4353 wasm bug 2). kconsume implies a string key.
+    o = o + "        (if (i32.and (i32.eq (local.get $kis) (i32.const 1)) (i32.eqz (local.get $kconsume))) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
     o = o + "        (i32.store (i32.add (local.get $vals) (i32.mul (local.get $slot) (i32.const 4))) (local.get $v))\n";
     // Perceus map value construction-inc: a NEW string-valued entry retains its
     // value (the map co-owns it alongside the source) so $__fern_map_release
     // can release it on the map's death; the source local's own sweep balances
     // it. A guard no-op for an immortal literal; i32 values (vis 0) carry no rc.
-    o = o + "        (if (local.get $vis) (then (drop (call $__fern_rc_inc (local.get $v)))))\n";
+    // EXCEPTION ($vconsume): a FRESH value temp has no source local to sweep, so
+    // retaining would leave rc at 2 and release's dec would strand it at 1 (the
+    // #4353 wasm bug 2 leak). When $vconsume is set the map TAKES the temp's
+    // single ref (no inc); release's dec then reclaims it. vis still gates the
+    // release-side dec, so vconsume implies vis.
+    o = o + "        (if (i32.and (local.get $vis) (i32.eqz (local.get $vconsume))) (then (drop (call $__fern_rc_inc (local.get $v)))))\n";
     o = o + "        (i32.store (i32.add (local.get $used) (i32.mul (local.get $slot) (i32.const 4))) (i32.const 1))\n";
     o = o + "        (i32.store (local.get $box) (i32.add (i32.load (local.get $box)) (i32.const 1)))\n";
     o = o + "        (if (i32.ge_s (local.get $ff) (i32.const 0)) (then\n";
@@ -8623,7 +8636,10 @@ pub function map_helpers(): string {
     // balanced (no leak of the replaced value, no over-release of the new).
     o = o + "          (if (local.get $vis) (then\n";
     o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))\n";
-    o = o + "            (drop (call $__fern_rc_inc (local.get $v)))))\n";
+    // Same $vconsume exception as the insert path: a fresh replacement value is
+    // TAKEN by the map (no inc) so release's dec balances it; the OLD value is
+    // released above unconditionally when vis.
+    o = o + "            (if (i32.eqz (local.get $vconsume)) (then (drop (call $__fern_rc_inc (local.get $v)))))))\n";
     o = o + "          (i32.store (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))) (local.get $v))\n";
     o = o + "          (br $d)))))\n";
     // Remember the first tombstone so we can reclaim it once the chain ends.
