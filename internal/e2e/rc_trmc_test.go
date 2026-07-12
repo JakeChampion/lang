@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"fmt"
+	"os/exec"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -112,10 +114,33 @@ function main(): i32 {
     return 0;
 }`
 
+// runWithStackLimit executes bin under an explicit RLIMIT_STACK soft limit
+// (in KiB) and returns its exit code. The deep-stack contract is only
+// meaningful inside a stack-size window: the TRMC-on leg still drops its
+// 300k-deep result through the recursive __drop_enum_List glue (~10 MB of
+// frames — drop specialisation hasn't loop-ified drop glue yet), while the
+// TRMC-off leg's inc_all recursion needs ~24 MB. A host soft limit of 8 MB
+// fails the "on" leg, unlimited passes the "off" leg — so pin 16 MB instead
+// of inheriting whatever the host happens to use.
+func runWithStackLimit(t *testing.T, kib int, bin string) int {
+	t.Helper()
+	cmd := exec.Command("bash", "-c", fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib), "--", bin)
+	if out, err := cmd.CombinedOutput(); err != nil && cmd.ProcessState == nil {
+		t.Fatalf("run %s: %v\n%s", bin, err, out)
+	}
+	return cmd.ProcessState.ExitCode()
+}
+
 func TestX86_64TrmcDeepStack(t *testing.T) {
 	var on, off int
-	withTrmc(true, func() { _, on = compileAndRunX86_64FreeOn(t, trmcDeepSrc) })
-	withTrmc(false, func() { _, off = compileAndRunX86_64FreeOn(t, trmcDeepSrc) })
+	withTrmc(true, func() {
+		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
+		on = runWithStackLimit(t, 16*1024, bin)
+	})
+	withTrmc(false, func() {
+		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
+		off = runWithStackLimit(t, 16*1024, bin)
+	})
 	if on != 0 {
 		t.Errorf("TRMC on: deep map should succeed, got %d", on)
 	}
