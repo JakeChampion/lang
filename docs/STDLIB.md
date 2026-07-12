@@ -207,6 +207,15 @@ Shell-style glob matching over a path-like string.
   zero directories), and `[abc]` / `[a-z]` / `[!…]` character classes.
   Anchored (whole text vs whole pattern).
 
+### `std/rand`
+
+Randomised array helpers over the CSPRNG-backed `std/math.random_int`.
+Value-semantic (they never mutate the input).
+
+- `shuffle(xs): T[]` — a uniformly random permutation (Fisher-Yates).
+- `choice(xs): Option[T]` — a random element (`None` when empty).
+- `sample(xs, k): T[]` — `k` elements without replacement, random order.
+
 ### `std/semver`
 
 Semantic Versioning 2.0.0 (semver.org) — parse and precedence-compare.

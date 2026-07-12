@@ -1,0 +1,50 @@
+// std/rand — randomised array helpers over the CSPRNG-backed
+// `std/math.random_int` (kernel getrandom on natives, wasi_random on
+// wasm). All operations are value-semantic: they read their input and
+// return a fresh array, never mutating the argument.
+
+import "std/math" as math;
+
+// `shuffle(xs)` — a uniformly random permutation of `xs` (Fisher-Yates
+// over a fresh copy). `xs` is left unchanged.
+pub function shuffle[T](xs: T[]): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    // Fisher-Yates: for j from n-1 down to 1, swap out[j] with a random
+    // out[k], k in [0, j].
+    var j: i32 = out.len() - 1;
+    while (j > 0) {
+        var k: i32 = math.random_int(0, j + 1);
+        var tmp: T = out[j];
+        out = out.with(j, out[k]);
+        out = out.with(k, tmp);
+        j = j - 1;
+    }
+    return out;
+}
+
+// `choice(xs)` — a uniformly random element of `xs`, or `None` when `xs`
+// is empty.
+pub function choice[T](xs: T[]): Option[T] {
+    if (xs.len() == 0) { return None; }
+    return Some(xs[math.random_int(0, xs.len())]);
+}
+
+// `sample(xs, k)` — `k` elements of `xs` chosen uniformly WITHOUT
+// replacement, in random order. Returns all of `xs` (shuffled) when
+// `k >= xs.len()`; the empty array when `k <= 0`.
+pub function sample[T](xs: T[], k: i32): T[] {
+    var shuffled: T[] = shuffle(xs);
+    if (k >= shuffled.len()) { return shuffled; }
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < k) {
+        out = out.append(shuffled[i]);
+        i = i + 1;
+    }
+    return out;
+}

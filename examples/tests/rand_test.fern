@@ -1,0 +1,98 @@
+import "std/test";
+import "std/rand" as rand;
+// examples/tests/rand_test.fern — pure-Fern coverage of std/rand. The
+// draws are non-deterministic (CSPRNG), so the tests assert the
+// CONTRACTS: shuffle is a permutation (multiset preserved) that leaves
+// its input untouched, choice is always in-bounds (None only when
+// empty), and sample returns k distinct elements of the input.
+
+function sum_arr(a: i32[]): i32 {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < a.len()) { s = s + a[i]; i = i + 1; }
+    return s;
+}
+
+function contains_arr(a: i32[], v: i32): boolean {
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] == v) { return true; } i = i + 1; }
+    return false;
+}
+
+function test_shuffle_is_permutation(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    var s: i32[] = rand.shuffle(xs);
+    if (s.len() != 10) { return test.fail("length changed"); }
+    if (sum_arr(s) != 55) { return test.fail("sum not preserved"); }
+    var v: i32 = 1;
+    while (v <= 10) {
+        if (!contains_arr(s, v)) { return test.fail("element " + v.to_string() + " missing"); }
+        v = v + 1;
+    }
+    return test.pass();
+}
+
+function test_shuffle_pure(): test.TestOutcome {
+    // shuffle must not mutate its argument.
+    var xs: i32[] = [1, 2, 3];
+    var s: i32[] = rand.shuffle(xs);
+    return test.assert_eq_array(xs, [1, 2, 3]);
+}
+
+function test_choice_in_bounds(): test.TestOutcome {
+    var xs: i32[] = [10, 20, 30];
+    var i: i32 = 0;
+    while (i < 100) {
+        match (rand.choice(xs)) {
+            Some(e) => { if (!contains_arr(xs, e)) { return test.fail("out of set: " + e.to_string()); } },
+            None => { return test.fail("None on non-empty"); }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function test_choice_empty_none(): test.TestOutcome {
+    var empty: i32[] = [];
+    match (rand.choice(empty)) {
+        Some(e) => { return test.fail("Some on empty"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_sample_without_replacement(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6, 7, 8];
+    var s: i32[] = rand.sample(xs, 4);
+    if (s.len() != 4) { return test.fail("wrong sample size"); }
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (!contains_arr(xs, s[i])) { return test.fail("element not from input"); }
+        // distinctness
+        var j: i32 = i + 1;
+        while (j < s.len()) {
+            if (s[i] == s[j]) { return test.fail("duplicate in sample"); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function test_sample_edges(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3];
+    // k >= len → all of xs (as a permutation); k <= 0 → empty.
+    if (rand.sample(xs, 9).len() != 3) { return test.fail("k>=len size"); }
+    if (rand.sample(xs, 0).len() != 0) { return test.fail("k<=0 size"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/rand");
+    r = r.it("shuffle permutation", test_shuffle_is_permutation());
+    r = r.it("shuffle is pure",     test_shuffle_pure());
+    r = r.it("choice in bounds",    test_choice_in_bounds());
+    r = r.it("choice empty None",   test_choice_empty_none());
+    r = r.it("sample distinct",     test_sample_without_replacement());
+    r = r.it("sample edges",        test_sample_edges());
+    return r.finish();
+}
