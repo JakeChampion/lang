@@ -513,6 +513,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-generic-struct-ok", func(t *testing.T) {
+		// #4346 piece 2 (generic-struct slice): a user generic-struct
+		// annotation `Box[i32]` resolves to the name-only struct `Box`, and its
+		// literal `Box { v: 3 }` type-checks (the opaque generic field `v: T`
+		// accepts any value), so constructing and binding one passes self-host
+		// `-check` (exit 0) instead of the prior silent over-reject exit 1.
+		// (Field access `b.v` still yields unknown — the field's type parameter
+		// isn't substituted yet — so it's deliberately not exercised here.)
+		srcPath := filepath.Join(dir, "generic_struct.fern")
+		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a generic-struct program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
 		// #4346: the partial checker's `Type` union still can't model a
 		// `dyn Trait` annotation (the self-host has no dyn-trait Type), so a
