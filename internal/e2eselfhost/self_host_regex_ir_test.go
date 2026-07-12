@@ -34,6 +34,22 @@ function main(): i32 { if (regex.regex_match("[abc]+", "cab")) { return 42; } re
 	// Grouped repetition -> RSeq(RNode[]) under a repeat. "(ab)+c" matches "ababc".
 	{"group-plus", `import "std/regex";
 function main(): i32 { if (regex.regex_match("(ab)+c", "ababc")) { return 42; } return 0; }`},
+	// Capturing groups -> RGroup + the compiled RInst capture program
+	// (Pike-VM thread simulation with RThread[] state).
+	{"captures", `import "std/regex";
+function main(): i32 {
+    var m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped");
+    if (m.found && m.group(1) == "123" && m.group(2) == "456" && m.group_count() == 2) { return 42; }
+    return 0;
+}`},
+	// Non-capturing (?:...) group + captures_all over multiple matches.
+	{"captures-all", `import "std/regex";
+function main(): i32 {
+    var nc: regex.RCaps = regex.regex_captures("(?:ab)+(c)", "ababc");
+    var all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
+    if (nc.group_count() == 1 && nc.group(1) == "c" && all.len() == 2 && all[1].group(2) == "d") { return 42; }
+    return 0;
+}`},
 }
 
 func TestSelfHostRegexModuleIR(t *testing.T) {

@@ -1,0 +1,33 @@
+// std/regex capturing groups (`regex_captures`) on the native backends:
+// multi-group extraction with spans, group_count, an optional group absent
+// and present, alternation-branch capture, nested + quantified groups
+// (last-iteration span), and greedy split between adjacent groups. Each
+// check sets a bit; all eight hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+
+    var m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped");
+    if (m.found && m.group(1) == "123" && m.group(2) == "456") { r = r + 1; }
+    if (m.group(0) == "123-456" && m.group_start(0) == 6 && m.group_end(0) == 13) { r = r + 2; }
+    if (m.group_count() == 2) { r = r + 4; }
+
+    var absent: regex.RCaps = regex.regex_captures("a(bc)?d", "ad");
+    if (absent.found && !absent.has_group(1) && absent.group(1) == "") { r = r + 8; }
+    var present: regex.RCaps = regex.regex_captures("a(bc)?d", "abcd");
+    if (present.has_group(1) && present.group(1) == "bc") { r = r + 16; }
+
+    var alt: regex.RCaps = regex.regex_captures("gr(a|e)y", "say grey");
+    if (alt.group(1) == "e") { r = r + 32; }
+
+    // quantified nested groups report the LAST iteration's spans
+    var nest: regex.RCaps = regex.regex_captures("((a|b)c)+", "acbc");
+    if (nest.group(0) == "acbc" && nest.group(1) == "bc" && nest.group(2) == "b") { r = r + 64; }
+
+    // greedy quantifiers: the left group takes as much as it can
+    var greedy: regex.RCaps = regex.regex_captures("(a+)(a+)", "aaaa");
+    if (greedy.group(1) == "aaa" && greedy.group(2) == "a") { r = r + 128; }
+
+    return r;
+}
