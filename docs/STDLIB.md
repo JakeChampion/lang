@@ -344,7 +344,13 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
 POSIX path manipulation (string-level only).
 
 - `path_join(parts)`, `path_parent(p)`, `path_file_name(p)`,
-  `path_extension(p)`.
+  `path_extension(p)`, `path_clean(p)`.
+- `path_is_absolute(p)` — true iff `p` begins at the root (`/`).
+- `path_stem(p)` — last component minus its final extension
+  (`"archive.tar.gz"` → `"archive.tar"`, `".bashrc"` → `".bashrc"`).
+- `path_with_extension(p, ext)` — replace/append the final extension
+  (`ext` without a leading dot; empty `ext` drops it), preserving the
+  directory (`"a/b/foo.txt"`, `"md"` → `"a/b/foo.md"`).
 
 ### `std/base64`
 

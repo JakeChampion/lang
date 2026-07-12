@@ -196,8 +196,9 @@ func TestRunnerMathExamplePasses(t *testing.T) {
 
 // `examples/tests/path_test.fern` covers the std/path POSIX helpers
 // (string-level, no FS) — path_join / path_parent / path_file_name /
-// path_extension / path_clean, incl. separator-collapsing,
-// root-preservation, trailing-slash, hidden-file, and `.`/`..`
+// path_extension / path_clean / path_is_absolute / path_stem /
+// path_with_extension, incl. separator-collapsing, root-preservation,
+// trailing-slash, hidden-file, multi-extension, and `.`/`..`
 // resolution edges. Passing suite → exit 0.
 func TestRunnerPathExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -206,7 +207,7 @@ func TestRunnerPathExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/path", "# pass 25", "# fail 0", "1..25"} {
+	for _, w := range []string{"# Suite: std/path", "# pass 28", "# fail 0", "1..28"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
