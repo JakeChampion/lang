@@ -3097,6 +3097,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r14\n");
     s = s.write("    pushq %r15\n");
     s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -48(%rbp), or 0
+    // %r9 = kconsume (the incoming KEY is a fresh, sole-owned string temp — the
+    // per-insert freshness flag from irlower, o.width bit 1). Saved to the frame
+    // because the probe loop's __fern_str_eq / eq-fn calls clobber caller-saved
+    // %r9; reloaded at .Lms_found to free the DISCARDED new key on an overwrite
+    // (the register twin of the wasm #4876 fix — a recurring computed key, e.g.
+    // word-count `m.set(word, n)`, otherwise leaks one key box per overwrite).
+    // The extra pad keeps the frame 16-byte aligned for the inner calls.
+    s = s.write("    pushq %r9\n");                 // saved kconsume @ -56(%rbp)
+    s = s.write("    pushq %r9\n");                 // 16-byte align pad @ -64(%rbp)
     s = s.write("    movq %rdi, %r12\n");          // mapbox
     s = s.write("    movq %rsi, %r13\n");          // key
     s = s.write("    movq %rdx, %r14\n");          // val
@@ -3151,6 +3160,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rbx, %rdx\n");
     s = s.write("    incq %rdx\n");
     s = s.write("    movq %r14, (%rax,%rdx,8)\n");  // values[i+1] = val
+    // Overwrite keeps the EXISTING key; the incoming key %r13 is discarded. When
+    // it is a fresh sole-owned temp (kconsume), free it via the rc-aware
+    // __fern_str_free (a literal's .rodata data / an aliased rc>1 key are handled
+    // safely by str_free's guards) so a recurring computed key doesn't leak. An
+    // aliased key (kconsume 0) is left untouched — its source local's sweep owns
+    // it. str_free preserves %r12/%r13, so the mapbox return is intact.
+    s = s.write("    movq -56(%rbp), %rax\n");      // reload kconsume
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lms_found_nokf\n");
+    s = s.write("    pushq %r13\n");                // discarded fresh key
+    s = s.write("    call __fn___fern_str_free\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write(".Lms_found_nokf:\n");
     s = s.write("    jmp .Lms_ret\n");
     s = s.write(".Lms_append:\n");
     s = s.write("    movq (%r12), %rdi\n");
@@ -3173,7 +3195,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rax, 8(%r12)\n");
     s = s.write(".Lms_ret:\n");
     s = s.write("    movq %r12, %rax\n");
-    s = s.write("    addq $8, %rsp\n");             // discard saved eq fn ptr
+    s = s.write("    addq $24, %rsp\n");            // discard align pad + saved kconsume + eq fn ptr
     s = s.write("    popq %r15\n");
     s = s.write("    popq %r14\n");
     s = s.write("    popq %r13\n");
@@ -4844,6 +4866,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // 0 for a scalar/string key. __fern_map_set dispatches struct
             // keys through it (call *) instead of i32/string compare. #2671.
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
+            // %r9 = kconsume: the KEY arg is a fresh sole-owned string temp
+            // (o.width bit 1, set by irlower's is_fresh_str_temp). map_set frees the
+            // discarded key on an overwrite so a recurring computed key doesn't leak
+            // (the register twin of wasm #4876). i32/interned keys are never fresh
+            // (width bit 1 clear) → %r9=0 → old behaviour, so the compiler's own maps
+            // and the fixpoint are unaffected.
+            if (o.width == 2 || o.width == 3) { s = s.write("    movq $1, %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
         } else if (o.kind_tag == 126) {  // map_len
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");

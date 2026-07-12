@@ -4447,3 +4447,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   once the alias is made safe. NEXT concrete slice: register keys/values
   snapshot-copy (the wasm map already does this), which both fixes the aliasing
   correctness gap and unblocks the last #4353 grow-leak.
+
+- 2026-07-12: **#4353 register (x86-IR) map overwrite-key reclaim — the register
+  twin of the wasm #4876 fix.** The register `__fern_map_set` (asm_ir.fern),
+  like wasm pre-#4876, leaked the incoming KEY on an OVERWRITE: when a re-`set`
+  hits an existing key, the slot keeps its original key and the incoming key is
+  discarded — but a FRESH discarded key temp was abandoned. This is the word-
+  count / histogram `m.set(computed_key, n)` shape where a computed key recurs;
+  measured differentially, a `Map[string,i32]` doing 8 re-inserts of `"wo"+"rd"`
+  / call leaked ~256 B/call (the fresh key boxes) over the i32-keyed baseline
+  (152 KB vs 24 KB / 500 calls; the 24 KB shared floor is the still-open cap-0
+  grow-leak). FIX (self-contained to the x86-IR backend): thread the per-insert
+  `kconsume` freshness bit (o.width bit 1, already computed by irlower's
+  `is_fresh_str_temp` for #4869) into `__fern_map_set` via `%r9`; on the overwrite
+  path (`.Lms_found`) free the discarded key `%r13` via the rc-aware
+  `__fn___fern_str_free` when kconsume. `str_free` preserves the callee-saved regs
+  map_set relies on (only rax/rcx/rdx/rsi/r8 scratch) and guards a literal's
+  .rodata data / an rc>1 aliased key, so the free is sound. An ALIASED recurring
+  key (kconsume 0) is left untouched (its source local's sweep owns it). VERIFIED
+  (x86-IR driver): the string-key overwrite churn drops to the i32 baseline
+  (152 KB → 24 KB, matching), reads back the LAST value with len 1, `__rc_underflow
+  ()==0`; the aliased recurring-key case stays valid; general map ops (i32 growth,
+  get/has/without/keys-iter, distinct-key string inserts) unaffected. BOOTSTRAP-
+  SAFE: the compiler's own maps are i32/interned-key → kconsume always 0 → `%r9`=0
+  → the new free path is never taken → map_set behaviour (and the modload
+  fixpoint, which runs the AST backend anyway) is unchanged. Tests: 3 cases added
+  to `TestSelfHostMapKsReclaimIRX86_64` (overwrite flatness / correctness /
+  aliased soundness). PARITY FOLLOW-UP: the arm64-IR map_set (asm_arm64.fern) has
+  the same gap and the same fix applies (thread kconsume via an arg reg, free the
+  discarded key on overwrite) — a separate slice. The value-side overwrite leak
+  (the OLD value dropped on overwrite for string-valued maps) and the cap-0
+  grow-leak (blocked on keys/values snapshot-copy) remain.
