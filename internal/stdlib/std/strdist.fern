@@ -1,0 +1,62 @@
+// std/strdist — string similarity: Levenshtein edit distance and a
+// normalised similarity ratio. Useful for fuzzy matching, "did you
+// mean" suggestions, and dedup.
+//
+// Distances are measured over Unicode CODE POINTS (not bytes), so
+// `levenshtein("café", "cafe") == 1` — a single substitution — rather
+// than the 2 a byte-level count would report.
+
+import "std/utf8";
+
+// `levenshtein(a, b)` — the minimum number of single-code-point
+// insertions, deletions, or substitutions to turn `a` into `b`.
+// O(len(a) · len(b)) time, O(len(b)) space (a rolling DP row).
+pub function levenshtein(a: string, b: string): i32 {
+    var ca: i32[] = utf8.codepoints(a);
+    var cb: i32[] = utf8.codepoints(b);
+    var n: i32 = ca.len();
+    var m: i32 = cb.len();
+    if (n == 0) { return m; }
+    if (m == 0) { return n; }
+    // prev row: distance from "" to each prefix of b (0, 1, …, m).
+    var prev: i32[] = [];
+    var j: i32 = 0;
+    while (j <= m) {
+        prev = prev.append(j);
+        j = j + 1;
+    }
+    var i: i32 = 1;
+    while (i <= n) {
+        var cur: i32[] = [];
+        cur = cur.append(i);            // cur[0] = i (delete i chars of a)
+        var k: i32 = 1;
+        while (k <= m) {
+            var cost: i32 = 1;
+            if (ca[i - 1] == cb[k - 1]) { cost = 0; }
+            var del: i32 = prev[k] + 1;
+            var ins: i32 = cur[k - 1] + 1;
+            var sub: i32 = prev[k - 1] + cost;
+            var best: i32 = del;
+            if (ins < best) { best = ins; }
+            if (sub < best) { best = sub; }
+            cur = cur.append(best);
+            k = k + 1;
+        }
+        prev = cur;
+        i = i + 1;
+    }
+    return prev[m];
+}
+
+// `similarity(a, b)` — 1.0 minus the edit distance normalised by the
+// longer length: 1.0 for identical (or both empty) strings, 0.0 for
+// completely different ones. In [0.0, 1.0].
+pub function similarity(a: string, b: string): f64 {
+    var la: i32 = utf8.codepoint_count(a);
+    var lb: i32 = utf8.codepoint_count(b);
+    var longer: i32 = la;
+    if (lb > longer) { longer = lb; }
+    if (longer == 0) { return 1.0; }          // both empty → identical
+    var d: i32 = levenshtein(a, b);
+    return 1.0 - ((d as f64) / (longer as f64));
+}

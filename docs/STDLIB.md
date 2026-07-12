@@ -207,6 +207,15 @@ Shell-style glob matching over a path-like string.
   zero directories), and `[abc]` / `[a-z]` / `[!…]` character classes.
   Anchored (whole text vs whole pattern).
 
+### `std/strdist`
+
+String similarity — for fuzzy matching / "did you mean" / dedup.
+
+- `levenshtein(a, b): i32` — edit distance over Unicode **code points**
+  (so `levenshtein("café", "cafe") == 1`).
+- `similarity(a, b): f64` — `1.0 - distance / max_len`, in `[0.0, 1.0]`
+  (1.0 for identical or both-empty).
+
 ### `std/rand`
 
 Randomised array helpers over the CSPRNG-backed `std/math.random_int`.
