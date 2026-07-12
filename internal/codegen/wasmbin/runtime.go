@@ -563,8 +563,20 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_drop_arr_str")
 					needs.add("__fern_rc_dec")
 					needs.add("__fern_str_dec")
+					// __fern_str_dec's body UNCONDITIONALLY calls
+					// __fern_box_free in its rc==1 branch (and box_free calls
+					// __free), so both must be present whenever str_dec is —
+					// regardless of RcFreeEnabled (the flat scanRuntimeHelpers
+					// pass does no transitive-dep closure, so a case that pulls
+					// str_dec in must also pull str_dec's own deps). Omitting
+					// box_free let helperIdxs["__fern_box_free"] miss → 0, and
+					// str_dec's `call 0` then resolved to whatever user function
+					// occupied funcidx 0 (a 5-param comparator in the sort_by
+					// repro) → "expected i32 but nothing on stack" invalid wasm
+					// (#4816). Mirrors the direct "__fern_str_dec" case above.
+					needs.add("__fern_box_free")
+					needs.add("__free")
 					if ast.RcFreeEnabled {
-						needs.add("__free")
 						needs.add("__fern_alloc")
 					}
 				case "__fern_rc_is_unique":
