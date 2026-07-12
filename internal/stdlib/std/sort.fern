@@ -21,17 +21,19 @@
 // allocation profile matches `sort_by`'s: one scratch copy per merge
 // pass, materialized explicitly — see sort_i32_asc's doc comment for
 // why it must not alias). The string sorts are monomorphic too, but
-// only for a codegen reason: a `sort_by[string]` instantiation still
-// emits invalid wasm in several configurations (#4816) — e.g. two
-// string sorts in one program, which the `prop_sort_strings` fixture
-// catches. Both intended enablers have landed — modload rewrites the
-// module-local comparator references from arg positions and lambda
-// bodies of a mangled module (#4802), and the `call_indirect`
-// signature seam accepts two-slot `string` params (#4804) — but a
-// value-flow site in the wasm closure-call lowering still unbalances
-// the stack for `string` (#4816). Until that's fixed, the string
-// merge bodies are spelled out monomorphically here; once #4816
-// closes they should become one-line `sort_by` delegations.
+// only for a wasm-codegen reason. The three original enablers have
+// all landed — modload rewrites module-local comparator references
+// from arg positions and lambda bodies of a mangled module (#4802),
+// the `call_indirect` signature seam accepts two-slot `string` params
+// (#4804), and the `__fern_box_free` funcidx collision is fixed
+// (#4816) — and a `sort_by[string]` instantiation now compiles and
+// runs standalone. BUT delegating these three string sorts to
+// `sort_by` STILL makes `prop_sort_strings` fail `-target wasm`
+// validation (a separate two-slot-`string` value-flow defect that
+// only manifests through the mangled-module delegation + the
+// fixture's op mix — #4829). Until #4829 closes, the merge bodies are
+// spelled out monomorphically here; once it does they should become
+// one-line `sort_by` delegations.
 // The generic comparator form `sort_by[T](arr, cmp)` (below) covers
 // any element type / custom ordering now that closure args lower on
 // every backend.
