@@ -113,6 +113,17 @@ function test_map_or_else(): test.TestOutcome {
     return test.assert_true(a == 10 && b == 3);
 }
 
+function test_flatten(): test.TestOutcome {
+    var ok_ok: Result[Result[i32, string], string] = Ok(Ok(30));
+    var ok_err: Result[Result[i32, string], string] = Ok(Err("inner"));
+    var outer_err: Result[Result[i32, string], string] = Err("outer");
+    // Ok(Ok(x)) -> Ok(x); Ok(Err(e)) -> Err(e); Err(e) -> Err(e).
+    return test.assert_true(
+        ok_ok.flatten().unwrap_or(0) == 30
+        && ok_err.flatten().is_err()
+        && outer_err.flatten().is_err());
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/result combinators");
     r = r.it("is_ok / is_err",   test_is_ok_is_err());
@@ -130,5 +141,6 @@ function main(): i32 {
     r = r.it("and",              test_and());
     r = r.it("or_else",          test_or_else());
     r = r.it("map_or_else",      test_map_or_else());
+    r = r.it("flatten",          test_flatten());
     return r.finish();
 }

@@ -139,6 +139,17 @@ function test_xor(): test.TestOutcome {
         && n.xor(n).is_none());
 }
 
+function test_flatten(): test.TestOutcome {
+    var s: Option[Option[i32]] = Some(Some(7));
+    var inner_none: Option[Option[i32]] = Some(None);
+    var outer_none: Option[Option[i32]] = None;
+    // Some(Some(x)) -> Some(x); Some(None) and None both -> None.
+    return test.assert_true(
+        s.flatten().unwrap_or(0) == 7
+        && inner_none.flatten().is_none()
+        && outer_none.flatten().is_none());
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/option combinators");
     r = r.it("is_some / is_none",   test_is_some_is_none());
@@ -159,5 +170,6 @@ function main(): i32 {
     r = r.it("map_or_else",         test_map_or_else());
     r = r.it("zip",                 test_zip());
     r = r.it("xor",                 test_xor());
+    r = r.it("flatten",             test_flatten());
     return r.finish();
 }

@@ -135,3 +135,11 @@ pub function (o: Option[T]) xor(other: Option[T]): Option[T] {
         None => { return other; }
     }
 }
+
+// flatten collapses one level of nesting: `Option[Option[T]]` ->
+// `Option[T]`. `Some(inner)` yields `inner` directly, `None` stays
+// `None`. Equivalent to `and_then(x => x)` but takes no callback, so
+// it sidesteps the indirect-call seam entirely.
+pub function (o: Option[Option[T]]) flatten(): Option[T] {
+    match (o) { Some(inner) => { return inner; }, None => { return None; } }
+}

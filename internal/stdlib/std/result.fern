@@ -111,3 +111,12 @@ pub function (r: Result[T, E]) or_else[F](f: (E) => Result[T, F]): Result[T, F] 
 pub function (r: Result[T, E]) map_or_else[U](default_fn: (E) => U, f: (T) => U): U {
     match (r) { Ok(x) => { return f(x); }, Err(e) => { return default_fn(e); } }
 }
+
+// flatten collapses one level of nesting on the `Ok` side:
+// `Result[Result[T, E], E]` -> `Result[T, E]`. `Ok(inner)` yields
+// `inner` directly, `Err(e)` stays `Err(e)`. Equivalent to
+// `and_then(x => x)` but callback-free, so it avoids the indirect-call
+// seam.
+pub function (r: Result[Result[T, E], E]) flatten(): Result[T, E] {
+    match (r) { Ok(inner) => { return inner; }, Err(e) => { return Err(e); } }
+}
