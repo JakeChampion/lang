@@ -4632,3 +4632,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   gating unknown and the sensitive part — a focused session should pin the scalar-array
   reclaim-candidacy gate first, then implement 1 with the full differential + fixpoint
   gate before proceeding.
+
+- 2026-07-12 (CRITICAL addendum to the decomposition — a naive slice 1 DOUBLE-FREES):
+  Traced why the current register keys()/values() code is sound despite aliasing, and
+  it is a DELICATE LEAK-BALANCE that any slice-1 edit must unwind holistically:
+  `var ks = m.keys()` IS reclaimed — the exit-sweep arr_dec's it like any fresh i32[]
+  (verified: a plain `var a: i32[] = [...]` churn is flat, so scalar arrays DO reclaim)
+  — and since keys() returns the RAW map buffer (alias), that arr_dec frees the MAP's
+  keys buffer. This does NOT double-free ONLY because `__fern_map_free`'s arr_dec on the
+  keys/vals buffers is a no-op/leak (the very grow-leak of #4877): the map never frees
+  its own buffers, so the ks-reclaim freeing the aliased buffer is the ONLY free. So
+  three things mutually compensate: (a) keys() aliases the buffer, (b) the ks result is
+  reclaimed and frees it, (c) the map leaks its buffers at death. Consequences for the
+  decomposition:
+  - A naive slice 1 that makes keys() SNAPSHOT (fresh copy) while leaving the result
+    reclaimed would: free the snapshot at exit (fine) BUT the map's real buffer now
+    ALSO never gets freed by anyone (ks no longer aliases it) → the map buffer leaks
+    MORE (regression), unless the map is also made to free its buffers.
+  - A naive slice 2 that makes the map free its buffers (arr_push_owned / map_free)
+    WITHOUT first desugaring the keys()-alias would DOUBLE-FREE: both the ks-reclaim
+    AND the map now free the same buffer.
+  So slices 1 and 2 are NOT independent — they are one coupled change: snapshot keys()/
+  values() (breaking the alias) AND make the map own+free its buffers, together, so the
+  ks-reclaim frees only its own copy and the map frees only its own buffers. THIS is the
+  real shape of the foundational change, and why it must be one careful, holistic slice
+  on the reclaim surface — not the 4 independent steps the entry above implied. The
+  correct first move in a focused session: write the coupled (keys/values-snapshot +
+  map-owns-buffers) change together, then validate the whole balance (churn flat,
+  __rc_underflow()==0, get_or/iter correctness, fixpoint) as a unit.
