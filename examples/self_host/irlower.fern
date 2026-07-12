@@ -11437,6 +11437,15 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (slot_is_reclaimable_arrstruct(sb, slot)) {
         return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
     }
+    // Reclaimable SCALAR-FIELD struct-array LOOP-LOCAL (#4355): a struct[] whose
+    // element struct has no rc field — the deep arrstruct path above skips it, so
+    // free the prior iteration's element boxes + outer buffer here (shallow box dec
+    // per element via __fern_arrarr_free), else every element struct box leaks per
+    // iteration. Disjoint from arrstruct (slot_is_reclaimable_structarr excludes
+    // field-routing structs), so at most one of these two branches fires per slot.
+    if (slot_is_reclaimable_structarr(sb, slot)) {
+        return emit_structarr_reclaim_store(sb, slot);
+    }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
 }
@@ -14481,6 +14490,20 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 // inside the helper. Same one-slot-one-free placement rationale
                 // as the arrarr branch above.
                 st = st.emit(ir.op_call_direct("__fern_optarrarr_free", 1));
+            } else if (slot_is_reclaimable_structarr(st, i)) {
+                // SCALAR-FIELD struct-array element-box reclaim (#4355): a fresh,
+                // non-escaping `[P { .. }, P { .. }]` where P has no rc field frees
+                // each element STRUCT BOX (one rc-guarded arr_dec — __fern_rc_dec's
+                // mapping — per element pointer) then the outer buffer, via the SAME
+                // __fern_arrarr_free helper the scalar arr-of-arr class uses (an
+                // element pointer and an inner array buffer are both freed by
+                // arr_dec). Inside the is_arr sweep like the arrarr branch — a
+                // struct-array slot is is_arr, so a separate loop would double-free
+                // it. DISJOINT from ARRSTRUCT (whose deep-free loop handles
+                // field-routing structs); the detector's struct_has_reclaim_array_
+                // field guard keeps a slot in at most one class, so nothing leaks
+                // here (a scalar-field struct owns no rc field).
+                st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
             } else {
                 if (slot_is_reclaimable_strarr(st, i)) {
                     // string[] ELEMENT reclaim (#4355): a proven fresh-element string
@@ -17599,6 +17622,30 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         asti = asti + 1;
     }
+    // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
+    // — every element a fresh no-base struct literal, and P has no rc-array field
+    // (the deep ARRSTRUCT path above only credits field-routing structs). Credited
+    // "STRUCTARR:" so slot_is_reclaimable_structarr routes the exit sweep /
+    // loop-rebind through __fern_arrarr_free (a rc-guarded box dec per element
+    // pointer, then the outer buffer). Before this, a scalar-field struct-array slot
+    // took the generic is_arr shallow __fern_rc_dec, freeing only the OUTER buffer
+    // and leaking every element struct box per iteration. Three gates: no escape of g
+    // itself (body_unsafe_for), not reassigned, and no ELEMENT escape
+    // (structarr_elem_escapes — a bound `var q = g[i]` element, or a `for p in g`
+    // whose body lets `p` escape, holds a box the free would dangle; transient
+    // `for p in g { … p.field … }` iteration and `g[i].field` reads are fine). The
+    // detector's struct_has_reclaim_array_field guard keeps this DISJOINT from
+    // ARRSTRUCT — field structs deep-drop there, scalar structs shallow-free here.
+    var sarrs2: string[] = collect_fresh_structarr_names(body, []);
+    var sa2i: i32 = 0;
+    while (sa2i < sarrs2.len()) {
+        if (!body_unsafe_for(body, sarrs2[sa2i], borrowable)
+            && util.index_of_str(reassigned, sarrs2[sa2i]) < 0
+            && !structarr_elem_escapes(body, sarrs2[sa2i], borrowable)) {
+            out = out.append("STRUCTARR:" + sarrs2[sa2i]);
+        }
+        sa2i = sa2i + 1;
+    }
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
     // concrete's rc-headered box) — credited "DYN:<name>|<Concrete>" so the
@@ -19999,6 +20046,64 @@ function collect_fresh_optaarr_names(stmts: parser.Stmt[], acc: string[]): strin
     return a;
 }
 
+// structarr_lit_is_fresh: `e` is a non-empty array literal whose EVERY element
+// is a fresh, no-base struct LITERAL (`[P { .. }, P { .. }]`). Each element box
+// is freshly allocated (rc=1) and solely owned by the outer buffer, so the
+// SHALLOW per-element box dec the reclaim performs (via __fern_arrarr_free,
+// which arr_dec's each element pointer then frees the outer buffer) frees each
+// element exactly once and can never dangle a caller's reference. A `{ ...base }`
+// update or a call/ident element is excluded — the box might alias a live value
+// whose owner also frees it. NB: the elements' own rc-array / string FIELDS are
+// NOT deep-dropped (they leak, sound) — that is the type-specialised follow-up;
+// this slice reclaims the currently-leaked element BOXES + outer buffer.
+function structarr_lit_is_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(outer) => {
+            if (outer.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < outer.elements.len()) {
+                match (outer.elements[i]) {
+                    parser.ExprStructLit(sl) => { if (sl.has_base) { return false; } },
+                    _ => { return false; }
+                }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_fresh_structarr_names: `var g = [P { .. }, P { .. }]` bindings whose
+// init is a fresh struct-literal array (structarr_lit_is_fresh), recursing
+// nested blocks. Escape gates (body_unsafe_for + not-reassigned +
+// structarr_elem_escapes) are applied by reclaimable_names_of. No annotation
+// check is needed — the all-struct-literal init both proves freshness AND makes
+// the declaration path mark the slot is_arr with its element struct type, which
+// slot_is_reclaimable_structarr consults.
+function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (structarr_lit_is_fresh(v.init)) { a = push_str_unique(a, v.name); }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, a); a = collect_fresh_structarr_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_structarr_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_fresh_arrarr_names gathers LOCAL names bound from a fresh
 // arr-of-arr literal (`var g = [[..], [..]]`, arrarr_lit_is_fresh) anywhere in
 // the body (#4355 slice 9), or — slice 10 — from a CALL to a function in the
@@ -20156,6 +20261,47 @@ function expr_is_bare_row_read(e: parser.Expr, name: string): boolean {
             }
         },
         _ => { return false; }
+    }
+    return false;
+}
+
+// structarr_elem_escapes: reports whether an ELEMENT pointer of the struct-array
+// `name` could outlive the reclaim (function exit / loop rebind), which would
+// dangle the freed element box. Unlike arrarr_row_escapes (which rejects ALL
+// `for row in g` because an arr-of-arr row is an inner buffer that may be
+// retained), a struct-array admits transient iteration: `for p in g { … p.field
+// … }` binds each element box only for the loop, which completes before the free
+// — so it is safe UNLESS the loop body lets `p` escape (stores / returns / binds
+// it). A bare element bind `var q = g[i]` / `q = g[i]` is rejected conservatively
+// (q could outlive), matching arrarr's index stance; a transient `g[i].field`
+// read (not a bind) is fine. Field aliasing (`var s = p.name`) is always safe
+// here — the reclaim is a SHALLOW box dec that never frees a field pointer.
+function structarr_elem_escapes(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (expr_is_bare_row_read(v.init, name)) { return true; } },
+            parser.StmtAssign(asg) => { if (expr_is_bare_row_read(asg.value, name)) { return true; } },
+            parser.StmtFor(fo) => {
+                var iterates_name: boolean = false;
+                match (fo.iter) {
+                    parser.ExprIdent(fid) => { if (fid.name == name) { iterates_name = true; } },
+                    _ => {}
+                }
+                // `for p in name`: the element box `p` is bound per iteration.
+                // Safe iff it does not escape the loop body (only borrow reads).
+                if (iterates_name && body_unsafe_for(fo.body, fo.var_name, borrowable)) { return true; }
+                if (structarr_elem_escapes(fo.body, name, borrowable)) { return true; }
+            },
+            parser.StmtIf(f) => { if (structarr_elem_escapes(f.then_body, name, borrowable) || structarr_elem_escapes(f.else_body, name, borrowable)) { return true; } },
+            parser.StmtWhile(w) => { if (structarr_elem_escapes(w.body, name, borrowable)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (structarr_elem_escapes(m.arms[mi].body, name, borrowable)) { return true; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
     }
     return false;
 }
@@ -21250,6 +21396,52 @@ function emit_arrstruct_reclaim_store(se: LowerState, slot: i32, sty: string): L
     st = st.emit(ir.op_store_local(tmp));            // stash new
     st = emit_arrstruct_deep_free(st, slot, sty);    // free old structure
     st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// slot_is_reclaimable_structarr: the SCALAR-FIELD sibling of arrstruct. Slot i
+// holds a fresh, non-escaping array of fresh struct literals
+// (`var g = [P { .. }, P { .. }]`) whose element struct has NO rc-array field
+// (struct_has_reclaim_array_field false — so the deep arrstruct path skips it and
+// its element boxes would otherwise leak). Credited "STRUCTARR:" by
+// reclaimable_names_of. The outer buffer's element pointers are each a sole-owned
+// (rc=1) struct box, freed by the SAME __fern_arrarr_free helper the scalar
+// arr-of-arr reclaim uses (one rc-guarded arr_dec per element pointer — exactly a
+// struct-box free, __fern_rc_dec maps to __fn___fern_arr_dec — then the outer
+// buffer). Deliberately NOT is_arrarr / is_strarr (T[][] / string[] have their own
+// helpers). DISJOINT from slot_is_reclaimable_arrstruct: field-routing structs go
+// there (deep drop of each element's fields), scalar-only structs here (shallow
+// box — no field to drop). A "dyn <T>" element array is excluded (dyn sweep).
+function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_arr) { return false; }
+    if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0) { return false; }
+    if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
+    if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
+    return util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_structarr_reclaim_store: the struct-element twin of
+// emit_optaarr_reclaim_store — stores `new` into a reclaimable struct-array
+// slot, cow-guarded (a self-store never frees), freeing the PRIOR array's
+// element boxes + outer buffer via __fern_arrarr_free.
+function emit_structarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$saar" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
     return st.emit(ir.op_store_local(slot));
 }
 

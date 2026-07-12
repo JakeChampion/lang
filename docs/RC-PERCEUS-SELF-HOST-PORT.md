@@ -4156,3 +4156,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   length as 0 (32-bit format truncation) — the literal-pool ldr =N was fine
   (verified in the disassembly: two-word 64-bit literal, correctly resolved).
   The earlier entry's "hint 0x04000000" details are superseded by this.
+
+- 2026-07-12: **#4355 — SCALAR-FIELD struct-array element-box reclaim
+  (`var g = [P{…}, P{…}]`, P scalar-only).** The complement to the #4365
+  ARRSTRUCT slice, which landed the DEEP struct-array reclaim
+  (`(<struct-with-array-field>)[]` — annotated, per-element `__struct_drop_<T>`
+  + box + outer buffer via `emit_arrstruct_deep_free`) but, by design, only
+  credits structs that ROUTE field-reclaim (`struct_has_reclaim_array_field`).
+  A **scalar-only** struct-array (`P { x: i32, y: i32 }[]`) fell through to the
+  generic is_arr shallow `__fern_rc_dec`, freeing only the OUTER buffer — so
+  every element struct box still leaked per iteration. This slice fills exactly
+  that gap. KEY REUSE: an element pointer and an inner array buffer are both
+  freed by the same primitive (`__fern_rc_dec` maps to `__fn___fern_arr_dec` /
+  `$__fern_arr_dec` on every backend), so a scalar-field struct-array routes
+  through the EXISTING `__fern_arrarr_free` helper (one rc-guarded arr_dec per
+  element pointer, then the outer buffer) with NO new backend runtime — the
+  whole slice lives in irlower.fern. ADMISSION (`collect_fresh_structarr_names`
+  + "STRUCTARR:" credit): every element a fresh no-base struct LITERAL
+  (`structarr_lit_is_fresh` — each box rc=1, solely owned by the buffer); three
+  gates — `body_unsafe_for` (g doesn't escape), NOT reassigned, and
+  `structarr_elem_escapes`. DISJOINTNESS FROM ARRSTRUCT is enforced in the
+  detector: `slot_is_reclaimable_structarr` bails when
+  `struct_has_reclaim_array_field(sty)` — so a field-routing struct goes to the
+  deep ARRSTRUCT path and a scalar struct to this shallow one; at most one class
+  fires per slot (no double-free). Since a scalar struct owns no rc field, the
+  shallow box free is EXACT (nothing leaks). The element gate is MORE PERMISSIVE
+  than the arr-of-arr row gate on purpose: a struct-array admits transient
+  iteration `for p in g { … p.field … }` (the box is borrowed only for the loop,
+  dead before the free) unless the loop body lets `p` escape; a bare element bind
+  `var q = g[i]` is still rejected conservatively. WIRING: exit-sweep is_arr-loop
+  `else if` branch + `emit_structarr_reclaim_store` (cow-guarded) at the loop
+  rebind, both after the ARRSTRUCT/ARRTUP branches. VERIFIED:
+  TestSelfHostStructArrReclaim{IRX86_64 (scalar-flat + annotated-flat +
+  iter-flat + elem-alias-safe), WasmIR (3), IRArm64 (3)} — reclaim fires (churn
+  flat at detector zero), transient iteration admitted, element-alias excluded
+  (q stays valid, no over-release). Fixtures use scalar-field structs (the only
+  shape this class covers). Rebased onto #4365's ARRSTRUCT/ARRTUP/OPTSTRUCT/
+  OPTTUP work; the two struct-array classes are now disjoint siblings.
+  Fixpoint stays byte-identical (the self-host's own struct-array literals, e.g.
+  `var nparams: ParamDecl[] = [ParamDecl {…}]`, all escape into a FuncDecl, so
+  body_unsafe_for excludes them). Remaining nearby: `string[][][]` deep free,
+  map string K/V (#4353).
