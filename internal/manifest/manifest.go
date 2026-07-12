@@ -52,19 +52,38 @@ type Dep struct {
 	// its package name rather than a path/url. Keeps cross-member deps
 	// explicit (isolation) while removing brittle `../../member` paths.
 	Workspace bool
+	// Version is the Minimum-Version-Selection constraint of a versioned
+	// dependency (`dep = "1.2.0"` or `{ version = "1.2.0" }`): the LOWEST
+	// acceptable version. The concrete version is chosen by MVS over the
+	// [package] index and pinned in fern.lock — never a range, so
+	// resolution stays deterministic and lockfile-driven (internal/mvs).
+	Version string
 }
 
 // Manifest is a parsed fern.toml.
 type Manifest struct {
 	Dir     string // absolute directory containing the manifest
 	Name    string // [package] name (empty for a workspace-only manifest)
-	Version string // [package] version (informational in this slice)
+	Version string // [package] version (informational; a package's own version)
 	Lib     string // [package] lib — entry module for `import "<name>"`; DefaultLib when unset
+	Index   string // [package] index — path to the version index for MVS deps (empty = none)
 	Deps    map[string]Dep
 	// Members is the [workspace] members list (relative directories),
 	// non-nil only when a [workspace] table is present. A manifest may be
 	// workspace-only (no [package]) or both a package and a workspace root.
 	Members []string
+}
+
+// VersionDeps returns the names→min-version of this manifest's versioned
+// (MVS) dependencies.
+func (m *Manifest) VersionDeps() map[string]string {
+	out := map[string]string{}
+	for name, d := range m.Deps {
+		if d.Version != "" {
+			out[name] = d.Version
+		}
+	}
+	return out
 }
 
 // IsWorkspace reports whether this manifest declares a [workspace] table.
@@ -206,8 +225,10 @@ func Parse(src string) (*Manifest, error) {
 				m.Version = s
 			case "lib":
 				m.Lib = s
+			case "index":
+				m.Index = filepath.FromSlash(s)
 			default:
-				return nil, fmt.Errorf("line %d: unknown [package] key %q (supported: name, version, lib)", ln+1, key)
+				return nil, fmt.Errorf("line %d: unknown [package] key %q (supported: name, version, lib, index)", ln+1, key)
 			}
 		case "dependencies":
 			dep, err := parseDep(val)
@@ -292,8 +313,21 @@ func parseString(val string) (string, error) {
 // `{ workspace = true }` — version-only deps (`dep = "1.2"`) belong to
 // the registry/MVS slice and error with a pointer at what IS supported.
 func parseDep(val string) (Dep, error) {
-	if !strings.HasPrefix(val, "{") || !strings.HasSuffix(val, "}") {
-		return Dep{}, fmt.Errorf("only path, url+hash, and workspace dependencies are supported in this slice — write `{ path = \"../dir\" }`, `{ url = \"https://…/pkg.tar.gz\", hash = \"sha256:…\" }`, or `{ workspace = true }`")
+	// Bare-string form: `dep = "1.2.0"` is a versioned (MVS) dependency,
+	// its value the minimum acceptable version. The concrete version comes
+	// from the index via MVS and is pinned in fern.lock.
+	if !strings.HasPrefix(val, "{") {
+		s, err := parseString(val)
+		if err != nil {
+			return Dep{}, fmt.Errorf("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): %w", err)
+		}
+		if !isVersion(s) {
+			return Dep{}, fmt.Errorf("version must be MAJOR.MINOR.PATCH digits, got %q", s)
+		}
+		return Dep{Version: s}, nil
+	}
+	if !strings.HasSuffix(val, "}") {
+		return Dep{}, fmt.Errorf("malformed inline table %q", val)
 	}
 	body := strings.TrimSpace(val[1 : len(val)-1])
 	dep := Dep{}
@@ -334,14 +368,23 @@ func parseDep(val string) (Dep, error) {
 				return Dep{}, fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", s)
 			}
 			dep.Hash = s
+		case "version":
+			if !isVersion(s) {
+				return Dep{}, fmt.Errorf("version must be MAJOR.MINOR.PATCH digits, got %q", s)
+			}
+			dep.Version = s
 		default:
-			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash, workspace)", k)
+			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash, workspace, version)", k)
 		}
 	}
 	switch {
-	case dep.Workspace && (dep.Path != "" || dep.URL != "" || dep.Hash != ""):
-		return Dep{}, fmt.Errorf("a `workspace` dependency takes no path/url/hash")
+	case dep.Workspace && (dep.Path != "" || dep.URL != "" || dep.Hash != "" || dep.Version != ""):
+		return Dep{}, fmt.Errorf("a `workspace` dependency takes no path/url/hash/version")
 	case dep.Workspace:
+		return dep, nil
+	case dep.Version != "" && (dep.Path != "" || dep.URL != "" || dep.Hash != ""):
+		return Dep{}, fmt.Errorf("a `version` dependency takes no path/url/hash (the version resolves through the index)")
+	case dep.Version != "":
 		return dep, nil
 	case dep.Path != "" && (dep.URL != "" || dep.Hash != ""):
 		return Dep{}, fmt.Errorf("a dependency is either `path` or `url`+`hash`, not both")
@@ -352,8 +395,29 @@ func parseDep(val string) (Dep, error) {
 	case dep.URL != "" || dep.Hash != "":
 		return Dep{}, fmt.Errorf("url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint")
 	default:
-		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`, or `workspace = true`)")
+		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`, `workspace = true`, or a version)")
 	}
+}
+
+// isVersion reports whether s is a bare MAJOR.MINOR.PATCH version (the
+// only form MVS constraints and the index use — no ranges, no
+// pre-release, keeping resolution deterministic).
+func isVersion(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func isHex(s string) bool {

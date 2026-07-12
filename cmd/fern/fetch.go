@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/jakechampion/lang/internal/manifest"
+	"github.com/jakechampion/lang/internal/mvs"
 	"github.com/jakechampion/lang/internal/pkgcache"
 )
 
@@ -43,6 +44,12 @@ func runFetch(start string) error {
 		}
 		seen[m.Dir] = true
 		for name, d := range m.Deps {
+			// Workspace-member deps are in-tree; versioned deps resolve
+			// through fern.lock (fetched from the lock below), not the
+			// manifest walk.
+			if d.Workspace || d.Version != "" {
+				continue
+			}
 			var depDir string
 			switch {
 			case d.URL != "":
@@ -75,6 +82,25 @@ func runFetch(start string) error {
 	}
 	if err := walk(root); err != nil {
 		return err
+	}
+	// Versioned deps: fetch every url-sourced version pinned in fern.lock,
+	// so a committed lock builds offline on a fresh machine without
+	// re-running resolution.
+	locked, err := mvs.ReadLock(root.Dir)
+	if err != nil {
+		return err
+	}
+	for name, sel := range locked {
+		if sel.Source.URL == "" {
+			continue
+		}
+		if _, present, derr := pkgcache.Dir(sel.Source.Hash); derr == nil && !present {
+			fmt.Fprintf(os.Stderr, "fetching %s@%s (%s)\n", name, sel.Version, sel.Source.URL)
+			if _, ferr := pkgcache.Fetch(sel.Source.URL, sel.Source.Hash); ferr != nil {
+				return fmt.Errorf("locked dependency %q: %w", name, ferr)
+			}
+			fetched++
+		}
 	}
 	fmt.Fprintf(os.Stderr, "fetch: %d downloaded, %d package(s) checked\n", fetched, len(seen))
 	return nil
