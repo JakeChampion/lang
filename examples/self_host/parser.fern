@@ -3754,6 +3754,16 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         base = base + "." + seg0;
         p = p.advance();
     }
+    // `str` -- the borrowed-string view type (#4813). The self-host ERASES
+    // it to "string" at the parse boundary: the parse-time mirror of the
+    // native ir/erase_str.go choke point. A view lowers to exactly the
+    // string box shape, and the view-discipline enforcement (E065 / the
+    // borrow rules) is the native checker's job, so normalizing here keeps
+    // every downstream `== "string"` dispatch site working unchanged -- the
+    // self-host COMPILES str programs, natively-checked. A qualified
+    // `str.Foo` keeps its nominal spelling (the dot-chain above already
+    // extended base past the bare name).
+    if (base == "str") { base = "string"; }
     if (p.peek_punct() != "[") {
         return (base, false, "", p);
     }
