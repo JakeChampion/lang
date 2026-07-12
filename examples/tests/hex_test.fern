@@ -69,6 +69,14 @@ function test_decode_strict_rejects(): test.TestOutcome {
     return test.assert_true(hex_is_none("414") && hex_is_none("zz") && hex_is_none("48656c6c6fzz"));
 }
 
+// hex_encode_upper emits uppercase A-F; decode accepts it (either case).
+function test_encode_upper(): test.TestOutcome {
+    if (hex.hex_encode_upper("z") != "7A") { return test.fail("7A"); }
+    if (hex.hex_encode_upper("") != "") { return test.fail("empty"); }
+    // Round-trips through the case-insensitive decoder.
+    return test.assert_eq(hex.hex_decode(hex.hex_encode_upper("Hello")), "Hello");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/hex");
     r = r.it("encode",                   test_encode());
@@ -83,5 +91,6 @@ function main(): i32 {
     r = r.it("encode emits lowercase",   test_encode_lowercase_digits());
     r = r.it("decode_strict valid",      test_decode_strict_valid());
     r = r.it("decode_strict rejects",    test_decode_strict_rejects());
+    r = r.it("encode_upper",             test_encode_upper());
     return r.finish();
 }

@@ -409,9 +409,12 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
 
 ### `std/hex`
 
-Lowercase hex round-trip.
+Hex round-trip.
 
-- `hex_encode(s)`, `hex_decode(s)`.
+- `hex_encode(s)` (lowercase `0-9a-f`), `hex_encode_upper(s)`
+  (uppercase `0-9A-F`).
+- `hex_decode(s)` (lenient, either case), `hex_decode_strict(s)`
+  (`Option`, `None` on malformed input).
 
 ### `std/crypto`
 

@@ -15,6 +15,11 @@ function __hex_lower_char(d: i32): i32 {
     return d + 87;                       // 'a' - 10 + d
 }
 
+function __hex_upper_char(d: i32): i32 {
+    if (d < 10) { return d + 48; }      // '0' + d
+    return d + 55;                       // 'A' - 10 + d
+}
+
 function __hex_value(c: i32): i32 {
     if (c >= 48 && c < 58)  { return c - 48; }      // 0-9
     if (c >= 97 && c < 103) { return c - 87; }      // a-f
@@ -31,6 +36,25 @@ pub function hex_encode(s: string): string {
         var b: i32 = s[i];
         buf = buf.with(i * 2, __hex_lower_char((b >> 4) & 15) as u8);
         buf = buf.with(i * 2 + 1, __hex_lower_char(b & 15) as u8);
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `hex_encode_upper(s)` — like `hex_encode` but emits uppercase
+// `0-9A-F`. Useful where a protocol / display convention calls for
+// uppercase hex (MAC addresses, some checksums, fingerprints). Decodes
+// with the same `hex_decode` / `hex_decode_strict` (both accept either
+// case).
+pub function hex_encode_upper(s: string): string {
+    var n: i32 = s.len();
+    if (n == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(n * 2);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        buf = buf.with(i * 2, __hex_upper_char((b >> 4) & 15) as u8);
+        buf = buf.with(i * 2 + 1, __hex_upper_char(b & 15) as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);
