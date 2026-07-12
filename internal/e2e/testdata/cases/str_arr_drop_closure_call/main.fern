@@ -1,0 +1,36 @@
+// Regression for #4816 (wasm codegen). A program that DROPS a `string[]`
+// (pulling in the `__fern_drop_arr_str` runtime helper → `__fern_str_dec`)
+// AND calls a closure `(string, string) => i32` with a `string` argument,
+// where nothing else independently pulls in `__fern_box_free`.
+//
+// `__fern_str_dec`'s wasm body statically contains a `call __fern_box_free`
+// (its rc==1 branch), so box_free must be emitted whenever str_dec is. The
+// `__fern_drop_arr_str` needs-case omitted box_free, so on `-target wasm`
+// that call resolved to funcidx 0 (the first user function) → invalid wasm
+// ("expected i32 but nothing on stack"). Native backends were unaffected.
+//
+// NOTE: no `print` — `print` transitively pulls in `__fern_box_free`, which
+// masks the bug. The program signals success purely through its exit code
+// (0), which the fixture harness reads directly on native and off the
+// appended stdout line on wasm.
+//
+// Shape: `xs` (a string[]) is dropped at main's scope exit; `cmp` is called
+// through a closure-typed parameter with a two-word string arg pulled from
+// the array. `scmp` orders by length, so "a" (len 1) < "zz" (len 2) → the
+// comparator returns negative → main returns 0.
+
+function scmp(a: string, b: string): i32 {
+    if (a.len() < b.len()) { return 0 - 1; }
+    if (a.len() > b.len()) { return 1; }
+    return 0;
+}
+
+function g(arr: string[], cmp: (string, string) => i32): i32 {
+    return cmp(arr[0], "zz");
+}
+
+function main(): i32 {
+    var xs: string[] = ["a", "bb"];
+    if (g(xs, scmp) < 0) { return 0; }
+    return 1;
+}

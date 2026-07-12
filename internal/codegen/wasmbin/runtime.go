@@ -560,11 +560,23 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_drop_arr_str":
 					// string[] drop: walks two-word elements calling
 					// __fern_str_dec, then frees the buffer (flag-on).
+					// str_dec's body statically calls box_free (→ __free)
+					// and rc_dec, so all three must be present whenever
+					// str_dec is — UNCONDITIONALLY, even flag-off: the CALL
+					// instructions are emitted regardless of whether
+					// reclamation runs, and a missing helper leaves the call
+					// resolving to funcidx 0 (the first user function) →
+					// invalid wasm. Mirrors the __fern_str_dec case above
+					// (#4816: box_free was omitted here, so a program that
+					// dropped a string[] without otherwise pulling in
+					// box_free emitted a str_dec whose `call box_free` hit
+					// funcidx 0).
 					needs.add("__fern_drop_arr_str")
 					needs.add("__fern_rc_dec")
 					needs.add("__fern_str_dec")
+					needs.add("__fern_box_free")
+					needs.add("__free")
 					if ast.RcFreeEnabled {
-						needs.add("__free")
 						needs.add("__fern_alloc")
 					}
 				case "__fern_rc_is_unique":
