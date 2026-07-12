@@ -11030,6 +11030,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             _ => {}
         }
     }
+    // #4365 ARRTUP: an `(<tuple-with-array>)[]` array-of-tuples slot stays plain
+    // is_arr (its elements are tuple boxes, not arrays, so is_arrarr is false) but
+    // records its ELEMENT TUPLE TYPE in arrarr_elem so slot_is_reclaimable_arrtup's
+    // release can type-drive each element's deep-drop.
+    if (is_arr && !is_arrarr) {
+        var atet: string = arrtup_elem_tuple_type(v.type_name);
+        if (atet != "") { arrarr_e = atet; }
+    }
     var sb: LowerState = se.add_local(v.name);
     var slot: i32 = sb.slot_of(v.name);
     sb = sb.mark_arr(slot, is_arr);
@@ -11393,6 +11401,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // outer buffer).
     if (slot_is_reclaimable_optaarr(sb, slot)) {
         return emit_optaarr_reclaim_store(sb, slot);
+    }
+    // Reclaimable (<tuple-with-array>)[] LOOP-LOCAL (#4365): free the prior
+    // iteration's whole structure — each element tuple's array fields + tuple box,
+    // then the outer buffer — before the store, else all levels leak per iteration
+    // (the shallow emit_arr_store dec frees only the outer buffer).
+    if (slot_is_reclaimable_arrtup(sb, slot)) {
+        return emit_arrtup_reclaim_store(sb, slot, sb.locals[slot].arrarr_elem);
     }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
@@ -14344,7 +14359,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var st: LowerState = s;
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
+        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -14545,6 +14560,21 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_store_local(otj));
         }
         otj = otj + 1;
+    }
+    // Reclaimable (<tuple-with-array>)[] locals (#4365): deep-free the final live
+    // structure (per-element tuple deep-drop + tuple box, then the outer buffer) via
+    // the same inline element-walk the loop-rebind uses. An arrtup slot is is_arr but
+    // EXCLUDED from the plain is_arr sweep above, so it takes this dedicated loop.
+    // Slots are entry-zeroed (arr_slots_of), so an untaken-branch slot routes a null
+    // through the guard.
+    var atj: i32 = st.n_params;
+    while (atj < st.locals.len()) {
+        if (!slot_list_has(keeps, atj) && slot_is_reclaimable_arrtup(st, atj)) {
+            st = emit_arrtup_deep_free(st, atj, st.locals[atj].arrarr_elem);
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(atj));
+        }
+        atj = atj + 1;
     }
     // (Reclaimable arr-of-arr locals are freed INSIDE the is_arr sweep above —
     // an arrarr slot is also is_arr, so a separate loop here double-freed;
@@ -17460,6 +17490,27 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         out = out.append("OPTTUP:" + ots[oti]);
         oti = oti + 1;
     }
+    // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
+    // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
+    // arrays. Credited "ARRTUP:" so slot_is_reclaimable_arrtup routes the loop-rebind
+    // + exit sweep through emit_arrtup_deep_free (counted element walk: per element
+    // type-driven tuple deep-drop + tuple box dec, then the outer buffer). Gates: no
+    // escape of xs itself (body_unsafe_for), not reassigned, no ELEMENT alias
+    // (arrarr_row_escapes — a bound `var t = xs[i]` / `for t in xs` holds a tuple box
+    // the free would dangle), and no element-payload escape (arrtup_elem_payload_
+    // escapes — a bare `keep = xs[i].1` array-field extraction; a scalar read
+    // `xs[i].0`, indexed read `xs[i].1[j]` and `xs[i].1.len()` are borrows).
+    var ats: string[] = collect_fresh_arrtup_names(body, []);
+    var ati: i32 = 0;
+    while (ati < ats.len()) {
+        if (!body_unsafe_for(body, ats[ati], borrowable)
+            && util.index_of_str(reassigned, ats[ati]) < 0
+            && !arrarr_row_escapes(body, ats[ati])
+            && !arrtup_elem_payload_escapes(body, ats[ati], arrtup_elem_type_of_decl(body, ats[ati]))) {
+            out = out.append("ARRTUP:" + ats[ati]);
+        }
+        ati = ati + 1;
+    }
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
     // concrete's rc-headered box) — credited "DYN:<name>|<Concrete>" so the
@@ -20142,6 +20193,340 @@ function emit_opttup_reclaim_store(se: LowerState, slot: i32, inner: string): Lo
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
     st = emit_opttup_deep_free(st, slot, inner);     // free old box + payload
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// ── ARRTUP: reclaim `(<tuple-with-array>)[]` array-of-tuples locals (#4365) ──
+// arrtup_elem_tuple_type: for an array type `(<tuple>)[]`, return the element tuple
+// type `(<tuple>)` when it is deep-droppable (>=1 array, all scalar / leaf array /
+// nested tuple), else "". The element boxes are tuples carrying fresh arrays; the
+// release walks the buffer element-by-element and type-drives each tuple's drop.
+function arrtup_elem_tuple_type(type_name: string): string {
+    var n: i32 = type_name.len();
+    if (n < 4) { return ""; }
+    if (type_name[n - 2 : n] != "[]") { return ""; }
+    var elem: string = type_name[0 : n - 2];
+    if (!tuple_field_deep_droppable(elem)) { return ""; }
+    return elem;
+}
+
+// arrtup_ann_is: `type_name` is `(<tuple-with-array>)[]` (arrtup_elem_tuple_type
+// parses + validates; this is the boolean gate).
+function arrtup_ann_is(type_name: string): boolean {
+    return arrtup_elem_tuple_type(type_name) != "";
+}
+
+// arrtup_lit_is_fresh: `e` is a non-empty array literal whose EVERY element is a
+// FRESH tuple literal for the element type `ttype` — every array position a direct
+// array literal (tuple_arg_payload_fresh), so each element tuple box AND its arrays
+// are sole-owned at the binding. A scalar position accepts any expression.
+function arrtup_lit_is_fresh(e: parser.Expr, ttype: string): boolean {
+    match (e) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < arr.elements.len()) {
+                if (!tuple_arg_payload_fresh(ttype, arr.elements[i])) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_fresh_arrtup_names: LOCAL names bound from a fresh `(<tuple-with-array>)[]`
+// literal (arrtup_ann_is + arrtup_lit_is_fresh) anywhere in the body. Escape gates
+// applied by reclaimable_names_of.
+function collect_fresh_arrtup_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (arrtup_ann_is(v.type_name) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name))) { a = push_str_unique(a, v.name); }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_arrtup_names(f.then_body, a); a = collect_fresh_arrtup_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrtup_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrtup_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_arrtup_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// arrtup_elem_type_of_decl: find the element tuple type of the `(<tuple>)[]` local
+// `name` from its declaration anywhere in the body (for the escape checker). "" if
+// not an arrtup declaration.
+function arrtup_elem_type_of_decl(stmts: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name && arrtup_ann_is(v.type_name)) { return arrtup_elem_tuple_type(v.type_name); } },
+            parser.StmtIf(f) => {
+                var t1: string = arrtup_elem_type_of_decl(f.then_body, name);
+                if (t1 != "") { return t1; }
+                var t2: string = arrtup_elem_type_of_decl(f.else_body, name);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var t: string = arrtup_elem_type_of_decl(w.body, name); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = arrtup_elem_type_of_decl(fo.body, name); if (t != "") { return t; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { var t: string = arrtup_elem_type_of_decl(m.arms[mi].body, name); if (t != "") { return t; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// arrtup_elem_esc_expr: does `e` use the array-of-tuples local `name` (element tuple
+// type `ttype`) in a way that ESCAPES an owned pointer the whole-structure reclaim
+// would free? The leaf is an ELEMENT field access `name[i].N`: a scalar field is a
+// safe value copy; an ARRAY / nested-tuple field extracted bare escapes. `name[i].N[j]`
+// (indexed array-field read) and `name[i].N.len()` are borrows; a BARE `name[i]`
+// element (the tuple box) or a bare `name` escapes. Erring toward escape is a safe
+// leak, never an over-release.
+function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIndex(ix) => {
+                    match (ix.array) {
+                        parser.ExprIdent(aid) => {
+                            if (aid.name == name && util.is_all_digits(fa.field)) {
+                                var tag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(fa.field));
+                                if (!is_scalar_type_name(tag)) { return true; }   // bare array/nested extract
+                                return arrtup_elem_esc_expr(ix.index, name, ttype);
+                            }
+                        },
+                        _ => {}
+                    }
+                    return arrtup_elem_esc_expr(fa.obj, name, ttype);
+                },
+                _ => { return arrtup_elem_esc_expr(fa.obj, name, ttype); }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            // `name[i].N[j]`: indexed array-field read — safe; check both indices.
+            match (ix.array) {
+                parser.ExprFieldAccess(bfa) => {
+                    match (bfa.obj) {
+                        parser.ExprIndex(bix) => {
+                            match (bix.array) {
+                                parser.ExprIdent(bid) => {
+                                    if (bid.name == name && util.is_all_digits(bfa.field)) {
+                                        return arrtup_elem_esc_expr(bix.index, name, ttype) || arrtup_elem_esc_expr(ix.index, name, ttype);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                parser.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] tuple box
+                _ => {}
+            }
+            return arrtup_elem_esc_expr(ix.array, name, ttype) || arrtup_elem_esc_expr(ix.index, name, ttype);
+        },
+        parser.ExprCall(c) => {
+            // `name[i].N.len()`: the one whitelisted borrow method — safe receiver, check args.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        parser.ExprFieldAccess(pfa) => {
+                            match (pfa.obj) {
+                                parser.ExprIndex(pix) => {
+                                    match (pix.array) {
+                                        parser.ExprIdent(pid) => {
+                                            if (pid.name == name && util.is_all_digits(pfa.field) && cfa.field == "len") {
+                                                if (arrtup_elem_esc_expr(pix.index, name, ttype)) { return true; }
+                                                var ai: i32 = 0;
+                                                while (ai < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ai], name, ttype)) { return true; } ai = ai + 1; }
+                                                return false;
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            if (arrtup_elem_esc_expr(c.callee, name, ttype)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ci], name, ttype)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return arrtup_elem_esc_expr(b.left, name, ttype) || arrtup_elem_esc_expr(b.right, name, ttype); },
+        parser.ExprUnary(u) => { return arrtup_elem_esc_expr(u.operand, name, ttype); },
+        parser.ExprSlice(sl) => { return arrtup_elem_esc_expr(sl.array, name, ttype) || arrtup_elem_esc_expr(sl.start, name, ttype) || arrtup_elem_esc_expr(sl.end, name, ttype); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { if (arrtup_elem_esc_expr(ar.elements[i], name, ttype)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (arrtup_elem_esc_expr(t.elements[i], name, ttype)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && arrtup_elem_esc_expr(sl.base, name, ttype)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (arrtup_elem_esc_expr(sl.field_values[i], name, ttype)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function arrtup_elem_esc_stmt(st: parser.Stmt, name: string, ttype: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return arrtup_elem_esc_expr(v.init, name, ttype); },
+        parser.StmtReturn(r) => { return arrtup_elem_esc_expr(r.value, name, ttype); },
+        parser.StmtExpr(e) => { return arrtup_elem_esc_expr(e.value, name, ttype); },
+        parser.StmtAssign(a) => { return arrtup_elem_esc_expr(a.value, name, ttype); },
+        parser.StmtIf(f) => {
+            if (arrtup_elem_esc_expr(f.cond, name, ttype)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (arrtup_elem_esc_stmt(f.then_body[ti], name, ttype)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (arrtup_elem_esc_stmt(f.else_body[ei], name, ttype)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (arrtup_elem_esc_expr(w.cond, name, ttype)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (arrtup_elem_esc_stmt(w.body[i], name, ttype)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (arrtup_elem_esc_expr(fo.iter, name, ttype)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (arrtup_elem_esc_stmt(fo.body[i], name, ttype)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (arrtup_elem_esc_expr(m.scrutinee, name, ttype)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && arrtup_elem_esc_expr(m.arms[ai].guard, name, ttype)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (arrtup_elem_esc_stmt(m.arms[ai].body[bi], name, ttype)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return arrtup_elem_esc_stmt(d.action, name, ttype); },
+        _ => { return false; }
+    }
+    return false;
+}
+// arrtup_elem_payload_escapes: any statement in the body uses `name` (element tuple
+// type `ttype`) in an escaping way per arrtup_elem_esc_stmt.
+function arrtup_elem_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (arrtup_elem_esc_stmt(stmts[i], name, ttype)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// slot_is_reclaimable_arrtup: slot i holds a fresh, non-escaping
+// `(<tuple-with-array>)[]` local, credited "ARRTUP:" by reclaimable_names_of. The
+// slot stays plain is_arr (elements are tuple boxes, not arrays, so NOT is_arrarr);
+// its arrarr_elem carries the element TUPLE TYPE (stored at binding) that drives the
+// per-element deep-drop.
+function slot_is_reclaimable_arrtup(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_arr) { return false; }
+    if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
+    var et: string = s.locals[i].arrarr_elem;
+    if (et.len() < 2 || et[0:1] != "(") { return false; }
+    return util.index_of_str(s.reclaimable_names, "ARRTUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_arrtup_deep_free frees the array-of-tuples buffer in `slot`: null-guarded, a
+// counted loop walks each element (a tuple box ptr), TYPE-drives its deep-drop
+// (emit_tuple_type_child_drops on `ttype`: dec each array field, recurse nested
+// tuples) then frees the tuple box, and finally decs the outer buffer. Consumes no
+// operand; leaves the slot dangling (callers store new / zero it). Admission proves
+// every element tuple + its arrays fresh, so each buffer is sole-owned.
+function emit_arrtup_deep_free(se: LowerState, slot: i32, ttype: string): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // arr != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var idxn: string = "$atupi" + util.i32_to_string(st.locals.len());
+    st = st.add_local(idxn);
+    var idxslot: i32 = st.slot_of(idxn);
+    var eln: string = "$atupe" + util.i32_to_string(st.locals.len());
+    st = st.add_local(eln);
+    var elslot: i32 = st.slot_of(eln);
+    st = st.emit(ir.op_const_i32(0 - 1));            // index starts at -1 (advance-at-top)
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_block(0)).enter_loop();
+    st = st.emit(ir.op_loop(0));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_bin("add", 0, false));
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_bin("lt_s", 0, false));
+    st = st.emit(ir.op_bin("not", 0, false));
+    st = st.emit(ir.op_brif(1));                     // exit when idx >= len
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (tuple box ptr)
+    st = st.emit(ir.op_store_local(elslot));
+    var etp: i32[] = [];
+    st = emit_tuple_type_child_drops(st, elslot, etp, ttype);   // free array/nested children
+    st = st.emit(ir.op_load_local(elslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the tuple box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_br(0));                       // back-edge
+    st = st.emit(ir.op_end());                       // end loop
+    st = st.emit(ir.op_end()).exit_loop();           // end block
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the outer buffer box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_arrtup_reclaim_store: the loop-rebind. Stash `new` (on stack), deep-free the
+// OLD array-of-tuples (emit_arrtup_deep_free), then store new. A fresh literal init
+// makes old != new implicit, so the null guard inside deep_free suffices.
+function emit_arrtup_reclaim_store(se: LowerState, slot: i32, ttype: string): LowerState {
+    var scratch: string = "$atr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_arrtup_deep_free(st, slot, ttype);     // free old structure
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
