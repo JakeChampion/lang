@@ -51,11 +51,3 @@ func (v Version) Compare(o Version) int {
 	}
 	return 0
 }
-
-// Max returns the greater of two versions.
-func Max(a, b Version) Version {
-	if a.Compare(b) >= 0 {
-		return a
-	}
-	return b
-}
