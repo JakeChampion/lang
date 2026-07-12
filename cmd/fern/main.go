@@ -536,6 +536,27 @@ func (r *repeatedString) Set(v string) error {
 	return nil
 }
 
+// shouldColorize resolves the -color mode to a boolean. "auto" (the
+// default) enables colour only when stderr is a terminal (a character
+// device) and NO_COLOR is unset — so `fern -check` piped to a file or run
+// under a test harness stays plain, while an interactive terminal gets
+// colour. "always" / "never" force the decision. See the NO_COLOR informal
+// standard (no-color.org) and docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7.
+func shouldColorize(mode string) bool {
+	switch mode {
+	case "always":
+		return true
+	case "never":
+		return false
+	default: // "auto"
+		if os.Getenv("NO_COLOR") != "" {
+			return false
+		}
+		fi, err := os.Stderr.Stat()
+		return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	}
+}
+
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
 	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
@@ -563,6 +584,7 @@ func main() {
 	doDoctest := flag.Bool("doctest", false, "run the `test`-directive example blocks in a literate FILE.fern.md. Each ```fern test block is tangled (its `<<refs>>` expand against the document's chunks) into a standalone program, compiled, and run; exit 0 = pass. Results print as TAP; the command exits non-zero if any example fails.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
+	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-android|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
@@ -575,6 +597,13 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	// Diagnostics colourise per -color (docs/DIAGNOSTIC-UX-RESEARCH.md
+	// Rec §7). Decided once, up front, so every diag.Format call below
+	// inherits it. Default "auto" keeps piped / redirected output plain
+	// (and honours NO_COLOR), so scripts and the test harnesses see the
+	// same text as always.
+	diag.SetColor(shouldColorize(*colorMode))
 
 	if *listTargets {
 		for _, name := range platforms.Targets() {
