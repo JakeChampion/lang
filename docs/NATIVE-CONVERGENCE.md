@@ -113,7 +113,7 @@ the self-host backends reach parity; retiring the native *interpreter* is not.
 2. #3451 / #3457 complete (the bootstrap-budget / bundle prerequisites).
 3. **Checker-codes filter empty** — `selfHostImplementedCodes` deleted, the
    six-code gap above closed, all three differentials comparing unfiltered
-   sets.
+   sets. **GREEN as of 2026-07-12.**
 4. **SH-057-class semantics closed** — the blocker list in §2 is empty, each
    former entry pinned by a differential test.
 

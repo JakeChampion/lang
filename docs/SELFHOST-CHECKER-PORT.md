@@ -1156,9 +1156,55 @@ picks them up with the right prerequisite, not as a lone checker tweak:
 
 ## Differential testing
 
-`internal/e2e/self_host_checker_codes_test.go` compiles
+`internal/e2eselfhost/self_host_checker_codes_test.go` compiles
 `checker_codes_run.fern` with the Go-built bundle compiler, runs it over
 a corpus, and asserts the printed code set equals what Go's
 `checker.Check` (formatted through `diag.Format`) reports for the same
-source, intersected with `selfHostImplementedCodes`. New rules extend the
-corpus and that set in lockstep.
+source — **unfiltered**. The historical `selfHostImplementedCodes`
+intersection is deleted (2026-07-12): the port now covers every code the
+Go checker emits, so the three differentials compare raw sets and new
+rules only need corpus cases.
+
+## 2026-07-12 — the last five codes land; the filter is deleted (freeze precondition 3)
+
+The "unreachable / needs-generics / needs-Perceus" assessments above were
+too pessimistic; each of the remaining codes had a portable conservative
+slice:
+
+- **E023** — reachable after all: an *unknown-BASE generic* annotation
+  (`s: Statuus[i32]`) keeps `ast.EnumType` through the native
+  resolveType, so a match / if-let / let-else on it draws E023. The
+  self-host mirror: `type_from_ref_su` resolves that shape to a name-only
+  union (declared struct/union/`Map`/`Cell` bases keep their old
+  resolution), and the match walk reports E023 when `lookup_union` misses
+  a non-reserved name. E064 additionally checks generic BASES (native
+  `knownTypeName` parity), with declared traits/resources allowlisted.
+- **E044** — the two native shapes (captured `void` call result, captured
+  erased generic param) are detectable syntactically: `e044_diags` tracks
+  void-call-initialised vars plus bare-unknown-annotated params/vars in
+  generic functions, and flags a lambda mentioning one (modulo shadowing
+  lambda params).
+- **E053** — `fip` is now parsed (`FuncDecl.fip`, same
+  directly-before-`function` contextual rule as native) and
+  `e053_diags` ports checkFipFunctions: array/tuple/struct literals,
+  payload variant construction, string concat (the f-string `+`-desugar
+  included), non-`fip` calls, non-whitelisted methods (`len` and
+  own-rooted `.with` allowed), indirect calls, and non-`own` index/field
+  writes.
+- **E065** — the parse-time `str`→`string` erasure now records the raw
+  spelling on `FuncDecl.ret_str` / `StmtVar.is_str`, so `e065_diags` can
+  mirror the native chase: local owned `string` = backing storage, local
+  `str` binding = view of its init, params/literals safe.
+- **E032** — the `use` desugar marks its synthesised callback
+  (`ExprLambda.use_infer`) when the binding is un-annotated;
+  `e032_stmts` ports inferUseParam's non-identifier-source /
+  no-signature / last-param-not-a-function arms. The
+  callback-takes-no-arguments arity arm is NOT decidable (a
+  function-type param coarses to the arity-less `"fn"` tag) and the
+  generic-unification arm needs unification the self-host doesn't model —
+  both stay native-only and out of the corpus.
+
+Corpus cases: `e023-*`, `e044-*`, `e053-*`, `e065-*`, `e032-*` in
+TestSelfHostCheckerCodesX86_64. E039 turned out to be a dead catalogue
+entry (the Go checker never emits it — no `errfCode` site), so it needed
+no port for unfiltered parity.

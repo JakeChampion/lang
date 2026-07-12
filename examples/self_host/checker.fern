@@ -2127,7 +2127,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     // whose base IS a declared struct or union keeps today's conservative
     // unknown resolution (the Go checker resolves those to the declared
     // type — no E023 — so they must not take this branch).
-    if (!r.is_tuple && r.args.len() > 0 && r.base != "Map") {
+    if (!r.is_tuple && r.args.len() > 0 && r.base != "Map" && r.base != "Cell") {
         var bk: boolean = false;
         var bs: i32 = 0;
         while (bs < structs.len()) {
@@ -6065,6 +6065,452 @@ function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: s
     return e044_stmts(efn.body, is_generic, struct_names, union_names, void_fns, suspects, labels);
 }
 
+// ---- E053: `fip` fully-in-place verification -------------------------------
+// Port of the native checkFipFunctions (checker.go): a `fip function` carries
+// a CHECKED no-heap-allocation guarantee, verified as a sound conservative
+// subset. Default-deny: anything not proven heap-neutral is rejected.
+// Allowed: scalars, arithmetic/comparison/logic, field & index reads, control
+// flow, (re)binding locals, `recv.with(i, v)` / index writes rooted at an
+// `own` array parameter (the COW unique-in-place branch), calls to other
+// `fip` functions and the whitelisted non-allocating builtin method (`len`).
+// Rejected: array / tuple / struct literals, payload-carrying enum variant
+// construction, string concatenation (incl. the f-string `+`-chain desugar),
+// calls to non-`fip` functions, any other method call, indirect calls, and
+// index/field writes not rooted at an `own` parameter.
+function e053_root_of_target(target: string): string {
+    // `xs[0]` / `p.f` → the base identifier being written through.
+    var i: i32 = 0;
+    while (i < target.len()) {
+        var ch: i32 = target[i];
+        if (ch == 91 || ch == 46) { return target[0:i]; }
+        i = i + 1;
+    }
+    return target;
+}
+
+function e053_stringish(e: parser.Expr, cur: Scope): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        _ => { }
+    }
+    match (check_expr(e, cur)) {
+        TypeString(_) => { return true; },
+        _ => { return false; }
+    }
+}
+
+function e053_expr(e: parser.Expr, fname: string, fips: string[], variants: string[], own: string[], cur: Scope): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprArray(a) => {
+            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (array literal)", 0, 0));
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, e053_expr(a.elements[i], fname, fips, variants, own, cur)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (tuple literal)", t.line, t.col));
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, e053_expr(t.elements[i], fname, fips, variants, own, cur)); i = i + 1; }
+        },
+        parser.ExprStructLit(sl) => {
+            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (struct literal \"" + sl.type_name + "\")", sl.line, sl.col));
+            if (sl.has_base) { out = append_diags(out, e053_expr(sl.base, fname, fips, variants, own, cur)); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { out = append_diags(out, e053_expr(sl.field_values[i], fname, fips, variants, own, cur)); i = i + 1; }
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "+" && (e053_stringish(b.left, cur) || e053_stringish(b.right, cur))) {
+                out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (string concatenation)", b.line, b.col));
+            }
+            out = append_diags(out, e053_expr(b.left, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(b.right, fname, fips, variants, own, cur));
+        },
+        parser.ExprUnary(u) => { out = append_diags(out, e053_expr(u.operand, fname, fips, variants, own, cur)); },
+        parser.ExprCall(c) => {
+            var args_checked: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    // Method call. `recv.with(i, v)` on an `own` receiver is
+                    // the in-place element set; `len` is the whitelisted
+                    // non-allocating read. Everything else is unproven.
+                    var recv_root: string = "";
+                    match (fa.obj) {
+                        parser.ExprIdent(ro) => { recv_root = ro.name; },
+                        _ => { }
+                    }
+                    var root_own: boolean = false;
+                    var oi: i32 = 0;
+                    while (oi < own.len()) { if (own[oi] == recv_root) { root_own = true; } oi = oi + 1; }
+                    if (fa.field == "with" && root_own) {
+                        // allowed
+                    } else if (fa.field == "len") {
+                        // allowed
+                    } else {
+                        out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not call method \"" + fa.field + "\" (not proven allocation-free)", fa.line, fa.col));
+                    }
+                    out = append_diags(out, e053_expr(fa.obj, fname, fips, variants, own, cur));
+                },
+                parser.ExprIdent(id) => {
+                    var is_variant: boolean = false;
+                    var vi: i32 = 0;
+                    while (vi < variants.len()) { if (variants[vi] == id.name) { is_variant = true; } vi = vi + 1; }
+                    if (is_variant) {
+                        if (c.args.len() > 0) {
+                            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (enum variant construction)", c.line, c.col));
+                        }
+                    } else {
+                        var is_fip: boolean = false;
+                        var fi: i32 = 0;
+                        while (fi < fips.len()) { if (fips[fi] == id.name) { is_fip = true; } fi = fi + 1; }
+                        if (!is_fip) {
+                            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may only call other `fip` functions, not \"" + id.name + "\"", c.line, c.col));
+                        }
+                    }
+                },
+                _ => {
+                    out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
+                    out = append_diags(out, e053_expr(c.callee, fname, fips, variants, own, cur));
+                }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { out = append_diags(out, e053_expr(c.args[ai], fname, fips, variants, own, cur)); ai = ai + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            out = append_diags(out, e053_expr(ix.array, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(ix.index, fname, fips, variants, own, cur));
+        },
+        parser.ExprSlice(sl) => {
+            out = append_diags(out, e053_expr(sl.array, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(sl.start, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(sl.end, fname, fips, variants, own, cur));
+        },
+        parser.ExprFieldAccess(fa) => { out = append_diags(out, e053_expr(fa.obj, fname, fips, variants, own, cur)); },
+        _ => { }
+    }
+    return out;
+}
+
+function e053_stmts(stmts: parser.Stmt[], fname: string, fips: string[], variants: string[], own: string[], s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = append_diags(out, e053_expr(v.init, fname, fips, variants, own, cur)); },
+            parser.StmtReturn(r) => { out = append_diags(out, e053_expr(r.value, fname, fips, variants, own, cur)); },
+            parser.StmtExpr(e) => { out = append_diags(out, e053_expr(e.value, fname, fips, variants, own, cur)); },
+            parser.StmtAssign(a) => {
+                // (Re)binding a local slot allocates nothing; an index/field
+                // write is in-place only when rooted at an `own` parameter —
+                // otherwise it triggers a copy-on-write.
+                var root: string = e053_root_of_target(a.target);
+                if (root != a.target) {
+                    var root_own: boolean = false;
+                    var oi: i32 = 0;
+                    while (oi < own.len()) { if (own[oi] == root) { root_own = true; } oi = oi + 1; }
+                    if (!root_own) {
+                        out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not write to a non-`own` heap value (triggers a copy-on-write)", a.line, a.col));
+                    }
+                }
+                out = append_diags(out, e053_expr(a.value, fname, fips, variants, own, cur));
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e053_expr(f.cond, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_stmts(f.then_body, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_stmts(f.else_body, fname, fips, variants, own, cur));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, e053_expr(w.cond, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_stmts(w.body, fname, fips, variants, own, cur));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, e053_expr(fr.iter, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_stmts(fr.body, fname, fips, variants, own, cur));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, e053_expr(m.scrutinee, fname, fips, variants, own, cur));
+                var a2: i32 = 0;
+                while (a2 < m.arms.len()) { out = append_diags(out, e053_stmts(m.arms[a2].body, fname, fips, variants, own, cur)); a2 = a2 + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e053_stmts(one, fname, fips, variants, own, cur));
+            },
+            _ => { }
+        }
+        cur = check_stmt(stmts[i], cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+function e053_diags(efn: parser.FuncDecl, fips: string[], variants: string[], s: Scope): Diag[] {
+    var own: string[] = [];
+    var pi: i32 = 0;
+    while (pi < efn.params.len()) {
+        if (efn.params[pi].own) { own = own.append(efn.params[pi].name); }
+        pi = pi + 1;
+    }
+    return e053_stmts(efn.body, efn.name, fips, variants, own, s);
+}
+
+// ---- E065: returning a `str` view of a function-local string ---------------
+// Port of the native checkStrEscape (checker.go): a function whose declared
+// return type is `str` (recorded on FuncDecl.ret_str before the parse-time
+// erasure) must not return a view of a function-LOCAL owned string — the
+// backing box is reclaimed when the frame drops. Mirrors the native chase:
+// a string literal is immortal, a parameter caller-owned; a local owned
+// `string` IS the backing storage; a local `str` binding (StmtVar.is_str)
+// views whatever its initializer views. Calls / slices are not chased (the
+// native rule's documented hole — both tighten together later). `sbacked`
+// accumulates locals known to be (views of) local string storage.
+function e065_ident_in(name: string, xs: string[]): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == name) { return true; } i = i + 1; }
+    return false;
+}
+
+function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.is_str) {
+                    // A `str` binding views its initializer: tainted only
+                    // when the init is (a view of) local string storage.
+                    match (v.init) {
+                        parser.ExprIdent(id) => {
+                            if (!e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked)) { sbacked = sbacked.append(v.name); }
+                        },
+                        _ => { }
+                    }
+                } else if (v.type_name == "string") {
+                    // An annotated owned `string` local IS backing storage.
+                    sbacked = sbacked.append(v.name);
+                } else if (v.type_name.len() == 0) {
+                    // Unannotated: infer the native way — a string literal,
+                    // a (copying) string slice, or an alias of known local
+                    // storage makes an owned StringType local; a call to a
+                    // `str`-returning function makes a view (not chased).
+                    match (v.init) {
+                        parser.ExprString(_) => { sbacked = sbacked.append(v.name); },
+                        parser.ExprSlice(sl) => {
+                            match (check_expr(sl.array, cur)) {
+                                TypeString(_) => { sbacked = sbacked.append(v.name); },
+                                _ => { }
+                            }
+                        },
+                        parser.ExprIdent(id) => {
+                            if (e065_ident_in(id.name, sbacked)) { sbacked = sbacked.append(v.name); }
+                        },
+                        parser.ExprCall(c) => {
+                            var callee_name: string = "";
+                            match (c.callee) {
+                                parser.ExprIdent(cid) => { callee_name = cid.name; },
+                                parser.ExprFieldAccess(cfa) => { callee_name = cfa.field; },
+                                _ => { }
+                            }
+                            if (!e065_ident_in(callee_name, str_ret_names)) {
+                                match (check_expr(v.init, cur)) {
+                                    TypeString(_) => { sbacked = sbacked.append(v.name); },
+                                    _ => { }
+                                }
+                            }
+                        },
+                        _ => { }
+                    }
+                }
+            },
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(id) => {
+                        if (!e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked)) {
+                            out = out.append(dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", r.line, r.col));
+                        }
+                    },
+                    _ => { }
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e065_stmts(f.then_body, fname, params, str_ret_names, sbacked, cur));
+                out = append_diags(out, e065_stmts(f.else_body, fname, params, str_ret_names, sbacked, cur));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, e065_stmts(w.body, fname, params, str_ret_names, sbacked, cur)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e065_stmts(fr.body, fname, params, str_ret_names, sbacked, cur)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, e065_stmts(m.arms[a].body, fname, params, str_ret_names, sbacked, cur)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e065_stmts(one, fname, params, str_ret_names, sbacked, cur));
+            },
+            _ => { }
+        }
+        cur = check_stmt(stmts[i], cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], s: Scope): Diag[] {
+    var params: string[] = [];
+    var pi: i32 = 0;
+    while (pi < efn.params.len()) { params = params.append(efn.params[pi].name); pi = pi + 1; }
+    if (efn.receiver_name.len() > 0) { params = params.append(efn.receiver_name); }
+    var none: string[] = [];
+    return e065_stmts(efn.body, efn.name, params, str_ret_names, none, s);
+}
+
+// ---- E032: `use` binding-type inference ------------------------------------
+// Port of the native inferUseParam (checker.go): `use BIND <- CALLEE(args);`
+// with no `: TYPE` annotation infers BIND's type from CALLEE's signature —
+// the trailing function-typed parameter's first argument. The parser marks
+// the synthesised callback lambda with use_infer; this walk verifies the
+// inference has a signature to read: the callee must be a bare identifier
+// with a known signature whose last parameter is a function type taking at
+// least one argument. (The native generic-unification failure arm is not
+// ported — the self-host's erased-generics model has no substitution to
+// fail; that arm stays native-only until the checker grows unification.)
+function e032_call_check(c: parser.ExprCall, lastfn: string[], cur: Scope): Diag[] {
+    var out: Diag[] = [];
+    if (c.args.len() == 0) { return out; }
+    var infer: boolean = false;
+    match (c.args[c.args.len() - 1]) {
+        parser.ExprLambda(lm) => {
+            if (lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0) { infer = true; }
+        },
+        _ => { }
+    }
+    if (!infer) { return out; }
+    var callee_name: string = "";
+    match (c.callee) {
+        parser.ExprIdent(id) => { callee_name = id.name; },
+        _ => {
+            out = out.append(dg_at("E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation", c.line, c.col));
+            return out;
+        }
+    }
+    // Resolve the callee: a module-level signature, or a local
+    // function-typed binding (a closure-valued var). The self-host type
+    // model coarses a function-type PARAMETER to the tag "fn" (its arity
+    // is not retained), so the last-parameter-is-a-function test reads
+    // the `lastfn` side table built from the parsed decls; the native
+    // "callback takes no arguments" arity arm is not decidable here and
+    // stays native-only (like the generic-unification arm).
+    var sig: FuncSig = cur.lookup_sig(callee_name);
+    var have_sig: boolean = sig.name.len() > 0;
+    if (have_sig) {
+        if (sig.param_types.len() == 0) {
+            out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+            return out;
+        }
+        var lf: boolean = false;
+        var li: i32 = 0;
+        while (li < lastfn.len()) { if (lastfn[li] == callee_name) { lf = true; } li = li + 1; }
+        if (!lf) {
+            out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+        }
+        return out;
+    }
+    match (cur.lookup(callee_name)) {
+        TypeFunc(ft) => {
+            if (ft.param_types.len() == 0) {
+                out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+                return out;
+            }
+            match (ft.param_types[ft.param_types.len() - 1]) {
+                TypeFunc(cb) => {
+                    if (cb.param_types.len() == 0) {
+                        out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s callback takes no arguments — there's nothing to bind", c.line, c.col));
+                    }
+                },
+                _ => {
+                    out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+                }
+            }
+            return out;
+        },
+        _ => { }
+    }
+    out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+    return out;
+}
+
+function e032_expr(e: parser.Expr, lastfn: string[], cur: Scope): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprCall(c) => {
+            out = append_diags(out, e032_call_check(c, lastfn, cur));
+            out = append_diags(out, e032_expr(c.callee, lastfn, cur));
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, e032_expr(c.args[i], lastfn, cur)); i = i + 1; }
+        },
+        parser.ExprBinary(b) => {
+            out = append_diags(out, e032_expr(b.left, lastfn, cur));
+            out = append_diags(out, e032_expr(b.right, lastfn, cur));
+        },
+        parser.ExprUnary(u) => { out = append_diags(out, e032_expr(u.operand, lastfn, cur)); },
+        parser.ExprLambda(lm) => { out = append_diags(out, e032_stmts(lm.body, lastfn, cur)); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, e032_expr(a.elements[i], lastfn, cur)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, e032_expr(t.elements[i], lastfn, cur)); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            out = append_diags(out, e032_expr(ix.array, lastfn, cur));
+            out = append_diags(out, e032_expr(ix.index, lastfn, cur));
+        },
+        parser.ExprSlice(sl) => { out = append_diags(out, e032_expr(sl.array, lastfn, cur)); },
+        parser.ExprFieldAccess(fa) => { out = append_diags(out, e032_expr(fa.obj, lastfn, cur)); },
+        parser.ExprStructLit(sx) => {
+            if (sx.has_base) { out = append_diags(out, e032_expr(sx.base, lastfn, cur)); }
+            var i: i32 = 0;
+            while (i < sx.field_values.len()) { out = append_diags(out, e032_expr(sx.field_values[i], lastfn, cur)); i = i + 1; }
+        },
+        _ => { }
+    }
+    return out;
+}
+
+function e032_stmts(stmts: parser.Stmt[], lastfn: string[], s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = append_diags(out, e032_expr(v.init, lastfn, cur)); },
+            parser.StmtReturn(r) => { out = append_diags(out, e032_expr(r.value, lastfn, cur)); },
+            parser.StmtExpr(e) => { out = append_diags(out, e032_expr(e.value, lastfn, cur)); },
+            parser.StmtAssign(a) => { out = append_diags(out, e032_expr(a.value, lastfn, cur)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e032_expr(f.cond, lastfn, cur));
+                out = append_diags(out, e032_stmts(f.then_body, lastfn, cur));
+                out = append_diags(out, e032_stmts(f.else_body, lastfn, cur));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, e032_stmts(w.body, lastfn, cur)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e032_stmts(fr.body, lastfn, cur)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, e032_stmts(m.arms[a].body, lastfn, cur)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e032_stmts(one, lastfn, cur));
+            },
+            _ => { }
+        }
+        cur = check_stmt(stmts[i], cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
 // e021_diags reports E021 (#4347): an `impl Trait for Type` block that omits a
 // REQUIRED (abstract, non-defaulted) trait method. mod.trait_reqs carries each
 // trait's abstract method set; mod.impls records each impl's explicitly-provided
@@ -6738,6 +7184,44 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     while (e44i < mod.funcs.len()) {
         body_diags = append_diags(body_diags, e044_diags(mod.funcs[e44i], struct_names, union_names, e044_void_fns));
         e44i = e44i + 1;
+    }
+    // E053 (`fip` no-allocation verification), E065 (`str` view escaping a
+    // function-local string), and E032 (`use` binding-type inference).
+    var fip_names: string[] = [];
+    var str_ret_names: string[] = [];
+    var fni: i32 = 0;
+    while (fni < mod.funcs.len()) {
+        if (mod.funcs[fni].fip) { fip_names = fip_names.append(mod.funcs[fni].name); }
+        if (mod.funcs[fni].ret_str) { str_ret_names = str_ret_names.append(mod.funcs[fni].name); }
+        fni = fni + 1;
+    }
+    var e032_lastfn: string[] = [];
+    var lfi: i32 = 0;
+    while (lfi < mod.funcs.len()) {
+        var lfd: parser.FuncDecl = mod.funcs[lfi];
+        if (lfd.params.len() > 0 && lfd.params[lfd.params.len() - 1].type_name == "fn") {
+            e032_lastfn = e032_lastfn.append(lfd.name);
+        }
+        lfi = lfi + 1;
+    }
+    var e053_variants: string[] = [];
+    var uvi: i32 = 0;
+    while (uvi < unions.len()) {
+        var vvj: i32 = 0;
+        while (vvj < unions[uvi].variants.len()) { e053_variants = e053_variants.append(unions[uvi].variants[vvj]); vvj = vvj + 1; }
+        uvi = uvi + 1;
+    }
+    var exi: i32 = 0;
+    while (exi < mod.funcs.len()) {
+        var xfn: parser.FuncDecl = mod.funcs[exi];
+        if (xfn.fip) {
+            body_diags = append_diags(body_diags, e053_diags(xfn, fip_names, e053_variants, build_func_scope(xfn, sigs, structs, unions, methods)));
+        }
+        if (xfn.ret_str) {
+            body_diags = append_diags(body_diags, e065_diags(xfn, str_ret_names, build_func_scope(xfn, sigs, structs, unions, methods)));
+        }
+        body_diags = append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, build_func_scope(xfn, sigs, structs, unions, methods)));
+        exi = exi + 1;
     }
     var esi: i32 = 0;
     while (esi < mod.structs.len()) {

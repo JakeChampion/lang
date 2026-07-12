@@ -2506,7 +2506,11 @@ function parse_block_body(p: Par): (Stmt[], Par) {
             p = rest_p;
             var cbparam: ParamDecl = ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
             var cbparams: ParamDecl[] = [cbparam];
-            var cb: Expr = e_lambda(cbparams, "", rest_body);
+            // use_infer marks the synthesised callback when the user wrote
+            // no `: TYPE` — the checker's E032 rule verifies the binding
+            // type is inferrable from the callee's signature (native
+            // inferUseParam). An annotated `use n: T <- …` never draws E032.
+            var cb: Expr = ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0 };
             match (usrc_expr) {
                 ExprCall(c) => {
                     var newargs: Expr[] = c.args.append(cb);
@@ -3336,8 +3340,17 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // / generics) is still a later milestone; for now just
         // the bare leading token.
         var type_name: string = "";
+        // A bare `var x: str = …` annotation is recorded on StmtVar.is_str
+        // BEFORE parse_type_name erases the spelling to "string" — the E065
+        // view-escape chase treats a `str` binding as a view of its
+        // initializer, but a `string` binding as owned backing storage.
+        var v_is_str: boolean = false;
         if (p.peek_punct() == ":") {
             p = p.advance();
+            if (p.peek_ident() == "str") {
+                var vstr_probe: Par = p.advance();
+                if (vstr_probe.peek_punct() == "=") { v_is_str = true; }
+            }
             var (vtr_name, vtr_ret_arr, vtr_fn_ret, vtr_p) = parse_type_name(p);
             p = vtr_p;
             type_name = vtr_name;
@@ -3384,7 +3397,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (s_var_at(name, type_name, init_expr, vline, vcol), p);
+        return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
@@ -4172,8 +4185,18 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
     var ret_type: string = "";
+    // A bare `str` return spelling is recorded on FuncDecl.ret_str BEFORE
+    // parse_type_name erases it to "string" — the E065 view-escape rule
+    // needs to know the function returns a borrowed view. Probe: the token
+    // after `str` must open the body (`{`) or end an extern decl (`;`), so
+    // `str.Foo` / `str[]` spellings keep their normal resolution.
+    var fn_ret_str: boolean = false;
     if (p.peek_punct() == ":") {
         p = p.advance();
+        if (p.peek_ident() == "str") {
+            var str_probe: Par = p.advance();
+            if (str_probe.peek_punct() == "{" || str_probe.peek_punct() == ";") { fn_ret_str = true; }
+        }
         var (fr_tr_name, fr_tr_ret_arr, fr_tr_fn_ret, fr_tr_p) = parse_type_name(p);
         p = fr_tr_p;
         ret_type = fr_tr_name;
@@ -4225,12 +4248,12 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         if (pd_names.len() > 0) {
             return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names, fip: false, ret_str: false }, p);
         }
-        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: false }, p);
+        return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: fn_ret_str }, p);
     }
     var (blk_body, blk_p) = parse_block(p);
     p = blk_p;
     var fbody: Stmt[] = prepend_param_destrs(blk_body, pd_names, pd_synths, pd_lines, pd_cols);
-    return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: false }, p);
+    return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, ret_str: fn_ret_str }, p);
 }
 
 // parse_module is the entry point that handles both function
@@ -10997,10 +11020,29 @@ pub function parse_module(toks: lexer.Token[]): Module {
             }
             continue;
         }
+        // `fip` is a contextual modifier on a function decl (`fip function
+        // …` / `pub fip function …`): stamp FuncDecl.fip so the checker can
+        // verify the fully-in-place no-allocation guarantee (E053).
+        // Recognised only when directly followed by `function`, so `fip`
+        // stays usable as an ordinary identifier everywhere else — the
+        // exact rule the native parser uses.
+        var decl_fip: boolean = false;
+        if (p.peek_ident() == "fip") {
+            var fip_probe: Par = p.advance();
+            if (fip_probe.peek_keyword() == "function") {
+                p = fip_probe;
+                kw = "function";
+                decl_fip = true;
+            }
+        }
         if (kw == "function") {
             var (fr_func, fr_p) = parse_func_decl(p);
             p = fr_p;
-            funcs = funcs.append(fr_func);
+            if (decl_fip) {
+                funcs = funcs.append(FuncDecl { ...fr_func, fip: true });
+            } else {
+                funcs = funcs.append(fr_func);
+            }
             continue;
         }
         if (kw == "struct") {

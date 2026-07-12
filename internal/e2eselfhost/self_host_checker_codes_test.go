@@ -19,72 +19,6 @@ import (
 // diagnostic string.
 var codeRE = regexp.MustCompile(`E\d{3}`)
 
-// selfHostImplementedCodes is the set of Go-checker codes the self-host
-// checker (checker.fern) already emits. The differential gate below
-// asserts parity ONLY on this set, so it stays green as the Go checker
-// emits codes the self-host port hasn't reached yet. Each checker-port
-// slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
-var selfHostImplementedCodes = map[string]bool{
-	"E002": true, // return-type mismatch
-	"E003": true, // assignment / annotated-var type mismatch
-	"E008": true, // non-boolean if/while condition
-	"E009": true, // non-boolean operand of && / || / !
-	"E011": true, // break / continue outside a loop
-	"E012": true, // return without value in a non-void function
-	"E013": true, // duplicate var in the same block
-	"E017": true, // duplicate variant in an enum
-	"E019": true, // generic-struct type-argument arity (param / field)
-	"E020": true, // empty array literal needs a type annotation
-	"E004": true, // free-function call arity
-	"E026": true, // wildcard arm not last in a match
-	"E028": true, // variant covered twice in a match
-	"E036": true, // unqualified reference to a variant shared by 2+ enums
-	"E037": true, // slice bound must be i32
-	"E038": true, // free-function argument type
-	"E041": true, // == / != on mismatched types
-	"E043": true, // unknown struct field (read)
-	"E046": true, // tuple field index (non-numeric / out of range)
-	"E047": true, // integer literal doesn't fit i32
-	"E005": true, // struct literal missing field
-	"E006": true, // function / method redeclared
-	"E007": true, // duplicate struct field
-	"E018": true, // duplicate parameter
-	"E034": true, // heterogeneous array element type (primitives)
-	"E035": true, // variant pattern in a match on a non-enum scrutinee
-	"E030": true, // non-exhaustive match on a union scrutinee
-	"E014": true, // variant pattern not part of the scrutinee enum/union
-	"E029": true, // variant pattern qualifier names the wrong enum/union
-	"E016": true, // union alias collides with a struct of the same name
-	"E052": true, // missing return (non-void body can fall off the end)
-	"E021": true, // method receiver references an unknown type
-	"E024": true, // tuple destructure of a non-tuple / wrong arity
-	"E033": true, // invalid cast (bool ↔ non-bool scalar)
-	"E048": true, // assignment to an immutable struct field
-	"E001": true, // undefined name (value position)
-	"E042": true, // `?` operator on a non-Option/Result operand
-	"E010": true, // user enum shadowing a reserved built-in name
-	"E027": true, // match guard must be boolean
-	"E015": true, // variant pattern payload-binding arity
-	"E040": true, // generic-call type-argument arity mismatch
-	"E054": true, // @export function cannot be generic / a method
-	"E050": true, // use of an owned parameter after it was consumed (move)
-	"E051": true, // argument to an owned parameter must be an owned value
-	"E049": true, // assignment to a reference-typed closure capture
-	"E055": true, // discarded result of a value-returning collection mutator
-	"E031": true, // match/if-expression arms have incompatible types
-	"E045": true, // map literal key type must be i32 or string
-	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
-	"E057": true, // cell_new(v) element type must be a scalar or string
-	"E056": true, // subscript assignment (arr[i] = v) is read-only
-	"E063": true, // returning a [T] slice that views function-local storage
-	"E058": true, // labeled break/continue names no enclosing loop
-	"E061": true, // value-position block has no trailing value
-	"E059": true, // `as?` downcast requires a `dyn Trait` value on the left
-	"E064": true, // a type annotation names no declared type (bare nominal)
-	"E060": true, // `as?` downcast target must be a struct/enum implementing the dyn set
-	"E062": true, // ambiguous method on a `dyn A + B` set (declared by 2+ traits)
-}
-
 // goCheckerCodes runs the production (Go) front end over src and returns
 // the sorted, de-duplicated set of diagnostic codes it reports.
 func goCheckerCodes(t *testing.T, dir, src string) []string {
@@ -120,27 +54,15 @@ func uniqueSortedCodes(in []string) []string {
 	return out
 }
 
-// filterImplemented keeps only the codes the self-host checker is
-// expected to emit at this slice.
-func filterImplemented(codes []string) []string {
-	var out []string
-	for _, c := range codes {
-		if selfHostImplementedCodes[c] {
-			out = append(out, c)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // TestSelfHostCheckerCodesX86_64 is the differential gate for the
 // self-host type-checker port: it compiles the diag-printing checker
 // driver (checker_codes_run.fern) with the Go-built self-host bundle
 // compiler, runs it over a corpus, and asserts the set of diagnostic
 // CODES it prints matches what the production Go checker reports for the
-// same source — restricted to the codes the port has implemented so far
-// (selfHostImplementedCodes). As later slices teach checker.fern more
-// codes, the corpus + that set grow together.
+// same source — the full unfiltered code set: the checker port covers
+// every code the Go checker emits, so the historical
+// selfHostImplementedCodes filter is deleted (freeze precondition 3,
+// #4451).
 // buildCheckerCodesBin builds the single-module checker-codes driver
 // (checker_codes_run.fern). See buildCheckerDriverBin.
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
@@ -954,6 +876,52 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e063-string-slice-ok", "function f(s: string): str { return s[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-return-owned-array-ok", "function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-slice-local-not-returned-ok", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s[0]; }\nfunction main(): i32 { return 0; }\n", nil},
+		// E023 (unknown enum): an unknown-BASE generic annotation survives
+		// type resolution as an "unknown enum" (native resolveType keeps
+		// ast.EnumType), so a match / if-let on the value draws E023 at the
+		// scrutinee — alongside the E064 the annotation itself draws. A
+		// known enum / builtin Option match stays clean.
+		{"e023-match-unknown-enum", "function main(s: Statuus[i32]): i32 {\n    match (s) {\n        _ => { return 0; }\n    }\n}\n", []string{"E023", "E064"}},
+		{"e023-iflet-unknown-enum", "function main(s: Statuus[i32]): i32 {\n    if let Some(v) = s {\n        return 0;\n    }\n    return 0;\n}\n", []string{"E023", "E064"}},
+		{"e023-known-enum-match-ok", "enum Color { Red, Green }\nfunction f(c: Color): i32 { match (c) { Red => { return 1; }, Green => { return 2; } } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e023-option-match-ok", "function main(): i32 { var o: Option[i32] = Some(3); match (o) { Some(v) => { return v; }, None => { return 0; } } }\n", nil},
+		// E044 (unsupported capture type): a lambda capturing a value with
+		// no runtime representation — a void call result or an erased
+		// generic type parameter — draws E044 (the two shapes the native
+		// captureSink rejects). Scalar captures and shadowing lambda params
+		// stay clean.
+		{"e044-capture-generic-param", "function f[T](x: T): i32 {\n    var g = () => x;\n    return 0;\n}\nfunction main(): i32 { return f(1); }\n", []string{"E044"}},
+		{"e044-capture-void", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = () => x;\n    return 0;\n}\n", []string{"E044"}},
+		{"e044-capture-scalar-ok", "function main(): i32 {\n    var x = 5;\n    var g = () => x;\n    return g();\n}\n", nil},
+		{"e044-capture-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = (x: i32) => x;\n    return g(1);\n}\n", nil},
+		// E053 (`fip` no-allocation): array / struct literals, string
+		// concatenation, and calls to non-fip functions are rejected inside
+		// a `fip function`; scalar arithmetic and fip→fip calls are clean.
+		{"e053-fip-array-lit", "fip function mk(): i32 {\n    var a = [1, 2];\n    return a[0];\n}\nfunction main(): i32 { return mk(); }\n", []string{"E053"}},
+		{"e053-fip-struct-lit", "struct P { x: i32 }\nfip function mk(a: i32): i32 {\n    var p = P { x: a };\n    return p.x;\n}\nfunction main(): i32 { return mk(1); }\n", []string{"E053"}},
+		{"e053-fip-concat", "fip function j(a: string, b: string): string {\n    return a + b;\n}\nfunction main(): i32 { return 0; }\n", []string{"E053"}},
+		{"e053-fip-nonfip-call", "function g(): i32 { return 1; }\nfip function f(): i32 {\n    return g();\n}\nfunction main(): i32 { return f(); }\n", []string{"E053"}},
+		{"e053-fip-arith-ok", "fip function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
+		{"e053-fip-fipcall-ok", "fip function g(): i32 { return 1; }\nfip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", nil},
+		// E065 (returning a `str` view of a function-local string): a local
+		// owned string (annotated or inferred) escaping through a str return
+		// draws E065, incl. through a local `str` binding chase. A literal,
+		// a parameter view, and a str-of-param binding stay clean.
+		{"e065-local-string", "function f(): str {\n    var s: string = \"hello\";\n    return s;\n}\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-inferred-local", "function f(): str {\n    var s = \"hi\";\n    return s;\n}\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-str-binding-chase", "function f(): str {\n    var s: string = \"hello\";\n    var t: str = s;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-literal-ok", "function f(): str {\n    return \"hi\";\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-param-slice-ok", "function f(p: string): str {\n    return p[0:2];\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-str-of-param-ok", "function f(p: str): str {\n    var t: str = p;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		// E032 (`use` binding-type inference): an un-annotated `use` whose
+		// callee has no signature (the E001 rides along) or whose last
+		// parameter isn't a function draws E032 (the E038 arg-type mismatch
+		// rides along on the desugared call); an inferrable or annotated
+		// `use` is clean.
+		{"e032-use-nosig", "function main(): i32 {\n    use n <- q(1);\n    return n;\n}\n", []string{"E001", "E032"}},
+		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
+		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
+		{"e032-use-annotated-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n: i32 <- apply(41);\n    return n + 1;\n}\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -972,11 +940,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 				t.Errorf("%s: self-host codes = %v, want %v", tc.name, got, want)
 			}
 			// Differential: the self-host codes must match what the Go
-			// checker reports for the same source, restricted to the
-			// codes implemented so far.
-			goCodes := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			// checker reports for the same source — the FULL, unfiltered
+			// code set (the historical selfHostImplementedCodes filter is
+			// gone; the port covers every code the Go checker emits).
+			goCodes := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, goCodes) {
-				t.Errorf("%s: self-host codes %v disagree with Go checker %v (implemented subset)", tc.name, got, goCodes)
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)", tc.name, got, goCodes)
 			}
 		})
 	}
@@ -997,8 +966,7 @@ func equalStrings(a, b []string) bool {
 // TestSelfHostCheckerDifferentialX86_64 is the pure-differential verification
 // harness for the self-host checker. For each program it runs BOTH the
 // self-host checker (the codes driver) and the production Go checker, and
-// asserts they agree on the diagnostic code SET (restricted to the codes the
-// port implements). Unlike TestSelfHostCheckerCodesX86_64 it carries NO
+// asserts they agree on the diagnostic code SET (unfiltered). Unlike TestSelfHostCheckerCodesX86_64 it carries NO
 // hardcoded expected codes — the Go checker is the sole oracle — so it catches
 // a self-host FALSE POSITIVE (or missing diagnostic) on any construct in the
 // corpus without the test author having to predict the codes.
@@ -1098,9 +1066,9 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			out, _ := cmd.Output()
 			got := uniqueSortedCodes(strings.Fields(string(out)))
-			want := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			want := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
 			}
 		})
 	}
@@ -1112,8 +1080,8 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 // imports off disk and runs it through the file-based checker driver
 // (checker_modload_run.fern → ./modloader → flatten.bundle → check_module),
 // then asserts the self-host code set matches the Go checker's (modload +
-// check) — restricted to implemented codes, with the Go checker as the sole
-// oracle (no hardcoded expectations).
+// check) — unfiltered, with the Go checker as the sole oracle (no
+// hardcoded expectations).
 //
 // This is the harness the method-table-dependent diagnostics need: it lets a
 // rule keyed off an IMPORTED module's methods/types (string methods from
@@ -1164,9 +1132,9 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			out := checkSourceModload(t, runner, driverBin, tc.src)
 			got := uniqueSortedCodes(strings.Fields(out))
-			want := filterImplemented(goCheckerCodes(t, t.TempDir(), tc.src))
+			want := goCheckerCodes(t, t.TempDir(), tc.src)
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
 			}
 		})
 	}
