@@ -4241,8 +4241,33 @@ func (p *parser) parsePipe() (ast.Expr, error) {
 		}
 		switch r := right.(type) {
 		case *ast.Call:
-			// `x |> f(a, b)` — prepend x to f's arg list.
-			r.Args = append([]ast.Expr{left}, r.Args...)
+			// `x |> f(a, _)` — the `_` topic placeholder: the LHS
+			// substitutes at the hole instead of being prepended,
+			// for the minority of callees that don't take the piped
+			// value first. At most one `_`, and only as a DIRECT
+			// argument of the piped call — a `_` nested inside a
+			// sub-expression is left alone (it stays an ordinary
+			// identifier and fails the checker's E001 like any other
+			// unknown name). A nested pipe in an arg has already
+			// consumed its own `_` by the time this scan runs, so
+			// holes compose: `x |> f(y |> g(_), _)` resolves the
+			// inner hole to y and the outer one to x.
+			hole := -1
+			for i, a := range r.Args {
+				if id, ok := a.(*ast.Ident); ok && id.Name == "_" {
+					if hole >= 0 {
+						return nil, p.errorfCode(id.P, "P004", "at most one `_` placeholder in a piped call")
+					}
+					hole = i
+				}
+			}
+			if hole >= 0 {
+				r.Args[hole] = left
+				r.PipeHole = hole + 1
+			} else {
+				// `x |> f(a, b)` — prepend x to f's arg list.
+				r.Args = append([]ast.Expr{left}, r.Args...)
+			}
 			r.IsPipe = true
 			left = r
 		default:
