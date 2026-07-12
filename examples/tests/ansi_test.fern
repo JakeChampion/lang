@@ -1,0 +1,50 @@
+import "std/test";
+import "std/ansi" as ansi;
+// examples/tests/ansi_test.fern — pure-Fern coverage of std/ansi: the
+// SGR wrap primitive, colours / bright / background / styles, and
+// strip() (which removes SGR sequences while preserving surrounding and
+// multi-byte UTF-8 text). Assertions round-trip through strip() so they
+// don't need the raw ESC byte spelled out, plus a length check that
+// confirms codes are actually emitted.
+
+function test_strip_roundtrip(): test.TestOutcome {
+    if (ansi.strip(ansi.red("hi")) != "hi") { return test.fail("red"); }
+    if (ansi.strip(ansi.bold(ansi.green("ok"))) != "ok") { return test.fail("nested"); }
+    return test.assert_eq(ansi.strip(ansi.bg_blue(ansi.bright_white("x"))), "x");
+}
+
+function test_strip_preserves_surrounding(): test.TestOutcome {
+    if (ansi.strip("a" + ansi.red("b") + "c") != "abc") { return test.fail("interleaved"); }
+    // Plain text and UTF-8 pass through untouched.
+    if (ansi.strip("plain") != "plain") { return test.fail("plain"); }
+    return test.assert_eq(ansi.strip(ansi.cyan("héllo")), "héllo");
+}
+
+function test_styles(): test.TestOutcome {
+    // Every style strips back to its content.
+    var styled: string = ansi.italic(ansi.underline(ansi.reverse(ansi.strikethrough("q"))));
+    return test.assert_eq(ansi.strip(styled), "q");
+}
+
+function test_custom_sgr(): test.TestOutcome {
+    // 256-colour / truecolour codes via the raw sgr primitive.
+    if (ansi.strip(ansi.sgr("38;5;208", "z")) != "z") { return test.fail("256-colour"); }
+    return test.assert_eq(ansi.strip(ansi.sgr("38;2;255;128;0", "t")), "t");
+}
+
+function test_codes_emitted(): test.TestOutcome {
+    // A styled string is strictly longer than its content (codes present)
+    // and strip is idempotent.
+    if (ansi.red("hi").len() <= 2) { return test.fail("expected codes"); }
+    return test.assert_eq(ansi.strip(ansi.strip(ansi.yellow("dup"))), "dup");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/ansi");
+    r = r.it("strip roundtrip",       test_strip_roundtrip());
+    r = r.it("strip preserves text",  test_strip_preserves_surrounding());
+    r = r.it("styles",                test_styles());
+    r = r.it("custom sgr",            test_custom_sgr());
+    r = r.it("codes emitted",         test_codes_emitted());
+    return r.finish();
+}

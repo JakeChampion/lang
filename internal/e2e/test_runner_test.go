@@ -2962,6 +2962,24 @@ func TestRunnerFormatDurationParseExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/ansi_test.fern` covers std/ansi — the SGR wrap
+// primitive, colours / bright / background / styles, and strip()
+// (removing SGR sequences while preserving surrounding and UTF-8 text).
+// Passing suite → exit 0; plan line `1..5`.
+func TestRunnerAnsiExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/ansi_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/ansi", "1..5", "# pass 5", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
