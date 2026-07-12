@@ -1,5 +1,11 @@
 # Wasm reactor — design + the component-composition blocker
 
+> **Status: shipped.** The wasm reactor runs on Preview-2 pollables
+> (timer/block/poll/drop + the `std/wasm_reactor` scheduler) on stock
+> wasmtime — see `WASI-PREVIEW3-ASYNC-PLAN.md` for what a Preview-3 native
+> async move would add. The remaining wasm-IR readiness/socket lowering
+> gaps are [#4316](https://github.com/JakeChampion/lang/issues/4316)–[#4320](https://github.com/JakeChampion/lang/issues/4320).
+
 The native reactor (poll/ppoll → `std/reactor.run_io` → timer_fd →
 timeouts → real sockets → outbound fan-out) is complete on x86-64 +
 arm64. This doc scopes the **wasm** reactor — the primary edge target

@@ -1,5 +1,10 @@
 # Small-String-Optimisation (SSO) migration plan
 
+> **Status: SHIPPED everywhere.** The two-word ABI + inline-SSO encoding is
+> live on wasm32 (`SSO-TWOWORD-EXEC.md`) and on **both** native backends —
+> arm64 AND x86-64 (`SSO-NATIVE-FLIP-STATUS.md`, 2026-06-03). This doc is
+> the historical migration roadmap.
+
 Captures the multi-PR migration strategy for BACKEND-PARITY
 perf item #2 (inline small strings). The change is breaking
 for **every** string operation in the prelude + native

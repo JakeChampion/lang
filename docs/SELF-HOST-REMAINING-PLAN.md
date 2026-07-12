@@ -1,9 +1,16 @@
 # Self-hosting: remaining work plan
 
-> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857)
-> surfaces the still-open frontiers across this and the sibling RC/checker plan
-> docs. This doc is a living progress log — verify the latest slice before
-> picking up an item.
+> **Status: largely complete — kept as the goal-1 historical record.** The
+> per-function IR subset this plan set out to widen is now mature (closures
+> incl. nested, matches incl. guards, generics, `dyn` traits, `try`/`?`,
+> tuples, iterators all lower). The remaining AST fallbacks are the
+> merged-bundle budget ([#3425](https://github.com/JakeChampion/lang/issues/3425))
+> and the wasm-IR component-model exclusions
+> ([#4316](https://github.com/JakeChampion/lang/issues/4316)–[#4320](https://github.com/JakeChampion/lang/issues/4320)).
+> The old coarse tracker #2857 is closed — open threads live in those issues,
+> the checker residue ([#4363](https://github.com/JakeChampion/lang/issues/4363)),
+> and the roadmap umbrella ([#4368](https://github.com/JakeChampion/lang/issues/4368)).
+> Verify against the issues, not the inline ⬜ markers below.
 
 Tracks the modules / features the self-hosted compiler
 (`examples/self_host/`) cannot yet compile, with a concrete plan per

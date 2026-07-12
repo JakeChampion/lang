@@ -1,9 +1,16 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
-Status: **slices 1–3 landed** — `__fern_i32_pow` (Tier 0) and the five
-`__fern_arr_i32_*` reducers (`sum`/`product`/`index_of`/`min`/`max`, Tier 1) on
-the AST x86-64 + arm64 backends, plus `__fern_str_to_i32` on the **x86-64 IR
-path** (the IR-hosting primitive `emit_ir_runtime_fern_fn`). This is the architecture document the end goal of
+Status (2026-07): **the Tier-0–2 helper migration is complete** — the
+byte-building Tier-2 set (`chr`, `str_concat`, `i32_to_string`,
+`str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
+`string_from_bytes`, `str_split`) now lowers as Fern functions via the
+raw-memory intrinsics (`RUNTIME-INTRINSICS.md`), on top of the earlier
+Tier-0/1 slices (`__fern_i32_pow`, the five `__fern_arr_i32_*` reducers,
+`__fern_str_to_i32`, and the str predicates/utilities). What remains
+hand-written — and what keeps
+[#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
+core allocator / map / array runtime (`__fern_alloc`, `__fern_map_*`,
+`__fern_arr_*` mutators) and the per-backend wasm helper bundles. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references

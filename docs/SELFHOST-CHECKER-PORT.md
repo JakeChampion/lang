@@ -1,8 +1,13 @@
 # Porting the type checker to the self-host (retiring the Go checker)
 
-> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857).
-> This doc is a living progress log — verify the latest slice before picking up
-> an item.
+> **Open follow-ups tracked in GitHub:**
+> [#4363](https://github.com/JakeChampion/lang/issues/4363) (small unported
+> codes) and [#4346](https://github.com/JakeChampion/lang/issues/4346)
+> (silent `all_well_typed` rejections), plus #4344/#4345. The E021/E060/E062
+> trait-conformance family is fully ported (#4347, closed; generic-bound
+> conformance has its own follow-up issue). The old coarse tracker #2857 is
+> closed. This doc is a living progress log — verify the latest slice before
+> picking up an item.
 
 Goal: grow `examples/self_host/checker.fern` to parity with the Go
 checker (`internal/checker/checker.go`, ~6700 LOC, 50 stable diagnostic

@@ -814,10 +814,11 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // in by module_uses_strbuf, which also folds into the heap gate. The wasm AST
     // backend never had strbuf, so this is the only wasm strbuf path.
     // The libm transcendentals (sin / cos / exp / log / pow) lower through the IR
-    // on x86 (x87 FPU) and arm64 (polynomial-approx runtime helpers), but wasm has
-    // neither a transcendental instruction nor an IR runtime for them, so a module
-    // calling one stays on the wasm AST path (where it is already deferred — see
-    // wasm.fern: "sin/cos/exp/log/pow have no primitive and are deferred"). #2691.
+    // on every backend: x86 (x87 FPU), arm64 (polynomial-approx runtime helpers),
+    // and wasm via the polynomial-approx WAT helpers (wasm.exp_func / log_func /
+    // pow_func / …) that wasm_ir_run pulls in when a module calls one — see the
+    // fexp/flog/fsin/fcos/fpow arms below (kind_tag 62+), which emit
+    // `call $__fern_<op>_f64`. They are NOT in the deferral list.
     if (!asm_ir.eligible_core(mod)) { return false; }
     return wasm_ir_deferrals_ok(lower_all_for(mod));
 }

@@ -1,6 +1,10 @@
 # Porting Perceus RC to the self-hosted compiler
 
-> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857).
+> **Open follow-ups tracked in GitHub:** the goal-2 port slices
+> [#4351](https://github.com/JakeChampion/lang/issues/4351)–[#4357](https://github.com/JakeChampion/lang/issues/4357),
+> [#4399](https://github.com/JakeChampion/lang/issues/4399) (escape-taint
+> retirement) and [#4402](https://github.com/JakeChampion/lang/issues/4402)
+> (missing optimisations). The old coarse tracker #2857 is closed.
 > This doc is a living progress log — verify the latest slice before picking up
 > an item.
 

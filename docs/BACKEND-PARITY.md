@@ -334,7 +334,22 @@ Tried option (2) end-to-end. Got far enough to confirm scope:
 Estimate: ~2–3 more days of careful work touching IR + wasm
 runtime + prelude, with cross-target testing.
 
-### Wide-scalar Map keys / values (i64 / u64 / f64)
+### ~~Wide-scalar Map keys / values (i64 / u64 / f64)~~ — RESOLVED
+
+> **Status: RESOLVED.** The runtime-tag scheme was extended instead of the
+> type-hash monomorphisation sketched below: `mapKeyKindTag` gained
+> **kind 2 = wide-scalar-boxed** (i64 / u64 / f64 keys box into a heap cell
+> when `ptrW < 8`, with `__map_hash` / `__map_lookup` dereferencing the
+> 8-byte value), `mapValKindTag` was widened to kinds 0..3, and wide-scalar
+> V types go through `emitWideMapSet` / `emitWideMapGet`. wasm e2e coverage:
+> `TestWASMWideKeyMapBasic` / `…HasDelete` / `…Overwrite` / `…Grow` /
+> `…HighBitsDistinct` / `…U64` / `…StringV` / `…KeysSnapshot` plus the
+> wide-V `TestWASMMapValuesWideI64` / `…F64` series
+> (`internal/e2e/wasm_e2e_test.go`). See the RESOLVED entry in
+> `ROADMAP-AND-SELF-HOSTING.md` Part 1 item 3. The full per-(K,V)
+> monomorphisation remains a separate, unstarted perf lever
+> (`MAP-SPECIALIZATION.md`, #4368). The original analysis below is kept as
+> the historical record (note it predates prelude removal).
 
 **Scope**: wasm-only. The natives (x86-64 + arm64 Linux qemu) now
 work for `Map[i64, i32]`, `Map[i32, f64]`, `Map[i64, string]`,

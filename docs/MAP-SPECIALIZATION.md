@@ -1,5 +1,14 @@
 # Map[K, V] specialization plan
 
+> **Status: proposal, unstarted (0/5 steps)** — tracked in the roadmap
+> umbrella [#4368](https://github.com/JakeChampion/lang/issues/4368). The
+> prose below predates the prelude removal (#1561): the Map runtime now
+> lives in `core/map` + the IR's runtime-tag scheme, not
+> `internal/prelude/prelude.fern`. The wide-scalar-K/V correctness gap that
+> partly motivated this was fixed separately via runtime kind tags (see
+> `BACKEND-PARITY.md` and `ROADMAP-AND-SELF-HOSTING.md` item 3); what
+> remains here is the perf/code-size monomorphisation lever.
+
 Captures the proposed migration from the current **runtime-tag
 dispatch** Map implementation to **compile-time-specialized**
 monomorphic clones per (K, V) pair.
