@@ -1,0 +1,71 @@
+import "std/test";
+import "std/unicode" as unicode;
+// examples/tests/unicode_test.fern — pure-Fern coverage of std/unicode's
+// simple (1:1) case mapping. Exercises multiple scripts (ASCII, Latin-1,
+// Latin Extended, Greek, Cyrillic), the code-point-level helpers, the
+// simple-mapping caveat (ß is left unchanged), and eq_ignore_case.
+
+function test_ascii(): test.TestOutcome {
+    return test.assert_true(unicode.to_upper("hello") == "HELLO" &&
+                            unicode.to_lower("HeLLo") == "hello");
+}
+
+function test_latin1(): test.TestOutcome {
+    // Accented Western-European letters map both ways.
+    return test.assert_true(unicode.to_upper("café") == "CAFÉ" &&
+                            unicode.to_lower("ÜBER") == "über");
+}
+
+function test_greek(): test.TestOutcome {
+    return test.assert_eq(unicode.to_upper("αβγδ"), "ΑΒΓΔ");
+}
+
+function test_cyrillic(): test.TestOutcome {
+    return test.assert_eq(unicode.to_upper("привет"), "ПРИВЕТ");
+}
+
+function test_mixed_unchanged(): test.TestOutcome {
+    // Digits, punctuation, spaces pass through untouched.
+    return test.assert_eq(unicode.to_upper("a1-b2 c3!"), "A1-B2 C3!");
+}
+
+function test_char_level(): test.TestOutcome {
+    // 'a'(97) -> 'A'(65); Greek Α(0x391) -> α(0x3B1).
+    return test.assert_true(unicode.to_upper_char(97) == 65 &&
+                            unicode.to_lower_char(913) == 945 &&
+                            unicode.to_upper_char(48) == 48);   // '0' unchanged
+}
+
+function test_sharp_s_unchanged(): test.TestOutcome {
+    // SIMPLE mapping only: ß has no single-code-point uppercase, so it
+    // is left as-is (full mapping ß -> SS is out of scope, matching Go).
+    return test.assert_eq(unicode.to_upper("straße"), "STRAßE");
+}
+
+function test_eq_ignore_case(): test.TestOutcome {
+    if (!unicode.eq_ignore_case("Café", "cafÉ")) { return test.fail("Café ~ cafÉ"); }
+    if (!unicode.eq_ignore_case("ПРИВЕТ", "привет")) { return test.fail("cyrillic fold"); }
+    if (unicode.eq_ignore_case("abc", "abd")) { return test.fail("abc != abd"); }
+    if (unicode.eq_ignore_case("ab", "abc")) { return test.fail("length differs"); }
+    return test.pass();
+}
+
+function test_roundtrip(): test.TestOutcome {
+    // lower(upper(x)) == lower(x) for these simple-mapping scripts.
+    var s: string = "Groß-Ελλάδα";
+    return test.assert_eq(unicode.to_lower(unicode.to_upper(s)), unicode.to_lower(s));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/unicode");
+    r = r.it("ascii",             test_ascii());
+    r = r.it("latin-1",           test_latin1());
+    r = r.it("greek",             test_greek());
+    r = r.it("cyrillic",          test_cyrillic());
+    r = r.it("mixed unchanged",   test_mixed_unchanged());
+    r = r.it("char level",        test_char_level());
+    r = r.it("sharp-s unchanged", test_sharp_s_unchanged());
+    r = r.it("eq_ignore_case",    test_eq_ignore_case());
+    r = r.it("roundtrip",         test_roundtrip());
+    return r.finish();
+}

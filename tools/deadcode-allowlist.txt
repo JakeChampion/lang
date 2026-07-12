@@ -28,3 +28,10 @@ internal/fernsmith:New
 internal/fernsmith:NewWithConfig
 internal/wasm/encode:PutBytes
 internal/wasm/component:PutTypeSectionOneInstanceOneFuncNoResultExport
+
+# The queryable-state getter pair for diagnostic rendering (added with
+# the TTY/NO_COLOR-gated ANSI colour support). `ColorEnabled` has an
+# in-tree caller; its sibling `ASCIIEnabled` (reports whether the
+# ASCII-connector fallback is on) is the symmetric public getter, kept
+# as deliberate API rather than deleted to leave the pair whole.
+internal/diag:ASCIIEnabled
