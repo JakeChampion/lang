@@ -4478,3 +4478,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   discarded key on overwrite) — a separate slice. The value-side overwrite leak
   (the OLD value dropped on overwrite for string-valued maps) and the cap-0
   grow-leak (blocked on keys/values snapshot-copy) remain.
+
+- 2026-07-12: **#4353 arm64-IR map overwrite-key reclaim — parity with the x86-IR
+  #4881 fix.** Mirrored the discarded-fresh-key overwrite reclaim into the arm64
+  backend: `asm_arm64_ir.fern`'s op-125 emission passes kconsume in `x4`;
+  `asm_arm64.fern`'s `__fern_map_set` saves it in the otherwise-unused callee-saved
+  `x24` (no extra stack juggling — it's already `stp`'d) and, on `.Lms_found`,
+  frees the discarded key `x20` via `__fn___fern_str_free` (`cbz x24` gate) when
+  fresh. str_free clobbers only x0-x3/x9/x10/w4 (preserves x19/x20), so the mapbox
+  return is intact. VERIFIED UNDER QEMU (not just CI): the string-key overwrite
+  churn drops to the i32 baseline (24048 ≈ 23904, matching x86 exactly — same
+  parallel-array map layout), correctness + aliased-key + general map ops all
+  exit 0. Bootstrap-safe identically (compiler maps i32/interned → kconsume 0 →
+  x24=0 → cbz skips → unchanged; the arm64 fixpoint stays byte-identical). Tests:
+  3 arm64 cases added to `TestSelfHostMapKsReclaimIRArm64`. Both register backends
+  now reclaim the overwrite-discarded fresh key, matching wasm #4876. The
+  value-side overwrite leak and the cap-0 grow-leak (keys/values snapshot-copy)
+  remain the open #4353 items.
