@@ -566,7 +566,7 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			name: "string_slice_content",
 			src: `function main(): i32 {
   var s: string = "hello world";
-  var w: string = s[6:11];
+  var w: str = s[6:11];
   return w[0] as i32;
 }`,
 			want: 119,

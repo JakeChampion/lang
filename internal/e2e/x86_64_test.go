@@ -334,30 +334,30 @@ func TestX86_64SsoInline(t *testing.T) {
 }`, 8},
 		// Inline byte indexing must still match the source bytes.
 		{"inline-index-first-byte", `function main(): i32 {
-    var s: string = "abcdefghij"[0:5]; // inline "abcde"
+    var s: str = "abcdefghij"[0:5]; // inline "abcde"
     return s[0] as i32;
 }`, 97}, // 'a'
 		{"inline-index-last-byte", `function main(): i32 {
-    var s: string = "abcdefghij"[0:5]; // inline "abcde"
+    var s: str = "abcdefghij"[0:5]; // inline "abcde"
     return s[4] as i32;
 }`, 101}, // 'e'
 		// Equality: inline-vs-inline (same bytes), inline-vs-heap
 		// (same bytes, different forms — strcmp must compare data,
 		// not pointer).
 		{"inline-eq-same", `function main(): i32 {
-    var a: string = "abcdef"[0:3]; // inline "abc"
-    var b: string = "xabc"[1:4];    // inline "abc"
+    var a: str = "abcdef"[0:3]; // inline "abc"
+    var b: str = "xabc"[1:4];    // inline "abc"
     if (a == b) { return 1; }
     return 0;
 }`, 1},
 		{"inline-eq-heap-same", `function main(): i32 {
-    var a: string = "abcdefghij"[0:3]; // inline "abc"
+    var a: str = "abcdefghij"[0:3]; // inline "abc"
     var b: string = "abc";              // heap "abc"
     if (a == b) { return 1; }
     return 0;
 }`, 1},
 		{"inline-ne", `function main(): i32 {
-    var a: string = "abcdef"[0:3]; // inline "abc"
+    var a: str = "abcdef"[0:3]; // inline "abc"
     var b: string = "xyz";          // heap "xyz"
     if (a != b) { return 1; }
     return 0;
@@ -365,17 +365,17 @@ func TestX86_64SsoInline(t *testing.T) {
 		// Concat chains: inline + inline → heap when total > 7,
 		// inline + heap → mixed materialisation, etc.
 		{"concat-inline-plus-inline-inline", `function main(): i32 {
-    var a: string = "abcdef"[0:3]; // inline "abc"
+    var a: str = "abcdef"[0:3]; // inline "abc"
     var b: string = "xyz";          // heap "xyz" — could go inline-or-heap
     return (a + b).len();
 }`, 6},
 		{"concat-inline-plus-inline-heap", `function main(): i32 {
-    var a: string = "abcdef"[0:5];  // inline "abcde"
+    var a: str = "abcdef"[0:5];  // inline "abcde"
     var b: string = "fghij";         // heap, 5 chars
     return (a + b).len();
 }`, 10},
 		{"concat-roundtrip-bytes", `function main(): i32 {
-    var a: string = "abcdef"[0:3]; // inline "abc"
+    var a: str = "abcdef"[0:3]; // inline "abc"
     var b: string = "DEF";          // heap "DEF"
     var c: string = a + b;          // heap result (6 bytes <= 7 → actually inline)
     if (c == "abcDEF") { return 1; }
@@ -395,7 +395,7 @@ func TestX86_64SsoInline(t *testing.T) {
 		// before passing the buffer pointer to the kernel.
 		// The exit code is the len of the printed inline string.
 		{"print-inline", `function main(): i32 {
-    var s: string = "abcdefgh"[0:5]; // inline "abcde"
+    var s: str = "abcdefgh"[0:5]; // inline "abcde"
     print(s);
     return s.len();
 }`, 5},
@@ -410,7 +410,7 @@ func TestX86_64SsoInline(t *testing.T) {
 		// so the inline tag is honoured.
 		{"field-access-len-inline", `struct Box { s: string }
 function main(): i32 {
-    var b: Box = Box { s: "abcdefgh"[0:5] }; // inline "abcde"
+    var b: Box = Box { s: "abcdefgh"[0:5] + "" }; // inline "abcde"
     return b.s.len();
 }`, 5},
 	} {
@@ -467,8 +467,8 @@ func TestX86_64EmptyStringSentinel(t *testing.T) {
 	}{
 		{"concat-of-empties", `function main(): i32 {
     var s: string = "abcd";
-    var a: string = s[0:0];
-    var b: string = s[0:0];
+    var a: str = s[0:0];
+    var b: str = s[0:0];
     return (a + b).len();
 }`, 0},
 		{"zero-width-slice", `function main(): i32 {
@@ -481,7 +481,7 @@ func TestX86_64EmptyStringSentinel(t *testing.T) {
 }`, 0},
 		{"sentinel-roundtrip", `function main(): i32 {
     var s: string = "world";
-    var empty: string = s[0:0];
+    var empty: str = s[0:0];
     return ("hello, " + empty + s).len();
 }`, 12},
 	} {

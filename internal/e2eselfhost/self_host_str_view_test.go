@@ -24,7 +24,8 @@ function main(): i32 {
     var v: str = s;
     var vs: str[] = ["ab", "cde"];
     var p: str = pick(vs);
-    return view_len(s) + view_len(v) + p.len();
+    var h: str = s[1:4];
+    return view_len(s) + view_len(v) + p.len() + h.len();
 }
 `
 
@@ -43,7 +44,8 @@ function main(): i32 {
     var v: string = s;
     var vs: string[] = ["ab", "cde"];
     var p: string = pick(vs);
-    return view_len(s) + view_len(v) + p.len();
+    var h: string = s[1:4];
+    return view_len(s) + view_len(v) + p.len() + h.len();
 }
 `
 

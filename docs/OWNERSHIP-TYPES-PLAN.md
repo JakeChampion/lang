@@ -292,9 +292,21 @@ precompute shape.
   `TestSelfHostStrViewErasure`) and the `own`-param tightening
   (`argAssignable` takes the callee's per-param `own` flag from
   `Info.OwnFuncs` / the trait `Param.Own`; a view never flows to a
-  consumer). **Remaining A-phase work:** the producer flip (`s[a:b]: str` /
-  `.trim(): str`, with backend zero-copy convergence gated by the byte-
-  identity differentials).
+  consumer). **Landed since (the producer flip):** P1 flipped the
+  `.trim()` family (`std/string` trim/trim_start/trim_end return `str`);
+  P2 flipped `s[a:b]` itself — slicing an owned `string` returns a `str`
+  sub-view (checker `SliceExpr` case), after two migration batches made
+  every consumer in the tree flip-clean (batch 1: stdlib + examples,
+  #4891; batch 2: the self-host compiler sources, #4900 — 231 sites
+  enumerated as the pristine-vs-flipped checker error delta, read-only
+  bindings annotated `str`, owning sinks materialised via `+ ""`). E065's
+  chase gained the `SliceExpr` case with the flip (returning a slice of a
+  local is a dangling view; slicing a param stays fine). **Remaining
+  A-phase work:** P3 backend zero-copy convergence (native `__str_slice` +
+  wasm produce the #4294 view box instead of copying), gated by the
+  byte-identity differentials + the per-module run gate; call-result
+  chasing in E065/E063 (views laundered through a `str`-returning callee)
+  tightens with it.
 
 ## Validation discipline (learned from #4294 / the A2 attempts)
 

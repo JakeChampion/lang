@@ -54,12 +54,12 @@ function trim(s: string): string {
     var a: i32 = 0; var b: i32 = s.len();
     while (a < b && (s[a] == 32 || s[a] == 9)) { a = a + 1; }
     while (b > a && (s[b-1] == 32 || s[b-1] == 9)) { b = b - 1; }
-    return s[a:b];
+    return s[a:b] + "";
 }
 function leading_ws(s: string): string {
     var i: i32 = 0; var n: i32 = s.len();
     while (i < n && (s[i] == 32 || s[i] == 9)) { i = i + 1; }
-    return s[0:i];
+    return s[0:i] + "";
 }
 function is_header(t: string): boolean { return t.len() >= 3 && t[0:2] == "<<" && t[t.len()-3:t.len()] == ">>="; }
 function header_name(t: string): string { return trim(t[2:t.len() - 3]); }

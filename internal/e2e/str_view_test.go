@@ -11,7 +11,9 @@ import "testing"
 // `string` sink; `str[]` arrays work element-wise; views compare by
 // CONTENTS against strings, literals, and other views (IsStringCmp — a
 // pointer compare here was the P1 near-miss), concat into fresh owned
-// strings, index as byte reads, and re-slice into sub-views.
+// strings, index as byte reads, and re-slice into sub-views; slicing an
+// OWNED string also yields a view (the P2 producer flip), which
+// materialises into an owning sink via `+ ""`.
 // StrType is erased to StringType at the LowerWith choke point
 // (ir/erase_str.go), so a correct run proves the erasure feeds every
 // backend a plain string program. Exits 0 on success, a distinct code per
@@ -47,6 +49,10 @@ function main(): i32 {
     if (t[0] != 104) { return 12; }
     var sub: str = t[1:3];
     if (sub != "ey") { return 13; }
+    var half: str = s[2:5];
+    if (half != "hey") { return 14; }
+    var oh: string = s[2:5] + "";
+    if (oh != "hey") { return 15; }
     return 0;
 }
 `

@@ -7053,9 +7053,9 @@ func (c *checker) sourceIsLocalStorage(src ast.Expr, locals map[string]*ast.Var,
 // is a parameter (caller-owned) or a string literal ('static / immortal). A
 // `str` viewing a function-LOCAL owned `string` outlives storage the RC
 // passes may reclaim at exit — the #4294 corruption class the `str` type
-// exists to prevent. No producer yields `str` yet (the s[a:b]/.trim() flip
-// is gated on this rule), so today the rejectable shape is an ident chain
-// bottoming out at a local `string` binding; the chase mirrors
+// exists to prevent. The producers are live: .trim() (P1) and s[a:b] (P2)
+// both yield views, so the rejectable shapes are an ident chain or a slice
+// expression bottoming out at a local `string` binding; the chase mirrors
 // sliceBorrowsLocal (cycle-guarded, params excluded). Like E063, `return`
 // is the only checked escape position for now, and the chase is
 // intraprocedural — a view laundered through a str-returning callee is not
@@ -7098,6 +7098,10 @@ func (c *checker) strViewsLocal(expr ast.Expr, locals map[string]*ast.Var, param
 	switch e := expr.(type) {
 	case *ast.StringLit:
 		return false // 'static / immortal
+	case *ast.SliceExpr:
+		// s[a:b] on a string is a sub-view of s's bytes (the P2 producer
+		// flip): the slice escapes iff its base does.
+		return c.strViewsLocal(e.Source, locals, params, visiting)
 	case *ast.Ident:
 		if params[e.Name] {
 			return false // caller-owned
@@ -9679,8 +9683,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return sl
 		}
 		if _, ok := st.(ast.StringType); ok {
+			// Slicing an owned string yields a `str` view of its bytes —
+			// the #4813 P2 producer flip. The backends still copy until
+			// the P3 zero-copy convergence; the erasure at LowerWith
+			// keeps them seeing a plain string program either way.
 			n.IsString = true
-			return ast.StringType{}
+			return ast.StrType{}
 		}
 		// Slicing a `str` view yields another `str` — a sub-view of the
 		// same bytes (#4813). The backends still copy until the P3
@@ -9719,7 +9727,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if at == nil {
 					return ast.VoidType{}
 				}
-				if _, isStr := at.(ast.StringType); isStr {
+				switch at.(type) {
+				case ast.StringType, ast.StrType:
+					// A `str` view prints as its bytes — same box shape
+					// as string at runtime (the LowerWith erasure).
 					return ast.VoidType{}
 				}
 				if !c.typeImplementsDisplay(at) {
