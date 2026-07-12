@@ -228,6 +228,23 @@ function main(): i32 {
 // __fern_free populates the freelist.
 func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 	t.Helper()
+	binPath, runner := compileX86_64FreeOn(t, src)
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode()
+}
+
+// compileX86_64FreeOn is the compile half of compileAndRunX86_64FreeOn:
+// it returns the built binary's path (in a test temp dir) plus the
+// runner argv prefix, for tests that need to control HOW the binary is
+// launched (e.g. rc_trmc_test.go pins RLIMIT_STACK before exec).
+func compileX86_64FreeOn(t *testing.T, src string) (string, []string) {
+	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	// Route through modload (not bare parser.Parse) so the program's
 	// std/ + core/ imports resolve — without it core/map's runtime
@@ -268,14 +285,7 @@ func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-	}
-	out, _ := cmd.CombinedOutput()
-	return string(out), cmd.ProcessState.ExitCode()
+	return binPath, runner
 }
 
 // compileAndRunArm64FreeOn mirrors compileAndRunArm64 but flips

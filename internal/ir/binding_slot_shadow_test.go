@@ -189,3 +189,84 @@ function main(): i32 {
 		t.Errorf("string var slot %d has %d stores, want 2 (entry zero-init + var init); a cross-shape match binding is sharing the two-word slot", strSlot, stores)
 	}
 }
+
+// The cross-WIDTH counterpart of the cross-shape test above: same-named
+// match-arm bindings whose payload types map to DIFFERENT wasm valtypes
+// — `I(v)` (i32) vs `L(v)` (i64) — must not share a slot. The backend
+// types the physical wasm local from the slot's final type stamp, so a
+// shared slot leaves one arm's store/load ill-typed and the emitted
+// module fails validation ("type mismatch: expected i64, found i32") —
+// the TestExternVariant{MixedWidth,NonUniform}ResultCustomProvider
+// composition shape, which only runs where wasmtime/wasm-tools are
+// installed; this pin gates it in the unit lane. bindingSlot's shape
+// guard used to compare only two-word-ness, under which i32 and i64 both
+// read "one word" and shared.
+func TestMatchBindingCrossWidthGetsDistinctSlots(t *testing.T) {
+	src := `
+enum V { I(i32), L(i64) }
+
+function mk(n: i32): V {
+    if (n < 100) { return I(n); }
+    return L(5000000000);
+}
+
+function pick(n: i32): i32 {
+    match (mk(n)) {
+        I(v) => { return v; },
+        L(v) => { if (v == 5000000000) { return 42; } return -1; },
+    }
+}
+function main(): i32 {
+    if (pick(5) == 5 && pick(200) == 42) { return 0; }
+    return 1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	// ptrW==4: the wasm shape, where locals are valtype-checked.
+	ip, err := ir.LowerWith(prog, info, 4)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	fn := funcByName(ip, "pick")
+	if fn == nil {
+		t.Fatal("pick not lowered")
+	}
+	// Collect the store-width sets per slot: every OpLoad directly
+	// feeding an OpStoreLocal / OpTeeLocal is a payload extraction, and
+	// Op.Width says which arm it belongs to (0 = i32 default, 64 = i64).
+	widths := map[int32]map[int]bool{}
+	for i := 0; i+1 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind != ir.OpLoad {
+			continue
+		}
+		next := fn.Ops[i+1]
+		if next.Kind != ir.OpStoreLocal && next.Kind != ir.OpTeeLocal {
+			continue
+		}
+		if widths[next.I32] == nil {
+			widths[next.I32] = map[int]bool{}
+		}
+		widths[next.I32][fn.Ops[i].Width] = true
+	}
+	sawI64 := false
+	for slot, ws := range widths {
+		if len(ws) > 1 {
+			t.Errorf("slot %d receives loads of multiple widths %v — cross-width same-named bindings are sharing a slot (invalid wasm local typing)", slot, ws)
+		}
+		if ws[64] {
+			sawI64 = true
+		}
+	}
+	if !sawI64 {
+		t.Fatal("no i64 payload extraction found (lowering shape changed? update the test)")
+	}
+}

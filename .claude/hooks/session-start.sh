@@ -34,26 +34,30 @@ fi
 
 # --- wasmtime + wasm-tools + WASI preview1 adapter (wasm e2e suite) ---
 # Versions pinned to match .github/actions/setup-fern (bump together).
+# wasmtime v37 is required for the WASI P3 async tests (component-model-async
+# is compiled out of v34) and wasm-tools 1.240 for composing the extern-variant
+# provider components — older pins fail ~40 wasm e2e tests that CI passes.
 WT_DIR="$HOME/.fern-wasm"
-WASMTIME_VER="v34.0.1"
-WASMTOOLS_VER="1.225.0"
+WASMTIME_VER="v37.0.1"
+WASMTOOLS_VER="1.240.0"
 case "$(uname -m)" in
   x86_64)  WT_ARCH="x86_64-linux" ;;
   aarch64) WT_ARCH="aarch64-linux" ;;
   *) echo "unsupported host arch $(uname -m)" >&2; exit 1 ;;
 esac
 mkdir -p "$WT_DIR"
-if [ ! -x "$WT_DIR/wasmtime" ]; then
+# Version-check the cached binaries, not just their existence — a container
+# provisioned under an older pin must refresh (the adapter ships per-wasmtime
+# release, so it is re-fetched whenever the wasmtime binary is).
+if [ ! -x "$WT_DIR/wasmtime" ] || ! "$WT_DIR/wasmtime" --version 2>/dev/null | grep -qF "${WASMTIME_VER#v}"; then
   curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VER}/wasmtime-${WASMTIME_VER}-${WT_ARCH}.tar.xz" \
     | tar -xJ -C "$WT_DIR" --strip-components=1 --wildcards '*/wasmtime'
-fi
-if [ ! -x "$WT_DIR/wasm-tools" ]; then
-  curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASMTOOLS_VER}/wasm-tools-${WASMTOOLS_VER}-${WT_ARCH}.tar.gz" \
-    | tar -xz -C "$WT_DIR" --strip-components=1 --wildcards '*/wasm-tools'
-fi
-if [ ! -f "$WT_DIR/adapter.wasm" ]; then
   curl -sSfL -o "$WT_DIR/adapter.wasm" \
     "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VER}/wasi_snapshot_preview1.command.wasm"
+fi
+if [ ! -x "$WT_DIR/wasm-tools" ] || ! "$WT_DIR/wasm-tools" --version 2>/dev/null | grep -qF "${WASMTOOLS_VER}"; then
+  curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASMTOOLS_VER}/wasm-tools-${WASMTOOLS_VER}-${WT_ARCH}.tar.gz" \
+    | tar -xz -C "$WT_DIR" --strip-components=1 --wildcards '*/wasm-tools'
 fi
 
 # Persist for the session: tools on PATH + the adapter the e2e tests read
