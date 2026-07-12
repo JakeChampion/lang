@@ -90,6 +90,9 @@ func TestASCIIGutterFallback(t *testing.T) {
 		code:    "E001",
 	}
 	defer SetASCII(SetASCII(true))
+	if !ASCIIEnabled() {
+		t.Fatal("ASCIIEnabled should report the fallback is on after SetASCII(true)")
+	}
 	out := Format("", "function f() { return x; }\n", err)
 	if !strings.Contains(out, " 1 "+paint(ansiBlue, "|")) {
 		t.Errorf("ascii mode should use a plain | gutter, got:\n%q", out)
@@ -98,6 +101,9 @@ func TestASCIIGutterFallback(t *testing.T) {
 		t.Errorf("ascii mode should not emit the box-drawing │, got:\n%q", out)
 	}
 	SetASCII(false)
+	if ASCIIEnabled() {
+		t.Fatal("ASCIIEnabled should report the fallback is off after SetASCII(false)")
+	}
 	out = Format("", "function f() { return x; }\n", err)
 	if !strings.Contains(out, "│") {
 		t.Errorf("default (UTF-8) should use the box-drawing │, got:\n%q", out)
