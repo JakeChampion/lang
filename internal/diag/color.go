@@ -26,6 +26,33 @@ func SetColor(on bool) bool {
 // ColorEnabled reports whether colour rendering is currently on.
 func ColorEnabled() bool { return enableColor }
 
+// useASCII forces the rich renderer's connectors to ASCII (`|`) instead of
+// the box-drawing `│`, for terminals whose locale isn't UTF-8. Like
+// enableColor it only affects the rich path; the classic plain layout has
+// no box-drawing to swap.
+var useASCII bool
+
+// SetASCII turns the ASCII-connector fallback on or off and returns the
+// previous setting. The `fern` CLI decides via --ascii + a UTF-8 locale
+// probe (see cmd/fern/main.go).
+func SetASCII(on bool) bool {
+	prev := useASCII
+	useASCII = on
+	return prev
+}
+
+// ASCIIEnabled reports whether the ASCII-connector fallback is on.
+func ASCIIEnabled() bool { return useASCII }
+
+// boxVert is the vertical gutter separator — the box-drawing `│` normally,
+// or a plain `|` when the ASCII fallback is on.
+func boxVert() string {
+	if useASCII {
+		return "|"
+	}
+	return "│"
+}
+
 // ANSI SGR sequences. Kept minimal — severity red for the error label and
 // its caret, blue for a `note:` label, green for a `help:` label — the
 // palette Rec §7 specifies (colour by severity; suggestions/help stand out).

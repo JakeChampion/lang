@@ -81,6 +81,29 @@ func TestColorRendersGutter(t *testing.T) {
 	}
 }
 
+// TestASCIIGutterFallback asserts --ascii swaps the box-drawing gutter for
+// a plain `|`, and that the default (UTF-8) keeps `│` (#4413 Rec §7).
+func TestASCIIGutterFallback(t *testing.T) {
+	defer SetColor(SetColor(true))
+	err := &fakeCodedErr{
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		code:    "E001",
+	}
+	defer SetASCII(SetASCII(true))
+	out := Format("", "function f() { return x; }\n", err)
+	if !strings.Contains(out, " 1 "+paint(ansiBlue, "|")) {
+		t.Errorf("ascii mode should use a plain | gutter, got:\n%q", out)
+	}
+	if strings.Contains(out, "│") {
+		t.Errorf("ascii mode should not emit the box-drawing │, got:\n%q", out)
+	}
+	SetASCII(false)
+	out = Format("", "function f() { return x; }\n", err)
+	if !strings.Contains(out, "│") {
+		t.Errorf("default (UTF-8) should use the box-drawing │, got:\n%q", out)
+	}
+}
+
 // TestSetColorReturnsPrevious pins the restore contract used by the
 // defer SetColor(SetColor(true)) idiom above.
 func TestSetColorReturnsPrevious(t *testing.T) {

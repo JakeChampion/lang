@@ -557,6 +557,24 @@ func shouldColorize(mode string) bool {
 	}
 }
 
+// shouldUseASCII decides whether the rich diagnostic gutter falls back to a
+// plain `|`. A `--ascii` forces it; otherwise box-drawing `│` is used only
+// when the locale advertises UTF-8 (LC_ALL / LC_CTYPE / LANG contain
+// "UTF-8"), the same signal docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7 names.
+// With no UTF-8 locale we fall back to ASCII rather than risk mojibake.
+func shouldUseASCII(force bool) bool {
+	if force {
+		return true
+	}
+	for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if v := os.Getenv(k); v != "" {
+			up := strings.ToUpper(v)
+			return !strings.Contains(up, "UTF-8") && !strings.Contains(up, "UTF8")
+		}
+	}
+	return true
+}
+
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
 	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
@@ -585,6 +603,7 @@ func main() {
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
+	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-android|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
@@ -604,6 +623,7 @@ func main() {
 	// (and honours NO_COLOR), so scripts and the test harnesses see the
 	// same text as always.
 	diag.SetColor(shouldColorize(*colorMode))
+	diag.SetASCII(shouldUseASCII(*asciiBoxes))
 
 	if *listTargets {
 		for _, name := range platforms.Targets() {
