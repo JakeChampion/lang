@@ -239,9 +239,13 @@ sets, not for large collections.
 
 ### `std/csv`
 
-RFC 4180 escape / join / single-line parse.
+RFC 4180 escape / join / parse (single record and full document).
 
-- `csv_escape(s)`, `csv_join(arr)`, `csv_parse_line(s)`.
+- `csv_escape(s)`, `csv_join(arr)`, `csv_parse_line(s)` — one record.
+- `csv_parse(s)` — a whole document → `string[][]`; quoted fields may
+  hold embedded commas AND newlines, records split on `\n` / `\r\n`,
+  and a trailing terminator yields no spurious empty record.
+- `csv_serialize(rows)` — the inverse of `csv_parse` (CRLF-separated).
 
 ### `std/log`
 
