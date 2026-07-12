@@ -269,7 +269,7 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	if enableColor {
 		num := fmt.Sprintf("%d", pos.Line)
 		blank := strings.Repeat(" ", len(num))
-		sep := paint(ansiBlue, "│")
+		sep := paint(ansiBlue, boxVert())
 		out = fmt.Sprintf("%s\n %s %s %s\n %s %s %s%s", header, num, sep, line, blank, sep, pad, coloredMark)
 		notePrefix = " " + blank + " " + sep + " "
 	} else {
