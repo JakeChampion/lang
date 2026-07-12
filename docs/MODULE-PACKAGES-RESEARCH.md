@@ -1,5 +1,12 @@
 # Module system + package management research
 
+> **2026-07 update:** see `PACKAGE-MANAGEMENT-SOTA.md` for a
+> state-of-the-art refresh (resolution-algorithm complexity, the
+> newest-language peers, supply-chain security post-2025, and
+> deltas to this doc's recommendations). Note Rec §10 (import
+> aliasing) has since landed, as have `pub(package)` (#3095) and
+> `std/semver` (#4886).
+
 `internal/modload/modload.go` ships a working in-tree module
 system: path-derived imports, private-by-default with `pub`
 exports, recursive multi-file loading, cycle detection.
