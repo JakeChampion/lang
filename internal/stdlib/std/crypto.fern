@@ -438,3 +438,49 @@ pub function hkdf_sha256(salt: string, ikm: string, info: string, length: i32): 
 pub function hkdf_sha256_hex(salt: string, ikm: string, info: string, length: i32): string {
     return __bytes_to_hex(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
 }
+
+// === HOTP / TOTP (RFC 4226 / RFC 6238), HMAC-SHA256 ===
+//
+// One-time passwords for 2FA. HOTP is counter-based; TOTP is HOTP over a
+// time-step counter. This uses HMAC-SHA256 (RFC 6238's SHA-256 mode) —
+// pass the RAW secret bytes as `key` (base32-decode a base32 secret
+// with std/base32 first). Returns the OTP as an integer; the caller
+// zero-pads it to `digits` for display.
+
+// __hotp_core: HOTP(key, counter) with dynamic truncation (RFC 4226 §5.3
+// / §5.4), using the last nibble of the 32-byte HMAC-SHA256 digest as
+// the offset. Returns a `digits`-digit code.
+function __hotp_core(key: u8[], counter: i64, digits: i32): i32 {
+    // 8-byte big-endian counter.
+    var msg: u8[] = __alloc_u8(8);
+    var i: i32 = 0;
+    while (i < 8) {
+        var shift: i64 = ((7 - i) * 8) as i64;
+        msg = msg.with(i, ((counter >> shift) & (255 as i64)) as u8);
+        i = i + 1;
+    }
+    var hs: u8[] = __hmac_core(key, msg);
+    var offset: i32 = (hs[hs.len() - 1] as i32) & 15;
+    // 31-bit dynamic-truncation value (top bit masked → stays non-negative).
+    var bin: i32 = (((hs[offset] as i32) & 127) << 24)
+                 | ((hs[offset + 1] as i32) << 16)
+                 | ((hs[offset + 2] as i32) << 8)
+                 | (hs[offset + 3] as i32);
+    var m: i32 = 1;
+    var d: i32 = 0;
+    while (d < digits) { m = m * 10; d = d + 1; }
+    return bin % m;
+}
+
+// hotp_sha256(key, counter, digits) — counter-based one-time password.
+pub function hotp_sha256(key: string, counter: i64, digits: i32): i32 {
+    return __hotp_core(__str_to_bytes(key), counter, digits);
+}
+
+// totp_sha256(key, unix_time, period, digits) — time-based one-time
+// password: HOTP over the time-step counter `floor(unix_time / period)`
+// (period is the step in seconds, typically 30).
+pub function totp_sha256(key: string, unix_time: i64, period: i32, digits: i32): i32 {
+    var counter: i64 = unix_time / (period as i64);
+    return __hotp_core(__str_to_bytes(key), counter, digits);
+}

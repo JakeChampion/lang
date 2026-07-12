@@ -134,6 +134,24 @@ function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
                             crypto.hkdf_sha256(salt, ikm, info, 40));
 }
 
+// TOTP / HOTP (RFC 6238 SHA-256 mode) against Appendix B: key =
+// "12345678901234567890123456789012" (32 ASCII bytes), 8 digits, 30s.
+function test_totp_rfc6238(): test.TestOutcome {
+    var key: string = "12345678901234567890123456789012";
+    if (crypto.totp_sha256(key, 59, 30, 8) != 46119246) { return test.fail("T=59"); }
+    if (crypto.totp_sha256(key, 1111111109, 30, 8) != 68084774) { return test.fail("T=1111111109"); }
+    if (crypto.totp_sha256(key, 20000000000, 30, 8) != 77737706) { return test.fail("T=2e10"); }
+    return test.pass();
+}
+
+function test_hotp_and_digits(): test.TestOutcome {
+    var key: string = "12345678901234567890123456789012";
+    // TOTP at time 59 (period 30) is HOTP at counter 1.
+    if (crypto.hotp_sha256(key, 1, 8) != 46119246) { return test.fail("hotp c=1"); }
+    // A 6-digit code is the low 6 digits of the 8-digit code.
+    return test.assert_eq(crypto.hotp_sha256(key, 1, 6), 46119246 % 1000000);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/crypto");
     r = r.it("sha256 empty",       test_sha256_empty());
@@ -152,5 +170,7 @@ function main(): i32 {
     r = r.it("hkdf TC1",           test_hkdf_tc1());
     r = r.it("hkdf TC3 empty",     test_hkdf_tc3_empty());
     r = r.it("hkdf expand==oneshot", test_hkdf_expand_matches_oneshot());
+    r = r.it("totp RFC 6238",      test_totp_rfc6238());
+    r = r.it("hotp + digits",      test_hotp_and_digits());
     return r.finish();
 }
