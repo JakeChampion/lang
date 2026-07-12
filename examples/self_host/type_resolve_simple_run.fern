@@ -21,8 +21,8 @@ import "./util";
 
 function main(): i32 {
     var structs: checker.StructSig[] = [
-        checker.StructSig { name: "Foo", field_names: [], field_types: [] },
-        checker.StructSig { name: "Bar", field_names: [], field_types: [] }
+        checker.StructSig { name: "Foo", field_names: [], field_types: [], type_params: [], field_type_names: [] },
+        checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [] }
     ];
     var snames: string[] = ["Foo", "Bar"];
     var unames: string[] = ["Shape"];
