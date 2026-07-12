@@ -222,6 +222,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-value-mismatch", "enum Color { Red, Green }\nfunction main(): i32 { var x: i32 = Red; return x; }\n", []string{"E003"}},
 		{"enum-value-assign-clean", "enum Color { Red, Green }\nfunction main(): i32 { var c: Color = Red; return 0; }\n", nil},
 		{"enum-value-return-clean", "enum Color { Red, Green }\nfunction pick(): Color { return Green; }\nfunction main(): i32 { var c: Color = pick(); return 0; }\n", nil},
+		// Builtin Option/Result as values (#4346 piece 2, second slice). The
+		// generic annotation `Option[i32]` resolves to a name-only union, the
+		// constructor call `Some(3)` / `Ok(3)` types to that union, and bare
+		// `None` does too — so a matching declared type is clean and a
+		// MISMATCHED one (`var x: i32 = Some(3)`) draws E003, the same code the
+		// Go checker emits. Before the slice all three collapsed to unknown, so
+		// E003 never fired (the mismatch was silently un-reported). The
+		// mismatch cases verify the value now types to its union; the clean
+		// accepts are pinned by the self_host_cli_test `-check` exit-code tests.
+		{"option-some-mismatch", "function main(): i32 { var x: i32 = Some(3); return x; }\n", []string{"E003"}},
+		{"result-ok-mismatch", "function main(): i32 { var x: i32 = Ok(3); return x; }\n", []string{"E003"}},
+		{"option-some-clean", "function main(): i32 { var o: Option[i32] = Some(3); return 0; }\n", nil},
+		{"option-none-clean", "function main(): i32 { var o: Option[i32] = None; return 0; }\n", nil},
+		{"result-ok-clean", "function main(): i32 { var r: Result[i32, i32] = Ok(3); return 0; }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
