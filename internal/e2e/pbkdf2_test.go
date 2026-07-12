@@ -20,6 +20,11 @@ function main(): i32 {
     if (crypto.pbkdf2_sha256_hex("passwordPASSWORDpassword",
         "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4096, 40) !=
         "348c89dbcbd32b2f32d814b8116e84cf2b17347ebc1800181c4e2a1fb8dd53e1c635518c7dac47e9") { return 4; }
+    // constant-time verify against a stored key (accept + reject).
+    if (!crypto.pbkdf2_verify_hex("password", "salt", 4096,
+        "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")) { return 5; }
+    if (crypto.pbkdf2_verify_hex("wrong", "salt", 4096,
+        "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")) { return 6; }
     return 42;
 }
 `

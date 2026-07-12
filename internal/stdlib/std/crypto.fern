@@ -347,3 +347,23 @@ pub function pbkdf2_sha256(password: string, salt: string, iterations: i32, dk_l
 pub function pbkdf2_sha256_hex(password: string, salt: string, iterations: i32, dk_len: i32): string {
     return __bytes_to_hex(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
 }
+
+// pbkdf2_verify(password, salt, iterations, expected) — re-derive the key
+// for `password` and compare it, IN CONSTANT TIME (consteq), against the
+// stored `expected` bytes. This is the correct way to verify a password:
+// a plain `pbkdf2_sha256(...) == expected` short-circuits at the first
+// differing byte and is a timing oracle that leaks the stored key one
+// byte at a time — the same data-obliviousness rule that governs the KDF
+// itself. `dk_len` is taken from `expected`'s length. The derivation is
+// already oblivious to the password's byte *values* (SHA-256 word ops
+// only), so this check adds no new leak beyond `expected`'s length.
+pub function pbkdf2_verify(password: string, salt: string, iterations: i32, expected: string): boolean {
+    return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
+}
+
+// pbkdf2_verify_hex — pbkdf2_verify for a hex-encoded stored key. The
+// constant-time compare runs over the hex text; `dk_len` is
+// `expected_hex.len() / 2`.
+pub function pbkdf2_verify_hex(password: string, salt: string, iterations: i32, expected_hex: string): boolean {
+    return consteq(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2), expected_hex);
+}

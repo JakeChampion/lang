@@ -296,6 +296,10 @@ against NIST / RFC 4231 known-answer vectors.
   `pbkdf2_sha256_hex(...)` — PBKDF2-HMAC-SHA256 (RFC 8018) password-based
   key derivation. Use a random per-password salt and a high iteration
   count for password storage.
+- `pbkdf2_verify(password, salt, iterations, expected)` /
+  `pbkdf2_verify_hex(...)` — re-derive and compare against a stored key
+  in constant time (`consteq`). Use these to verify a password, never a
+  plain `pbkdf2_sha256(...) == stored` (a timing oracle).
 
 ### `std/url`
 
