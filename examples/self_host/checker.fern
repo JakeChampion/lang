@@ -1518,7 +1518,12 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                         if (ssig.field_names[ufi] == uname) {
                             found = true;
                             var uft: Type = check_expr(sl.field_values[ui], s);
-                            if (!type_eq(uft, ssig.field_types[ufi])) {
+                            // A field of unknown declared type is an opaque
+                            // generic field (`Box[T] { v: T }` — T erases to
+                            // unknown); any value is acceptable, so skip rather
+                            // than mis-flag a mismatch (#4346 piece 2, mirrors
+                            // the opaque-param skips elsewhere).
+                            if (!is_unknown(ssig.field_types[ufi]) && !type_eq(uft, ssig.field_types[ufi])) {
                                 return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
                             }
                         }
@@ -1540,7 +1545,9 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     return t_unknown("struct " + sl.type_name + " field name mismatch at index " + sl.field_names[sli]);
                 }
                 var ft: Type = check_expr(sl.field_values[sli], s);
-                if (!type_eq(ft, ssig.field_types[sli])) {
+                // An opaque generic field (`Box[T] { v: T }`, T → unknown)
+                // accepts any value — skip the check (#4346 piece 2).
+                if (!is_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
                     return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
                 }
                 sli = sli + 1;
@@ -2129,10 +2136,29 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     // spelling `Option[i32]` matches no struct/union below and the annotation
     // collapsed to unknown, over-rejecting every `var o: Option[i32] = …`.
     if (is_reserved_enum_name(r.base)) { return t_union(r.base); }
+    // User generic struct / union-alias instantiation (#4346 piece 2):
+    // `Box[i32]` / `Foo[T]` resolves to the NAME-ONLY struct / union off
+    // r.base, dropping the generic args (this partial type system carries
+    // none — the same way builtin enums and non-generic names are name-only).
+    // Without this the full spelling `Box[i32]` matched no declared name below
+    // and collapsed to unknown, over-rejecting every `var b: Box[i32] = …`.
+    // Only fires for an actual instantiation (args present); a bare `Box`
+    // resolves through the full-spelling loop as before.
+    if (r.args.len() > 0) {
+        var gsi: i32 = 0;
+        while (gsi < structs.len()) {
+            if (structs[gsi].name == r.base) { return t_struct(r.base); }
+            gsi = gsi + 1;
+        }
+        var gui: i32 = 0;
+        while (gui < unions.len()) {
+            if (unions[gui].name == r.base) { return t_union(r.base); }
+            gui = gui + 1;
+        }
+    }
     // Any other shape (a bare name, a single-element tuple, a Map with <2 args, a
-    // non-Map generic like `Foo[T]`) resolves by its full spelling:
-    // struct → union → unknown. A generic's spelling never matches a struct/union
-    // name (those carry no brackets), so it lands on unknown, exactly as before.
+    // non-Map generic whose base names no declared type) resolves by its full
+    // spelling: struct → union → unknown.
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) { return t_struct(name); }

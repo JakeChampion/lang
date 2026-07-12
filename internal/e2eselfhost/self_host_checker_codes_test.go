@@ -167,6 +167,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// call path is pinned by the self_host_cli_test exit-code test.
 		{"generic-call-mismatch", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { var x: string = ident(3); return 0; }\n", []string{"E003"}},
 		{"generic-call-clean", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n", nil},
+		// User generic-struct instantiation (#4346 piece 2): a `Box[i32]`
+		// annotation resolves to the name-only struct `Box`, and constructing
+		// `Box { v: 3 }` type-checks (the opaque generic field `v: T` accepts any
+		// value). A MISMATCHED initialiser (`= 5`) draws E003 — the same code the
+		// Go checker emits — where the pre-slice self-host typed the annotation
+		// as unknown and E003 never fired. The clean construction is pinned
+		// end-to-end by the self_host_cli_test exit-code test. (Field access
+		// `b.v` still yields unknown — the field's type parameter isn't
+		// substituted yet — so it's a further slice, kept out of these cases.)
+		{"generic-struct-mismatch", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = 5; return 0; }\n", []string{"E003"}},
+		{"generic-struct-clean", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; return 0; }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
