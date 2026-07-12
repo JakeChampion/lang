@@ -442,6 +442,19 @@ against NIST / RFC 4231 known-answer vectors.
   (base32-decode a base32 secret via `std/base32` first); returns the
   code as an integer to zero-pad to `digits`.
 
+### `std/uuid`
+
+UUID generation + inspection (RFC 4122 / RFC 9562), canonical
+hyphenated lowercase form.
+
+- `uuid_v4()` — random version-4 UUID.
+- `uuid_v7()` — time-ordered version-7 UUID (48-bit Unix-ms prefix +
+  random tail); sortable identifier.
+- `uuid_nil()` — the all-zeros nil UUID; `uuid_is_nil(s)` tests for it.
+- `uuid_version(s)` — the version digit (index-14 nibble): `4`/`7`/`0`
+  for v4/v7/nil, or -1 if `s` isn't a well-formed 36-char UUID.
+- Validate a UUID string with `string.is_uuid()`.
+
 ### `std/url`
 
 Percent-encoding, URL parsing, query parsing.
