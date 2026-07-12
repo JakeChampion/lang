@@ -4146,6 +4146,12 @@ type builder struct {
 	// (#3425). Node identity keeps nested appends inside the pushed
 	// value on the retaining path.
 	selfPushMoveCall ast.Expr
+	// appendOrder caches the ident-occurrence order of the current
+	// function's body (lazily, per fn) so emitArrayPush can ask whether an
+	// ident append operand is its LAST use without rebuilding the order at
+	// every push site. appendOrderFn is the fn the cache was built for.
+	appendOrder   identOrder
+	appendOrderFn *ast.FuncDecl
 	// paramEscapes[name][i] is true when parameter i of function `name` can
 	// escape (inferParamEscapes). Borrow inference (BorrowInferEnabled) keeps a
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
@@ -15233,6 +15239,18 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	return nil
 }
 
+// curAppendOrder returns the ident-occurrence order for the function
+// currently being lowered, rebuilding it only when the function changes.
+// emitArrayPush uses it for a last-use test on ident append operands
+// (#4827) without paying an O(body) rebuild at every push site.
+func (b *builder) curAppendOrder() identOrder {
+	if b.appendOrderFn != b.fn {
+		b.appendOrder = identOrderOf(b.fn.Body)
+		b.appendOrderFn = b.fn
+	}
+	return b.appendOrder
+}
+
 func (b *builder) emitArrayPush(n *ast.Call) error {
 	elemType := n.TypeArgs[0]
 	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
@@ -15274,6 +15292,45 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 		return err
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
+
+	// Value semantics for a non-self-reassign append on a plain-IDENT
+	// operand that is REUSED after the append (not its last use). The grow
+	// helper's rc==1 in-place fast path mutates the operand buffer's
+	// length header and returns the SAME pointer; that's only sound when
+	// the binding is not read again. For a reused ident it corrupts later
+	// reads — e.g. `var a = walk(path.append(d), …); var b =
+	// path.append(d).len();`, where the first append mutates `path` in
+	// place and the second sees the longer buffer (interp ≠ compiled,
+	// #4827). Here the rc==1 check is not enough: `path` is uniquely
+	// referenced (rc 1) yet READ twice, and rc counts references, not
+	// uses. Bump the operand's rc across the grow so the helper takes the
+	// copy path (fresh buffer, operand untouched), then restore it.
+	//
+	// Scope is deliberately narrow — a bare ident whose occurrence here is
+	// NOT its last in the function body (identOrder). This leaves sound
+	// in-place cases on the fast path:
+	//   - the ident's LAST use — nothing reads it after, so the mutation
+	//     is unobservable (the second `path.append` above);
+	//   - a fresh-temporary operand (array literal / call result) — no
+	//     other reference exists;
+	//   - a field / index operand — notably `S { f: s.f.append(v) }`
+	//     functional-update threading (the self-host EmitState `s =
+	//     s.emit(x)` shape), which must stay O(1)
+	//     (TestWASMSelfReassignFieldBounded) and whose container is
+	//     replaced rather than reused;
+	//   - the self-reassign form (selfPushMoveCall), whose in-place mutate
+	//     pairs with the assign-site overwrite dec — O(1) push loops.
+	forceCopy := false
+	if ast.Expr(n) != b.selfPushMoveCall {
+		if id, ok := n.Args[0].(*ast.Ident); ok && needsRcIncOnAlias(n.Args[0], b) && !b.curAppendOrder().isLast(id) {
+			forceCopy = true
+		}
+	}
+	if forceCopy {
+		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
 
 	// oldLen = i32.load(arr - 4)
 	oldLenSlot := b.allocSlot()
@@ -15336,6 +15393,16 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+
+	// Restore the operand's rc bumped above to force the copy path. The
+	// grow's copy path leaves the operand untouched, so this returns it
+	// to its incoming count (never below 1 — inc preceded it — so no
+	// free fires here); `buf` is the fresh copy the append result owns.
+	if forceCopy {
+		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
 
 	// *(buf + oldLen * stride) = v   (width-correct store)
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
