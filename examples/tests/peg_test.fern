@@ -1,0 +1,222 @@
+import "std/test";
+import "std/peg";
+// examples/tests/peg_test.fern — the std/peg grammar/matcher suite.
+//
+// Run:
+//   fern -interp examples/tests/peg_test.fern
+//
+// Output is TAP-13. Exit code 0 if every case passes. Gated on the
+// Go side by TestRunnerPegExamplePasses (internal/e2e/test_runner_test.go).
+
+// Literal matching: anchored at 0, pos lands after the match.
+function test_lit_match(): test.TestOutcome {
+    var r: peg.PegResult = peg.peg_match_pattern(PLit("hello"), "hello world");
+    if (!r.ok) { return test.fail("expected match"); }
+    return test.assert_eq(r.pos, 5);
+}
+
+// A failed literal reports the FURTHEST byte reached, not just 0:
+// "hel" of "help" matches before the mismatch at byte 3.
+function test_furthest_failure_pos(): test.TestOutcome {
+    var r: peg.PegResult = peg.peg_match_pattern(PSeq([PLit("hel"), PLit("lo")]), "help");
+    if (r.ok) { return test.fail("should not match"); }
+    return test.assert_eq(r.pos, 3);
+}
+
+// Ordered choice: the FIRST matching alternative wins, even when a
+// later one would match more. PEG semantics, no ambiguity.
+function test_ordered_choice_first_wins(): test.TestOutcome {
+    var p: peg.Pattern = PChoice([PLit("a"), PLit("ab")]);
+    var r: peg.PegResult = peg.peg_match_pattern(p, "ab");
+    if (!r.ok) { return test.fail("expected match"); }
+    return test.assert_eq(r.pos, 1);
+}
+
+// Star is greedy and never backtracks; it stops at the first
+// non-match and always succeeds.
+function test_star_greedy(): test.TestOutcome {
+    var r: peg.PegResult = peg.peg_match_pattern(PStar(peg.peg_digit()), "1234x");
+    if (!r.ok) { return test.fail("star should always succeed"); }
+    return test.assert_eq(r.pos, 4);
+}
+
+// A star over a NULLABLE operand terminates instead of spinning.
+function test_star_nullable_terminates(): test.TestOutcome {
+    var r: peg.PegResult = peg.peg_match_pattern(PStar(POpt(PLit("x"))), "yyy");
+    if (!r.ok) { return test.fail("nullable star should succeed"); }
+    return test.assert_eq(r.pos, 0);
+}
+
+// Plus requires at least one occurrence.
+function test_plus_requires_one(): test.TestOutcome {
+    var r: peg.PegResult = peg.peg_match_pattern(PPlus(peg.peg_digit()), "x1");
+    return test.assert_false(r.ok);
+}
+
+// Negative lookahead: match the keyword `if` only when NOT followed
+// by another identifier byte — the classic keyword/identifier split.
+function test_not_lookahead(): test.TestOutcome {
+    var kw: peg.Pattern = PSeq([PLit("if"), PNot(peg.peg_alnum())]);
+    var hit: peg.PegResult = peg.peg_match_pattern(kw, "if (x)");
+    var miss: peg.PegResult = peg.peg_match_pattern(kw, "iffy");
+    if (!hit.ok) { return test.fail("`if (` should match"); }
+    if (miss.ok) { return test.fail("`iffy` should not match"); }
+    return test.assert_eq(hit.pos, 2);
+}
+
+// Positive lookahead is zero-width: it checks without consuming.
+function test_and_lookahead_zero_width(): test.TestOutcome {
+    var p: peg.Pattern = PSeq([PAnd(PLit("ab")), PCap("all", PPlus(peg.peg_alpha()))]);
+    var r: peg.PegResult = peg.peg_match_pattern(p, "abc");
+    if (!r.ok) { return test.fail("expected match"); }
+    match (r.caps.get("all")) {
+        Some(v) => { return test.assert_eq(v, "abc"); },
+        None => { return test.fail("missing capture"); }
+    }
+}
+
+// Named captures pull out the matched span; a name matched again
+// (under a star) keeps its LAST occurrence.
+function test_capture_last_wins(): test.TestOutcome {
+    var word: peg.Pattern = PSeq([PCap("w", PPlus(peg.peg_alpha())), PStar(PSet(" "))]);
+    var r: peg.PegResult = peg.peg_match_pattern(PStar(word), "one two three");
+    if (!r.ok) { return test.fail("expected match"); }
+    match (r.caps.get("w")) {
+        Some(v) => { return test.assert_eq(v, "three"); },
+        None => { return test.fail("missing capture"); }
+    }
+}
+
+// Captures inside a FAILED alternative leave nothing behind.
+function test_capture_backtrack_discarded(): test.TestOutcome {
+    var p: peg.Pattern = PChoice([
+        PSeq([PCap("bad", PLit("ab")), PLit("X")]),
+        PCap("good", PLit("abc"))
+    ]);
+    var r: peg.PegResult = peg.peg_match_pattern(p, "abc");
+    if (!r.ok) { return test.fail("expected match"); }
+    if (r.caps.has("bad")) { return test.fail("backtracked capture leaked"); }
+    return test.assert_true(r.caps.has("good"));
+}
+
+// Recursive grammar: balanced parentheses via a named rule.
+function test_recursive_grammar_balanced(): test.TestOutcome {
+    var rules: Map[string, peg.Pattern] = map_new(4);
+    // b <- ( "(" b ")" b ) / ""
+    rules = rules.insert("b", PChoice([
+        PSeq([PLit("("), PRef("b"), PLit(")"), PRef("b")]),
+        PLit("")
+    ]));
+    rules = rules.insert("all", PSeq([PRef("b"), PEof]));
+    let Ok(g) = peg.peg_grammar(rules, "all") else { return test.fail("grammar should build"); };
+    if (!peg.peg_match(g, "(()(()))").ok) { return test.fail("balanced should match"); }
+    if (peg.peg_match(g, "(()").ok) { return test.fail("unbalanced should fail"); }
+    return test.pass();
+}
+
+// peg_grammar validates: unknown start rule and dangling PRef both Err.
+function test_grammar_validation(): test.TestOutcome {
+    var rules: Map[string, peg.Pattern] = map_new(4);
+    rules = rules.insert("a", PRef("missing"));
+    match (peg.peg_grammar(rules, "nope")) {
+        Ok(g1) => { return test.fail("unknown start should Err"); },
+        Err(e1) => {
+            if (e1 != "unknown rule: nope") { return test.fail("wrong start error: " + e1); }
+        }
+    }
+    match (peg.peg_grammar(rules, "a")) {
+        Ok(g2) => { return test.fail("dangling PRef should Err"); },
+        Err(e2) => { return test.assert_eq(e2, "unknown rule: missing"); }
+    }
+}
+
+// LEFT-recursive rules fail fast (depth bound) instead of hanging.
+function test_left_recursion_fails_fast(): test.TestOutcome {
+    var rules: Map[string, peg.Pattern] = map_new(2);
+    rules = rules.insert("l", PSeq([PRef("l"), PLit("a")]));
+    let Ok(g) = peg.peg_grammar(rules, "l") else { return test.fail("grammar should build"); };
+    return test.assert_false(peg.peg_match(g, "aaa").ok);
+}
+
+// PEof rejects trailing input.
+function test_eof_rejects_trailing(): test.TestOutcome {
+    var p: peg.Pattern = PSeq([PLit("ok"), PEof]);
+    if (!peg.peg_match_pattern(p, "ok").ok) { return test.fail("exact input should match"); }
+    return test.assert_false(peg.peg_match_pattern(p, "okay").ok);
+}
+
+// Real format #1: an HTTP/1.1 request line with named captures.
+function test_http_request_line(): test.TestOutcome {
+    var sp: peg.Pattern = PLit(" ");
+    var p: peg.Pattern = PSeq([
+        PCap("method", PPlus(peg.peg_upper())),
+        sp,
+        PCap("path", PPlus(PNotSet(" "))),
+        sp,
+        PLit("HTTP/"),
+        PCap("version", PSeq([peg.peg_digit(), PLit("."), peg.peg_digit()])),
+        PEof
+    ]);
+    var r: peg.PegResult = peg.peg_match_pattern(p, "GET /users/42?tab=all HTTP/1.1");
+    if (!r.ok) { return test.fail("request line should match"); }
+    if (r.caps.get_or("method", "") != "GET") { return test.fail("bad method"); }
+    if (r.caps.get_or("path", "") != "/users/42?tab=all") { return test.fail("bad path"); }
+    return test.assert_eq(r.caps.get_or("version", ""), "1.1");
+}
+
+// Real format #2: a config line `key = value` — surrounding spaces
+// consumed by the grammar, value runs to end of line.
+function test_config_line(): test.TestOutcome {
+    var ws: peg.Pattern = PStar(PSet(" \t"));
+    var p: peg.Pattern = PSeq([
+        ws,
+        PCap("key", PPlus(PChoice([peg.peg_alnum(), PSet("_.")]))),
+        ws, PLit("="), ws,
+        PCap("value", PStar(PNotSet("\n"))),
+        PEof
+    ]);
+    var r: peg.PegResult = peg.peg_match_pattern(p, "  http.port =  8080");
+    if (!r.ok) { return test.fail("config line should match"); }
+    if (r.caps.get_or("key", "") != "http.port") { return test.fail("bad key"); }
+    return test.assert_eq(r.caps.get_or("value", ""), "8080");
+}
+
+// The class helpers cover their advertised byte sets.
+function test_class_helpers(): test.TestOutcome {
+    if (!peg.peg_match_pattern(peg.peg_digit(), "7").ok) { return test.fail("digit"); }
+    if (peg.peg_match_pattern(peg.peg_digit(), "x").ok) { return test.fail("digit x"); }
+    if (!peg.peg_match_pattern(peg.peg_alpha(), "G").ok) { return test.fail("alpha"); }
+    if (!peg.peg_match_pattern(peg.peg_alnum(), "9").ok) { return test.fail("alnum"); }
+    if (!peg.peg_match_pattern(peg.peg_space(), "\t").ok) { return test.fail("space"); }
+    if (!peg.peg_match_pattern(peg.peg_lower(), "q").ok) { return test.fail("lower"); }
+    if (!peg.peg_match_pattern(peg.peg_upper(), "Q").ok) { return test.fail("upper"); }
+    return test.pass();
+}
+
+// PRef inside peg_match_pattern (no rule table) fails cleanly.
+function test_pattern_ref_without_grammar(): test.TestOutcome {
+    return test.assert_false(peg.peg_match_pattern(PRef("nowhere"), "x").ok);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("peg");
+    r = r.it("literal match", test_lit_match());
+    r = r.it("furthest failure position", test_furthest_failure_pos());
+    r = r.it("ordered choice first wins", test_ordered_choice_first_wins());
+    r = r.it("star greedy", test_star_greedy());
+    r = r.it("nullable star terminates", test_star_nullable_terminates());
+    r = r.it("plus requires one", test_plus_requires_one());
+    r = r.it("negative lookahead", test_not_lookahead());
+    r = r.it("positive lookahead zero-width", test_and_lookahead_zero_width());
+    r = r.it("capture last wins", test_capture_last_wins());
+    r = r.it("backtracked capture discarded", test_capture_backtrack_discarded());
+    r = r.it("recursive balanced parens", test_recursive_grammar_balanced());
+    r = r.it("grammar validation", test_grammar_validation());
+    r = r.it("left recursion fails fast", test_left_recursion_fails_fast());
+    r = r.it("eof rejects trailing", test_eof_rejects_trailing());
+    r = r.it("http request line", test_http_request_line());
+    r = r.it("config line", test_config_line());
+    r = r.it("class helpers", test_class_helpers());
+    r = r.it("ref without grammar", test_pattern_ref_without_grammar());
+    return r.finish();
+}

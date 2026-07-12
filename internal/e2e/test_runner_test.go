@@ -3008,3 +3008,15 @@ function main(): i32 {
 		}
 	}
 }
+
+func TestRunnerPegExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/peg_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 18") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 18 passes, 0 fails\noutput:\n%s", out)
+	}
+}

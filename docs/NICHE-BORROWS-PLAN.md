@@ -145,7 +145,19 @@ parity) any implementation must clear.
 
 ### Phase C — stdlib
 
-**C1. `std/peg`.** [status: not started]
+**C1. `std/peg`.** [status: shipped]
+Shipped as designed with one API adjustment: the `Pattern` enum
+variants ARE the construction API (no wrapper functions needed —
+`PSeq([PLit("("), PRef("b"), …])`), plus class helpers
+(`peg_digit()` etc.). The matcher threads its state functionally
+(struct fields are immutable — E048), which makes PEG
+backtracking undo-free: a failed alternative resumes from the
+pre-attempt state binding, and only the furthest-failure
+watermark is merged across. Left recursion fails fast via the
+8192-deep PRef bound. Verified on all four backends
+(TestPegModule) + the 18-case TAP suite
+(examples/tests/peg_test.fern, gated by
+TestRunnerPegExamplePasses).
 Pure-Fern PEG module (Janet/Rebol/Raku convergence), complement
 to `std/regex` (which stays: cheap one-line matches). Scope for
 slice 1: pattern constructors as an enum tree (`Lit`, `CharSet`,
