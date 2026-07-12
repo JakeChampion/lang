@@ -97,6 +97,43 @@ function test_pbkdf2_verify(): test.TestOutcome {
     return test.assert_false(crypto.pbkdf2_verify_hex("password", "salt", 1, tampered));
 }
 
+// HKDF-SHA256 (RFC 5869) against Test Case 1 and Test Case 3. Fast (a
+// few HMACs), so the full vectors run on the interp oracle here.
+function __hkdf_byte_rep(b: i32, n: i32): string {
+    var a: u8[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(b as u8); i = i + 1; }
+    return string_from_bytes(a);
+}
+
+function test_hkdf_tc1(): test.TestOutcome {
+    var ikm: string = __hkdf_byte_rep(11, 22);   // 0x0b × 22
+    var salt: string = string_from_bytes([0 as u8, 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8,
+        6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8]);
+    var info: string = string_from_bytes([240 as u8, 241 as u8, 242 as u8, 243 as u8, 244 as u8,
+        245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8]);
+    return test.assert_eq(crypto.hkdf_sha256_hex(salt, ikm, info, 42),
+        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865");
+}
+
+function test_hkdf_tc3_empty(): test.TestOutcome {
+    // Zero-length salt (→ 32 zero bytes) and zero-length info.
+    var ikm: string = __hkdf_byte_rep(11, 22);
+    var e: string = string_from_bytes([]);
+    return test.assert_eq(crypto.hkdf_sha256_hex(e, ikm, e, 42),
+        "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8");
+}
+
+function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
+    // hkdf_expand(hkdf_extract(...)) equals the one-shot hkdf_sha256.
+    var ikm: string = __hkdf_byte_rep(11, 22);
+    var salt: string = __hkdf_byte_rep(0, 13);
+    var info: string = __hkdf_byte_rep(255, 4);
+    var prk: string = crypto.hkdf_extract(salt, ikm);
+    return test.assert_true(crypto.hkdf_expand(prk, info, 40) ==
+                            crypto.hkdf_sha256(salt, ikm, info, 40));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/crypto");
     r = r.it("sha256 empty",       test_sha256_empty());
@@ -112,5 +149,8 @@ function main(): i32 {
     r = r.it("pbkdf2 c=2",         test_pbkdf2_c2());
     r = r.it("pbkdf2 truncated",   test_pbkdf2_truncated());
     r = r.it("pbkdf2 verify",      test_pbkdf2_verify());
+    r = r.it("hkdf TC1",           test_hkdf_tc1());
+    r = r.it("hkdf TC3 empty",     test_hkdf_tc3_empty());
+    r = r.it("hkdf expand==oneshot", test_hkdf_expand_matches_oneshot());
     return r.finish();
 }
