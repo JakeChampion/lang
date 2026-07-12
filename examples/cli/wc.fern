@@ -71,7 +71,7 @@ function format_row(c: Counts, sh: Show, label: string): string {
   if (!label.is_empty()) {
     out = out + " " + label;
   }
-  return out.trim_start();
+  return out.trim_start().to_owned();
 }
 
 function main(): i32 {

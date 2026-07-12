@@ -9644,6 +9644,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.IsString = true
 			return ast.NumberType{}
 		}
+		// `v[i]` on a `str` view reads the byte too — a read-only
+		// operation, safe on a borrow (#4813). Same IsString lowering:
+		// after erasure the operand IS a string.
+		if _, ok := at.(ast.StrType); ok {
+			n.IsString = true
+			return ast.NumberType{}
+		}
 		if at != nil {
 			c.errfCode(n.P, "E034", "indexing non-array value of type %s", at)
 		}
@@ -9674,6 +9681,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if _, ok := st.(ast.StringType); ok {
 			n.IsString = true
 			return ast.StringType{}
+		}
+		// Slicing a `str` view yields another `str` — a sub-view of the
+		// same bytes (#4813). The backends still copy until the P3
+		// zero-copy convergence (a fresh box typed `str` is safe-leak at
+		// worst); the erasure makes the lowering identical to a string
+		// slice either way.
+		if _, ok := st.(ast.StrType); ok {
+			n.IsString = true
+			return ast.StrType{}
 		}
 		if st != nil {
 			c.errfCode(n.P, "E037", "cannot slice value of type %s", st)
@@ -10460,12 +10476,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		switch n.Op {
 		case "+":
-			// Special case: string + string is concatenation.
-			if _, lOk := lt.(ast.StringType); lOk {
-				if _, rOk := rt.(ast.StringType); rOk {
-					n.IsStringConcat = true
-					return ast.StringType{}
+			// Special case: string + string is concatenation. A `str` view
+			// operand concats too (#4813) — concat READS both operands and
+			// produces a fresh OWNED string, so borrowing views in is safe
+			// and the result is a plain `string`.
+			isStrOrString := func(t ast.Type) bool {
+				switch t.(type) {
+				case ast.StringType, ast.StrType:
+					return true
 				}
+				return false
+			}
+			if isStrOrString(lt) && isStrOrString(rt) {
+				n.IsStringConcat = true
+				return ast.StringType{}
 			}
 			fallthrough
 		case "-", "*", "/":
@@ -10638,7 +10662,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				lt = c.postSettleType(n.Left, lt)
 				rt = c.postSettleType(n.Right, rt)
 			}
-			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
+			// A `str` view compares freely with `string` (and other
+			// views) — comparison READS both operands' bytes (#4813);
+			// after erasure both sides are the same string comparison.
+			strLike := func(t ast.Type) bool {
+				switch t.(type) {
+				case ast.StringType, ast.StrType:
+					return true
+				}
+				return false
+			}
+			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(strLike(lt) && strLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
 			}
 			// Composite-type equality. `==` / `!=` on a struct or
@@ -10672,11 +10706,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			// String-vs-string equality compares contents; flag so
-			// codegen lowers to a runtime call rather than i32.eq.
-			if _, ok := lt.(ast.StringType); ok {
-				if _, ok := rt.(ast.StringType); ok {
-					n.IsStringCmp = true
-				}
+			// codegen lowers to a runtime call rather than i32.eq. A
+			// `str` view operand (#4813) compares contents the same way —
+			// without the flag the backends would pointer-compare the
+			// boxes and a trimmed view would never equal its literal.
+			if strLike(lt) && strLike(rt) {
+				n.IsStringCmp = true
 			}
 			// Float-vs-float equality has to lower to f32.eq /
 			// f32.ne — using i32.eq on f32 operands fails core-wasm

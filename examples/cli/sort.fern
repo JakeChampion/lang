@@ -32,7 +32,7 @@ function slurp(path: string): string {
 }
 
 function leading_int(s: string): i32 {
-  var t: string = s.trim_start();
+  var t: str = s.trim_start();
   match (t.parse_int()) {
     Some(n) => {
       return n;

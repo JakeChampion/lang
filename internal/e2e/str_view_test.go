@@ -6,8 +6,12 @@ import "testing"
 // (#4813 / #4297 Option A, slice 1): an owned `string` borrows into a `str`
 // var and a `str` param; a `str` flows into a `string` param (borrowed
 // position); the string method surface dispatches on a view receiver
-// (builtin .len(), std/string .trim()); .to_owned() materialises an owned
-// copy assignable to a `string` sink; `str[]` arrays work element-wise.
+// (builtin .len(), std/string .trim() — which returns `str` since the P1
+// producer flip); .to_owned() materialises an owned copy assignable to a
+// `string` sink; `str[]` arrays work element-wise; views compare by
+// CONTENTS against strings, literals, and other views (IsStringCmp — a
+// pointer compare here was the P1 near-miss), concat into fresh owned
+// strings, index as byte reads, and re-slice into sub-views.
 // StrType is erased to StringType at the LowerWith choke point
 // (ir/erase_str.go), so a correct run proves the erasure feeds every
 // backend a plain string program. Exits 0 on success, a distinct code per
@@ -35,6 +39,14 @@ function main(): i32 {
     if (o != "hey") { return 6; }
     var vs: str[] = ["ab", "cde"];
     if (vs[0].len() + vs[1].len() != 5) { return 7; }
+    if (t != "hey") { return 8; }
+    if ("hey" != t) { return 9; }
+    var w: str = t;
+    if (w != t) { return 10; }
+    if (t + "!" != "hey!") { return 11; }
+    if (t[0] != 104) { return 12; }
+    var sub: str = t[1:3];
+    if (sub != "ey") { return 13; }
     return 0;
 }
 `

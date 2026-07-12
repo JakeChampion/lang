@@ -527,7 +527,7 @@ pub function (s: string) is_url_like(): boolean {
 // JSON validator — just a fast pre-flight check before
 // attempting a parse. Empty strings return false.
 pub function (s: string) is_json_like(): boolean {
-    var t: string = s.trim();
+    var t: str = s.trim();
     var n: i32 = t.len();
     if (n < 2) { return false; }
     var first: i32 = t[0];
@@ -1068,6 +1068,13 @@ pub function (s: string) indent(prefix: string): string {
     return string_from_bytes(buf);
 }
 
+// The trim family returns `str` (#4813 producer flip, slice P1): the
+// declared type says "this is a view of the receiver's bytes" even though
+// the native/wasm backends still COPY today (the asm-IR path is already
+// zero-copy, #4294). Consumers read/pass it freely (borrowed positions)
+// and materialise with .to_owned() to store it in an owning sink; E065
+// governs escapes. The backend zero-copy convergence is slice P3.
+//
 // to_owned materialises an OWNED `string` from a borrowed `str` view
 // (#4813): `str` shares the `string` method surface, so a view receiver
 // dispatches here. `s + ""` is a fresh-owned producer on EVERY backend and
@@ -1078,7 +1085,7 @@ pub function (s: string) to_owned(): string {
     return s + "";
 }
 
-pub function (s: string) trim(): string {
+pub function (s: string) trim(): str {
     var n: i32 = s.len();
     var low: i32 = 0;
     var high: i32 = n;
@@ -1097,14 +1104,14 @@ pub function (s: string) trim(): string {
 // strip. The bare `trim` already covers both ends; these
 // are the asymmetric variants useful for trimming a
 // prompt prefix without eating trailing data, or vice versa.
-pub function (s: string) trim_start(): string {
+pub function (s: string) trim_start(): str {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n && __is_ascii_ws(s[i])) { i = i + 1; }
     return s[i:n];
 }
 
-pub function (s: string) trim_end(): string {
+pub function (s: string) trim_end(): str {
     var n: i32 = s.len();
     var end: i32 = n;
     while (end > 0 && __is_ascii_ws(s[end - 1])) { end = end - 1; }
