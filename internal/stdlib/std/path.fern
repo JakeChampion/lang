@@ -24,8 +24,6 @@
 // Migrated from the former auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
-import "std/string";
-
 pub function path_join(parts: string[]): string {
     var n: i32 = parts.len();
     if (n == 0) { return ""; }
@@ -43,7 +41,7 @@ pub function path_join(parts: string[]): string {
                 // just "/", which is the root path and must be
                 // preserved as a separator-sentinel).
                 while (out.len() > 1 && out[out.len() - 1] == 47) {
-                    out = out[0:out.len() - 1].to_owned();
+                    out = out[0:out.len() - 1] + "";
                 }
                 // Strip any leading `/`s from p.
                 var start: i32 = 0;
