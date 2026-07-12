@@ -1,0 +1,79 @@
+// std/base32 — RFC 4648 base32 encode / decode (standard alphabet
+// `A–Z 2–7`, `=` padding).
+//
+// `base32_encode(s)` groups the input into 5-bit chunks, each mapped to
+// one of 32 characters, padding to 8-character groups with `=`.
+// `base32_decode(s)` is the inverse; like base64_decode it is lenient —
+// decoding stops at the first character that is neither a base32 digit
+// nor `=`, returning the bytes decoded so far. Round-trips
+// `base32_encode` on any byte content. Base32's case-insensitive,
+// digit-safe alphabet suits TOTP secrets, filenames, and DNS labels.
+
+// __b32_alphabet maps a 5-bit value (0..31) to its character byte:
+// 0..25 → 'A'..'Z', 26..31 → '2'..'7'.
+function __b32_alphabet(v: i32): i32 {
+    if (v < 26) { return v + 65; }   // 'A' + v
+    return v + 24;                    // 26 → '2' (50)
+}
+
+// __b32_decode_char maps a character byte back to its 5-bit value, or
+// -1 if it is not a base32 digit.
+function __b32_decode_char(c: i32): i32 {
+    if (c >= 65 && c < 91)  { return c - 65; }   // A-Z
+    if (c >= 50 && c < 56)  { return c - 24; }   // 2-7 → 26..31
+    return 0 - 1;
+}
+
+// `base32_encode(s)` — RFC 4648 base32, `=`-padded to 8-char groups.
+pub function base32_encode(s: string): string {
+    var out: u8[] = [];
+    var acc: i32 = 0;
+    var bits: i32 = 0;
+    var i: i32 = 0;
+    var n: i32 = s.len();
+    while (i < n) {
+        acc = (acc << 8) | (s[i] as i32);
+        bits = bits + 8;
+        while (bits >= 5) {
+            bits = bits - 5;
+            out = out.append(__b32_alphabet((acc >> bits) & 31) as u8);
+        }
+        i = i + 1;
+    }
+    if (bits > 0) {
+        // Flush the final partial group, zero-padding the low bits.
+        out = out.append(__b32_alphabet((acc << (5 - bits)) & 31) as u8);
+    }
+    // Pad with '=' to a multiple of 8 characters.
+    while (out.len() % 8 != 0) {
+        out = out.append(61 as u8);   // '='
+    }
+    return string_from_bytes(out);
+}
+
+// `base32_decode(s)` — inverse of base32_encode. Lenient: stops at the
+// first non-base32 / non-`=` character (so trailing `=` padding needs no
+// special handling), returning the bytes decoded up to that point.
+pub function base32_decode(s: string): string {
+    // Count the leading run of valid base32 digits (stop at '=' / junk).
+    var n: i32 = 0;
+    var sLen: i32 = s.len();
+    while (n < sLen) {
+        if (__b32_decode_char(s[n]) < 0) { break; }
+        n = n + 1;
+    }
+    var out: u8[] = [];
+    var acc: i32 = 0;
+    var bits: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        acc = (acc << 5) | __b32_decode_char(s[i]);
+        bits = bits + 5;
+        if (bits >= 8) {
+            bits = bits - 8;
+            out = out.append(((acc >> bits) & 255) as u8);
+        }
+        i = i + 1;
+    }
+    return string_from_bytes(out);
+}
