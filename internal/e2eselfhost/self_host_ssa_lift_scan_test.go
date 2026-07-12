@@ -31,7 +31,7 @@ func TestSelfHostSSALiftCoverageScan(t *testing.T) {
 	// pull in.
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
-		"flatten.fern", "modloader.fern", "ir.fern", "ssa.fern",
+		"flatten.fern", "modloader.fern", "fern_toml.fern", "ir.fern", "ssa.fern",
 		"ssa_lift.fern", "irlower.fern", "checker.fern", "builtins.fern",
 		"treeshake.fern", "ssa_lift_scan_run.fern",
 	} {

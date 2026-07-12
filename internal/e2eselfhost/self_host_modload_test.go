@@ -60,6 +60,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	cases := []struct {
 		name     string
 		files    map[string]string
+		entryRel string // entry file relative to the program dir (default main.fern)
 		wantExit int
 	}{
 		{
@@ -114,6 +115,24 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			},
 			wantExit: 42,
 		},
+		{
+			// Manifest path dep: a fern.toml declares `dbl = { path =
+			// "../dbl" }`, so a bare `import "dbl"` resolves — via the new
+			// fern_toml reader in modloader — to ../dbl/lib.fern (the dep's
+			// lib module, its own manifest setting lib=api.fern). dbl(21)=42.
+			// Files are written into a `prog/` subdir so the ../dbl path is
+			// meaningful; the driver entry is prog/main.fern.
+			name: "manifest-path-dep",
+			files: map[string]string{
+				"builtins.fern":  string(builtinsSrc),
+				"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\ndbl = { path = \"../dbl\" }\n",
+				"app/main.fern": "import \"dbl\";\nfunction main(): i32 { return dbl.dbl(21); }\n",
+				"dbl/fern.toml":  "[package]\nname = \"dbl\"\nlib = \"api.fern\"\n",
+				"dbl/api.fern":   "pub function dbl(x: i32): i32 { return x * 2; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 42,
+		},
 	}
 
 	for _, tc := range cases {
@@ -128,7 +147,11 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 					t.Fatalf("write %s: %v", name, err)
 				}
 			}
-			entry := filepath.Join(progDir, "main.fern")
+			entryRel := tc.entryRel
+			if entryRel == "" {
+				entryRel = "main.fern"
+			}
+			entry := filepath.Join(progDir, filepath.FromSlash(entryRel))
 			progAsm := runDriverFile(t, runner, driverBin, entry)
 			if len(progAsm) == 0 {
 				t.Fatalf("driver emitted 0 bytes for %s", tc.name)

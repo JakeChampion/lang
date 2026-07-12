@@ -1,4 +1,4 @@
-# Packages: the `fern.toml` manifest (slices 1–8)
+# Packages: the `fern.toml` manifest (slices 1–9)
 
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
@@ -233,9 +233,15 @@ versions from a committed lock, for fresh-machine offline builds). MVS
 implementation: `internal/mvs` (semver, index parse, the fixpoint,
 lockfile read/write).
 
-## Not yet
+## Self-hosted compiler (slice 9)
 
-The self-hosted compiler's modloader (`examples/self_host/
-modloader.fern`) does not read manifests yet — a port so the
-self-hosted compiler understands `fern.toml`/`fern.lock` the way the
-native driver does. Tracked in issue #4907.
+The self-hosted compiler's module loader (`examples/self_host/
+modloader.fern`) reads `fern.toml` **path dependencies** too, via a
+manifest parser written in Fern (`examples/self_host/fern_toml.fern`):
+a bare `import "dep"` in a program compiled by the self-hosted compiler
+resolves through a declared `dep = { path = "../dep" }` to that
+dependency's lib module (honouring its own `lib` key). The wiring is
+additive — consulted only when a `fern.toml` is present — so the
+compiler's own manifest-less bootstrap is byte-for-byte unchanged.
+url/workspace/version deps remain native-only on the self-host path for
+now (they fall back to on-disk resolution).

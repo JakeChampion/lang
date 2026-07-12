@@ -23,6 +23,7 @@
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./fern_toml";
 
 // dirname returns everything up to and including the last '/', or "" when
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
@@ -97,9 +98,59 @@ function try_read(dir: string, rel: string): Option[string] {
 pub function resolve_module_src(dir: string, path: string, name: string): Option[string] {
     match (try_read(dir, rel_path(path))) {
         Some(s) => { return Some(s); },
-        None => { return try_read(dir, name); },
+        None => { },
+    }
+    match (try_read(dir, name)) {
+        Some(s) => { return Some(s); },
+        None => { },
+    }
+    // Manifest fallback (mirrors native's path-dep resolution): when a
+    // fern.toml declares `name = { path = "../dir" }`, load that dep's lib
+    // module (<dir><deppath>/<lib>). Dormant when no fern.toml is present,
+    // so a manifest-less build (every current compiler source) is
+    // unchanged. url/workspace/version deps stay native-only.
+    return try_manifest(dir, name);
+}
+
+// try_manifest consults `<dir>fern.toml` for a path dependency named
+// `name` and, if found, reads that dependency's lib module. Returns None
+// when there is no manifest, no such dep, or its lib file is unreadable.
+function try_manifest(dir: string, name: string): Option[string] {
+    match (read_file(dir + "fern.toml")) {
+        Ok(src) => {
+            var m: fern_toml.Manifest = fern_toml.parse(src);
+            match (fern_toml.dep_path(m, name)) {
+                Some(dp) => {
+                    // Read the dependency's own lib (its own manifest may
+                    // set `lib`; default lib.fern otherwise).
+                    var deplib: string = dep_lib(dir + dp + "/");
+                    return try_read(dir + dp + "/", strip_fern_ext(deplib));
+                },
+                None => { return None; },
+            }
+        },
+        Err(e) => { return None; },
     }
     return None;
+}
+
+// dep_lib returns the dependency's declared lib module (from its own
+// fern.toml), or "lib.fern" when it has none.
+function dep_lib(depdir: string): string {
+    match (read_file(depdir + "fern.toml")) {
+        Ok(src) => { return fern_toml.parse(src).lib; },
+        Err(e) => { return "lib.fern"; },
+    }
+    return "lib.fern";
+}
+
+// strip_fern_ext removes a trailing ".fern" so the name joins onto
+// try_read (which appends ".fern"): "api.fern" → "api", "lib" → "lib".
+function strip_fern_ext(s: string): string {
+    if (s.len() >= 5 && s[s.len() - 5:s.len()] == ".fern") {
+        return s[0:s.len() - 5] + "";
+    }
+    return s;
 }
 
 // append_structs / append_enums concatenate two decl lists (builtin merge).
