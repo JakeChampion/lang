@@ -290,7 +290,18 @@ serve-side API grows one; until then the feature ships with test
 types + docs. Self-host checker parity required (differential
 gate) — budget for porting the walk.
 
-**E2. `fip` completion.** [status: not started]
+**E2. `fip` completion.** [status: (a) self-host parity DONE —
+absorbed upstream; (b)-(d) remain as the E2' follow-up]
+Slice (a) — self-host parity for the `fip` modifier + the E053
+checked subset — was shipped by the parallel checker-port
+completion (#4451 freeze-precondition work, 2026-07-12: FuncDecl
+carries `fip` through the self-host parser, checker.fern has the
+E053 walk, and six e053-fip-* fixtures sit in the now-unfiltered
+differential corpus). The remaining items are unchanged and
+large: `fbip` (destructive-match mutation set — requires wiring
+E053's static view to the IR's actual reuse sites so
+verify-matches-enable), graded `fip(n)`, and docs. These
+coordinate with the goal-2 roadmap per E3/E4 below.
 Native `fip` (E053) is verify-don't-enable. Remaining, in order:
 (a) **self-host parity** for the existing modifier + E053 subset
 (parser + checker port — required before self-host compiler
