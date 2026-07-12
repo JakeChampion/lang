@@ -145,3 +145,17 @@ func TestSetColorReturnsPrevious(t *testing.T) {
 		t.Errorf("SetColor should report the prior (on) state, got off")
 	}
 }
+
+// TestColorExplainHeader asserts `fern -explain` colours its "error EXXX:"
+// header to match the diagnostic renderer, and stays plain by default.
+func TestColorExplainHeader(t *testing.T) {
+	body := "some explanation body"
+	if out := FormatExplain("E001", body); strings.Contains(out, "\x1b[") {
+		t.Errorf("explain header must be plain by default, got:\n%q", out)
+	}
+	defer SetColor(SetColor(true))
+	out := FormatExplain("E001", body)
+	if !strings.Contains(out, ansiRedBld+"error E001:"+ansiReset) {
+		t.Errorf("explain header should be bold-red under colour, got:\n%q", out)
+	}
+}
