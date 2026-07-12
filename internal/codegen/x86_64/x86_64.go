@@ -190,18 +190,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `if (false) { … }` bodies before they reach asm; EliminateDeadCode trims
 	// ops after a terminator (slice 1, #4678).
 	//
-	// OptimizeCleanup (the copyprop/constprop/Fold/strength fixpoint, slice 1b)
-	// is still NOT enabled here. The ir.Fold emitter crash it used to hit is
-	// fixed (the index zero-extend in emitInlineIdxHelper above — a
+	// OptimizeCleanup (the copyprop/constprop/Fold/strength fixpoint) now runs
+	// on the natives too (slice 1b, #4377). The ir.Fold emitter crash it used
+	// to hit is fixed (the index zero-extend in emitInlineIdxHelper above — a
 	// folded-constant array index otherwise carried dirty upper bits into a
-	// scaled `lea` past the 32-bit bounds check), but enabling the fixpoint
-	// balloons self-host driver build times (its up-to-8× whole-program
-	// convergence snapshot), so slice 1b additionally needs the
-	// changed-bool convergence fix before it can go on. ir.Inline + the
-	// whole-function cull remain slice 2 (name-keyed walk).
+	// scaled `lea` past the 32-bit bounds check), and the fixpoint's old
+	// up-to-8× whole-program convergence snapshot is gone (each sub-pass now
+	// reports a changed bool), so it no longer balloons self-host build time.
+	// ir.Inline + the whole-function cull remain slice 2 (name-keyed walk).
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
+	ir.OptimizeCleanup(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the

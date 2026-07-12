@@ -50,10 +50,17 @@ import "github.com/jakechampion/lang/internal/ast"
 // ConstPropagate replaces every OpLoadLocal of a slot known to hold
 // a constant with a fresh copy of that constant op. Programs whose
 // slots never see a constant write are unchanged.
-func ConstPropagate(prog *Program) {
+// Returns whether any function's op list changed (see Fold — #4377 slice 1b).
+func ConstPropagate(prog *Program) bool {
+	changed := false
 	for _, fn := range prog.Funcs {
-		fn.Ops = constPropOps(fn.Ops, fn)
+		next := constPropOps(fn.Ops, fn)
+		if !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
 	}
+	return changed
 }
 
 // slotIsWide reports whether slot `idx` on `fn` lowers to a multi-

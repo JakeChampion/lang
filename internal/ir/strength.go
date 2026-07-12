@@ -39,10 +39,17 @@ package ir
 // ReduceStrength rewrites every recognised arithmetic / bitwise
 // shape in prog into its cheaper equivalent. Programs without an
 // eligible site are unchanged.
-func ReduceStrength(prog *Program) {
+// Returns whether any function's op list changed (see Fold — #4377 slice 1b).
+func ReduceStrength(prog *Program) bool {
+	changed := false
 	for _, fn := range prog.Funcs {
-		fn.Ops = reduceStrengthOps(fn.Ops)
+		next := reduceStrengthOps(fn.Ops)
+		if !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
 	}
+	return changed
 }
 
 func reduceStrengthOps(ops []Op) []Op {
