@@ -15271,6 +15271,29 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
 
+	// Value semantics for a non-self-reassign append on an ALIASING
+	// operand — a reused ident / field / index, not a fresh temporary
+	// and not the `a = a.append(v)` self-reassign the overwrite-reclaim
+	// pairs with. The grow helper's rc==1 in-place fast path mutates the
+	// operand buffer's length header and returns the SAME pointer; for a
+	// reused operand that corrupts later reads of the same binding — e.g.
+	// `var a = walk(path.append(d), …); var b = path.append(d).len();`,
+	// where the first append mutates `path` in place and the second sees
+	// the longer buffer (interp ≠ compiled, #4827). Bump the operand's rc
+	// across the grow so the helper takes the copy path (fresh buffer,
+	// operand untouched), then restore it. A fresh-temporary operand
+	// (needsRcIncOnAlias == false: array literal / call result) keeps the
+	// in-place fast path — mutating a value nothing else references is
+	// sound and avoids orphaning a copy. The self-reassign form is
+	// excluded via selfPushMoveCall: its in-place mutate is paired with
+	// the assign-site overwrite dec, so it stays O(1) for push loops.
+	forceCopy := ast.Expr(n) != b.selfPushMoveCall && needsRcIncOnAlias(n.Args[0], b)
+	if forceCopy {
+		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+
 	// oldLen = i32.load(arr - 4)
 	oldLenSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_oldLen_%d", oldLenSlot)] = oldLenSlot
@@ -15332,6 +15355,16 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+
+	// Restore the operand's rc bumped above to force the copy path. The
+	// grow's copy path leaves the operand untouched, so this returns it
+	// to its incoming count (never below 1 — inc preceded it — so no
+	// free fires here); `buf` is the fresh copy the append result owns.
+	if forceCopy {
+		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
 
 	// *(buf + oldLen * stride) = v   (width-correct store)
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
