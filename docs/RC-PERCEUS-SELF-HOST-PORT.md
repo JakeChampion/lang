@@ -4552,3 +4552,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   classifier; string[][][] is rare), and the map DELETE value/key leak (same
   ownership question as value-overwrite). None is a clean win; all await the
   ownership-tracking or snapshot-copy foundations above.
+
+- 2026-07-12 (CORRECTION to the prioritized-plan entry above): **the register
+  value-side overwrite free is UNSOUND under map-ownership tracking — both remaining
+  #4353 items share ONE root blocker: uncounted read-aliases.** Traced the clean
+  MAPVS-gated approach (check `"MAPVS:"+mapname` in `s.reclaimable_names` at the
+  op_map_set site — it IS available there, computed at irlower.fern:26070 before the
+  body lowers — and free the OLD value on overwrite when the map's value column is
+  fully-fresh/sole-owned). It compiles and the ownership gate is real, BUT it
+  introduces a use-after-free: `m.get_or(k, d)` / `m.get(k)` / `m.values()` /
+  `m.iter()` return the STORED value pointer as an UNCOUNTED alias, so
+    `var v = m.get_or(1, ""); m.set(1, "c"+"d"); print(v)`
+  frees the old value at the overwrite while `v` still points at it. Map-ownership
+  tracking (the plan's recommended owned-bits, OR the MAPVS gate) does NOT fix this
+  — ownership says "the MAP solely owns the slot", but a live get_or/get borrow is a
+  SEPARATE uncounted reference the map doesn't know about. The existing MAPVS
+  exit-sweep stays sound ONLY because it frees the value column at map DEATH (once,
+  at end of scope), never mid-life; freeing on overwrite is a mid-life free and
+  that is what dangles the read. **This is the SAME root cause as the cap-0
+  grow-leak's blocker (#4877): register map_keys/map_values/get_or return raw,
+  uncounted aliases, so ANY mid-life free (overwrite value, or grow-freeing an old
+  buffer) can dangle a live read.** So the two remaining items are not two separate
+  hacks — they are one underlying deficiency. SOUND fixes, in order of preference:
+  (1) **counted reads** — get_or/get/values/keys/iter rc-inc the returned pointer
+      and the read RESULT is reclaimed (str_free / arr_dec) at its scope exit, so a
+      live read holds rc>1 and a mid-life free rc-decs instead of freeing; this
+      unblocks BOTH the value-overwrite free AND the grow-leak's arr_push_owned swap
+      AND the keys/values snapshot correctness bug, uniformly. This is the real fix
+      and it is large (touches every read site + their result reclaim + the map's
+      rc model). (2) Leave both as death-only-sound leaks (current behaviour) until
+      (1) lands. **Do NOT implement owned-bits or a MAPVS-gated overwrite-free — it
+      UAFs on get_or-then-overwrite.** This supersedes the "recommendation: lazy
+      owned-bits" in the entry above.
