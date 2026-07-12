@@ -497,6 +497,22 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-generic-call-ok", func(t *testing.T) {
+		// #4346 piece 2 (generic-call slice): CALLING a generic function and
+		// using its result now type-checks — the return type is inferred from
+		// the argument whose parameter shares the return's type-parameter name
+		// (`ident(3)` → i32, so `return ident(3)` matches main's i32 return).
+		// Before the slice the call typed to unknown and a non-generic caller
+		// over-rejected (exit 1).
+		srcPath := filepath.Join(dir, "generic_call.fern")
+		if err := os.WriteFile(srcPath, []byte("function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a generic-call program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
 		// #4346: the partial checker's `Type` union still can't model a
 		// `dyn Trait` annotation (the self-host has no dyn-trait Type), so a

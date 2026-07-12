@@ -158,6 +158,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"option-some-clean", "function main(): i32 { var o: Option[i32] = Some(3); return 0; }\n", nil},
 		{"option-none-clean", "function main(): i32 { var o: Option[i32] = None; return 0; }\n", nil},
 		{"result-ok-clean", "function main(): i32 { var r: Result[i32, i32] = Ok(3); return 0; }\n", nil},
+		// Generic-call return-type inference (#4346 piece 2): a call to a
+		// generic function whose return type NAMES a parameter's type
+		// (`ident[T](v: T): T`) infers the concrete return from that argument,
+		// so `ident(3)` types to i32 — a MISMATCHED destination (`string`) draws
+		// E003, the same code the Go checker emits, where the pre-slice
+		// self-host typed the call as unknown and E003 never fired. The clean
+		// call path is pinned by the self_host_cli_test exit-code test.
+		{"generic-call-mismatch", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { var x: string = ident(3); return 0; }\n", []string{"E003"}},
+		{"generic-call-clean", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},

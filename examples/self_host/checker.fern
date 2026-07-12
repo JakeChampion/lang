@@ -337,7 +337,7 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_bound: string[] }
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_bound: string[], ret_type_name: string, param_type_names: string[] }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -675,7 +675,8 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     // tells callers the name isn't a function.
     var empty: Type[] = [];
     var nob: string[] = [];
-    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_bound: nob };
+    var non: string[] = [];
+    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_bound: nob, ret_type_name: "", param_type_names: non };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -1296,10 +1297,31 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     var i: i32 = 0;
     while (i < c.args.len()) {
         var at: Type = check_expr(c.args[i], s);
-        if (!type_assignable(at, sig.param_types[i], s.unions)) {
+        // An unknown PARAM type is an opaque generic parameter (`f[T](x: T)`,
+        // where T erases to unknown) — the arg can't be checked against it, so
+        // skip rather than mis-flag a mismatch (mirrors the E038 diag pass,
+        // #4346 piece 2). A concrete param is still checked.
+        if (!is_unknown(sig.param_types[i]) && !type_assignable(at, sig.param_types[i], s.unions)) {
             return t_unknown("arg-type mismatch calling `" + name + "`");
         }
         i = i + 1;
+    }
+    // Generic-call return-type inference (#4346 piece 2): a generic function's
+    // declared return type erases to unknown here (it names a type parameter).
+    // When the return type NAME also names a parameter's type — the pervasive
+    // `ident[T](v: T): T`, `first[T, U](a: T, b: U): T` shape — the concrete
+    // return is that argument's type. Without this a non-generic caller of a
+    // generic function over-rejected on the unknown result (`return ident(3);`).
+    // (A return type param that appears only nested — `Option[T]` — or in no
+    // parameter isn't inferred here and stays unknown, a further slice.)
+    if (sig.type_param_count > 0 && is_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
+        var k: i32 = 0;
+        while (k < sig.param_type_names.len()) {
+            if (sig.param_type_names[k] == sig.ret_type_name && k < c.args.len()) {
+                return check_expr(c.args[k], s);
+            }
+            k = k + 1;
+        }
     }
     return sig.ret_type;
 }
@@ -1890,10 +1912,12 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
         if (fd.receiver_name.len() > 0) { i = i + 1; continue; }
         var pts: Type[] = [];
         var pbnd: string[] = [];
+        var ptn: string[] = [];
         var j: i32 = 0;
         while (j < fd.params.len()) {
             pts = pts.append(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
             pbnd = pbnd.append(tp_bound_for(fd.params[j].type_name, fd.type_params, fd.bound_traits));
+            ptn = ptn.append(fd.params[j].type_name);
             j = j + 1;
         }
         out = out.append(FuncSig {
@@ -1901,7 +1925,9 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
             param_types: pts,
             ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions),
             type_param_count: fd.type_param_count,
-            param_bound: pbnd
+            param_bound: pbnd,
+            ret_type_name: fd.ret_type,
+            param_type_names: ptn
         });
         i = i + 1;
     }
