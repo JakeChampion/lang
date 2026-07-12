@@ -659,7 +659,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             type_params: mod.structs[j].type_params,
             line: mod.structs[j].line,
             col: mod.structs[j].col,
-            enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx)
+            enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
+            must_consume: mod.structs[j].must_consume
         });
         j = j + 1;
     }
@@ -724,7 +725,8 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
             variant_names: nvn,
             type_params: e.type_params,
             line: e.line,
-            col: e.col
+            col: e.col,
+            must_consume: e.must_consume
         });
         i = i + 1;
     }

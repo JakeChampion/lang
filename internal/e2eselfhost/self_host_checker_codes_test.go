@@ -931,6 +931,35 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
 		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
 		{"e032-use-annotated-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n: i32 <- apply(41);\n    return n + 1;\n}\n", nil},
+		// E067 (@must_consume obligation, docs/MUST-CONSUME.md): a value of a
+		// marked struct/enum type must be consumed on every control-flow path
+		// before its binding leaves scope — call-argument, return, match,
+		// transfer to another binding, or store into another marked type.
+		// Laundering into an unmarked container (array/tuple/unmarked struct)
+		// is a violation at the store site; loop bodies are opaque; `own`
+		// params are exempt. Mirrors internal/checker/mustconsume_test.go;
+		// cross-checked against the Go oracle by the differential leg.
+		{"mc-plain-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-one-arm-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(n: i32): void { var t: Ticket = Ticket { id: 1 }; if (n > 0) { sink(t); } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-early-return-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(n: i32): i32 { var t: Ticket = Ticket { id: 1 }; if (n > 5) { return 1; } sink(t); return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-both-arms-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(n: i32): void { var t: Ticket = Ticket { id: 1 }; if (n > 0) { sink(t); } else { sink(t); } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-transfer-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): Ticket { var t: Ticket = Ticket { id: 1 }; var u: Ticket = t; return u; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-unannotated-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): void { var t = Ticket { id: 1 }; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-match-consumes-ok", "@must_consume\nenum Pending { Reply(string), Close }\nfunction f(p: Pending): i32 { match (p) { Reply(s) => { print(s); }, Close => { print(\"closed\"); } } return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-enum-leak", "@must_consume\nenum Pending { Reply(string), Close }\nfunction f(): void { var p: Pending = Close; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-laundered-array", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var arr: Ticket[] = [t]; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-laundered-struct", "@must_consume\nstruct Ticket { id: i32 }\nstruct Box { inner: Ticket }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var b: Box = Box { inner: t }; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-laundered-tuple", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): (Ticket, i32) { var t: Ticket = Ticket { id: 1 }; return (t, 3); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-marked-envelope-ok", "@must_consume\nstruct Ticket { id: i32 }\n@must_consume\nstruct Envelope { inner: Ticket }\nfunction open_env(e: Envelope): Envelope { return e; }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var e: Envelope = Envelope { inner: t }; open_env(e); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-closure-capture", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var g = function(): i32 { return t.id; }; print(\"captured\"); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-overwrite", "@must_consume\nenum Pending { Reply(string), Close }\nfunction f(): void { var p: Pending = Close; p = Reply(\"again\"); match (p) { Reply(s) => { }, Close => { } } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-nonown-param-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(t: Ticket): void { print(\"ignored\"); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-own-param-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction take(own t: Ticket): void { print(\"own\"); }\nfunction f(): void { take(Ticket { id: 9 }); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-loop-consume-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(n: i32): void { var t: Ticket = Ticket { id: 1 }; var i: i32 = 0; while (i < n) { sink(t); i = i + 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-field-read-neutral-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): i32 { var t: Ticket = Ticket { id: 7 }; var n: i32 = t.id; sink(t); return n; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-match-expr-consumes-ok", "@must_consume\nenum Pending { Reply(string), Close }\nfunction f(p: Pending): i32 { var r: i32 = match (p) { Reply(s) => 1, Close => 0 }; return r; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"mc-nested-block-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(c: boolean): void { if (c) { var t: Ticket = Ticket { id: 1 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-unmarked-unaffected-ok", "struct Plain { id: i32 }\nfunction f(): void { var p: Plain = Plain { id: 1 }; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1151,6 +1151,35 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   array-element / generic-argument / body-`var` positions Go also covers
   are a later widening. Gated by corpus cases `unknown-param-type`,
   `unknown-field-type`.
+- **E067** (`@must_consume` value may leave scope unconsumed) — **done.**
+  The self-host parser now stamps the `@must_consume` attribute onto the
+  following struct/enum decl (`StructDecl.must_consume` /
+  `EnumDecl.must_consume`, propagated through the flatten / monomorphise
+  rewrites) instead of dropping it, and `checker.fern` ports the native
+  walk (internal/checker/mustconsume.go) function-for-function as the
+  `mc_*` family: `must_consume_diags` (per-function entry; non-`own`
+  params + body walk), `mc_walk_body` (finds marked bindings at every
+  block depth, scope-threaded so unannotated inits resolve via
+  `check_expr`), `mc_seq` (all-paths at-least-once; loop bodies opaque;
+  return/break/continue end paths), `mc_check_binding` (leak report at
+  the binding + straight-line overwrite scan), and `mc_expr_consumes`
+  (call-arg transfer, marked-store consume, laundering into
+  array/tuple/unmarked struct/enum at the store site, lambda capture).
+  Two self-host-specific mappings: an enum-variant constructor call
+  (`Reply(t)`) plays the native `EnumLit` store rule (the callee ident
+  resolves through `mx_enum_of` / `mx_builtin_enum_of`), and an
+  immediately-invoked lambda — the parser's IIFE desugar of a
+  value-position `match`/`if` — is treated as an inline block (`mc_seq`
+  over its body), not a closure capture, so `var r = match (p) { … }`
+  consumes `p` like the native `MatchExpr` tag rule (with the residual
+  strictness that the IIFE body must consume on ALL paths, where the
+  native expression walk accepts a consuming use on any). Gated only
+  when the module declares a marked type (`mc_any_marked`), keeping the
+  walk free for the self-host's own sources. Covered by the `mc-*`
+  corpus cases (plain/one-arm/early-return/enum/loop/param leaks,
+  laundering into array/struct/tuple, closure capture, overwrite, and
+  the clean transfer / match / match-expr / marked-envelope / own-param
+  shapes).
 - **E053** (`fip` function may not allocate) — needs Perceus in the
   self-host before allocation sites can be attributed to a `fip` function.
 

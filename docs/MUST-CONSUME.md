@@ -87,17 +87,25 @@ it claims:
 
 ## Self-host parity
 
-**Corrected after grounding (E1 implementation):** the differential
-checker-codes gate is OPT-IN per code (`selfHostImplementedCodes`
-in `internal/e2eselfhost/self_host_checker_codes_test.go` — "each
-checker-port slice grows this set"), so same-PR parity is not
-structurally required; E063 itself landed native-first with its
-port as a separate slice. E067 follows that convention: the native
-walk ships first, the `checker.fern` port (mirroring `slc_walk`)
-lands as its own slice and then joins the opt-in set. The self-host
-PARSER tolerance ships with the native PR (the `@must_consume`
-attribute parses and is dropped, so marked programs compile through
-the self-host pipeline; the obligation is enforced natively).
+**Ported (both checkers).** The native walk landed first (#4933,
+with self-host parse-tolerance so marked programs compiled), and
+the `checker.fern` port followed as its own slice (the `mc_*`
+family, mirroring `internal/checker/mustconsume.go`; deviations in
+`SELFHOST-CHECKER-PORT.md`). Historical note: the port originally
+targeted the gate's per-code opt-in set
+(`selfHostImplementedCodes`), but that filter was DELETED the same
+day (freeze precondition 3, #4451) when the checker port reached
+full coverage — the differential gate now compares the raw,
+unfiltered code sets, with 21 `mc-*` fixtures covering E067.
+
+**Status: the self-host port has landed.** The parser stamps the
+attribute onto `StructDecl.must_consume` / `EnumDecl.must_consume`,
+`checker.fern`'s `mc_*` family mirrors the native walk, and `"E067"`
+is in `selfHostImplementedCodes` with an `mc-*` fixture corpus in the
+differential gate. See docs/SELFHOST-CHECKER-PORT.md (E067 entry) for
+the port's shape and its two self-host-specific mappings (variant
+constructor calls as EnumLit stores; the value-position match/if IIFE
+desugar treated as an inline block rather than a capture).
 
 ## First real users
 
