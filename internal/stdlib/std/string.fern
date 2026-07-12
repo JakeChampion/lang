@@ -429,6 +429,40 @@ function __case_separator(s: string, sep_byte: i32): string {
     return string_from_bytes(buf);
 }
 
+// `(s: string) slugify()` — turn arbitrary text into a URL slug: lower-
+// case, with every run of non-`[a-z0-9]` bytes collapsed to a single
+// `-` and no leading/trailing hyphen. `"Hello, World! 2024"` →
+// `"hello-world-2024"`, `"  --Foo__Bar--  "` → `"foo-bar"`.
+//
+// Unlike `kebab_case` (which folds camelCase identifiers but keeps
+// punctuation), this is for free-form titles. ASCII-only: any byte
+// outside `[a-z0-9]` after lower-casing — punctuation, whitespace, and
+// non-ASCII/UTF-8 bytes alike — acts as a separator, so accented
+// letters are dropped rather than transliterated. An input with no
+// alphanumerics yields `""`.
+pub function (s: string) slugify(): string {
+    var n: i32 = s.len();
+    var out: u8[] = [];
+    var pending: boolean = false;   // a separator run is buffered
+    var i: i32 = 0;
+    while (i < n) {
+        var lc: i32 = s[i].to_lower();
+        var alnum: boolean = (lc >= 97 && lc <= 122) || (lc >= 48 && lc <= 57);
+        if (alnum) {
+            // Emit the buffered separator only between alphanumerics, so
+            // leading separators (out empty) and trailing ones (never
+            // flushed) are dropped and internal runs collapse to one.
+            if (pending && out.len() > 0) { out = out.append(45 as u8); }
+            pending = false;
+            out = out.append(lc as u8);
+        } else {
+            pending = true;
+        }
+        i = i + 1;
+    }
+    return string_from_bytes(out);
+}
+
 // `s.is_valid_identifier()` — true if s matches lang's /
 // C / JS identifier pattern: starts with a letter or
 // underscore, continues with letters / digits / underscores.
