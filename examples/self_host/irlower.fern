@@ -6720,7 +6720,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[1], mset);
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), meqfn));
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), meqfn));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -6819,7 +6819,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             emset = lower_expr(c.args[1], emset);
                             if (!emset.ok) { return emset; }
                             var emtt: string = expr_map_type_tag(fa.obj, s);
-                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), map_key_eqfn(emtt)));
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_key_eqfn(emtt)));
                         }
                     }
                     // Qualified built-in Option/Result construction:

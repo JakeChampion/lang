@@ -11,10 +11,14 @@ import (
 // TestSelfHostMapKsReclaimWasmIR is the wasm port of
 // TestSelfHostMapKsReclaimIRX86_64 (#4353 string-KEY / both-column). On wasm the
 // _ks / _kvs variants are a NO-OP distinction — wasm_helper_symbol routes them (and
-// the plain __fern_map_free) all to $__fern_map_release — so this validates the
-// routing COMPILES and stays SOUND (correctness + aliased-key exclusion); it does
-// not assert column flatness (the wasm $__fern_map_release string-K/V release is a
-// separate pre-existing mechanism, a follow-up).
+// the plain __fern_map_free) all to $__fern_map_release, which deep-releases the
+// key column via the box's kis@20 flag. With the #4353 wasm bug-2 fix (the
+// per-insert `kconsume` flag, the key-column twin of `vconsume`: $__fern_map_set
+// TAKES a FRESH key temp's single ref instead of retaining, so the release-side
+// dec reclaims it) the key column is now FLAT, so this asserts DIFFERENTIAL
+// flatness (string-keyed / both-column maps grow no more than an i32-keyed
+// baseline) in addition to correctness + aliased-key exclusion (an aliased key
+// stays kconsume=0 → retained → the source local's sweep balances it).
 func TestSelfHostMapKsReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-ks-reclaim wasm IR e2e")
@@ -40,6 +44,60 @@ func TestSelfHostMapKsReclaimWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
+		// DIFFERENTIAL key-column flatness: a Map[string, i32] built-and-dropped in a
+		// callee must grow no more than the same-shape Map[i32, i32] baseline (fresh
+		// keys reclaimed by the bug-2 fix). Built without a lookup (m.has("a"+"b")
+		// would allocate a fresh lookup-key temp that leaks independently).
+		{"mapks-key-column-flat-wasm", `function build_sk(n: i32): i32 {
+    var m: Map[string, i32] = Map { "a" + "b": 1, "c" + "d": 2 };
+    return 1;
+}
+function build_ik(n: i32): i32 {
+    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    return 1;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { acc = acc + build_sk(i) + build_ik(i); i = i + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 500) { acc = acc + build_sk(j); j = j + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 500) { acc = acc + build_ik(k); k = k + 1; }
+    var k2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+		// DIFFERENTIAL both-column flatness: a Map[string, string] with fresh keys AND
+		// values reclaims both columns (kconsume + vconsume), matching the i32 baseline.
+		{"mapkvs-both-columns-flat-wasm", `function build_ss(n: i32): i32 {
+    var m: Map[string, string] = Map { "a" + "b": "x" + "y", "c" + "d": "z" + "w" };
+    return 1;
+}
+function build_ii(n: i32): i32 {
+    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    return 1;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { acc = acc + build_ss(i) + build_ii(i); i = i + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 500) { acc = acc + build_ss(j); j = j + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 500) { acc = acc + build_ii(k); k = k + 1; }
+    var k2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
 		{"mapks-key-correct-wasm", `function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
@@ -92,7 +150,7 @@ func TestSelfHostMapKsReclaimWasmIR(t *testing.T) {
 				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
 			}
 			if got := rcmd.ProcessState.ExitCode(); got != tc.expected {
-				t.Errorf("map-ks-reclaim wasm IR %q = %d, want %d (88 = live value freed; 99 = over-release)", tc.name, got, tc.expected)
+				t.Errorf("map-ks-reclaim wasm IR %q = %d, want %d (1 = key/both column leaks vs i32 baseline; 88 = live value freed; 97 = acc guard; 99 = over-release)", tc.name, got, tc.expected)
 			}
 		})
 	}
