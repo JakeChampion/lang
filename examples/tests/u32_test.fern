@@ -1,0 +1,55 @@
+import "std/test";
+import "std/u32";
+// examples/tests/u32_test.fern — pure-Fern coverage of std/u32's
+// unsigned-32-bit receiver methods beyond the wrapping-arithmetic
+// contract pinned in u32_arith_test.fern: the zero/parity predicates,
+// pow (exponentiation by squaring), and the overflow-aware
+// saturating_add/sub + checked_add/sub. Unsigned overflow clamps to
+// u32::MAX / 0 (saturating) or yields None (checked). Boundary cases
+// use `!=` operators rather than the generic assert_eq, which degrades
+// the all-ones value to signed.
+
+// 2^32 - 1, the all-ones wraparound value.
+function umax(): u32 { return (0 as u32) - (1 as u32); }
+
+function test_predicates(): test.TestOutcome {
+    if (!(0 as u32).is_zero() || (1 as u32).is_zero()) { return test.fail("is_zero"); }
+    if (!(4 as u32).is_even() || (3 as u32).is_even()) { return test.fail("is_even"); }
+    return test.assert_true((3 as u32).is_odd() && !(4 as u32).is_odd());
+}
+
+function test_pow(): test.TestOutcome {
+    if ((2 as u32).pow(10) != (1024 as u32)) { return test.fail("2^10"); }
+    return test.assert_eq((3 as u32).pow(0), 1 as u32);
+}
+
+function test_saturating(): test.TestOutcome {
+    if (umax().saturating_add(1 as u32) != umax()) { return test.fail("add clamps to MAX"); }
+    if ((3 as u32).saturating_sub(10 as u32) != (0 as u32)) { return test.fail("sub clamps to 0"); }
+    if ((10 as u32).saturating_add(5 as u32) != (15 as u32)) { return test.fail("add in range"); }
+    return test.assert_eq((10 as u32).saturating_sub(4 as u32), 6 as u32);
+}
+
+function test_checked(): test.TestOutcome {
+    match (umax().checked_add(1 as u32)) {
+        Some(v) => { return test.fail("expected None on overflow"); },
+        None => {},
+    }
+    match ((3 as u32).checked_sub(10 as u32)) {
+        Some(v) => { return test.fail("expected None on underflow"); },
+        None => {},
+    }
+    match ((3 as u32).checked_add(4 as u32)) {
+        Some(v) => { return test.assert_eq(v, 7 as u32); },
+        None => { return test.fail("expected Some(7)"); },
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/u32 helpers");
+    r = r.it("predicates",  test_predicates());
+    r = r.it("pow",         test_pow());
+    r = r.it("saturating",  test_saturating());
+    r = r.it("checked",     test_checked());
+    return r.finish();
+}

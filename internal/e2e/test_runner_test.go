@@ -337,7 +337,25 @@ func TestRunnerU64ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/u64", "# pass 11", "# fail 0", "1..11"} {
+	for _, w := range []string{"# Suite: std/u64", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerU32ExamplePasses gates the std/u32 receiver-method helpers
+// (predicates / pow / saturating / checked) under the interpreter — the
+// counterpart to TestRunnerU64ExamplePasses. Distinct from the
+// wrapping-arithmetic suite below.
+func TestRunnerU32ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/u32_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u32 helpers", "# pass 4", "# fail 0", "1..4"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

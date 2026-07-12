@@ -57,11 +57,21 @@ Receiver methods on i32 / byte values.
 
 ### `std/u32`
 
-`min`, `max`, `clamp`, `to_string`.
+- **Scalar:** `min`, `max`, `clamp`, `pow`
+- **Predicates:** `is_zero`, `is_even`, `is_odd`
+- **Overflow-aware (unsigned):** `saturating_add`/`saturating_sub`
+  (clamp to u32::MAX / 0), `checked_add`/`checked_sub` (`Option[u32]`,
+  `None` on overflow/underflow)
+- **String:** `to_string`
 
 ### `std/u64`
 
-`min`, `max`, `clamp`, `to_string`.
+- **Scalar:** `min`, `max`, `clamp`, `pow`
+- **Predicates:** `is_zero`, `is_even`, `is_odd`
+- **Overflow-aware (unsigned):** `saturating_add`/`saturating_sub`
+  (clamp to u64::MAX / 0), `checked_add`/`checked_sub` (`Option[u64]`,
+  `None` on overflow/underflow)
+- **String:** `to_string`
 
 ### `std/float`
 
