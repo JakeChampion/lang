@@ -564,10 +564,15 @@ think they're free additions to make.
 - **`trim_start_chars` / `trim_end_chars`**: one-sided
   trim_chars companions.
 - **`random_int(lo, hi)`**: CSPRNG-backed random in [lo,
-  hi). 24-bit value width — caps bias-free range at ~16M
-  but covers port pick / ID generation / jitter. The 24-bit
-  cap is a workaround for the natives' signed-u32-modulo
-  codegen bug.
+  hi). Draws a full 32-bit value (4 bytes) and modulo-maps to
+  the range width, so the WHOLE requested range is reachable
+  (previously a 24-bit draw silently truncated any range >
+  2^24 to the low ~16M). The 24-bit cap had been a workaround
+  for the natives' signed-u32-modulo codegen bug; that bug is
+  fixed (full `u32 % range` is differential-verified across
+  interp / x86-64 / wasm), so the draw was widened. Residual
+  modulo bias for `range << 2^32` is negligible; rejection
+  sampling to remove it entirely is a follow-up.
 - **`format_bytes(n)`**: human-readable size — "N B" / "N
   KiB" / "N MiB" / "N GiB". i32 input (caps at ~2 GiB
   representable range).
@@ -682,17 +687,18 @@ think they're free additions to make.
 - **`(arr: string[]).all_non_empty()`**: vacuously true on
   empty array; false on any empty entry.
 
-### Additional compiler bug
+### Additional compiler bug — FIXED
 
 - **arm64 + x86-64: u32 modulo path uses signed arithmetic
-  when the dividend has the high bit set.** Reproduces
+  when the dividend has the high bit set.** ~~Reproduces
   with `(255 as u32) << (24 as u32) % (100 as u32)` — the
   natives return 240 (the result of `-16777216 % 100 = -16`,
   cast back to u32 → 0xFFFFFFF0 → low byte 240), interp
-  + wasm return 80 (the correct unsigned mod). Worked
-  around in `random_int` by keeping the random uint
-  24-bit. Documented separately in the known-compiler-bugs
-  section below.
+  + wasm return 80 (the correct unsigned mod).~~ **Fixed** —
+  `((255 as u32) << 24) % 100` now returns 80 on all four
+  backends (differential-verified). The `random_int` 24-bit
+  workaround has accordingly been removed (it now draws a
+  full 32 bits, so ranges > 2^24 are no longer truncated).
 
 ## Known compiler bugs surfaced during this work
 
@@ -753,11 +759,12 @@ think they're free additions to make.
   using sign-bit overflow detection on plain i32 ops rather
   than the natural i64-widening approach.
 - **arm64 / x86-64 u32 modulo uses signed arithmetic when
-  the dividend has the high bit set**. `(255 as u32) << (24
+  the dividend has the high bit set**. ~~`(255 as u32) << (24
   as u32) % (100 as u32)` returns 240 on the natives
   (`-16777216 % 100 = -16`, cast to unsigned exit code →
-  240) but 80 on interp + wasm. Worked around in random_int
-  by limiting the random uint to 24 bits.
+  240) but 80 on interp + wasm.~~ **FIXED** — now returns 80
+  on all four backends; the `random_int` 24-bit workaround
+  was removed (it draws a full 32 bits again).
 - **arm64 `len(stringTuple.field)` segfaults.** Calling
   `len()` directly on a `(string, string)` tuple-element
   access (e.g. `len(p.0)` where `p: (string, string)`)
