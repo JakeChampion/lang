@@ -16973,10 +16973,36 @@ function map_decl_value_type(stmts: parser.Stmt[], name: string): string {
     return "";
 }
 
-// map_insert_chain_values_fresh: `e` is a `map_new[_i32]().insert(k,v)…` chain
-// (the Map{…} literal desugar); every insert's value arg (args[1]) must be a
-// fresh string. The root map_new() carries no value.
-function map_insert_chain_values_fresh(e: parser.Expr): boolean {
+// map_decl_key_type: the K of the `var name: Map[K, V] = …` declaration — the
+// key-side sibling of map_decl_value_type (uses map_key_of).
+function map_decl_key_type(stmts: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return map_key_of(v.type_name); } },
+            parser.StmtIf(f) => {
+                var t1: string = map_decl_key_type(f.then_body, name);
+                if (t1 != "") { return t1; }
+                var t2: string = map_decl_key_type(f.else_body, name);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var t: string = map_decl_key_type(w.body, name); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = map_decl_key_type(fo.body, name); if (t != "") { return t; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { var t: string = map_decl_key_type(m.arms[mi].body, name); if (t != "") { return t; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// map_insert_chain_arg_fresh: `e` is a `map_new[_i32]().insert(k,v)…` chain (the
+// Map{…} literal desugar); every insert's arg at `argidx` (0=key, 1=value) must be
+// a fresh string. The root map_new() carries no entry.
+function map_insert_chain_arg_fresh(e: parser.Expr, argidx: i32): boolean {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -16984,8 +17010,8 @@ function map_insert_chain_values_fresh(e: parser.Expr): boolean {
                 parser.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") {
                         if (c.args.len() < 2) { return false; }
-                        if (!str_local_binding_is_fresh(c.args[1])) { return false; }
-                        return map_insert_chain_values_fresh(fa.obj);
+                        if (!str_local_binding_is_fresh(c.args[argidx])) { return false; }
+                        return map_insert_chain_arg_fresh(fa.obj, argidx);
                     }
                     return false;
                 },
@@ -17013,17 +17039,17 @@ function map_expr_root_ident(e: parser.Expr): string {
     return "";
 }
 
-// map_expr_sets_unfresh: does `e` contain a `name.set(k,v)` / `name.insert(k,v)`
-// (receiver-chain rooted at `name`) whose value arg is NOT a fresh string?
-function map_expr_sets_unfresh(e: parser.Expr, name: string): boolean {
+// map_expr_sets_unfresh_arg: does `e` contain a `name.set(k,v)` / `name.insert(k,v)`
+// (receiver-chain rooted at `name`) whose arg at `argidx` is NOT a fresh string?
+function map_expr_sets_unfresh_arg(e: parser.Expr, name: string, argidx: i32): boolean {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     if ((fa.field == "set" || fa.field == "insert") && map_expr_root_ident(fa.obj) == name) {
-                        if (c.args.len() >= 2 && !str_local_binding_is_fresh(c.args[1])) { return true; }
+                        if (c.args.len() >= 2 && !str_local_binding_is_fresh(c.args[argidx])) { return true; }
                     }
-                    return map_expr_sets_unfresh(fa.obj, name);
+                    return map_expr_sets_unfresh_arg(fa.obj, name, argidx);
                 },
                 _ => { return false; }
             }
@@ -17033,21 +17059,21 @@ function map_expr_sets_unfresh(e: parser.Expr, name: string): boolean {
     return false;
 }
 
-// map_no_unfresh_set: no statement in `stmts` sets a non-fresh string value on
-// map `name` (recursing nested blocks). Reads (m.get/has/len) are ignored.
-function map_no_unfresh_set(stmts: parser.Stmt[], name: string): boolean {
+// map_no_unfresh_set_arg: no statement in `stmts` sets a non-fresh string at
+// `argidx` on map `name` (recursing nested blocks). Reads (m.get/has/len) ignored.
+function map_no_unfresh_set_arg(stmts: parser.Stmt[], name: string, argidx: i32): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtExpr(e) => { if (map_expr_sets_unfresh(e.value, name)) { return false; } },
-            parser.StmtVar(v) => { if (map_expr_sets_unfresh(v.init, name)) { return false; } },
-            parser.StmtAssign(a) => { if (map_expr_sets_unfresh(a.value, name)) { return false; } },
-            parser.StmtIf(f) => { if (!map_no_unfresh_set(f.then_body, name) || !map_no_unfresh_set(f.else_body, name)) { return false; } },
-            parser.StmtWhile(w) => { if (!map_no_unfresh_set(w.body, name)) { return false; } },
-            parser.StmtFor(fo) => { if (!map_no_unfresh_set(fo.body, name)) { return false; } },
+            parser.StmtExpr(e) => { if (map_expr_sets_unfresh_arg(e.value, name, argidx)) { return false; } },
+            parser.StmtVar(v) => { if (map_expr_sets_unfresh_arg(v.init, name, argidx)) { return false; } },
+            parser.StmtAssign(a) => { if (map_expr_sets_unfresh_arg(a.value, name, argidx)) { return false; } },
+            parser.StmtIf(f) => { if (!map_no_unfresh_set_arg(f.then_body, name, argidx) || !map_no_unfresh_set_arg(f.else_body, name, argidx)) { return false; } },
+            parser.StmtWhile(w) => { if (!map_no_unfresh_set_arg(w.body, name, argidx)) { return false; } },
+            parser.StmtFor(fo) => { if (!map_no_unfresh_set_arg(fo.body, name, argidx)) { return false; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (!map_no_unfresh_set(m.arms[mi].body, name)) { return false; } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (!map_no_unfresh_set_arg(m.arms[mi].body, name, argidx)) { return false; } mi = mi + 1; }
             },
             _ => {}
         }
@@ -17056,29 +17082,35 @@ function map_no_unfresh_set(stmts: parser.Stmt[], name: string): boolean {
     return true;
 }
 
-// map_str_value_reclaimable: `name` is declared Map[K, string], its init insert-
-// chain values are all fresh strings, AND no later set/insert on it uses a
-// non-fresh value — so the map is the sole rc=1 owner of every value box and the
-// value column can be deep-freed. Finds the map's StmtVar to check the init chain.
+// map_str_value_reclaimable / map_str_key_reclaimable: `name` is declared with a
+// `string` value (resp. key), its init insert-chain values (resp. keys) are all
+// fresh strings, AND no later set/insert on it uses a non-fresh value (resp. key)
+// — so the map is the sole rc=1 owner of every value (resp. key) box and that
+// column can be deep-freed. argidx 1 = value column, 0 = key column.
 function map_str_value_reclaimable(stmts: parser.Stmt[], name: string): boolean {
     if (map_decl_value_type(stmts, name) != "string") { return false; }
-    if (!map_no_unfresh_set(stmts, name)) { return false; }
-    return map_init_chain_ok(stmts, name);
+    if (!map_no_unfresh_set_arg(stmts, name, 1)) { return false; }
+    return map_init_chain_arg_ok(stmts, name, 1);
 }
-function map_init_chain_ok(stmts: parser.Stmt[], name: string): boolean {
+function map_str_key_reclaimable(stmts: parser.Stmt[], name: string): boolean {
+    if (map_decl_key_type(stmts, name) != "string") { return false; }
+    if (!map_no_unfresh_set_arg(stmts, name, 0)) { return false; }
+    return map_init_chain_arg_ok(stmts, name, 0);
+}
+function map_init_chain_arg_ok(stmts: parser.Stmt[], name: string, argidx: i32): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (v.name == name) { return map_insert_chain_values_fresh(v.init); } },
+            parser.StmtVar(v) => { if (v.name == name) { return map_insert_chain_arg_fresh(v.init, argidx); } },
             parser.StmtIf(f) => {
-                if (stmts_declare(f.then_body, name)) { return map_init_chain_ok(f.then_body, name); }
-                if (stmts_declare(f.else_body, name)) { return map_init_chain_ok(f.else_body, name); }
+                if (stmts_declare(f.then_body, name)) { return map_init_chain_arg_ok(f.then_body, name, argidx); }
+                if (stmts_declare(f.else_body, name)) { return map_init_chain_arg_ok(f.else_body, name, argidx); }
             },
-            parser.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_ok(w.body, name); } },
-            parser.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_ok(fo.body, name); } },
+            parser.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_arg_ok(w.body, name, argidx); } },
+            parser.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_arg_ok(fo.body, name, argidx); } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (stmts_declare(m.arms[mi].body, name)) { return map_init_chain_ok(m.arms[mi].body, name); } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (stmts_declare(m.arms[mi].body, name)) { return map_init_chain_arg_ok(m.arms[mi].body, name, argidx); } mi = mi + 1; }
             },
             _ => {}
         }
@@ -18127,12 +18159,16 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             && !body_unsafe_for(body, maps[mi], borrowable)
             && !map_has_explicit_iter(body, maps[mi])) {
             out = out.append("MAP:" + maps[mi]);
-            // #4353: a reclaimable Map[K, string] whose every value is a fresh
-            // string additionally deep-releases its VALUE column (via
-            // __fern_map_free_vs on the register backends; wasm already does).
-            // Sound because the map is the sole rc=1 owner of each fresh value.
+            // #4353: a reclaimable map whose every VALUE (resp. KEY) is a fresh
+            // string additionally deep-releases that column — via
+            // __fern_map_free_vs / _ks / _kvs on the register backends (wasm
+            // already deep-releases). Sound because the map is the sole rc=1 owner
+            // of each fresh value / key box.
             if (map_str_value_reclaimable(body, maps[mi])) {
                 out = out.append("MAPVS:" + maps[mi]);
+            }
+            if (map_str_key_reclaimable(body, maps[mi])) {
+                out = out.append("MAPKS:" + maps[mi]);
             }
         }
         mi = mi + 1;
@@ -20282,12 +20318,19 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
 function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     var st: LowerState = s;
     st = st.emit(ir.op_load_local(slot));
-    // #4353: a Map[K, string]-with-fresh-values credited "MAPVS:" routes to
-    // __fern_map_free_vs, which deep-releases the value column (register backends
-    // free vals via __fern_str_arr_free; wasm_helper_symbol maps it to the
-    // already-deep $__fern_map_release). Everything else keeps the shallow
-    // __fern_map_free (value string boxes leak one level — sound).
-    if (util.index_of_str(s.reclaimable_names, "MAPVS:" + s.locals[slot].slot_name) >= 0) {
+    // #4353: a reclaimable map with a fresh-string VALUE column ("MAPVS:") and/or
+    // KEY column ("MAPKS:") routes to the matching deep-release variant
+    // (__fern_map_free_vs / _ks / _kvs — the register backends free that column via
+    // __fern_str_arr_free; wasm_helper_symbol maps all of them to the already-deep
+    // $__fern_map_release). A map with neither keeps the shallow __fern_map_free
+    // (string boxes in the non-credited column leak one level — sound).
+    var mvs: boolean = util.index_of_str(s.reclaimable_names, "MAPVS:" + s.locals[slot].slot_name) >= 0;
+    var mks: boolean = util.index_of_str(s.reclaimable_names, "MAPKS:" + s.locals[slot].slot_name) >= 0;
+    if (mks && mvs) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_kvs", 1));
+    } else if (mks) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_ks", 1));
+    } else if (mvs) {
         st = st.emit(ir.op_call_direct("__fern_map_free_vs", 1));
     } else {
         st = st.emit(ir.op_call_direct("__fern_map_free", 1));

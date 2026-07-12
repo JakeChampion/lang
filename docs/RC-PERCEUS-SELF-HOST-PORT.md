@@ -4304,3 +4304,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostMapVsReclaim{IRX86_64, WasmIR, IRArm64}` — differential value-column
   flatness + correctness + aliased-value exclusion. Also found (pre-existing, orthogonal): on the wasm IR path the map string-VALUE release via $__fern_map_release does NOT actually free the value boxes (a differential churn leaks), so the wasm map test asserts routing soundness only — a separate follow-up. Remaining #4353: string KEYS
   (same treatment, keys column), then the grow-leak via goal-2 reuse routing.
+
+- 2026-07-12: **#4353 — string-KEY column + both-column deep-release (sibling of
+  the value column).** Generalised the value-column machinery: the arg-freshness
+  helpers now take an `argidx` (0=key, 1=value), a reclaimable map with a fresh-
+  string KEY column is credited `MAPKS:` (via `map_str_key_reclaimable` —
+  annotated `Map[string, V]`, init insert-chain + every later set/insert KEY a
+  fresh string), and `emit_map_buffers_free` routes 4-way: `__fern_map_free_kvs`
+  (both credited), `_ks` (keys only), `_vs` (values only), or the shallow
+  `__fern_map_free`. New register-backend bodies `__fern_map_free_ks` / `_kvs`
+  (x86 + arm64) free the keys (resp. both) column via `__fern_str_arr_free`; wasm
+  routes all to `$__fern_map_release`. VERIFIED differentially (build-and-drop, NO
+  `m.has("a"+"b")` lookup — that allocates a fresh lookup-key temp that leaks
+  independently, the key-side twin of the `get_or ""` default): `Map[string, i32]`
+  and `Map[string, string]` helper-churn both match the `Map[i32, i32]` baseline
+  (keys / both columns freed). Tests: `TestSelfHostMapKsReclaim{IRX86_64 (key +
+  both-column differential + correctness + aliased-key exclusion), IRArm64,
+  WasmIR (routing soundness)}`; the value-column suite stays green (the argidx
+  refactor is behaviour-preserving) and the stage-2 fixpoint is byte-identical
+  (the compiler's own maps are i32/interned-key). Remaining #4353: the wasm-IR
+  `$__fern_map_release` string-K/V release gap, and the orthogonal arr_push
+  grow-leak (goal-2 reuse routing).
