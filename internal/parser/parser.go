@@ -249,6 +249,7 @@ func (p *parser) parseProgram() *ast.Program {
 		var derives []string
 		var importIface, importWIT string
 		var exportIface, exportWIT string
+		mustConsume := false
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -264,6 +265,7 @@ func (p *parser) parseProgram() *ast.Program {
 			importWIT = attr.importWIT
 			exportIface = attr.exportIface
 			exportWIT = attr.exportWIT
+			mustConsume = attr.mustConsume
 		}
 		// `pub` is an optional prefix on function, struct, enum, or
 		// const decls at the top level. Track it and consume; the
@@ -437,6 +439,7 @@ func (p *parser) parseProgram() *ast.Program {
 				sd.Public = isPub
 				sd.PackageScoped = isPackage
 				sd.Derives = derives
+				sd.MustConsume = mustConsume
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
 			}
@@ -481,6 +484,7 @@ func (p *parser) parseProgram() *ast.Program {
 				ed.Public = isPub
 				ed.PackageScoped = isPackage
 				ed.Derives = derives
+				ed.MustConsume = mustConsume
 				prog.Enums = append(prog.Enums, ed)
 			}
 			continue
@@ -488,6 +492,15 @@ func (p *parser) parseProgram() *ast.Program {
 		if len(derives) > 0 {
 			p.errors = append(p.errors, p.errorf(p.peek().Pos,
 				"@derive only applies to a `struct` or `enum` declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
+			}
+			continue
+		}
+		if mustConsume {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@must_consume only applies to a `struct` or `enum` declaration"))
 			p.syncToTopLevel()
 			if p.i == before {
 				p.advance()
@@ -1025,6 +1038,7 @@ type declAttr struct {
 	importWIT   string
 	exportIface string
 	exportWIT   string
+	mustConsume bool
 }
 
 // parseAttribute parses a leading `@…` declaration attribute (the `@` is at
@@ -1071,6 +1085,12 @@ func (p *parser) parseAttribute() (declAttr, error) {
 			return declAttr{}, err
 		}
 		return declAttr{derives: derives}, nil
+	case "must_consume":
+		// `@must_consume` — bare marker, no arguments. Applies to a
+		// struct or enum declaration; the checker's E067 walk
+		// enforces that values of the type are consumed on every
+		// path. See docs/MUST-CONSUME.md.
+		return declAttr{mustConsume: true}, nil
 	case "import", "export":
 		// `@import(iface, name)` and `@export(iface, name)` share the same
 		// two-string shape; only the binding direction differs.
@@ -1083,7 +1103,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{exportIface: iface, exportWIT: name}, nil
 	default:
-		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, and @export are supported)", attr)
+		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, @export, and @must_consume are supported)", attr)
 	}
 }
 

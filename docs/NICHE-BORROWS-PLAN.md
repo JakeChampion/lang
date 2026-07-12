@@ -243,8 +243,20 @@ reset while the server keeps answering subsequent requests.
 
 ### Phase E — type-system & Perceus-adjacent
 
-**E1. `@must_consume` marker types.** [status: design shipped —
-`docs/MUST-CONSUME.md`; slice-1 checker implementation next]
+**E1. `@must_consume` marker types.** [status: slice 1 shipped
+(native E067); self-host checker port queued]
+Shipped: `@must_consume` on struct/enum decls (both parsers — the
+self-host parser parse-tolerates and drops it pending its checker
+port), the native E067 walk (at-least-once on every path;
+laundering into unmarked containers, closure capture, and
+unconsumed overwrite rejected at their sites; `own` params are the
+declared sinks — exempt, composing with the affine owned-param
+rule for exactly-once across own boundaries), `fern explain E067`,
+and 21 checker tests pinning both directions per shape. Grounding
+corrections recorded in docs/MUST-CONSUME.md: the differential
+gate is opt-in per code (the port lands as its own slice, the
+E063 convention), and the owned-argument rule shapes how sinks
+are written.
 Decision: at-least-once obligation checking (E067), E063-shaped
 conservative walk, consuming uses = call-arg / return / construct /
 destructure, unmarked-container laundering rejected, closures

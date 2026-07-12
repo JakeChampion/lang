@@ -6936,6 +6936,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.checkOwnedParams(fn)
 	c.checkSliceEscape(fn)
 	c.checkStrEscape(fn)
+	c.checkMustConsume(fn)
 	// A value-returning function must return on every path. Falling off
 	// the end leaves the result undefined (the interpreter yields Void
 	// where a real value is expected and crashes downstream; a scalar
