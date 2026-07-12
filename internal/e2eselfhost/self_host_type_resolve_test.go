@@ -78,7 +78,10 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"Map[string] => unknown(unrecognised type name: Map[string])\n" +
 		"Map[string, i32][] => array<map<string, i32>>\n" +
 		"(i32, string)[] => array<tuple<i32, string>>\n" +
-		"Option[i32] => unknown(unrecognised type name: Option[i32])\n" +
+		// Option[i32] resolves since the self-host checker learned to
+		// instantiate a generic enum's type args (#4346 piece 2) —
+		// updated from the pre-#4913 `unknown(...)` capture.
+		"Option[i32] => union:Option\n" +
 		"Vec[T] => unknown(unrecognised type name: Vec[T])\n" +
 		"Foo[T] => unknown(unrecognised type name: Foo[T])\n" +
 		"Bogus[] => array<unknown(unrecognised type name: Bogus)>\n" +
