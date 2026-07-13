@@ -1643,6 +1643,22 @@ pub function contains[T: cmp.Eq](xs: T[], target: T): boolean {
     return false;
 }
 
+// `all_equal(xs)` — true iff every element equals the first (i.e. the array has
+// at most one DISTINCT value). Vacuously true for an empty or single-element
+// array. Short-circuits on the first element that differs. The `T: cmp.Eq`
+// bound supplies the `==` (the type's structural equality). Useful for "is this
+// column constant" / "did every worker agree" checks.
+pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
+    var n: i32 = xs.len();
+    if (n < 2) { return true; }
+    var i: i32 = 1;
+    while (i < n) {
+        if (!(xs[i] == xs[0])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // `distinct(xs)` — fresh `T[]` with duplicates removed (first occurrence wins,
 // input order preserved). O(n²) membership scan via `contains` — fine for the
 // small-n CLI / edge-handler workloads; reach for a Map-backed dedup at larger
@@ -1899,6 +1915,10 @@ pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean { return equal(xs, 
 
 // `xs.dedup()` — collapse each run of consecutive equal elements to one.
 pub function (xs: T[]) dedup[T: cmp.Eq](): T[] { return dedup(xs); }
+
+// `xs.all_equal()` — true iff every element is equal (≤ 1 distinct value);
+// vacuously true for length < 2.
+pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean { return all_equal(xs); }
 
 // `xs.starts_with(prefix)` / `xs.ends_with(suffix)` — array analogues of
 // the string prefix/suffix tests, over any `T: cmp.Eq`.
