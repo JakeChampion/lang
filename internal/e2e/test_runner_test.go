@@ -2041,6 +2041,27 @@ func TestRunnerFloatExp2Exp10Example(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_recip_copysign_midpoint_test.fern` covers std/float's
+// recip (1/x), copysign (magnitude of receiver, sign of argument), and midpoint
+// (overflow-safe halfway point), f64 and f32. Purely arithmetic, so unlike the
+// transcendentals these lower on all four backends. On the interp gate and both
+// self-host gates (uses assert_eq_f64_near); the Go-side
+// TestFloatRecipCopysignMidpoint pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerFloatRecipCopysignMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_recip_copysign_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float recip/copysign/midpoint", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

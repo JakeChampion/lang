@@ -1,0 +1,65 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_recip_copysign_midpoint_test.fern — pure-Fern coverage
+// of std/float.recip / copysign / midpoint: three purely-arithmetic helpers
+// (reciprocal 1/x; magnitude-of-receiver with sign-of-argument; overflow-safe
+// halfway point a*0.5 + b*0.5). No libm primitive, so unlike the transcendentals
+// these lower on all four backends including wasmbin. Both f64 and f32. The
+// Go-side TestFloatRecipCopysignMidpoint pins these across all four backends;
+// this is the migration-shaped companion.
+
+function test_recip(): test.TestOutcome {
+    if (!float_near((4.0).recip(), 0.25)) { return test.fail("recip 4"); }
+    return test.assert_eq_f64_near((2.0).recip(), 0.5, 0.0001);
+}
+
+function test_recip_negative(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0 - 8.0).recip(), 0.0 - 0.125, 0.0001);
+}
+
+function test_recip_roundtrip(): test.TestOutcome {
+    return test.assert_eq_f64_near((7.0).recip().recip(), 7.0, 0.0001);
+}
+
+function test_copysign_negate(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.0).copysign(0.0 - 1.0), 0.0 - 3.0, 0.0001);
+}
+
+function test_copysign_make_positive(): test.TestOutcome {
+    if (!float_near((0.0 - 3.0).copysign(2.0), 3.0)) { return test.fail("copysign +"); }
+    return test.assert_eq_f64_near((5.0).copysign(0.0), 5.0, 0.0001);
+}
+
+function test_midpoint(): test.TestOutcome {
+    if (!float_near((2.0).midpoint(4.0), 3.0)) { return test.fail("midpoint 2,4"); }
+    return test.assert_eq_f64_near((1.0).midpoint(2.0), 1.5, 0.0001);
+}
+
+function test_midpoint_straddle_zero(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0 - 4.0).midpoint(4.0), 0.0, 0.0001);
+}
+
+function test_f32(): test.TestOutcome {
+    if (!float_near((4.0 as f32).recip() as f64, 0.25)) { return test.fail("recip f32"); }
+    if (!float_near((0.0 - 3.0 as f32).copysign(1.0 as f32) as f64, 3.0)) { return test.fail("copysign f32"); }
+    return test.assert_eq_f64_near((10.0 as f32).midpoint(20.0 as f32) as f64, 15.0, 0.001);
+}
+
+function float_near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float recip/copysign/midpoint");
+    r = r.it("recip",                   test_recip());
+    r = r.it("recip negative",          test_recip_negative());
+    r = r.it("recip round-trip",        test_recip_roundtrip());
+    r = r.it("copysign negate",         test_copysign_negate());
+    r = r.it("copysign make positive",  test_copysign_make_positive());
+    r = r.it("midpoint",                test_midpoint());
+    r = r.it("midpoint straddle zero",  test_midpoint_straddle_zero());
+    r = r.it("f32",                     test_f32());
+    return r.finish();
+}
