@@ -12422,7 +12422,16 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
 		return
 	}
-	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
+	// The generated __drop_struct_/__drop_enum_/__drop_tuple_ bodies come
+	// from the post-pass worklist, which only runs when RcFreeEnabled —
+	// routing to one here under free-off emits a call to a symbol that is
+	// never generated (an undefined reference at link). Free-off falls
+	// through to the flat one-level dec instead, matching the free-off
+	// baseline everywhere else. First hit by emitArraySet's old-element
+	// drop on a concrete-enum-element array (`RInst[].with` in std/regex)
+	// under the FreeMatchesNoFree differential: __drop_enum_regex__RInst
+	// was called but never emitted.
+	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
@@ -12433,7 +12442,9 @@ func (b *builder) dropStructField(t ast.Type) {
 		// the array, so a shared one only dec's). Array-of-struct also
 		// deep-drops each element box (Stage B loop); array-of-rc frees the
 		// outer buffer + flat-dec's inner; plain arrays free the buffer.
-		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
+		// Same RcFreeEnabled gate as above: the __drop_arr_* bodies are
+		// worklist-generated, free-on only.
+		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
