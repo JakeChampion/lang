@@ -3118,6 +3118,115 @@ live value would be freed). `Test{X86_64,Arm64,WASM}NestedConcatReclaim` —
 intermediates for non-string operators (none today produce owned temps
 fed to another op) would extend the same way.
 
+### E3 drop-guided reuse evaluation — verdict (2026-07-13)
+
+Plan item E3 (`docs/NICHE-BORROWS-PLAN.md`): the ICFP 2022
+frame-limited / drop-guided source selection (Lorenzen & Leijen,
+"Reference Counting with Frame-Limited Reuse") implemented behind
+`ast.RcReuseDropGuided` (default OFF, env knob
+`FERN_RC_REUSE_DROP_GUIDED=1`) in `internal/ir/rc_dropguided.go`,
+as an evaluation — NOT a default flip. The flag swaps ONLY the
+pair-selection scan inside `computeReuseSources`; every proposed
+pair still passes the identical gates (`reuseClassOf`,
+`freeEligible`, never-reassigned, name-unique, moved / borrow
+exclusions) and the shared lowering (runtime `is_unique` guard,
+degrade-to-fresh-alloc, slot zeroing, `reuseConsumed`
+bookkeeping). Flag-OFF output verified byte-identical to the
+pre-change tree (sha256 over emitted x86-64 asm for 5 reuse
+fixtures — golden stash-diff).
+
+**What was implemented.** Three token flows: (1) per-statement-list
+forward scan — a token is born at the donor's last-use index + 1
+and claimed FIFO in drop order by the first same-class
+construction at/after it; (2) tokens flowing into dominated nested
+regions — this is exactly the existing cross-block pass, shared
+verbatim; (3) NEW: a token born at a drop point INSIDE a
+dominated, non-loop if/match arm, claimed by a later construction
+in the same arm. Flow 3 is the only source of new pairs: the PLDI
+pairing structurally misses it (the donor is declared in the
+parent list, so the same-block pass can't see it, yet still
+referenced inside the enclosing statement, so the cross-block
+`deadFrom` rejects it). Conservative token death: never across a
+loop back-edge (a next iteration re-reads the donor), never with
+sibling-arm references, never when the donor is the match
+scrutinee (arm bindings are live uncounted views of its box).
+
+**Finding: superset, not different.** On this codebase's shapes
+the token flow selects a SUPERSET of the pairing — flows 1–2 are
+provably equal in pair count to the PLDI passes (deadFrom(D, k) ≡
+"token born at or before k"; both greedy orders achieve maximum
+matching on the suffix-closed eligibility structure), and flow 3
+adds the one arm-drop shape. Every `general_reuse_test.go` /
+`struct_reuse_test.go` / `enum_reuse_test.go` /
+`c2_consuming_reuse_test.go` expectation holds unchanged under the
+flag (`internal/ir` suite green with `FERN_RC_REUSE_DROP_GUIDED=1`).
+
+**Measured numbers (x86-64, free+freelist on).**
+
+| program | bump growth OFF | bump growth ON |
+|---|---|---|
+| array build-up loop (2000 it) | 64000 B | 64000 B |
+| struct churn loop (R3 loop shape, 2000 it) | 32 B | 32 B |
+| R3 dead chain (straight-line) | 32 B | 32 B |
+| arm-drop shape in a loop (Wide struct, 48 B class, 2000 it) | 144 B | 96 B |
+| arm-drop shape straight-line (tuple, 16 B class) | 32 B | 16 B |
+| arm-drop loop, arm on even iters only (tuple) | 48 B | 48 B |
+| 400-function synthetic (tuple churn + per-fn arm shape) | 64 B | 64 B |
+
+The win, where it exists, is ONE box class of peak high-water per
+arm-drop site (the site really fires — straight-line tuple 32→16,
+struct loop 144→96); in loop shapes where the arm-scoped
+construction is dropped at arm exit anyway, the freelist recycles
+the block within the iteration and the high-water difference
+vanishes (48=48, 64=64 — despite the 400-fn synthetic emitting
+2x the reuse sites under the flag, 400 OFF vs 800 ON). Cumulative
+allocation traffic is identical in every case: with free +
+freelist on, reuse moves the peak, never the total.
+
+- Runtime contracts: all 13 `genReuseCases` pass with the flag ON
+  (`TestX86_64GeneralReuseDropGuided`), zero `__rc_underflow_count`.
+- Leak guards: `TestX86_64RcRequestLoopLeakGuardDropGuided` +
+  `TestX86_64AppendCopyLeakBoundDropGuided` green.
+- Differential: 224 fernsmith seeds, interp vs x86-64 flag OFF vs
+  flag ON — 0 mismatches (`drop_guided_differential_test.go`).
+- RC-family e2e sweep (x86-64 + wasm Reuse/Rc/HeapBump/Freelist/
+  Leak/Trmc families) green under `FERN_RC_REUSE_DROP_GUIDED=1`.
+- The new arm shape is value-correct + underflow-free on all three
+  backends (`Test{X86_64,Arm64,WASM}DropGuidedArmShapeRuntime`).
+- Self-compile (static): emitting the `asm_ir_run.fern` driver
+  closure (1722 functions, ~982 MB asm) through the native x86-64
+  backend — `__fern_alloc_reuse` sites: **10 flag OFF vs 10 flag
+  ON**. Drop-guided finds ZERO additional pairs on the real
+  self-host compiler codebase: the arm-drop shape does not occur
+  there (self-host structs carry string fields, which taint
+  eligibility long before selection strategy matters). The two
+  emits differ by 29 asm bytes (donor-assignment order inside
+  equal-count pairings), behaviourally identical.
+- Self-compile (runtime): both flag-state driver binaries were
+  assembled + linked (`gcc -static -nostdlib -no-pie -fuse-ld=lld`)
+  and run on a 182 KB / 403-function fixture: **byte-identical
+  2.61 MB asm output**, exit 0 both, peak RSS statistically equal
+  (OFF 157.7–164.2 MB, ON 159.4–163.2 MB over 3 runs each — within
+  run-to-run noise, as the 10 = 10 site count predicts).
+
+**Verdict: KEEP PAIRING as the default; revisit at the self-host
+port (E4).** Rationale, numbers over narrative: with the freelist
++ precise drops already in place, the drop-guided-only wins are
+bounded to ONE box class of peak high-water per arm-drop site
+(144→96 B above — the freelist recycles everything else either
+way), and the self-compile site count shows the shape occurs
+ZERO times in the largest real Fern codebase we have (10 reuse
+sites either way). That is not worth (a) flipping a
+memory-safety-critical default mid-way through the goal-2
+self-host port, or (b) porting TWO selection algorithms. The flag, tests, and this verdict stay in-tree so the
+self-host reuse port (`SELFHOST-PERCEUS-REUSE.md`) can (re)decide
+with the same harness when it reaches the reuse slice — if the
+port adopts one algorithm, drop-guided's frame-limited robustness
+under transformation plus its strict-superset behaviour here make
+it the better candidate to port ONCE, but that decision belongs to
+E4, not this evaluation. `docs/REUSE-CONTRACT.md`'s "Known gaps"
+entry points here.
+
 ## Testing strategy
 
 Three layers:

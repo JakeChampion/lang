@@ -328,7 +328,19 @@ reuse sites so "verify" matches "enable"); (c) graded `fip(n)`;
 The ICFP 2023 paper is the reference; `OWNERSHIP-INFERENCE-PLAN.md`
 is the standing home for the borrow-side interactions.
 
-**E3. Drop-guided reuse (native evaluation).** [status: not started]
+**E3. Drop-guided reuse (native evaluation).** [status: EVALUATED
+2026-07-13 — verdict: keep pairing, revisit at E4. Implemented
+behind `ast.RcReuseDropGuided` (default off) in
+`internal/ir/rc_dropguided.go`; measured numbers + verdict in
+`RC-PERCEUS-PLAN.md` ("E3 drop-guided reuse evaluation — verdict");
+`REUSE-CONTRACT.md`'s "Known gaps" entry updated. Headline: the
+token flow selects a strict SUPERSET of the pairing on this
+codebase (one new shape — donor dropped inside a dominated
+non-loop arm), but the self-compile static count shows 10 reuse
+sites flag-off vs 10 flag-on: the new shape occurs zero times in
+real Fern code today, so the win (one box class of peak per site,
+144→96 B on the synthetic loop) does not justify switching
+defaults mid-port.]
 Today's `computeReuseSources` is the PLDI 2021 pairing; ICFP 2022
 frame-limited/drop-guided is documented-superior (fragility under
 transformation). This item is an **evaluation slice, not a

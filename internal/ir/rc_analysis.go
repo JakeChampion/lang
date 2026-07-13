@@ -1755,22 +1755,44 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		}
 	}
 
+	// hooks packages the shared closures for the drop-guided strategy
+	// (rc_dropguided.go, ast.RcReuseDropGuided — plan E3). Both strategies
+	// propose pairs exclusively through attemptPair, so every gate and all
+	// bookkeeping is common; only the selection scan differs.
+	hooks := reusePairingHooks{
+		attemptPair:    attemptPair,
+		constructionAt: constructionAt,
+		declIndices:    declIndices,
+		deadFromIn:     deadFromIn,
+		reuseClassOk: func(name string) bool {
+			_, _, _, ok := reuseClassOf(name)
+			return ok
+		},
+		sources: sources,
+	}
+
 	// SAME-BLOCK pass: every block in the function — the body and each nested
 	// loop / if arm — is its own statement list with block-scoped locals. A
 	// construction C pairs with a D declared earlier in (and dead from C onward
 	// within) the SAME list. This is the high-value case (loop-body churn).
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		if blk, ok := n.(*ast.Block); ok {
-			declIdx := declIndices(blk.Stmts)
-			deadFrom := deadFromIn(blk.Stmts)
-			for k, st := range blk.Stmts {
-				if cName, cNode := constructionAt(st); cNode != nil {
-					attemptPair(cName, cNode, declIdx, k, deadFrom)
+	// Under the drop-guided flag the same lists are scanned token-major
+	// instead (drop-order FIFO claiming — dropGuidedSameList).
+	if ast.RcReuseDropGuided {
+		b.dropGuidedSameList(hooks)
+	} else {
+		ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			if blk, ok := n.(*ast.Block); ok {
+				declIdx := declIndices(blk.Stmts)
+				deadFrom := deadFromIn(blk.Stmts)
+				for k, st := range blk.Stmts {
+					if cName, cNode := constructionAt(st); cNode != nil {
+						attemptPair(cName, cNode, declIdx, k, deadFrom)
+					}
 				}
 			}
-		}
-		return true
-	})
+			return true
+		})
+	}
 
 	// CROSS-BLOCK pass: a block-top-level local D dominates and outlives a
 	// construction C NESTED inside a LATER top-level statement of that same
@@ -1819,6 +1841,15 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				return true
 			})
 		}
+	}
+
+	// DROP-GUIDED arm pass (flag only): a token born at a drop point INSIDE
+	// a dominated, non-loop arm flows forward to a later construction in the
+	// same arm — the shape neither pass above can see (D declared in the
+	// parent list, still referenced inside the enclosing statement). See
+	// dropGuidedArmPass for the soundness argument and gates.
+	if ast.RcReuseDropGuided {
+		b.dropGuidedArmPass(hooks)
 	}
 	return sources, consumed
 }
