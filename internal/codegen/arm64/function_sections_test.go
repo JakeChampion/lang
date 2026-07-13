@@ -42,3 +42,53 @@ func TestArm64FunctionSectionsDarwinUnaffected(t *testing.T) {
 		t.Error("arm64-darwin (Mach-O) output must NOT emit the ELF .section .text.<name> directive")
 	}
 }
+
+// strbufSrc is a minimal program that pulls in the global string-builder
+// runtime (__fern_strbuf_reset / _append / _take) so the emitters that back
+// them are exercised.
+const strbufSrc = `function main(): i32 {
+	strbuf_reset();
+	strbuf_append("hello, ");
+	strbuf_append("world");
+	var s: string = strbuf_take();
+	return s.len();
+}`
+
+// TestArm64StrBufRuntimeDarwinDialect guards the strbuf runtime's Mach-O
+// dialect. The helper was added ELF-only: it hand-emitted `.section .bss` /
+// `.section .text` and GNU `adrp`/`add ..., :lo12:sym` addressing, which
+// clang's Mach-O assembler rejects (`unexpected token in .section` /
+// `ADR/ADRP relocations must be GOT relative`) — link-failing the whole
+// arm64-darwin self-host CLI build. On the Darwin path it must use
+// `.section __DATA,__bss`, a plain `.text` switch-back, and `@PAGE`/
+// `@PAGEOFF` addressing for its BSS symbols.
+func TestArm64StrBufRuntimeDarwinDialect(t *testing.T) {
+	asm := compile(t, strbufSrc, Options{Darwin: true})
+
+	// Sanity: the strbuf runtime was actually emitted.
+	if !strings.Contains(asm, "__fern_strbuf_reset") {
+		t.Fatal("strbuf runtime not emitted; test can't guard its dialect")
+	}
+	for _, bad := range []string{":lo12:__fern_strbuf_len", ":lo12:__fern_strbuf_data", ".section .bss"} {
+		if strings.Contains(asm, bad) {
+			t.Errorf("arm64-darwin strbuf runtime must not emit ELF-only %q (clang's Mach-O assembler rejects it)", bad)
+		}
+	}
+	for _, want := range []string{"__fern_strbuf_len@PAGE", "__fern_strbuf_data@PAGE", ".section __DATA,__bss"} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("arm64-darwin strbuf runtime must emit Mach-O form %q", want)
+		}
+	}
+}
+
+// TestArm64StrBufRuntimeELFDialect pins that the ELF path keeps the GNU
+// dialect (the darwin gating must not flip the default target).
+func TestArm64StrBufRuntimeELFDialect(t *testing.T) {
+	asm := compile(t, strbufSrc, Options{})
+	if !strings.Contains(asm, ":lo12:__fern_strbuf_len") {
+		t.Error("ELF arm64 strbuf runtime must use GNU :lo12: addressing")
+	}
+	if strings.Contains(asm, "__fern_strbuf_len@PAGE") {
+		t.Error("ELF arm64 strbuf runtime must not emit Mach-O @PAGE addressing")
+	}
+}

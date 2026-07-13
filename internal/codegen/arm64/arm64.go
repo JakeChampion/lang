@@ -3983,22 +3983,28 @@ func (g *generator) emitStrBufRuntime() {
 	twoWord := ast.UseTwoWordStrings(8)
 
 	g.line("")
-	g.line(".section .bss")
+	if g.darwin {
+		// Mach-O zero-initialised data lives in __DATA,__bss; switch
+		// back with the plain `.text` directive (valid on both ELF and
+		// Mach-O). Mirrors the darwin gating on the alloc/BSS emit above.
+		g.line(".section __DATA,__bss")
+	} else {
+		g.line(".section .bss")
+	}
 	g.line(".align 8")
 	g.label("__fern_strbuf_len")
 	g.emit(".skip 8")
 	g.line(".align 8")
 	g.label("__fern_strbuf_data")
 	g.emit(".skip 67108864") // 64 MiB
-	g.line(".section .text")
+	g.line(".text")
 
 	// __fern_strbuf_reset(): len = 0.
 	g.line("")
 	g.line(".global __fern_strbuf_reset")
 	g.typeDirective("__fern_strbuf_reset")
 	g.label("__fern_strbuf_reset")
-	g.emit("adrp x0, __fern_strbuf_len")
-	g.emit("add x0, x0, :lo12:__fern_strbuf_len")
+	g.adrpAdd("x0", "__fern_strbuf_len")
 	g.emit("str xzr, [x0]")
 	g.emit("ret")
 	g.sizeDirective("__fern_strbuf_reset")
@@ -4022,18 +4028,15 @@ func (g *generator) emitStrBufRuntime() {
 		g.emitStrLen2W("w20", "x20")                // w20 = byte length (untagged)
 		g.emitStrDataPtr2W("x19", "x19", "x20", 32) // x19 = byte ptr (after SSO spill if needed)
 		// dst = strbuf_data + strbuf_len
-		g.emit("adrp x2, __fern_strbuf_len")
-		g.emit("add x2, x2, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x2", "__fern_strbuf_len")
 		g.emit("ldr x3, [x2]")
-		g.emit("adrp x0, __fern_strbuf_data")
-		g.emit("add x0, x0, :lo12:__fern_strbuf_data")
+		g.adrpAdd("x0", "__fern_strbuf_data")
 		g.emit("add x0, x0, x3")
 		g.emit("mov x1, x19")
 		g.emit("mov x2, x20")
 		g.emit("bl __fern_memcpy")
 		// bump len
-		g.emit("adrp x2, __fern_strbuf_len")
-		g.emit("add x2, x2, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x2", "__fern_strbuf_len")
 		g.emit("ldr x3, [x2]")
 		g.emit("add x3, x3, x20")
 		g.emit("str x3, [x2]")
@@ -4048,17 +4051,14 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("mov x19, x0")
 		g.emitStrLen("w20", "x19")         // w20 = byte length
 		g.emitStrDataPtr("x19", "x19", 24) // x19 = byte ptr
-		g.emit("adrp x2, __fern_strbuf_len")
-		g.emit("add x2, x2, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x2", "__fern_strbuf_len")
 		g.emit("ldr x3, [x2]")
-		g.emit("adrp x0, __fern_strbuf_data")
-		g.emit("add x0, x0, :lo12:__fern_strbuf_data")
+		g.adrpAdd("x0", "__fern_strbuf_data")
 		g.emit("add x0, x0, x3")
 		g.emit("mov x1, x19")
 		g.emit("mov x2, x20")
 		g.emit("bl __fern_memcpy")
-		g.emit("adrp x2, __fern_strbuf_len")
-		g.emit("add x2, x2, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x2", "__fern_strbuf_len")
 		g.emit("ldr x3, [x2]")
 		g.emit("add x3, x3, x20")
 		g.emit("str x3, [x2]")
@@ -4081,8 +4081,7 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("stp x29, x30, [sp, #-32]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("adrp x0, __fern_strbuf_len")
-		g.emit("add x0, x0, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x0", "__fern_strbuf_len")
 		g.emit("ldr x19, [x0]")
 		// alloc_rc1 x19 bytes — like __fern_strcat's two-word path,
 		// the result is rc-tracked by the IR (freeEligible on a
@@ -4096,13 +4095,11 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("mov x20, x0")
 		// memcpy(dst, strbuf_data, len)
 		g.emit("mov x0, x20")
-		g.emit("adrp x1, __fern_strbuf_data")
-		g.emit("add x1, x1, :lo12:__fern_strbuf_data")
+		g.adrpAdd("x1", "__fern_strbuf_data")
 		g.emit("mov x2, x19")
 		g.emit("bl __fern_memcpy")
 		// reset
-		g.emit("adrp x0, __fern_strbuf_len")
-		g.emit("add x0, x0, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x0", "__fern_strbuf_len")
 		g.emit("str xzr, [x0]")
 		// return (dst, len) — no SSO tag for plain heap form.
 		g.emit("mov x0, x20")
@@ -4116,8 +4113,7 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("stp x29, x30, [sp, #-32]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("adrp x0, __fern_strbuf_len")
-		g.emit("add x0, x0, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x0", "__fern_strbuf_len")
 		g.emit("ldr x19, [x0]") // x19 = len
 		// L2 rc-header layout — see __fern_strcat. Payload = len data only.
 		g.emit("mov x0, x19")
@@ -4126,13 +4122,11 @@ func (g *generator) emitStrBufRuntime() {
 		g.emitStrLenStore("w19", "x20")
 		// memcpy(data, strbuf_data, len)
 		g.emit("mov x0, x20")
-		g.emit("adrp x1, __fern_strbuf_data")
-		g.emit("add x1, x1, :lo12:__fern_strbuf_data")
+		g.adrpAdd("x1", "__fern_strbuf_data")
 		g.emit("mov x2, x19")
 		g.emit("bl __fern_memcpy")
 		// reset
-		g.emit("adrp x0, __fern_strbuf_len")
-		g.emit("add x0, x0, :lo12:__fern_strbuf_len")
+		g.adrpAdd("x0", "__fern_strbuf_len")
 		g.emit("str xzr, [x0]")
 		g.emit("mov x0, x20")
 		g.emit("ldp x19, x20, [sp, #16]")
