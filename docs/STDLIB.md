@@ -196,7 +196,9 @@ convention.
   `take`, `drop`, `all_non_empty`, `any_contains`,
   `count_str`, `all_starts_with`, `all_ends_with`,
   `sorted_str_asc`, `sorted_str_desc`, `join_with_last`
-- **generic `[T]` combinators** (free + method forms): `map`,
+- **generic `[T]` combinators** (free + method forms): `is_empty`,
+  `first`/`last` (→ `Option[T]`, `None` when empty), `get(i)`
+  (bounds-checked → `Option[T]`, negative index → `None`), `map`,
   `filter`, `fold`, `reduce`, `any`, `all`, `find`, `find_map`
   (first `Some` of a projection returning `Option[U]`), `position`,
   `count_where` (tally matching a predicate), `sum_by` (sum of an

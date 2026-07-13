@@ -960,6 +960,35 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 // A lazy `std/iter` can layer on later without reworking these
 // bodies.
 
+// `is_empty(xs)` — `true` iff `xs` has no elements. The readable spelling of
+// `xs.len() == 0`.
+pub function is_empty[T](xs: T[]): boolean {
+    return xs.len() == 0;
+}
+
+// `first(xs)` — `Some` of the first element, or `None` when empty. The safe,
+// bounds-checked alternative to `xs[0]` (which traps on an empty array).
+pub function first[T](xs: T[]): Option[T] {
+    if (xs.len() == 0) { return None; }
+    return Some(xs[0]);
+}
+
+// `last(xs)` — `Some` of the final element, or `None` when empty. The safe
+// alternative to `xs[xs.len() - 1]`.
+pub function last[T](xs: T[]): Option[T] {
+    var n: i32 = xs.len();
+    if (n == 0) { return None; }
+    return Some(xs[n - 1]);
+}
+
+// `get(xs, i)` — bounds-checked indexing: `Some(xs[i])` when `0 <= i < len`,
+// else `None`. Turns an out-of-range access (which `xs[i]` would trap on) into
+// a value you can match on; negative `i` is `None`, never a from-the-end index.
+pub function get[T](xs: T[], i: i32): Option[T] {
+    if (i < 0 || i >= xs.len()) { return None; }
+    return Some(xs[i]);
+}
+
 // `map(xs, f)` — fresh `U[]` with `f` applied to every element.
 // Empty → empty. The workhorse transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
@@ -1696,6 +1725,17 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
 // parameter / return is a composite (`string`, `Option`, …) hits the
 // indirect-call codegen limitation (#2753) on the native + wasm
 // backends, so keep callbacks scalar / bool / pointer-shaped there.
+
+// `xs.is_empty()` — true iff `xs` has no elements.
+pub function (xs: T[]) is_empty(): boolean { return is_empty(xs); }
+
+// `xs.first()` / `xs.last()` — `Some` of the first / last element, `None` when
+// empty. Safe, bounds-checked alternatives to `xs[0]` / `xs[len-1]`.
+pub function (xs: T[]) first(): Option[T] { return first(xs); }
+pub function (xs: T[]) last(): Option[T] { return last(xs); }
+
+// `xs.get(i)` — bounds-checked indexing: `Some(xs[i])` in range, else `None`.
+pub function (xs: T[]) get(i: i32): Option[T] { return get(xs, i); }
 
 // `xs.map(f)` — apply `f` to every element, yielding a new array.
 pub function (xs: T[]) map[U](f: (T) => U): U[] { return map(xs, f); }
