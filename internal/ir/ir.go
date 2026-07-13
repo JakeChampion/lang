@@ -8567,7 +8567,19 @@ func (b *builder) expr(e ast.Expr) error {
 			// `map_new()` result is NOT a mutator call, so it still moves in
 			// (no needless copy / no leak). The fast ownership-flow-aware
 			// inc-only path is the Perceus port's job (roadmap goal 2).
-			if isMapType(fieldType(sd.Fields, f.Name)) && isMapMutatorCall(f.Value) {
+			//
+			// Issue #4871: the same aliasing arises one `var` removed —
+			// `var m = s.m.insert(...); Struct { m: m }` — where the field value
+			// is a plain ident, not a direct call, so isMapMutatorCall misses it.
+			// borrowedMapFieldResults flags such a local (mutator with a
+			// field-access receiver); clone it too, but only when it is MOVED
+			// into the field (its last use): a moved local is not exit-dec'd, so
+			// the container's field keeps the original at rc==1 for the
+			// container's own drop while the struct owns the clone. A non-move
+			// (live-after) ident would still be exit-dec'd — cloning there would
+			// free the aliased buffer early — so it is left to the Perceus port.
+			if isMapType(fieldType(sd.Fields, f.Name)) &&
+				(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
 				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
 			}
 			// Reuse payloadStoreOp so the store is correctly
@@ -13677,6 +13689,21 @@ func isMapMutatorCall(e ast.Expr) bool {
 		return true
 	}
 	return false
+}
+
+// isBorrowedMapFieldResultMove reports whether e is an ident that (a) names a
+// local bound to a Map COW-mutator with a field-access receiver
+// (borrowedMapFieldResults — the #4871 alias shape) and (b) is MOVED into the
+// field at this occurrence. Both must hold for the clone at the StructLit site
+// to be sound: the clone gives the container an independent buffer, and the
+// move guarantees the aliasing local is not also exit-dec'd (which would free
+// the original out from under the still-live source container).
+func (b *builder) isBorrowedMapFieldResultMove(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return b.rc.borrowedMapFieldResults[id.Name] && b.rc.moveSites[e]
 }
 
 func isArrayTypeOfLocal(name string, b *builder) bool {
