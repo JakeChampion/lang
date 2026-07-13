@@ -871,6 +871,28 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_dedup_test.fern` covers std/array's dedup[T: cmp.Eq]
+// (free + method forms): collapse runs of CONSECUTIVE equal elements, the
+// single-pass complement of distinct. Runs / all-equal / no-dup / sorted /
+// empty (i32) cases on the interp gate and the self-host x86-64 + arm64 gates
+// (same cmp.Eq bound / monomorphisation as distinct). STRING-element dedup is
+// native-differential-only (self-host mishandles the generic cmp.Eq over
+// pointer payloads); the Go-side TestNativeArrayDedup pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerArrayDedupExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_dedup_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array dedup", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_accessors_test.fern` covers std/array's foundational
 // accessors is_empty / first / last / get (free + method forms): Option[T]
 // returns, None on empty / out-of-range, negative index → None. On the interp

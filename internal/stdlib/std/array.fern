@@ -1602,6 +1602,22 @@ pub function distinct[T: cmp.Eq](xs: T[]): T[] {
     return out;
 }
 
+// `dedup(xs)` — fresh `T[]` with each run of CONSECUTIVE equal elements
+// collapsed to a single element: `[1,1,2,2,1]` → `[1,2,1]`. Unlike `distinct`
+// (which removes ALL duplicates anywhere), `dedup` only removes adjacent ones —
+// so on a sorted array it behaves like `distinct` but in a single O(n) pass,
+// and on unsorted data it compresses runs while keeping later repeats. Empty →
+// empty. Same `T: cmp.Eq` bound / per-type monomorphisation as `distinct`.
+pub function dedup[T: cmp.Eq](xs: T[]): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // =================== EQ-DRIVEN SET ALGEBRA ===================
 //
 // `count` / `union` / `intersection` / `difference` over an arbitrary `T[]`,
@@ -1817,6 +1833,9 @@ pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean { return cmp.is_sorted(x
 // `xs.equal(other)` — structural element-wise equality (same length and
 // equal elements at every index). The method form of array.equal.
 pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean { return equal(xs, other); }
+
+// `xs.dedup()` — collapse each run of consecutive equal elements to one.
+pub function (xs: T[]) dedup[T: cmp.Eq](): T[] { return dedup(xs); }
 
 // `xs.starts_with(prefix)` / `xs.ends_with(suffix)` — array analogues of
 // the string prefix/suffix tests, over any `T: cmp.Eq`.
