@@ -185,6 +185,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// checker emits — where the pre-slice self-host typed `b.v` as unknown
 		// and E003 never fired. The clean read is pinned by the CLI exit test.
 		{"generic-struct-field-mismatch", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; var s: string = b.v; return 0; }\n", []string{"E003"}},
+		// NESTED generic field spellings (#4346 piece 2): a type parameter INSIDE
+		// a field's spelling is substituted throughout, so off a `Wrapper[i32]`
+		// (`items: T[]`) the field `items` is i32[] and its element is i32 —
+		// binding it to a MISMATCHED `string` draws E003, matching the Go
+		// checker, where the pre-slice self-host typed the nested field unknown
+		// and E003 never fired. The clean read is pinned by the CLI exit test.
+		{"generic-nested-field-mismatch", "struct Wrapper[T] { items: T[] }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] }; var s: string = w.items[0]; return 0; }\n", []string{"E003"}},
+		{"generic-nested-field-clean", "struct Wrapper[T] { items: T[] }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] }; return w.items[0]; }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
@@ -1109,6 +1117,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		//     oracle: the first is clean, the second draws E030.
 		{"match-guarded-then-unguarded-ok", "enum Color { Red, Green, Blue }\nfunction f(c: Color): i32 { match (c) { Red when 1 == 1 => { return 1; }, Red => { return 2; }, Green => { return 3; }, Blue => { return 4; } } }\nfunction main(): i32 { return f(Green); }\n"},
 		{"match-guarded-only-nonexhaustive", "enum Color { Red, Green, Blue }\nfunction f(c: Color): i32 { match (c) { Red when 1 == 2 => { return 1; }, Green => { return 3; }, Blue => { return 4; } } }\nfunction main(): i32 { return f(Green); }\n"},
+		// Nested generic field spellings (#4346 piece 2): reading a field whose
+		// declared type nests a type parameter — `items: T[]`, `kv: (K, V)` — off
+		// a concrete instantiation substitutes the arg throughout, so
+		// `Wrapper[i32].items` is i32[] (element i32) and `Pair[i32, string].kv`
+		// is (i32, string). Both well-typed against the Go oracle — the self-host
+		// must stay silent where it once typed the nested field unknown and
+		// either over- or under-flagged.
+		{"generic-nested-array-field-ok", "struct Wrapper[T] { items: T[] }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] }; return w.items[0]; }\n"},
+		{"generic-nested-tuple-field-ok", "struct Pair[K, V] { kv: (K, V) }\nfunction main(): i32 { var p: Pair[i32, string] = Pair { kv: (7, \"hi\") }; return p.kv.0; }\n"},
 	}
 
 	for _, tc := range progs {
