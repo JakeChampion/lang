@@ -1549,6 +1549,27 @@ pub function sort[T: cmp.Ord](xs: T[]): T[] {
     return src;
 }
 
+// `binary_search(xs, target)` — `Some(i)` for an index where `xs[i] == target`,
+// or `None` if absent, assuming `xs` is sorted ASCENDING by the element type's
+// `Ord` ordering (the order `sort` produces). O(log n) — halve the search range
+// each step via the three-way `xs[mid].cmp(target)`. The `T: cmp.Ord` bound
+// monomorphises the compare per element type (scalar for `i32`, lexicographic
+// for `string`), the same mechanism as `sort`. On duplicates, returns SOME
+// matching index (not necessarily the first). The return is `Option[i32]`
+// regardless of `T`. Precondition: `xs` must be sorted — on unsorted input the
+// result is unspecified (it won't crash, but may miss a present element).
+pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
+    var lo: i32 = 0;
+    var hi: i32 = xs.len();
+    while (lo < hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var c: i32 = xs[mid].cmp(target);
+        if (c == 0) { return Some(mid); }
+        if (c < 0) { lo = mid + 1; } else { hi = mid; }
+    }
+    return None;
+}
+
 // =================== EQ-DRIVEN GENERIC VERBS ===================
 //
 // `contains` / `index_of` / `distinct` over an arbitrary `T[]`, driven by
@@ -1829,6 +1850,11 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] { return min_by(xs,
 // `xs.is_sorted()` — true iff `xs` is in non-decreasing `Ord` order
 // (vacuously true for length < 2).
 pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean { return cmp.is_sorted(xs); }
+
+// `xs.binary_search(target)` — `Some(i)` where `xs[i] == target`, else `None`,
+// assuming `xs` is sorted ascending. O(log n). The method form of
+// array.binary_search.
+pub function (xs: T[]) binary_search[T: cmp.Ord](target: T): Option[i32] { return binary_search(xs, target); }
 
 // `xs.equal(other)` — structural element-wise equality (same length and
 // equal elements at every index). The method form of array.equal.
