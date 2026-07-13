@@ -127,6 +127,18 @@ function test_zip(): test.TestOutcome {
     return test.assert_true(a.zip(n).is_none() && n.zip(a).is_none());
 }
 
+function test_unzip(): test.TestOutcome {
+    // unzip is the inverse of zip: Some((7,"hi")) -> (Some(7), Some("hi")).
+    var some: Option[(i32, string)] = Some((7, "hi"));
+    var sa: (Option[i32], Option[string]) = some.unzip();
+    if (sa.0.unwrap_or(0) != 7) { return test.fail("first"); }
+    if (sa.1.unwrap_or("") != "hi") { return test.fail("second"); }
+    // None -> (None, None).
+    var none: Option[(i32, string)] = None;
+    var na: (Option[i32], Option[string]) = none.unzip();
+    return test.assert_true(na.0.is_none() && na.1.is_none());
+}
+
 function test_xor(): test.TestOutcome {
     var s: Option[i32] = Some(5);
     var t: Option[i32] = Some(9);
@@ -169,6 +181,7 @@ function main(): i32 {
     r = r.it("ok_or_else",          test_ok_or_else());
     r = r.it("map_or_else",         test_map_or_else());
     r = r.it("zip",                 test_zip());
+    r = r.it("unzip",               test_unzip());
     r = r.it("xor",                 test_xor());
     r = r.it("flatten",             test_flatten());
     return r.finish();

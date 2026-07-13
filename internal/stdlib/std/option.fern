@@ -124,6 +124,15 @@ pub function (o: Option[T]) zip[U](other: Option[U]): Option[(T, U)] {
     }
 }
 
+// unzip is the inverse of zip: split an option of a pair into a pair of
+// options. `Some((a, b))` -> `(Some(a), Some(b))`; `None` -> `(None, None)`.
+pub function (o: Option[(T, U)]) unzip[T, U](): (Option[T], Option[U]) {
+    match (o) {
+        Some(p) => { return (Some(p.0), Some(p.1)); },
+        None => { return (None, None); }
+    }
+}
+
 // xor yields a value only when EXACTLY one of the two options is
 // present: `Some` xor `None` (either order) -> that `Some`; two `Some`s
 // or two `None`s -> `None`.
