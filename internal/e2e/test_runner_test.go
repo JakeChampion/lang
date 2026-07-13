@@ -311,6 +311,27 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i32_to_string_radix_test.fern` covers std/i32's
+// to_string_radix(base) — render an i32 in an arbitrary base (2..36), the
+// general form behind to_binary/to_oct/to_hex and the write-side inverse of
+// string.parse_int_radix. Several bases, sign, zero, out-of-range base, and a
+// round-trip. On the interp gate and the self-host x86-64 + arm64 gates (i32 ->
+// string render, self-hosts cleanly); the Go-side TestI32ToStringRadix pins
+// native compilation on all four backends. Passing → exit 0.
+func TestRunnerI32ToStringRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_to_string_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 to_string_radix", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/i32_bit_arith_test.fern` covers std/i32's abs_diff (absolute
 // difference via an ordering branch) and count_zeros (complement of count_ones;
 // the two sum to 32). Kept out of i32_test to keep the self-host bundle under
