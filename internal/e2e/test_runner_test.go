@@ -2020,6 +2020,27 @@ func TestRunnerFloatLog2Log10Example(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_exp2_exp10_test.fern` covers std/float's exp2 / exp10 —
+// base-2 and base-10 exponentials (inverses of log2 / log10), built on the
+// natural exp via 2^x = e^(x·ln2) / 10^x = e^(x·ln10), f64 and f32. On the
+// interp gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near);
+// the Go-side TestFloatExp2Exp10 pins native compilation on interp/x86-64/arm64
+// (wasmbin skips libm transcendentals, the known gap exp/log/sin share).
+// Passing → exit 0.
+func TestRunnerFloatExp2Exp10Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_exp2_exp10_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float exp2/exp10", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

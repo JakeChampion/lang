@@ -105,7 +105,9 @@ Receiver methods on i32 / byte values.
   `x - trunc(x)`), `sqrt`, `pow(y)`, `hypot(y)` (Euclidean
   length, overflow-safe), `log` (natural), `log2` / `log10`
   (base-2 / base-10, via change-of-base ÷ ln2 / ÷ ln10),
-  `exp`, `sin`, `cos`, `tan`.
+  `exp`, `exp2` / `exp10` (base-2 / base-10 exponentials,
+  inverses of `log2` / `log10`, via `e^(x·ln2)` / `e^(x·ln10)`),
+  `sin`, `cos`, `tan`.
   Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
   hardware-precise op.

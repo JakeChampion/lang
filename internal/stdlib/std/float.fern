@@ -223,6 +223,15 @@ pub function (x: f64) log(): f64 { return __log_f64(x); }
 pub function (x: f64) log2(): f64 { return __log_f64(x) / 0.6931471805599453; }
 pub function (x: f64) log10(): f64 { return __log_f64(x) / 2.302585092994046; }
 pub function (x: f64) exp(): f64 { return __exp_f64(x); }
+// `exp2(x)` / `exp10(x)` — base-2 and base-10 exponentials, the inverses of
+// `log2` / `log10`. Built on the natural `exp` via `2^x == e^(x*ln2)` and
+// `10^x == e^(x*ln10)`, so — like the logs — they reuse the `__exp_f64` the
+// wasm-IR backend already lowers rather than needing a new primitive.
+// `exp2(3)` is `8`, `exp2(10)` is `1024`, `exp10(3)` is `1000`; `exp2` of a
+// whole number and `exp10` of a whole number land on the exact power up to
+// rounding, and both round-trip with their logs (`exp2(x).log2() == x`).
+pub function (x: f64) exp2(): f64 { return __exp_f64(x * 0.6931471805599453); }
+pub function (x: f64) exp10(): f64 { return __exp_f64(x * 2.302585092994046); }
 pub function (x: f64) sin(): f64 { return __sin_f64(x); }
 pub function (x: f64) cos(): f64 { return __cos_f64(x); }
 // `tan(x)` — tangent, as `sin(x) / cos(x)`; the missing sibling of the
@@ -344,6 +353,8 @@ pub function (x: f32) log(): f32 { return __log_f64(x as f64) as f32; }
 pub function (x: f32) log2(): f32 { return (__log_f64(x as f64) / 0.6931471805599453) as f32; }
 pub function (x: f32) log10(): f32 { return (__log_f64(x as f64) / 2.302585092994046) as f32; }
 pub function (x: f32) exp(): f32 { return __exp_f64(x as f64) as f32; }
+pub function (x: f32) exp2(): f32 { return __exp_f64(x as f64 * 0.6931471805599453) as f32; }
+pub function (x: f32) exp10(): f32 { return __exp_f64(x as f64 * 2.302585092994046) as f32; }
 pub function (x: f32) sin(): f32 { return __sin_f64(x as f64) as f32; }
 pub function (x: f32) cos(): f32 { return __cos_f64(x as f64) as f32; }
 pub function (x: f32) tan(): f32 { return (__sin_f64(x as f64) / __cos_f64(x as f64)) as f32; }
