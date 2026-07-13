@@ -15041,9 +15041,20 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		// reference); on the in-place branch it is the sole owner's release
 		// (frees on last reference). dropStructField is the type-appropriate
 		// deep drop, is_unique-gated internally, so a shared element only decs.
-		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
-		b.emit(Op{Kind: OpLoad, Width: storeWidth})
-		b.dropStructField(elemType)
+		//
+		// Gated on RcFreeEnabled like every other drop-site: no-free mode
+		// emits no drops (the replaced element leaks — safe, arena-only), and
+		// dropStructField routes an RC-tracked struct/enum/array element to a
+		// named `__drop_<...>` fn whose BODY the post-pass worklist only
+		// generates under RcFreeEnabled. Emitting the CALL here in no-free
+		// mode left that symbol undefined at link time — the `.with`-patched
+		// RInst[] (enum with a string payload) in std/regex's __rx_emit was
+		// the first construct to hit it (#4956 regex_captures fixture).
+		if ast.RcFreeEnabled {
+			b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+			b.emit(Op{Kind: OpLoad, Width: storeWidth})
+			b.dropStructField(elemType)
+		}
 		// Store the new element value.
 		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
