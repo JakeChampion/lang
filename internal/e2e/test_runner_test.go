@@ -871,6 +871,28 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_binary_search_test.fern` covers std/array's
+// binary_search[T: cmp.Ord] (free + method forms): O(log n) search of an
+// ascending-sorted array → Option[i32]. Found (first/middle/last), absent
+// (in-range/below/above), empty, single, and STRING elements. Fully self-host
+// gated (x86-64 + arm64) incl. strings — the return is Option[i32] (scalar), so
+// it avoids the pointer-payload gap that limits the T[]-returning generics. The
+// Go-side TestArrayBinarySearch pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerArrayBinarySearchExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_binary_search_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array binary_search", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_dedup_test.fern` covers std/array's dedup[T: cmp.Eq]
 // (free + method forms): collapse runs of CONSECUTIVE equal elements, the
 // single-pass complement of distinct. Runs / all-equal / no-dup / sorted /

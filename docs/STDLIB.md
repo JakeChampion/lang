@@ -215,7 +215,8 @@ convention.
   Eq/Ord-bounded: `contains`, `index_of`,
   `index_of_last`, `distinct` (remove all duplicates), `dedup`
   (collapse consecutive runs — single-pass complement of
-  `distinct`), `count`, `is_sorted`, `equal`,
+  `distinct`), `binary_search` (O(log n) → `Option[i32]` over an
+  ascending-sorted array), `count`, `is_sorted`, `equal`,
   `starts_with`/`ends_with`.
 
 ### `std/unicode`
