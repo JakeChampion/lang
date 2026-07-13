@@ -245,6 +245,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"i64_intdiv", langSrcAbs(t, "examples/tests/i64_intdiv_test.fern"), ""},
 		{"u64_roots", langSrcAbs(t, "examples/tests/u64_roots_test.fern"), ""},
 		{"float_clamp01_absdiff_muladd", langSrcAbs(t, "examples/tests/float_clamp01_absdiff_muladd_test.fern"), ""},
+		// NOTE: u32_roots is deliberately NOT gated here. It is native-differential
+		// + interp only: the self-host compiler's u32 arithmetic doesn't truncate /
+		// compare as unsigned near the 2^31 boundary (the documented u32 self-host
+		// gap that keeps u32_arith interp-only), which makes next_power_of_2's
+		// doubling loop spin forever in the self-host-compiled binary. All four
+		// native backends handle it correctly — see internal/e2e/u32_roots_test.go.
 		{"float_array_strict_sort", langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern"), ""},
 		{"lines_log", langSrcAbs(t, "examples/tests/lines_log_test.fern"), ""},
 		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern"), ""},
