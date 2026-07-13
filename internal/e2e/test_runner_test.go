@@ -717,7 +717,30 @@ func TestRunnerArrayHofExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/array higher-order", "# pass 24", "# fail 0", "1..24"} {
+	for _, w := range []string{"# Suite: std/array higher-order", "# pass 18", "# fail 0", "1..18"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_extremum_by_test.fern` covers std/array's
+// comparator-driven extremum verbs `max_by` / `min_by` (free + method forms)
+// over i32 and string-length comparators: extremum, empty → None, ties keep
+// the FIRST, single element. Interp-gated only (NOT in selfHostStdTestCases):
+// a string-element `max_by`/`min_by` crashes the arm64 self-host emitter, and
+// folding these into array_hof tips its bundle over the asm_ir 512-function
+// budget — the file's header documents both. Native compilation across all
+// four backends is pinned by the Go-side TestNativeArrayMinMaxBy. Passing →
+// exit 0.
+func TestRunnerArrayExtremumByExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_extremum_by_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array extremum-by", "# pass 9", "# fail 0", "1..9"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
