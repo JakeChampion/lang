@@ -31,6 +31,12 @@ name: Test e2e other
 #     Accepted, TestMixedSignednessRejected, TestPolymorphicLiteral
 #     I32Overflow, TestSubI32LiteralOverflow, TestU32SignedMix
 #     Rejected, TestUnionUnknownMemberErrors).
+#   - the wasm-component interop tests without a dedicated prefix
+#     (TestExternVariant*, TestCmdLang*, TestComponent*, …). These
+#     need wasmtime + wasm-tools + the WASI adapter (setup-fern's
+#     wasmtime input below) — without the toolchain they SKIP
+#     silently, and this lane's green tells you nothing about them
+#     (see #4942 for the miscompile that shipped that way).
 #
 # Matrix per arch because the interp + checker paths are
 # arch-independent but TestRunner pulls in the stdlib (which has
@@ -83,6 +89,16 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
+          # The catch-all lane owns every test without a dedicated
+          # prefix — including the wasm-component interop tests
+          # (TestExternVariant*, TestCmdLang*, TestComponent*, …)
+          # that need wasmtime + wasm-tools + the WASI adapter at
+          # runtime. Without the toolchain those tests SKIP silently,
+          # which is how the #4942 cross-width binding-slot miscompile
+          # (invalid wasm rejected at `wasm-tools compose`) shipped
+          # unseen: this lane was green while the only tests that
+          # could catch it never ran anywhere in CI.
+          wasmtime: "true"
       - name: go test (e2e — non-backend-specific)
         # `-skip` (Go 1.20+) is the negation lever the `-run`
         # alternation lacks. Anything not matching the listed
