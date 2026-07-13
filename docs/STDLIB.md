@@ -117,8 +117,10 @@ Receiver methods on i32 / byte values.
   `round`, `round_to(digits)` (round to N decimal places, half
   away from zero; negative `digits` round to tens/hundreds),
   `trunc`, `fract` (signed fractional part
-  `x - trunc(x)`), `sqrt`, `pow(y)`, `hypot(y)` (Euclidean
-  length, overflow-safe), `log` (natural), `log2` / `log10`
+  `x - trunc(x)`), `sqrt`, `cbrt` (real cube root, defined for
+  negatives), `pow(y)`, `hypot(y)` (2-D Euclidean length,
+  overflow-safe), `hypot3(y, z)` (3-D Euclidean length,
+  overflow-safe), `log` (natural), `log2` / `log10`
   (base-2 / base-10, via change-of-base ÷ ln2 / ÷ ln10),
   `exp`, `exp2` / `exp10` (base-2 / base-10 exponentials,
   inverses of `log2` / `log10`, via `e^(x·ln2)` / `e^(x·ln10)`),

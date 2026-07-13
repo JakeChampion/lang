@@ -242,6 +242,17 @@ pub function (x: f64) tan(): f64 { return __sin_f64(x) / __cos_f64(x); }
 // base. Use `(b).pow(e)` for `b ^ e`.
 pub function (x: f64) pow(y: f64): f64 { return __pow_f64(x, y); }
 
+// `cbrt(x)` — the real cube root, the companion to `sqrt` but defined for
+// negative inputs too (`cbrt(-8)` is `-2`). Since `pow` of a negative base with
+// a fractional exponent is NaN, the sign is peeled off and reapplied around
+// `pow(|x|, 1/3)`. `cbrt(0)` is `0` (sign preserved), NaN passes through.
+pub function (x: f64) cbrt(): f64 {
+    if (x != x) { return x; }
+    if (x == 0.0) { return x; }
+    if (x < 0.0) { return 0.0 - __pow_f64(0.0 - x, 1.0 / 3.0); }
+    return __pow_f64(x, 1.0 / 3.0);
+}
+
 // `hypot(x, y)` — the Euclidean length `sqrt(x*x + y*y)`, computed via the
 // scaled form `hi * sqrt(1 + (lo/hi)^2)` (hi/lo the larger/smaller magnitude)
 // so it does NOT overflow when a naive `x*x + y*y` would, and stays accurate
@@ -254,6 +265,22 @@ pub function (x: f64) hypot(y: f64): f64 {
     if (hi == 0.0) { return 0.0; }
     var r: f64 = lo / hi;
     return hi * (1.0 + r * r).sqrt();
+}
+
+// `hypot3(x, y, z)` — the 3-D Euclidean length `sqrt(x*x + y*y + z*z)`, the
+// three-argument sibling of `hypot`. Same overflow-safe scaling: divide through
+// by the largest magnitude before squaring, so a component near the f64 max
+// doesn't overflow the sum. `hypot3(0, 0, 0)` is `0`; `hypot3(2, 3, 6)` is `7`.
+pub function (x: f64) hypot3(y: f64, z: f64): f64 {
+    var ax: f64 = x.abs();
+    var ay: f64 = y.abs();
+    var az: f64 = z.abs();
+    var hi: f64 = ax.max(ay).max(az);
+    if (hi == 0.0) { return 0.0; }
+    var rx: f64 = ax / hi;
+    var ry: f64 = ay / hi;
+    var rz: f64 = az / hi;
+    return hi * (rx * rx + ry * ry + rz * rz).sqrt();
 }
 
 // `fract(x)` — the fractional part, `x - trunc(x)`; keeps `x`'s sign, so
@@ -408,6 +435,9 @@ pub function (x: f32) tan(): f32 { return (__sin_f64(x as f64) / __cos_f64(x as 
 pub function (x: f32) pow(y: f32): f32 {
     return __pow_f64(x as f64, y as f64) as f32;
 }
+pub function (x: f32) cbrt(): f32 {
+    return (x as f64).cbrt() as f32;
+}
 pub function (x: f32) hypot(y: f32): f32 {
     var ax: f64 = (x as f64).abs();
     var ay: f64 = (y as f64).abs();
@@ -416,6 +446,9 @@ pub function (x: f32) hypot(y: f32): f32 {
     if (hi == 0.0) { return 0.0 as f32; }
     var r: f64 = lo / hi;
     return (hi * (1.0 + r * r).sqrt()) as f32;
+}
+pub function (x: f32) hypot3(y: f32, z: f32): f32 {
+    return (x as f64).hypot3(y as f64, z as f64) as f32;
 }
 pub function (x: f32) fract(): f32 { return (x as f64 - __trunc_f64(x as f64)) as f32; }
 
