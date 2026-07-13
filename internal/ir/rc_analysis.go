@@ -155,6 +155,18 @@ type rcPlan struct {
 	// loop-reinit drop: re-declaring it per iteration would free the
 	// still-live source local's cell.
 	dynAliasElemArrays map[string]bool
+	// borrowedMapFieldResults[name] marks a local bound to a Map COW-mutator
+	// call whose RECEIVER is a field access (`var m = s.m.insert(k, v)`). On
+	// the rc==1 in-place path the mutator returns the SAME handle the
+	// container's field `s.m` still holds, so `m` aliases the container's
+	// buffer. Wrapping such a local into a fresh struct field
+	// (`Wrapper { m: m }`) and later dropping the container then frees the
+	// buffer out from under the new struct — the var-indirected twin of the
+	// #2763 direct-construction clone (issue #4871). The StructLit lowering
+	// clones a Map field initialised by such a local, exactly as #2763 clones
+	// a Map field initialised by a direct mutator call, so the new container
+	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
+	borrowedMapFieldResults map[string]bool
 }
 
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
@@ -178,6 +190,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.freeEligible = b.computeFreeEligible()
 	b.rc.moveSites = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
+	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
 	b.rc.dynAliasElemArrays = map[string]bool{}
@@ -2886,6 +2899,51 @@ func inPlacePushes(body ast.Node) map[*ast.Call]bool {
 // x's release stays the exit dec sweep — after every statement, hence after
 // every read through y — enforced by the borrowSources exclusions in
 // computePreciseDrops and computeReuseSources' donor gate.
+// computeBorrowedMapFieldResults finds locals bound to a Map COW-mutator call
+// whose receiver is a field access (`var m = s.m.insert(k, v)`) — see the
+// borrowedMapFieldResults field doc (issue #4871). Purely syntactic: the walk
+// runs on the already-mangled AST (`insert` → `__method_Map_set`), the same
+// form isMapMutatorCall matches at the construction site.
+func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
+	out := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		if mapMutatorReceiverIsFieldAccess(v.Init) {
+			out[v.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// mapMutatorReceiverIsFieldAccess reports whether e is a Map COW-mutator call
+// (`__method_Map_set` / `_delete` / `_clear`) whose receiver argument (arg 0)
+// is a field access — the "borrowed through a container" shape that makes the
+// rc==1 in-place mutation alias the container's buffer (#4871).
+func mapMutatorReceiverIsFieldAccess(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch id.Name {
+	case "__method_Map_set", "__method_Map_delete", "__method_Map_clear":
+	default:
+		return false
+	}
+	if len(call.Args) == 0 {
+		return false
+	}
+	_, isField := call.Args[0].(*ast.FieldAccess)
+	return isField
+}
+
 func (b *builder) computeBorrowedAliases() {
 	b.rc.borrowedAlias = map[string]bool{}
 	b.rc.borrowedAliasSites = map[ast.Node]bool{}

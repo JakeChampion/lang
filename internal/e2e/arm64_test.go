@@ -46,6 +46,33 @@ func TestArm64ExitCode(t *testing.T) {
 	}
 }
 
+// Issue #4871 (arm64 arm of the x86 TestX86_64NativeMapFieldStructRebindIndirect):
+// `var m = s.m.insert(...); return ISet { m: m }`, self-reassigned `s = iset_add(s,
+// x)`, aliased the borrowed receiver's in-place Map buffer and corrupted it on the
+// second wrap-insert (the issue reports arm64 corruption; here it hung). The
+// StructLit clone now covers the var-indirected mutator result, so the shared-IR
+// fix holds on arm64 too. Set size is 2.
+func TestArm64MapFieldStructRebindIndirect(t *testing.T) {
+	src := `
+import "core/map";
+struct ISet { m: Map[i32, i32] }
+function iset_add(s: ISet, x: i32): ISet {
+    var m: Map[i32, i32] = s.m.insert(x, 1);
+    return ISet { m: m };
+}
+function main(): i32 {
+    var m0: Map[i32, i32] = map_new(4);
+    var s: ISet = ISet { m: m0 };
+    s = iset_add(s, 10);
+    s = iset_add(s, 20);
+    s = iset_add(s, 10);
+    return s.m.len();
+}`
+	if _, code := compileAndRunArm64(t, src); code != 2 {
+		t.Errorf("indirect IntSet rebind (arm64) → exit = %d, want 2 (issue #4871)", code)
+	}
+}
+
 // arm64 arithmetic + locals + function calls. Exercises the
 // per-op switch's coverage of OpAdd / OpSub / OpMul, OpLoadLocal
 // / OpStoreLocal, OpCallDirect for user-defined functions, and
