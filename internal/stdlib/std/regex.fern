@@ -15,6 +15,8 @@
 //   [^...]       negated class — any byte NOT listed
 //   ( ... )      capturing group (scopes a quantifier or an alternation;
 //                its span is extractable via `regex_captures`)
+//   (?<name>...) named capturing group — captures like `( … )` and is also
+//                reachable by name (`.group_named("name")`, `${name}`)
 //   (?: ... )    non-capturing group — same scoping, no capture slot
 //   a|b|c        alternation — match any one alternative
 //   *  +  ?      zero-or-more / one-or-more / optional, on the preceding
@@ -55,11 +57,15 @@
 // `.group_count()`; group 0 is the whole match). `regex_captures_all`
 // returns every non-overlapping match's captures left to right. Groups are
 // numbered by their `(` from 1, left to right; `(?:…)` groups without
-// capturing. A group inside a quantifier reports its LAST iteration's span
+// capturing. A `(?<name>…)` group captures like `( … )` AND is reachable
+// by name — `.group_named(name)` / `.group_named_start(name)` /
+// `.group_named_end(name)` / `.has_group_named(name)` / `.group_index(name)`
+// (unknown name → "" / -1; a duplicate name resolves to the lowest index).
+// A group inside a quantifier reports its LAST iteration's span
 // (`(a|b)+` on "ab" captures "b"). `regex_replace_groups` /
 // `regex_replace_all_groups` substitute a `$`-template per match
-// (`$1`…`$9` group text, `$0` whole match, `$$` literal dollar).
-// Capture extraction runs on a compiled
+// (`$1`…`$9` group text, `${name}` named-group text, `$0` whole match,
+// `$$` literal dollar). Capture extraction runs on a compiled
 // instruction program (a Pike-VM thread simulation — see `RInst` below),
 // so it stays linear-time per scan position with no backtracking blow-up,
 // same as the span matcher. Backreferences (`\1` in a PATTERN) are not
@@ -90,6 +96,15 @@
 // self-host backend only constructs/binds one payload. Boxing the two
 // fields in a struct keeps std/regex compilable on EVERY backend (native,
 // self-host IR, and the legacy AST path the treeshake gate exercises).
+// RGroupData is deliberately kept to exactly two fields (`idx`, `node`) —
+// the same shape it has had since captures landed. A `(?<name>…)` label is
+// NOT stored here; group names are recovered by a separate positional scan
+// of the pattern (`__rx_group_names`). This is not just tidiness: adding a
+// trailing `string` field to this struct made the self-host IR span matcher
+// (`__rx_match`'s `RGroup(gd) => __rx_match(gd.node, …)`) crash on a plain
+// `(ab)+c` match, while the capture VM path stayed fine — a struct-layout
+// codegen subtlety in the self-host backend. Keeping this struct byte-shape
+// stable side-steps it and keeps the hot matcher path unchanged.
 struct RGroupData { idx: i32, node: RNode }
 
 pub enum RNode {
@@ -143,6 +158,24 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
         // pattern likely won't match) but must NOT claim a capture index,
         // or every later group's number would silently shift.
         if (i + 1 < p.len() && p[i + 1] == 63) {                     // '?'
+            // `(?<name>…)` — a NAMED capturing group: claims an index like a
+            // bare group (the NAME itself is recovered separately by
+            // `__rx_group_names`, which mirrors this exact recognition — the
+            // node stays a plain 2-field RGroupData). Recognised as `(?<`
+            // followed by a name byte that is NOT `=`/`!` (those would be
+            // `(?<=` / `(?<!` lookbehind, unsupported). A `(?<…` with no
+            // closing `>` falls through to non-capturing.
+            if (i + 3 < p.len() && p[i + 2] == 60
+                && p[i + 3] != 61 && p[i + 3] != 33) {               // '?' '<' !'=' !'!'
+                var ne: i32 = i + 3;
+                while (ne < p.len() && p[ne] != 62) { ne = ne + 1; }  // scan to '>'
+                if (ne < p.len()) {                                  // found '>'
+                    var gi: RParse = __rx_alt(p, ne + 1, g + 1);
+                    var gpos: i32 = gi.pos;
+                    if (gpos < p.len() && p[gpos] == 41) { gpos = gpos + 1; }   // ')'
+                    return RParse { node: RGroup(RGroupData { idx: g, node: gi.node }), pos: gpos, g: gi.g };
+                }
+            }
             var nb: i32 = i + 1;
             if (i + 2 < p.len() && p[i + 2] == 58) { nb = i + 3; }   // '?:' → skip both
             var ni: RParse = __rx_alt(p, nb, g);
@@ -293,20 +326,75 @@ function __rx_fold(c: i32, ci: boolean): i32 {
 }
 
 // RProg is a compiled pattern: the parsed tree, whether matching is
-// case-insensitive (set by a leading `(?i)` flag), and how many capturing
-// groups the pattern declares (for the capture engine's slot allocation).
-pub struct RProg { root: RNode, ci: boolean, ngroups: i32 }
+// case-insensitive (set by a leading `(?i)` flag), how many capturing
+// groups the pattern declares (for the capture engine's slot allocation),
+// and the positional group-name table (`names[i]` = the `(?<name>…)` label
+// of group i+1, or "" for a bare positional group).
+pub struct RProg { root: RNode, ci: boolean, ngroups: i32, names: string[] }
+
+// __rx_group_names scans `pattern` and returns the positional group-name
+// table: `names[k]` is the `(?<name>…)` label of capture group k+1, or ""
+// for a bare `( … )` group. It recognises capturing parens with the SAME
+// rules `__rx_atom` applies — a bare `(`, or a `(?<name>` with a closing
+// `>` whose first name byte is not `=`/`!` (lookbehind); `(?:` / `(?i)` /
+// other `(?…` claim no index — and it skips `\(` escapes and `[ … ]`
+// character classes so a paren inside them isn't miscounted. Reading names
+// off the source (not the tree) keeps RGroupData at its stable 2-field
+// shape; the shared recognition keeps the numbering in lockstep with the
+// parser (guarded by the group_index checks in the e2e fixture).
+function __rx_group_names(pattern: string): string[] {
+    var names: string[] = [];
+    var i: i32 = 0;
+    var n: i32 = pattern.len();
+    while (i < n) {
+        var c: i32 = pattern[i];
+        if (c == 92) {                                  // '\' escape — skip next byte
+            i = i + 2;
+        } else if (c == 91) {                           // '[' character class
+            var j: i32 = i + 1;
+            if (j < n && pattern[j] == 94) { j = j + 1; }   // leading '^'
+            if (j < n && pattern[j] == 93) { j = j + 1; }   // ']' as first member
+            while (j < n && pattern[j] != 93) { j = j + 1; }
+            i = j + 1;                                  // past the closing ']'
+        } else if (c == 40) {                           // '('
+            if (i + 1 < n && pattern[i + 1] == 63) {    // '(?'
+                if (i + 3 < n && pattern[i + 2] == 60
+                    && pattern[i + 3] != 61 && pattern[i + 3] != 33) {   // '(?<' name
+                    var ne: i32 = i + 3;
+                    while (ne < n && pattern[ne] != 62) { ne = ne + 1; }  // to '>'
+                    if (ne < n) {                       // named capturing group
+                        names = names.append(pattern[i + 3 : ne] + "");
+                        i = ne + 1;
+                    } else {
+                        i = i + 1;                      // `(?<…` no '>' → non-capturing
+                    }
+                } else {
+                    i = i + 1;                          // `(?:` / `(?i)` / … → non-capturing
+                }
+            } else {
+                names = names.append("");               // bare capturing group
+                i = i + 1;
+            }
+        } else {
+            i = i + 1;
+        }
+    }
+    return names;
+}
 
 // __rx_compile parses `pattern`, honouring a leading `(?i)` flag that turns
 // on ASCII case-insensitive matching for the entire pattern. All the public
-// entry points compile through here, so `(?i)` works uniformly.
+// entry points compile through here, so `(?i)` works uniformly. The
+// `(?i)` prefix is itself a `(?…` form, so __rx_group_names skips it (no
+// index claimed), matching the parser which strips it before numbering.
 function __rx_compile(pattern: string): RProg {
+    var names: string[] = __rx_group_names(pattern);
     if (pattern.len() >= 4 && pattern[0 : 4] == "(?i)") {
         var r: RParse = __rx_alt(pattern, 4, 1);
-        return RProg { root: r.node, ci: true, ngroups: r.g - 1 };
+        return RProg { root: r.node, ci: true, ngroups: r.g - 1, names: names };
     }
     var r0: RParse = __rx_alt(pattern, 0, 1);
-    return RProg { root: r0.node, ci: false, ngroups: r0.g - 1 };
+    return RProg { root: r0.node, ci: false, ngroups: r0.g - 1, names: names };
 }
 
 // __rx_class tests a byte against a `[ … ]` class token (including its
@@ -909,8 +997,10 @@ function __rx_csearch_from(prog: RInst[], t: string, from: i32, ci: boolean, nsl
 // `ends[0]` are the whole match, `starts[i]` / `ends[i]` group `i`. A
 // group that did not participate in the match (an untaken `(a)?` or
 // untaken `|` alternative) has span -1 / -1. On no match `found` is false
-// and the span arrays are empty.
-pub struct RCaps { found: boolean, text: string, starts: i32[], ends: i32[] }
+// and the span arrays are empty. `names` is the positional group-name table
+// (`names[i]` = the `(?<name>…)` label of group i+1, or "") so `.group_named`
+// can resolve a name to its index.
+pub struct RCaps { found: boolean, text: string, starts: i32[], ends: i32[], names: string[] }
 
 // `.group_count()` — the number of capturing groups the PATTERN declares
 // (not counting group 0, and regardless of which participated). 0 when the
@@ -951,10 +1041,44 @@ pub function (c: RCaps) group(i: i32): string {
     return c.text[s : e] + "";
 }
 
+// `.group_index(name)` — the 1-based index of the `(?<name>…)` group, or -1
+// when no group has that name. The lookup behind the `_named` accessors;
+// exposed so callers can map a name to `.group_start(i)` etc. themselves.
+pub function (c: RCaps) group_index(name: string): i32 {
+    var i: i32 = 0;
+    while (i < c.names.len()) {
+        if (c.names[i] == name) { return i + 1; }   // names[i] is group i+1
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// `.group_named(name)` — the text the `(?<name>…)` group matched, or "" when
+// no such group exists / it didn't participate. `.has_group_named(name)` /
+// `.group_named_start(name)` / `.group_named_end(name)` mirror the positional
+// accessors. On a duplicate name the first (lowest-index) group wins.
+pub function (c: RCaps) group_named(name: string): string {
+    return c.group(c.group_index(name));
+}
+
+pub function (c: RCaps) group_named_start(name: string): i32 {
+    return c.group_start(c.group_index(name));
+}
+
+pub function (c: RCaps) group_named_end(name: string): i32 {
+    return c.group_end(c.group_index(name));
+}
+
+pub function (c: RCaps) has_group_named(name: string): boolean {
+    var idx: i32 = c.group_index(name);
+    if (idx < 0) { return false; }
+    return c.has_group(idx);
+}
+
 // __rx_caps_wrap converts a raw capture-slot array (empty = no match) to
-// the public RCaps shape.
-function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32): RCaps {
-    if (caps.len() == 0) { return RCaps { found: false, text: text, starts: [], ends: [] }; }
+// the public RCaps shape, attaching the compiled name table.
+function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): RCaps {
+    if (caps.len() == 0) { return RCaps { found: false, text: text, starts: [], ends: [], names: names }; }
     var starts: i32[] = [];
     var ends: i32[] = [];
     var i: i32 = 0;
@@ -963,7 +1087,7 @@ function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32): RCaps {
         ends = ends.append(caps[i + i + 1]);
         i = i + 1;
     }
-    return RCaps { found: true, text: text, starts: starts, ends: ends };
+    return RCaps { found: true, text: text, starts: starts, ends: ends, names: names };
 }
 
 // `regex_captures(pattern, text)` — find the leftmost-longest match (the
@@ -976,7 +1100,7 @@ pub function regex_captures(pattern: string, text: string): RCaps {
     var insts: RInst[] = __rx_cprog(prog.root);
     var nslots: i32 = (prog.ngroups + 1) * 2;
     var caps: i32[] = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
-    return __rx_caps_wrap(caps, text, prog.ngroups);
+    return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
 }
 
 // `regex_captures_all(pattern, text)` — the captures of every
@@ -992,7 +1116,7 @@ pub function regex_captures_all(pattern: string, text: string): RCaps[] {
     while (pos <= text.len()) {
         var caps: i32[] = __rx_csearch_from(insts, text, pos, prog.ci, nslots);
         if (caps.len() == 0) { return out; }
-        out = out.append(__rx_caps_wrap(caps, text, prog.ngroups));
+        out = out.append(__rx_caps_wrap(caps, text, prog.ngroups, prog.names));
         // Slots 0/1 are the whole-match span; advance through the shared
         // helper so this stays mechanically in step with regex_find_all.
         pos = __rx_advance(RMatch { found: true, start: caps[0], end: caps[1] });
@@ -1002,9 +1126,11 @@ pub function regex_captures_all(pattern: string, text: string): RCaps[] {
 
 // __rx_expand expands a `$`-template against one match's captures:
 // `$0`–`$9` insert that group's matched text (`$0` = the whole match; an
-// unmatched group inserts ""), `$$` inserts a literal `$`, and a `$`
-// followed by anything else (or at the end) is a literal `$`. Single
-// digits only — `$12` is group 1 followed by a literal `2`.
+// unmatched group inserts ""), `${name}` inserts the `(?<name>…)` group's
+// text (unknown name → ""), `$$` inserts a literal `$`, and a `$` followed
+// by anything else (or at the end) is a literal `$`. Single digits only —
+// `$12` is group 1 followed by a literal `2`; use `${12}`-style names only
+// for actual `(?<…>)` labels.
 function __rx_expand(tmpl: string, c: RCaps): string {
     var parts: string[] = [];
     var total: i32 = 0;
@@ -1012,17 +1138,27 @@ function __rx_expand(tmpl: string, c: RCaps): string {
     var i: i32 = 0;
     while (i < tmpl.len()) {
         var take: boolean = false;
+        var adv: i32 = 2;          // bytes consumed by the token ($X = 2)
         var rep: string = "";
         if (tmpl[i] == 36 && i + 1 < tmpl.len()) {          // '$'
             var d: i32 = tmpl[i + 1];
             if (d == 36) { rep = "$"; take = true; }         // $$ → literal $
-            if (d >= 48 && d <= 57) { rep = c.group(d - 48); take = true; }
+            else if (d >= 48 && d <= 57) { rep = c.group(d - 48); take = true; }   // $0-$9
+            else if (d == 123) {                             // '{' → ${name}
+                var ne: i32 = i + 2;
+                while (ne < tmpl.len() && tmpl[ne] != 125) { ne = ne + 1; }   // scan to '}'
+                if (ne < tmpl.len()) {                       // found '}'
+                    rep = c.group_named(tmpl[i + 2 : ne] + "");
+                    take = true;
+                    adv = (ne + 1) - i;                      // consume through '}'
+                }
+            }
         }
         if (take) {
             var seg: string = tmpl[lit : i] + "";
             parts = parts.append(seg); total = total + seg.len();
             parts = parts.append(rep); total = total + rep.len();
-            i = i + 2;
+            i = i + adv;
             lit = i;
         } else {
             i = i + 1;
