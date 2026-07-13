@@ -92,6 +92,20 @@ function test_add_span_months_rollover(): test.TestOutcome {
     return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 15);
 }
 
+function test_duration_to_string(): test.TestOutcome {
+    // Compact canonical form; largest units first, zero units omitted.
+    if (time.duration_seconds(0 as i64).to_string() != "0s") { return test.fail("zero"); }
+    if (time.duration_seconds(3661 as i64).to_string() != "1h1m1s") { return test.fail("h m s"); }
+    if (time.duration_seconds(3605 as i64).to_string() != "1h5s") { return test.fail("skip zero minutes"); }
+    return test.assert_eq(time.duration_millis(1500 as i64).to_string(), "1s500ms");
+}
+
+function test_duration_to_string_negative(): test.TestOutcome {
+    // A negative duration gets a leading '-'.
+    if (time.duration_seconds((0 as i64) - 10).to_string() != "-10s") { return test.fail("-10s"); }
+    return test.assert_eq(time.duration_millis((0 as i64) - 500).to_string(), "-500ms");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time iso + span");
     r = r.it("format_iso",            test_format_iso());
@@ -106,5 +120,7 @@ function main(): i32 {
     r = r.it("add_span months clamp plain", test_add_span_months_clamp_plain());
     r = r.it("add_span years clamp",  test_add_span_years_clamp());
     r = r.it("add_span months rollover", test_add_span_months_rollover());
+    r = r.it("duration to_string",    test_duration_to_string());
+    r = r.it("duration to_string neg", test_duration_to_string_negative());
     return r.finish();
 }
