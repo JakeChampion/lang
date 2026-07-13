@@ -15041,9 +15041,18 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		// reference); on the in-place branch it is the sole owner's release
 		// (frees on last reference). dropStructField is the type-appropriate
 		// deep drop, is_unique-gated internally, so a shared element only decs.
-		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
-		b.emit(Op{Kind: OpLoad, Width: storeWidth})
-		b.dropStructField(elemType)
+		// RcFreeEnabled-gated: the generated __drop_struct_/__drop_enum_
+		// bodies dropStructField routes to only exist under free-on (the
+		// worklist is free-gated), so a free-off emit referenced an
+		// undefined label (an enum-element `.with` overwrite — the regex
+		// Pike-VM's RInst[] writes were the first fixture to hit it).
+		// Free-off leaks the replaced element like every other free-off
+		// site, keeping that baseline's no-reclaim contract.
+		if ast.RcFreeEnabled {
+			b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+			b.emit(Op{Kind: OpLoad, Width: storeWidth})
+			b.dropStructField(elemType)
+		}
 		// Store the new element value.
 		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
