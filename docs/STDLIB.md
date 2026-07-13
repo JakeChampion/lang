@@ -159,8 +159,9 @@ Grouped by family:
   Python `textwrap.dedent`), `repeat_with_sep`
 - **Slice / count / reverse:** `take`, `drop`, `chunks`, `at`,
   `chars`, `to_array`, `reverse_bytes`, `count`, `count_byte`,
-  `bytes`, `first`, `last`, `before`, `after`, `between`,
-  `truncate`, `ellipsis`, `first_line`
+  `find_all` (start indices of every non-overlapping occurrence,
+  `len` == `count`), `bytes`, `first`, `last`, `before`, `after`,
+  `between`, `truncate`, `ellipsis`, `first_line`
 - **Parse:** `parse_bool`, `parse_int`, `parse_hex_int`,
   `parse_bin_int`, `parse_float`
 - **Build:** `repeat_char`

@@ -533,6 +533,27 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerStringFindAllExamplePasses gates std/string.find_all — the start
+// indices of every non-overlapping occurrence of a substring — under the
+// interpreter. Interp-gated only: the self-host compiler fails to emit the
+// generic assert_eq[i32] monomorph for this file's shape (link error, both
+// self-host backends), a self-host codegen gap unrelated to find_all (the file
+// header documents it). Native compilation on all four backends is pinned by
+// the Go-side TestStringFindAll. Passing → exit 0.
+func TestRunnerStringFindAllExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_find_all_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string find_all", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerTimeCalendarExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/time_calendar_test.fern")
