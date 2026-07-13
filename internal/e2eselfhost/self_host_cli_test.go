@@ -569,6 +569,30 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-generic-method-ret-ok", func(t *testing.T) {
+		// #4346 piece 2 (generic-receiver method return): a method whose return
+		// type names a receiver type parameter (`(b: Box[T]) get(): T`, nested
+		// `(w: Wrapper[T]) all(): T[]`) is substituted with the receiver's
+		// concrete instantiation args at the call site — so `Box[i32].get()` is
+		// i32 (feeds main's i32 return) and `Wrapper[i32].all()` is i32[] (its
+		// element indexes to i32). Both pass self-host `-check` (exit 0) where
+		// the pre-slice self-host typed the call unknown and over-rejected.
+		bare := filepath.Join(dir, "generic_method.fern")
+		if err := os.WriteFile(bare, []byte("struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.get(); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", bare); code != 0 {
+			t.Errorf("-check on a generic-method-return program exited %d, want 0", code)
+		}
+		nested := filepath.Join(dir, "generic_method_nested.fern")
+		if err := os.WriteFile(nested, []byte("struct Wrapper[T] { items: T[] }\nfunction (w: Wrapper[T]) all(): T[] { return w.items; }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2] }; return w.all()[0]; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", nested); code != 0 {
+			t.Errorf("-check on a nested generic-method-return program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-dyn-bind-ok", func(t *testing.T) {
 		// #4346 piece 2 (dyn Trait representation): a `dyn Trait` annotation now
 		// resolves to a real TypeDyn instead of TypeUnknown, so binding a struct

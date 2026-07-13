@@ -193,6 +193,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// and E003 never fired. The clean read is pinned by the CLI exit test.
 		{"generic-nested-field-mismatch", "struct Wrapper[T] { items: T[] }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] }; var s: string = w.items[0]; return 0; }\n", []string{"E003"}},
 		{"generic-nested-field-clean", "struct Wrapper[T] { items: T[] }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] }; return w.items[0]; }\n", nil},
+		// Generic-receiver METHOD return substitution (#4346 piece 2): a method
+		// whose declared return names a receiver type parameter (`(b: Box[T])
+		// get(): T`) resolves to the instantiation arg off a concrete receiver,
+		// so `Box[i32].get()` is i32 — assigning it to a MISMATCHED destination
+		// draws E003 (matching the Go checker) where the pre-slice self-host
+		// typed the call unknown and E003 never fired. The clean call is pinned
+		// by the CLI exit test.
+		{"generic-method-ret-mismatch", "struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { var b: Box[i32] = Box { v: 5 }; var s: string = b.get(); return 0; }\n", []string{"E003"}},
+		{"generic-method-ret-clean", "struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.get(); }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
@@ -1135,6 +1144,14 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// object-safe), so no code fires; the self-host must stay silent.
 		{"dyn-bind-ok", "trait Greet { function hi(self: Self): i32; }\nstruct Dog { }\nimpl Greet for Dog { function hi(self: Self): i32 { return 7; } }\nfunction main(): i32 { var d: dyn Greet = Dog { }; return 0; }\n"},
 		{"dyn-array-ok", "trait Greet { function hi(self: Self): i32; }\nstruct Dog { }\nimpl Greet for Dog { function hi(self: Self): i32 { return 7; } }\nfunction main(): i32 { var ds: dyn Greet[] = [Dog { }]; return ds.len(); }\n"},
+		// Generic-receiver method return substitution (#4346 piece 2): a method
+		// returning a receiver type parameter — bare `T` or nested `T[]` —
+		// resolves to the instantiation off a concrete receiver. Both well-typed
+		// against the Go oracle (`Box[i32].get()` → i32 feeds an i32 return;
+		// `Wrapper[i32].all()` → i32[] indexes to i32) where the pre-slice
+		// self-host typed the call unknown and silently over-rejected.
+		{"generic-method-ret-ok", "struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.get(); }\n"},
+		{"generic-method-nested-ret-ok", "struct Wrapper[T] { items: T[] }\nfunction (w: Wrapper[T]) all(): T[] { return w.items; }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2] }; return w.all()[0]; }\n"},
 	}
 
 	for _, tc := range progs {
