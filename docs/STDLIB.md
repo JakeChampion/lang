@@ -63,8 +63,11 @@ Receiver methods on i32 / byte values.
 
 ### `std/u32`
 
-- **Scalar:** `min`, `max`, `clamp`, `pow`
+- **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
+  always fits — unsigned)
 - **Predicates:** `is_zero`, `is_even`, `is_odd`
+- **Range (unsigned):** `is_in_range` (half-open `[lo, hi)`),
+  `is_between` (inclusive `[lo, hi]`)
 - **Overflow-aware (unsigned):** `saturating_add`/`saturating_sub`
   (clamp to u32::MAX / 0), `checked_add`/`checked_sub` (`Option[u32]`,
   `None` on overflow/underflow)
@@ -72,8 +75,11 @@ Receiver methods on i32 / byte values.
 
 ### `std/u64`
 
-- **Scalar:** `min`, `max`, `clamp`, `pow`
+- **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
+  always fits — unsigned)
 - **Predicates:** `is_zero`, `is_even`, `is_odd`
+- **Range (unsigned):** `is_in_range` (half-open `[lo, hi)`),
+  `is_between` (inclusive `[lo, hi]`)
 - **Overflow-aware (unsigned):** `saturating_add`/`saturating_sub`
   (clamp to u64::MAX / 0), `checked_add`/`checked_sub` (`Option[u64]`,
   `None` on overflow/underflow)

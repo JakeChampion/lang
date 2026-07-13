@@ -39,6 +39,25 @@ pub function (n: u32) is_zero(): boolean { return n == (0 as u32); }
 pub function (n: u32) is_even(): boolean { return n % (2 as u32) == (0 as u32); }
 pub function (n: u32) is_odd(): boolean  { return n % (2 as u32) != (0 as u32); }
 
+// `abs_diff(other)` — the absolute difference `|n - other|`. For unsigned it is
+// simply the larger minus the smaller (via an unsigned compare), so — unlike
+// the signed `abs_diff` — the result ALWAYS fits and never wraps.
+pub function (n: u32) abs_diff(other: u32): u32 {
+    if (n >= other) { return n - other; }
+    return other - n;
+}
+
+// `is_in_range(lo, hi)` — true iff `lo <= n < hi` (half-open), using unsigned
+// comparison. Empty / inverted ranges → false. Mirrors std/i32 / std/i64.
+pub function (n: u32) is_in_range(lo: u32, hi: u32): boolean {
+    return n >= lo && n < hi;
+}
+
+// `is_between(lo, hi)` — inclusive range check (`lo <= n <= hi`), unsigned.
+pub function (n: u32) is_between(lo: u32, hi: u32): boolean {
+    return n >= lo && n <= hi;
+}
+
 // `(n: u32) pow(exp)` — exponentiation by squaring. Overflow wraps
 // (unsigned, modulo 2^32), same shape as the u64 version.
 pub function (n: u32) pow(exp: i32): u32 {

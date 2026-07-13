@@ -420,6 +420,28 @@ func TestRunnerU32ArithExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerUintRangeExamplePasses gates the unsigned range/diff helpers added
+// to std/u32 and std/u64 (abs_diff, is_in_range, is_between) under the
+// interpreter. Interp-gated only: the MAX-value cases build u32::MAX / u64::MAX
+// via wraparound (`(0 as u32) - (1 as u32)`), and the self-host backends don't
+// yet truncate u32 arithmetic back to 32 bits (the same documented gap that
+// keeps u32_arith_test interp-only), so the u32 MAX cases would diverge there.
+// Native compilation across all four backends — incl. the unsigned-compare
+// MAX edges — is pinned by the Go-side TestUintAbsDiffRange.
+func TestRunnerUintRangeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/uint_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uint range", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // TestRunnerIoBufferedExamplePasses gates the std/io_buffered BytesWriter suite
 // under the interpreter. Interp-gated only: BytesWriter holds a `u8[]` field and
 // is rebuilt immutably (`{ ...w, data }`) per write, so a writer retained to
