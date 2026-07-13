@@ -186,6 +186,28 @@ pub function (x: f64) ceil(): f64 { return __ceil_f64(x); }
 // banker's rounding (round half to even) should reach
 // into the bit-pattern themselves.
 pub function (x: f64) round(): f64 { return __round_f64(x); }
+
+// `round_to(digits)` — round `x` to `digits` decimal places, half away from
+// zero (like `round`): `(3.14159).round_to(2)` is `3.14`, `(2.5).round_to(0)`
+// is `3.0`. Negative `digits` round to tens / hundreds
+// (`(1234.0).round_to(-2)` is `1200.0`). Scales by `10^digits`, rounds, and
+// unscales; the usual float-representation caveat applies (the result is the
+// nearest f64 to the rounded decimal, which for most display / money use is
+// exact enough). NaN / ±Inf pass through unchanged.
+pub function (x: f64) round_to(digits: i32): f64 {
+    if (x != x) { return x; }                    // NaN
+    if (x != 0.0 && x * 2.0 == x) { return x; }  // ±Inf
+    var scale: f64 = 1.0;
+    var i: i32 = 0;
+    var d: i32 = digits;
+    if (d < 0) { d = 0 - d; }
+    while (i < d) { scale = scale * 10.0; i = i + 1; }
+    if (digits >= 0) {
+        return __round_f64(x * scale) / scale;
+    }
+    return __round_f64(x / scale) * scale;
+}
+
 // `trunc(x)` is round-toward-zero, equivalent to
 // `(x as i64) as f64` for values that fit in the i64 range.
 // The primitive form handles ±Inf / NaN that the cast
@@ -306,6 +328,9 @@ pub function (x: f32) abs(): f32 { return __abs_f64(x as f64) as f32; }
 pub function (x: f32) floor(): f32 { return __floor_f64(x as f64) as f32; }
 pub function (x: f32) ceil(): f32 { return __ceil_f64(x as f64) as f32; }
 pub function (x: f32) round(): f32 { return __round_f64(x as f64) as f32; }
+pub function (x: f32) round_to(digits: i32): f32 {
+    return (x as f64).round_to(digits) as f32;
+}
 pub function (x: f32) trunc(): f32 { return __trunc_f64(x as f64) as f32; }
 pub function (x: f32) sqrt(): f32 { return __sqrt_f64(x as f64) as f32; }
 pub function (x: f32) log(): f32 { return __log_f64(x as f64) as f32; }

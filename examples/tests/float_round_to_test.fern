@@ -1,0 +1,63 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_round_to_test.fern — pure-Fern coverage of
+// std/float.round_to(digits): round to N decimal places, half away from zero.
+// Positive digits round the fraction, negative digits round to tens / hundreds.
+// Both f64 and f32. Kept as its own suite so the self-host merged bundle stays
+// under the asm_ir IR budget; uses assert_eq_f64_near (tolerance-banded). The
+// Go-side TestFloatRoundTo pins these across all four backends; this is the
+// migration-shaped companion.
+
+function test_two_places(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.14159).round_to(2), 3.14, 0.0001);
+}
+
+function test_zero_places(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.14159).round_to(0), 3.0, 0.0001);
+}
+
+function test_half_away(): test.TestOutcome {
+    // 2.5 rounds to 3 (away from zero).
+    return test.assert_eq_f64_near((2.5).round_to(0), 3.0, 0.0001);
+}
+
+function test_four_places(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.14159).round_to(4), 3.1416, 0.0001);
+}
+
+function test_negative_value(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0 - 2.567).round_to(1), 0.0 - 2.6, 0.0001);
+}
+
+function test_negative_digits(): test.TestOutcome {
+    // digits < 0 rounds to tens / hundreds.
+    if (!float_near((1234.0).round_to(0 - 2), 1200.0)) { return test.fail("1234 -> 1200"); }
+    return test.assert_eq_f64_near((1250.0).round_to(0 - 2), 1300.0, 0.0001);
+}
+
+function test_whole_number(): test.TestOutcome {
+    return test.assert_eq_f64_near((5.0).round_to(3), 5.0, 0.0);
+}
+
+function test_f32(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.14159 as f32).round_to(2) as f64, 3.14, 0.001);
+}
+
+function float_near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float round_to");
+    r = r.it("two places",       test_two_places());
+    r = r.it("zero places",      test_zero_places());
+    r = r.it("half away",        test_half_away());
+    r = r.it("four places",      test_four_places());
+    r = r.it("negative value",   test_negative_value());
+    r = r.it("negative digits",  test_negative_digits());
+    r = r.it("whole number",     test_whole_number());
+    r = r.it("f32",              test_f32());
+    return r.finish();
+}
