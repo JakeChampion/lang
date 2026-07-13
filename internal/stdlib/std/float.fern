@@ -196,9 +196,31 @@ pub function (x: f64) log(): f64 { return __log_f64(x); }
 pub function (x: f64) exp(): f64 { return __exp_f64(x); }
 pub function (x: f64) sin(): f64 { return __sin_f64(x); }
 pub function (x: f64) cos(): f64 { return __cos_f64(x); }
+// `tan(x)` — tangent, as `sin(x) / cos(x)`; the missing sibling of the
+// existing `sin` / `cos`. Blows up to ±Inf near the odd multiples of π/2
+// where `cos` crosses zero, as expected.
+pub function (x: f64) tan(): f64 { return __sin_f64(x) / __cos_f64(x); }
 // `pow(x, y)` — two-argument form; method receiver is the
 // base. Use `(b).pow(e)` for `b ^ e`.
 pub function (x: f64) pow(y: f64): f64 { return __pow_f64(x, y); }
+
+// `hypot(x, y)` — the Euclidean length `sqrt(x*x + y*y)`, computed via the
+// scaled form `hi * sqrt(1 + (lo/hi)^2)` (hi/lo the larger/smaller magnitude)
+// so it does NOT overflow when a naive `x*x + y*y` would, and stays accurate
+// for very lopsided inputs. `hypot(0, 0)` is `0`.
+pub function (x: f64) hypot(y: f64): f64 {
+    var ax: f64 = x.abs();
+    var ay: f64 = y.abs();
+    var hi: f64 = ax.max(ay);
+    var lo: f64 = ax.min(ay);
+    if (hi == 0.0) { return 0.0; }
+    var r: f64 = lo / hi;
+    return hi * (1.0 + r * r).sqrt();
+}
+
+// `fract(x)` — the fractional part, `x - trunc(x)`; keeps `x`'s sign, so
+// `fract(-3.75)` is `-0.75`. The companion to `trunc` / `floor` / `ceil`.
+pub function (x: f64) fract(): f64 { return x - __trunc_f64(x); }
 
 // `is_nan(x)` / `is_inf(x)` / `is_finite(x)` — IEEE-754
 // classification. The NaN predicate uses the textbook
@@ -290,9 +312,20 @@ pub function (x: f32) log(): f32 { return __log_f64(x as f64) as f32; }
 pub function (x: f32) exp(): f32 { return __exp_f64(x as f64) as f32; }
 pub function (x: f32) sin(): f32 { return __sin_f64(x as f64) as f32; }
 pub function (x: f32) cos(): f32 { return __cos_f64(x as f64) as f32; }
+pub function (x: f32) tan(): f32 { return (__sin_f64(x as f64) / __cos_f64(x as f64)) as f32; }
 pub function (x: f32) pow(y: f32): f32 {
     return __pow_f64(x as f64, y as f64) as f32;
 }
+pub function (x: f32) hypot(y: f32): f32 {
+    var ax: f64 = (x as f64).abs();
+    var ay: f64 = (y as f64).abs();
+    var hi: f64 = ax.max(ay);
+    var lo: f64 = ax.min(ay);
+    if (hi == 0.0) { return 0.0 as f32; }
+    var r: f64 = lo / hi;
+    return (hi * (1.0 + r * r).sqrt()) as f32;
+}
+pub function (x: f32) fract(): f32 { return (x as f64 - __trunc_f64(x as f64)) as f32; }
 
 pub function (x: f32) is_nan(): boolean { return x != x; }
 pub function (x: f32) is_finite(): boolean {
