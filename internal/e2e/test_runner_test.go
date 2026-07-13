@@ -554,6 +554,24 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerStringZfillExamplePasses gates std/string.zfill(width) — zero-pad a
+// numeric string keeping the sign in front — under the interpreter. Also on the
+// self-host x86-64 + arm64 gates (string return, uses assert_true); the Go-side
+// TestStringZfill pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerStringZfillExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_zfill_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string zfill", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // TestRunnerStringParseRadixExamplePasses gates std/string.parse_int_radix(base)
 // — the method form of the arbitrary-base (2..36) i32 parser — under the
 // interpreter. Also on the self-host x86-64 + arm64 gates (Option[i32] return,

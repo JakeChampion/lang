@@ -1645,6 +1645,32 @@ pub function (s: string) pad_end(n: i32, ch: string): string {
     return string_from_bytes(buf);
 }
 
+// `s.zfill(width)` — left-pad a NUMERIC string with `'0'` to at least `width`
+// bytes, keeping a leading sign in front of the zeros: `"-42".zfill(5)` is
+// `"-0042"`, not `pad_start`'s `"00-42"`. `'+'` is preserved the same way.
+// Already-`width`-long (or longer) strings pass through unchanged, and the sign
+// counts toward `width` (Python's `str.zfill`). The formatting shape for
+// fixed-width signed numbers — ledgers, zero-padded ids, timestamps.
+pub function (s: string) zfill(width: i32): string {
+    var sl: i32 = s.len();
+    if (sl >= width) { return s; }
+    var has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);   // '-' or '+'
+    var need: i32 = width - sl;
+    var buf: u8[] = __alloc_u8(width);
+    var pos: i32 = 0;
+    var body_start: i32 = 0;
+    if (has_sign) {
+        buf = buf.with(0, s[0] as u8);
+        pos = 1;
+        body_start = 1;
+    }
+    var z: i32 = 0;
+    while (z < need) { buf = buf.with(pos, 48 as u8); pos = pos + 1; z = z + 1; }  // '0'
+    var j: i32 = body_start;
+    while (j < sl) { buf = buf.with(pos, s[j] as u8); pos = pos + 1; j = j + 1; }
+    return string_from_bytes(buf);
+}
+
 // `s.split_once(sep)` — splits at the FIRST occurrence of
 // sep, returning Some((head, tail)). The separator is dropped
 // from the output. Returns None when sep doesn't appear or
