@@ -161,7 +161,9 @@ Grouped by family:
   mirror of `split_once`), `partition`/`rpartition` (Python-style
   three-way `(head, sep, tail)` that KEEPS the separator; first /
   last occurrence), `pad_start`, `pad_end`, `pad_start_str`,
-  `pad_end_str`, `center`, `wrap`, `indent`, `dedent` (strip the
+  `pad_end_str`, `zfill` (zero-pad a numeric string keeping the sign
+  in front, à la Python `str.zfill`), `center`, `wrap`, `indent`,
+  `dedent` (strip the
   common leading-whitespace prefix — the inverse of `indent`, à la
   Python `textwrap.dedent`), `repeat_with_sep`
 - **Slice / count / reverse:** `take`, `drop`, `chunks`, `at`,
