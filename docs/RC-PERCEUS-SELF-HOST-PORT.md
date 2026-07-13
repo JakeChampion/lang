@@ -4852,3 +4852,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   other STR: producers), NOT by touching str_local_binding_is_fresh. Validate
   the concat-operand case (`var v = m.get_or(k,""); var s = v + "x"; use(v)`)
   explicitly — it is the double-free trap. Refs #4353 #4451.
+
+- 2026-07-13 (slice 4 — COMPLETE implementation-ready design, incl. the
+  get_or default-arm ownership fork, the correctness crux of "counted reads").
+  This supersedes the two entries above as the build spec; they remain valid
+  for the individual site pins. Slice 4 is FIVE coordinated parts (not four —
+  the default-arm handling is the extra one that makes counted reads correct):
+  1. **Op value-kind flag.** `op_map_get`/`op_map_get_or` (kinds 127/129) gain
+     a string-value flag (op_map_set already carries `valptr`); thread it from
+     `map_value_of(mty) == "string"` at the irlower call sites.
+  2. **Found-branch inc.** get_or/get emit `__fn___fern_rc_inc` on the string
+     result **only on the FOUND branch** (register: inside kind 129's
+     `golbl_d`/`golbl_e` found path in asm_ir.fern; get / kind 127 similarly;
+     arm64 + wasm mirrors). NOT on the default branch — see part 4.
+  3. **Caller default-inc-if-alias.** When get_or's DEFAULT arg is a string
+     ALIAS (a bare ident / field / index — `is_fresh_str_temp` is false and
+     it is a string), the caller rc-inc's it BEFORE the call, so the result
+     owns an independent ref regardless of which branch is taken. A FRESH
+     default temp (`""` / `a+b`) is already sole-owned and is MOVED into the
+     result (no inc, not separately reclaimed). This is what makes both
+     branches yield exactly one owned ref: found → V+1; default-alias →
+     other+1; default-fresh → the temp itself. Get this wrong and either an
+     alias default double-frees (v-reclaim + other-reclaim) or a fresh default
+     leaks (+1 with no owner).
+  4. **Overwrite free.** map_set's string-value overwrite rc-aware-frees the
+     OLD value: register `.Lms_found` gains `__fn___fern_str_free(old_value)`
+     gated on the value-is-string flag (`valptr`); wasm's existing `arr_dec`
+     is already correct once reads are counted.
+  5. **Reclaim credit (do NOT touch str_local_binding_is_fresh — trap #1
+     above).** A new context-free structural collection credits
+     `var v = m.get_or(k,d)` / `m.get(k)` string-VAR bindings STR: (gated by
+     body_unsafe_for + not-reassigned, like the other STR: producers). Rely on
+     the `slot_is_reclaimable_str` sweep-site `is_str` interlock so an i32
+     get_or credit is inert (verify that interlock). Anonymous expression-
+     position get_or (`use(m.get_or(...))`) is NOT credited → a bounded +1
+     leak, same class as slices 1–3's var/expr positions (no regression: the
+     register overwrite leaked the whole value before slice 4).
+  Accounting (found path): map holds V rc1 → get_or inc → rc2 → overwrite
+  str_free → rc1 (map's ref released) → scope-exit v-reclaim str_free → rc0
+  free. No live read: overwrite str_free rc1→0 frees. Balanced both ways.
+  Gates: value-overwrite churn (`var old=m.get_or(k,""); m.set(k,"new"); use(old)`
+  loop → flat + underflow==0 + old valid after set), the alias-default case
+  (`var v=m.get_or(k, live); ... use(v); use(live)` → no double-free), fresh-
+  default reclaim, plus modload/load/heap-bump fixpoints byte-identical.
+  Refs #4353 #4451.

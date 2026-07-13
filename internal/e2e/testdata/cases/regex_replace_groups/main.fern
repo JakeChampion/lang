@@ -1,0 +1,38 @@
+// std/regex $-template replacements (regex_replace_groups /
+// regex_replace_all_groups): group refs $1-$9, whole-match $0, the $$
+// escape, literal stray $, unmatched-group expansion to "", first-match-
+// only vs all, and zero-width parity with regex_replace_all. Each check
+// sets a bit; all eight hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+
+    // swap two groups in every match
+    if (regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1") == "b@a d@c") { r = r + 1; }
+
+    // $0 is the whole match
+    if (regex.regex_replace_all_groups("\\d+", "a1b22", "<$0>") == "a<1>b<22>") { r = r + 2; }
+
+    // $$ escapes to a literal dollar
+    if (regex.regex_replace_all_groups("(\\d+)", "x5", "$$$1") == "x$5") { r = r + 4; }
+
+    // an unmatched optional group expands to ""
+    if (regex.regex_replace_all_groups("a(b)?c", "ac abc", "[$1]") == "[] [b]") { r = r + 8; }
+
+    // regex_replace_groups replaces only the first match
+    if (regex.regex_replace_groups("(\\d)", "1 2 3", "[$1]") == "[1] 2 3") { r = r + 16; }
+
+    // no match returns the text unchanged
+    if (regex.regex_replace_groups("(x)", "abc", "$1") == "abc") { r = r + 32; }
+
+    // a $ before a non-digit / at the end is a literal $
+    if (regex.regex_replace_all_groups("b", "abc", "$z$") == "a$z$c") { r = r + 64; }
+
+    // zero-width matches: same shape regex_replace_all produces
+    var viaGroups: string = regex.regex_replace_all_groups("a*", "bc", "<$0>");
+    var viaLiteral: string = regex.regex_replace_all("a*", "bc", "<>");
+    if (viaGroups == viaLiteral && viaGroups == "<>b<>c<>") { r = r + 128; }
+
+    return r;
+}

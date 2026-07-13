@@ -56,7 +56,10 @@
 // returns every non-overlapping match's captures left to right. Groups are
 // numbered by their `(` from 1, left to right; `(?:…)` groups without
 // capturing. A group inside a quantifier reports its LAST iteration's span
-// (`(a|b)+` on "ab" captures "b"). Capture extraction runs on a compiled
+// (`(a|b)+` on "ab" captures "b"). `regex_replace_groups` /
+// `regex_replace_all_groups` substitute a `$`-template per match
+// (`$1`…`$9` group text, `$0` whole match, `$$` literal dollar).
+// Capture extraction runs on a compiled
 // instruction program (a Pike-VM thread simulation — see `RInst` below),
 // so it stays linear-time per scan position with no backtracking blow-up,
 // same as the span matcher. Backreferences (`\1` in a PATTERN) are not
@@ -503,9 +506,31 @@ pub function regex_find_all(pattern: string, text: string): RMatch[] {
     return out;
 }
 
+// __rx_join concatenates `parts` into one string of exactly `total` bytes
+// (the caller sums the lengths while collecting). One exact-size buffer
+// fill, so builders stay O(output) instead of O(output²) (#4379).
+function __rx_join(parts: string[], total: i32): string {
+    var buf: u8[] = __alloc_u8(total);
+    var bpos: i32 = 0;
+    var pi: i32 = 0;
+    while (pi < parts.len()) {
+        var s: string = parts[pi];
+        var sl: i32 = s.len();
+        var k: i32 = 0;
+        while (k < sl) {
+            buf = buf.with(bpos, s[k] as u8);
+            bpos = bpos + 1;
+            k = k + 1;
+        }
+        pi = pi + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // `regex_replace_all(pattern, text, repl)` — replace every non-overlapping
 // match of `pattern` with the literal string `repl`, returning the new
-// string. `repl` is inserted verbatim (no `$1`/`\1` group substitution).
+// string. `repl` is inserted verbatim (no `$1` group substitution — for
+// that, see `regex_replace_all_groups`).
 pub function regex_replace_all(pattern: string, text: string, repl: string): string {
     var prog: RProg = __rx_compile(pattern);
     // Collect the output pieces in one scan (amortized-O(1) appends, like
@@ -539,21 +564,7 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
     }
     var tail: string = text[last : text.len()] + "";
     parts = parts.append(tail); total = total + tail.len();
-    var buf: u8[] = __alloc_u8(total);
-    var bpos: i32 = 0;
-    var pi: i32 = 0;
-    while (pi < parts.len()) {
-        var s: string = parts[pi];
-        var sl: i32 = s.len();
-        var k: i32 = 0;
-        while (k < sl) {
-            buf = buf.with(bpos, s[k] as u8);
-            bpos = bpos + 1;
-            k = k + 1;
-        }
-        pi = pi + 1;
-    }
-    return string_from_bytes(buf);
+    return __rx_join(parts, total);
 }
 
 // `regex_split(text, pattern)` — split `text` on non-overlapping matches of
@@ -987,4 +998,79 @@ pub function regex_captures_all(pattern: string, text: string): RCaps[] {
         pos = __rx_advance(RMatch { found: true, start: caps[0], end: caps[1] });
     }
     return out;
+}
+
+// __rx_expand expands a `$`-template against one match's captures:
+// `$0`–`$9` insert that group's matched text (`$0` = the whole match; an
+// unmatched group inserts ""), `$$` inserts a literal `$`, and a `$`
+// followed by anything else (or at the end) is a literal `$`. Single
+// digits only — `$12` is group 1 followed by a literal `2`.
+function __rx_expand(tmpl: string, c: RCaps): string {
+    var parts: string[] = [];
+    var total: i32 = 0;
+    var lit: i32 = 0;              // start of the pending literal run
+    var i: i32 = 0;
+    while (i < tmpl.len()) {
+        var take: boolean = false;
+        var rep: string = "";
+        if (tmpl[i] == 36 && i + 1 < tmpl.len()) {          // '$'
+            var d: i32 = tmpl[i + 1];
+            if (d == 36) { rep = "$"; take = true; }         // $$ → literal $
+            if (d >= 48 && d <= 57) { rep = c.group(d - 48); take = true; }
+        }
+        if (take) {
+            var seg: string = tmpl[lit : i] + "";
+            parts = parts.append(seg); total = total + seg.len();
+            parts = parts.append(rep); total = total + rep.len();
+            i = i + 2;
+            lit = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    var tail: string = tmpl[lit : tmpl.len()] + "";
+    parts = parts.append(tail); total = total + tail.len();
+    return __rx_join(parts, total);
+}
+
+// `regex_replace_groups(pattern, text, tmpl)` — replace the FIRST match of
+// `pattern` with the `$`-template `tmpl` expanded against its captures
+// (`$1` = group 1's text, `$0` = the whole match, `$$` = literal `$`;
+// unmatched groups expand to ""). The text is returned unchanged when
+// there is no match. The group-substituting counterpart to
+// `regex_replace`.
+pub function regex_replace_groups(pattern: string, text: string, tmpl: string): string {
+    var c: RCaps = regex_captures(pattern, text);
+    if (!c.found) { return text; }
+    return text[0 : c.group_start(0)] + __rx_expand(tmpl, c) + text[c.group_end(0) : text.len()];
+}
+
+// `regex_replace_all_groups(pattern, text, tmpl)` — replace every
+// non-overlapping match with the `$`-template expanded against THAT
+// match's captures. Matches, ordering, and zero-width advancement are
+// exactly `regex_captures_all`'s (which mirrors `regex_find_all` /
+// `regex_replace_all`); output assembly is the same exact-size single
+// buffer as `regex_replace_all`.
+pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): string {
+    var all: RCaps[] = regex_captures_all(pattern, text);
+    if (all.len() == 0) { return text; }
+    var parts: string[] = [];
+    var total: i32 = 0;
+    var last: i32 = 0;             // end of the text already emitted
+    var mi: i32 = 0;
+    while (mi < all.len()) {
+        var m: RCaps = all[mi];
+        // A zero-width match has start == end == last-or-later; the bytes
+        // between `last` and this match's start (including any byte a
+        // zero-width advance skipped) ride along in `seg`.
+        var seg: string = text[last : m.group_start(0)] + "";
+        parts = parts.append(seg); total = total + seg.len();
+        var rep: string = __rx_expand(tmpl, m);
+        parts = parts.append(rep); total = total + rep.len();
+        last = m.group_end(0);
+        mi = mi + 1;
+    }
+    var tail: string = text[last : text.len()] + "";
+    parts = parts.append(tail); total = total + tail.len();
+    return __rx_join(parts, total);
 }
