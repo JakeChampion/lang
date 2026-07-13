@@ -14,13 +14,21 @@ function test_sqrt_floor(): test.TestOutcome {
     return test.assert_true((0 as u64).sqrt_floor() == (0 as u64));
 }
 
+function two63(): u64 {
+    // 2^63 built as a shift; a bare 9223372036854775808 literal exceeds the
+    // signed range the lexer stores numbers in (and trips the formatter).
+    return (1 as u64) << (63 as u64);
+}
+
 function test_sqrt_floor_large(): test.TestOutcome {
-    // (2^32 - 1)^2 = 18446744065119617025; its floor-sqrt is 2^32 - 1.
-    return test.assert_true((18446744065119617025 as u64).sqrt_floor() == (4294967295 as u64));
+    // (2^32 - 1)^2 = 18446744065119617025; its floor-sqrt is 2^32 - 1. Built by
+    // squaring rather than as a bare (over-i64-range) literal.
+    var big: u64 = (4294967295 as u64) * (4294967295 as u64);
+    return test.assert_true(big.sqrt_floor() == (4294967295 as u64));
 }
 
 function test_is_power_of_2(): test.TestOutcome {
-    if (!(9223372036854775808 as u64).is_power_of_2()) { return test.fail("2^63"); }
+    if (!two63().is_power_of_2()) { return test.fail("2^63"); }
     if ((6 as u64).is_power_of_2()) { return test.fail("6"); }
     if ((0 as u64).is_power_of_2()) { return test.fail("0"); }
     return test.assert_true((1 as u64).is_power_of_2());
@@ -34,14 +42,12 @@ function test_next_power_of_2(): test.TestOutcome {
 
 function test_next_power_of_2_cap(): test.TestOutcome {
     // 2^63 is the largest representable power; above it returns 0.
-    if ((9223372036854775808 as u64).next_power_of_2() != (9223372036854775808 as u64)) {
-        return test.fail("2^63 unchanged");
-    }
-    return test.assert_true(((9223372036854775808 as u64) + (1 as u64)).next_power_of_2() == (0 as u64));
+    if (two63().next_power_of_2() != two63()) { return test.fail("2^63 unchanged"); }
+    return test.assert_true((two63() + (1 as u64)).next_power_of_2() == (0 as u64));
 }
 
 function test_log2_floor(): test.TestOutcome {
-    if ((9223372036854775808 as u64).log2_floor() != 63) { return test.fail("2^63 -> 63"); }
+    if (two63().log2_floor() != 63) { return test.fail("2^63 -> 63"); }
     if ((1 as u64).log2_floor() != 0) { return test.fail("1 -> 0"); }
     return test.assert_true((0 as u64).log2_floor() == (0 - 1));
 }

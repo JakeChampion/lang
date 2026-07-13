@@ -123,12 +123,14 @@ pub function (n: u64) is_power_of_2(): boolean {
 }
 
 // `(n: u64) next_power_of_2()` — the smallest power of two `>= n`. Returns `1`
-// for `n <= 1`. The largest power of two representable in a u64 is 2^63, so `n`
-// above that returns `0` (the "no representable power" sentinel), which also
-// keeps the doubling loop from wrapping to zero and spinning forever.
+// for `n <= 1`. The largest power of two representable in a u64 is 2^63 (built
+// here as `1 << 63` rather than a bare literal, which would exceed the signed
+// range the lexer stores numbers in), so `n` above that returns `0` (the "no
+// representable power" sentinel) — which also keeps the doubling loop from
+// wrapping to zero and spinning forever.
 pub function (n: u64) next_power_of_2(): u64 {
     if (n <= (1 as u64)) { return 1 as u64; }
-    if (n > (9223372036854775808 as u64)) { return 0 as u64; }
+    if (n > ((1 as u64) << (63 as u64))) { return 0 as u64; }
     var p: u64 = 1 as u64;
     while (p < n) { p = p * (2 as u64); }
     return p;
