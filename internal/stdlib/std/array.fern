@@ -1035,6 +1035,17 @@ pub function all[T](xs: T[], pred: (T) => boolean): boolean {
     return true;
 }
 
+// `none(xs, pred)` — true if `pred` holds for NO element (the readable
+// complement of `any`: `none(xs, is_error)` reads better than
+// `!any(xs, is_error)`). Short-circuits on the first match. Empty → true
+// (vacuous). Completes the any / all / none predicate triad.
+pub function none[T](xs: T[], pred: (T) => boolean): boolean {
+    for x in xs {
+        if (pred(x)) { return false; }
+    }
+    return true;
+}
+
 // `find(xs, pred)` — `Some(x)` for the first element matching
 // `pred`, else `None`. Short-circuits. The Option return keeps
 // "not found" out-of-band rather than leaning on a sentinel.
@@ -1834,6 +1845,9 @@ pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A { return fold(xs, ini
 // `xs.any(pred)` / `xs.all(pred)` — existential / universal quantifier.
 pub function (xs: T[]) any(pred: (T) => boolean): boolean { return any(xs, pred); }
 pub function (xs: T[]) all(pred: (T) => boolean): boolean { return all(xs, pred); }
+
+// `xs.none(pred)` — true iff `pred` holds for no element (complement of `any`).
+pub function (xs: T[]) none(pred: (T) => boolean): boolean { return none(xs, pred); }
 
 // `xs.find(pred)` — first element satisfying `pred`, or `None`.
 pub function (xs: T[]) find(pred: (T) => boolean): Option[T] { return find(xs, pred); }
