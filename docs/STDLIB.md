@@ -55,6 +55,9 @@ Receiver methods on i32 / byte values.
 
 - **Scalar:** `abs`, `abs_diff` (`|n - other|`), `min`, `max`,
   `clamp`, `pow`, `gcd`, `lcm`
+- **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact
+  into the i64 range), `is_power_of_2` (`n & (n-1)` bit trick),
+  `is_perfect_square` (`sqrt_floor(n)² == n`)
 - **Parity:** `is_even`, `is_odd`
 - **Sign:** `signum` (-1/0/1), `is_positive`, `is_negative`, `is_zero`
 - **Range:** `is_in_range` (half-open `[lo, hi)`), `is_between`
