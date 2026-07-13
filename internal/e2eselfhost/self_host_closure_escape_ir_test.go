@@ -38,6 +38,13 @@ var closureEscapeCases = []struct {
 	{"escape-capture", "function adder(a: i32): (i32) => i32 { var f = function (b: i32): i32 { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); return add10(6); }", 16},
 	{"escape-counter", "function make_counter(): () => i32 { var x = 0; var inc = function (): i32 { x = x + 1; return x; }; return inc; } function main(): i32 { var c = make_counter(); var a = c(); var b = c(); return a + b; }", 3},
 	{"escape-zero-arg", "function mk(): () => i32 { var f = function (): i32 { return 11; }; return f; } function main(): i32 { var g = mk(); return g(); }", 11},
+	// Transitive: a factory that FORWARDS another factory's closure box
+	// (`return makeAdder();`). Requires closure_ret_fns_of to recognise
+	// `return <closure-returning call>` (fixpoint-ordered).
+	{"transitive-factory", "function makeAdder(): (i32) => i32 { var g = function (x: i32): i32 { return x + 1; }; return g; } function outer(): (i32) => i32 { return makeAdder(); } function main(): i32 { var f = outer(); return f(41); }", 42},
+	// Nested: a factory whose body defines and calls a LOCAL closure that
+	// itself returns a closure, then forwards the result (`return inner();`).
+	{"nested-factory", "function outer(): (i32) => i32 { var inner = function (): (i32) => i32 { var g = function (x: i32): i32 { return x + 1; }; return g; }; return inner(); } function main(): i32 { var f = outer(); return f(41); }", 42},
 	// Regression: a directly-returned lambda (bare fn pointer, no box) must
 	// keep working under the extended detection.
 	{"direct-return", "function adder(a: i32): (i32) => i32 { return function (b: i32): i32 { return a + b; }; } function main(): i32 { var add10 = adder(10); return add10(5); }", 15},

@@ -28055,6 +28055,25 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                                         changed = true;
                                     }
                                 },
+                                // (c) `return <closure-returning call>` — a factory
+                                // that forwards another factory's box, e.g.
+                                // `return makeAdder();`. The callee is a top-level
+                                // fn already known to return a closure box (`out`,
+                                // resolved by the fixpoint) or an inline `__mkclo$`
+                                // env-box constructor. Same fn-return gate.
+                                parser.ExprCall(rcc) => {
+                                    if (funcs[fi].ret_type == "fn") {
+                                        match (rcc.callee) {
+                                            parser.ExprIdent(rccid) => {
+                                                if ((rccid.name.len() > 8 && rccid.name[0:8] == "__mkclo$") || util.index_of_str(out, rccid.name) >= 0) {
+                                                    out = out.append(funcs[fi].name);
+                                                    changed = true;
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    }
+                                },
                                 _ => { }
                             }
                         },
