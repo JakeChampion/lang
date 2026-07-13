@@ -1,0 +1,84 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_accessors_test.fern — pure-Fern coverage of std/array's
+// foundational accessors is_empty / first / last / get (free + method forms):
+// the safe, bounds-checked alternatives to len()==0 / xs[0] / xs[len-1] / xs[i],
+// returning Option[T] (None on empty / out-of-range; negative index is None).
+// Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
+// budget; uses assert_true + match (no generic assert_eq[i32]).
+//
+// The i32 cases here are self-host-gated; STRING-element first/get is covered
+// only by the Go-side native differential (TestNativeArrayFirstLastGet exercises
+// a string[] on all four native backends) because the self-host compiler
+// mishandles the generic Option[T] return over pointer-payload (string)
+// elements — the same gap that keeps array_rotate's string case native-only.
+
+function uw(o: Option[i32]): i32 {
+    match (o) { Some(v) => { return v; }, None => { return 0 - 1; } }
+}
+
+function test_is_empty_true(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_true(e.is_empty());
+}
+
+function test_is_empty_false(): test.TestOutcome {
+    return test.assert_true(![1, 2, 3].is_empty());
+}
+
+function test_first(): test.TestOutcome {
+    return test.assert_true(uw([10, 20, 30].first()) == 10);
+}
+
+function test_last(): test.TestOutcome {
+    return test.assert_true(uw([10, 20, 30].last()) == 30);
+}
+
+function test_first_empty_none(): test.TestOutcome {
+    var e: i32[] = [];
+    match (array.first(e)) {
+        Some(v) => { return test.fail("expected None for empty first"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_last_empty_none(): test.TestOutcome {
+    var e: i32[] = [];
+    match (array.last(e)) {
+        Some(v) => { return test.fail("expected None for empty last"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_get_in_range(): test.TestOutcome {
+    return test.assert_true(uw([10, 20, 30].get(1)) == 20);
+}
+
+function test_get_out_of_range(): test.TestOutcome {
+    match ([10, 20, 30].get(9)) {
+        Some(v) => { return test.fail("expected None for OOB get"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_get_negative(): test.TestOutcome {
+    // Negative index is None, never a from-the-end index.
+    match ([10, 20, 30].get(0 - 1)) {
+        Some(v) => { return test.fail("expected None for negative get"); },
+        None => { return test.pass(); }
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array accessors");
+    r = r.it("is_empty true",     test_is_empty_true());
+    r = r.it("is_empty false",    test_is_empty_false());
+    r = r.it("first",             test_first());
+    r = r.it("last",              test_last());
+    r = r.it("first empty None",  test_first_empty_none());
+    r = r.it("last empty None",   test_last_empty_none());
+    r = r.it("get in range",      test_get_in_range());
+    r = r.it("get out of range",  test_get_out_of_range());
+    r = r.it("get negative",      test_get_negative());
+    return r.finish();
+}

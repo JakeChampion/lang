@@ -871,6 +871,28 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_accessors_test.fern` covers std/array's foundational
+// accessors is_empty / first / last / get (free + method forms): Option[T]
+// returns, None on empty / out-of-range, negative index → None. On the interp
+// gate and the self-host x86-64 + arm64 gates for the i32 cases (uses
+// assert_true + match). STRING-element first/get is native-differential-only
+// (self-host mishandles the generic Option[T] over pointer payloads); the
+// Go-side TestNativeArrayFirstLastGet pins native compilation on all four
+// backends. Passing → exit 0.
+func TestRunnerArrayAccessorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_accessors_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array accessors", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_rotate_test.fern` covers std/array's structural
 // rotation verbs rotate_left / rotate_right (free + method forms): cyclic shift
 // by n (mod len), wrap when n >= len, negative n, zero / full shift, and empty.
