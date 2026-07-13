@@ -86,9 +86,21 @@ pub struct TypeMap { key: Type, value: Type }
 // "Circle") is assignable to a TypeUnion "Shape" if Circle
 // appears in Shape's variant list.
 pub struct TypeUnion { name: string }
+// A `dyn Trait` object type. `traits` is the trait-set text after the
+// `dyn ` prefix — "Greet" for `dyn Greet`, "A + B" for `dyn A + B`. In this
+// partial type system a dyn value's concrete Self isn't tracked (native
+// resolves it at monomorphisation / vtable-dispatch time), so assignability
+// into a dyn slot is lenient — a value of ANY value type may flow in, exactly
+// as a generic parameter accepts any argument. The coded conformance passes
+// (E021 object-safety, E059/E060 downcast, E062 ambiguous-method) run
+// independently off the annotation TEXT, so real dyn errors still surface;
+// this Type only stops the uncoded silent over-reject of a `dyn` binding
+// (#4346 piece 2). Method dispatch THROUGH a dyn value is not yet typed —
+// `d.hi()` still infers unknown — a deliberately-deferred follow-up.
+pub struct TypeDyn { traits: string }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -145,6 +157,7 @@ function digit_string_to_i32(s: string): i32 {
     return acc;
 }
 function t_union(name: string): Type { return TypeUnion { name: name }; }
+function t_dyn(traits: string): Type { return TypeDyn { traits: traits }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
@@ -175,6 +188,7 @@ pub function type_debug(t: Type): string {
         TypeFunc(f) => { return "fn"; },
         TypeMap(m) => { return "map<" + type_debug(m.key) + ", " + type_debug(m.value) + ">"; },
         TypeUnion(u) => { return "union:" + u.name; },
+        TypeDyn(d) => { return "dyn:" + d.traits; },
         TypeUnknown(uk) => { return "unknown(" + uk.reason + ")"; }
     }
     return "?";
@@ -262,6 +276,12 @@ function type_eq(a: Type, b: Type): boolean {
         TypeUnion(an) => {
             match (b) {
                 TypeUnion(bn) => { return an.name == bn.name; },
+                _ => { return false; }
+            }
+        },
+        TypeDyn(ad) => {
+            match (b) {
+                TypeDyn(bd) => { return ad.traits == bd.traits; },
                 _ => { return false; }
             }
         },
@@ -1105,6 +1125,15 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
                 },
                 _ => { return false; }
             }
+        },
+        TypeDyn(_) => {
+            // Any value may be coerced into a `dyn Trait` slot — the concrete
+            // Self isn't tracked here, so conformance is left to the coded
+            // E021/E059/E060 passes (which key off the annotation text). An
+            // `unknown` source (e.g. a not-yet-typed dyn method call) is also
+            // accepted so it can't false-positive. Mirrors how a generic
+            // parameter accepts any argument (#4346 piece 2, dyn Trait).
+            return true;
         },
         _ => { return false; }
     }
@@ -2146,6 +2175,26 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
 // struct name and an alias name can't collide because
 // collect_union_sigs rejects the overlap at module build time.
 pub function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): Type {
+    // A `dyn Trait` annotation ("dyn Greet", "dyn A + B", or an array
+    // `dyn Greet[]`) resolves to a TypeDyn carrying the trait-set text after
+    // the `dyn ` prefix — parse_type_ref doesn't model the `dyn ` keyword, and
+    // without this the annotation collapsed to unknown and over-rejected every
+    // `var d: dyn Greet = …` (#4346 piece 2). Trailing `[]` peels to an array
+    // of dyn so `dyn Greet[]` is TypeArray<TypeDyn>.
+    if (name.len() >= 5 && name[0:4] == "dyn ") {
+        var tail: str = name[4:name.len()];
+        var depth: i32 = 0;
+        while (tail.len() >= 2 && tail[tail.len() - 2] == 91 && tail[tail.len() - 1] == 93) {
+            tail = tail[0:tail.len() - 2];
+            depth = depth + 1;
+        }
+        var dt: Type = t_dyn(tail + "");
+        while (depth > 0) {
+            dt = t_array(dt);
+            depth = depth - 1;
+        }
+        return dt;
+    }
     return type_from_ref_su(parser.parse_type_ref(name), structs, unions);
 }
 
@@ -2470,6 +2519,7 @@ function type_label(t: Type): string {
         TypeFunc(_) => { return "fn"; },
         TypeMap(_) => { return "map"; },
         TypeUnion(u) => { return u.name; },
+        TypeDyn(d) => { return "dyn " + d.traits; },
         TypeUnknown(_) => { return "unknown"; },
     }
     return "unknown";

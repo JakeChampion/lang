@@ -569,24 +569,45 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	t.Run("check-overreject-not-silent", func(t *testing.T) {
-		// #4346: the partial checker's `Type` union still can't model a
-		// `dyn Trait` annotation (the self-host has no dyn-trait Type), so a
-		// `var d: dyn Greet = …` binds `d` to TypeUnknown and marks the module
-		// ill-typed — but no coded rule fires (Greet is object-safe and the
-		// impl is valid, so E021/E059/E060 stay silent). Before piece 1 `-check`
-		// exited 1 with EMPTY output (silent reject). This program is
-		// native-valid (exit 0) yet over-rejected here; piece 1 surfaces a
-		// best-effort `error[type]` hint so the rejection is never silent. The
-		// native `fern` stays the full oracle (this asserts non-silence, not a
-		// code). (Enum values, Option/Result, and generic bodies, once also
-		// over-rejected here, now type via the piece-2 slices — see the
-		// check-*-ok tests above; `dyn` is the last unmodelled shape.)
-		srcPath := filepath.Join(dir, "overreject.fern")
+	t.Run("check-dyn-bind-ok", func(t *testing.T) {
+		// #4346 piece 2 (dyn Trait representation): a `dyn Trait` annotation now
+		// resolves to a real TypeDyn instead of TypeUnknown, so binding a struct
+		// value into a dyn slot (`var d: dyn Greet = Dog { }`) type-checks
+		// (assignment into a dyn slot is lenient) — the program passes self-host
+		// `-check` (exit 0) where the pre-slice self-host bound `d` to unknown
+		// and silently over-rejected (the shape the over-reject test used to
+		// pin). Method dispatch THROUGH the dyn value is the remaining unmodelled
+		// shape — see check-overreject-not-silent below.
+		srcPath := filepath.Join(dir, "dyn_bind.fern")
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
 			"impl Greet for Dog { function hi(self: Self): i32 { return 7; } }\n" +
 			"function main(): i32 { var d: dyn Greet = Dog { }; return 0; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a dyn-binding program exited %d, want 0", code)
+		}
+	})
+
+	t.Run("check-overreject-not-silent", func(t *testing.T) {
+		// #4346: after the piece-2 slices the last unmodelled shape is method
+		// DISPATCH through a dyn value — `d.hi()` where `d: dyn Greet`. The dyn
+		// annotation now types (TypeDyn), so the binding is accepted (see
+		// check-dyn-bind-ok), but a call on a dyn receiver isn't resolved to the
+		// trait method, so `d.hi()` infers unknown and marks the module
+		// ill-typed. No coded rule fires (the E043 method-existence pass has no
+		// dyn-receiver arm, and Greet is object-safe so E021/E059/E060 stay
+		// silent). This program is native-valid (exit 0) yet over-rejected here;
+		// piece 1 surfaces a best-effort `error[type]` hint so the rejection is
+		// never silent. The native `fern` stays the full oracle (this asserts
+		// non-silence, not a code).
+		srcPath := filepath.Join(dir, "overreject.fern")
+		src := "trait Greet { function hi(self: Self): i32; }\n" +
+			"struct Dog { }\n" +
+			"impl Greet for Dog { function hi(self: Self): i32 { return 7; } }\n" +
+			"function main(): i32 { var d: dyn Greet = Dog { }; return d.hi(); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}

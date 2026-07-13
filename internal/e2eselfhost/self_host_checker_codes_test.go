@@ -1126,6 +1126,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// either over- or under-flagged.
 		{"generic-nested-array-field-ok", "struct Wrapper[T] { items: T[] }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] }; return w.items[0]; }\n"},
 		{"generic-nested-tuple-field-ok", "struct Pair[K, V] { kv: (K, V) }\nfunction main(): i32 { var p: Pair[i32, string] = Pair { kv: (7, \"hi\") }; return p.kv.0; }\n"},
+		// dyn Trait representation (#4346 piece 2): a `dyn Trait` annotation now
+		// resolves to TypeDyn, so binding a value into a dyn slot type-checks
+		// (assignment into dyn is lenient). Both are well-typed against the Go
+		// oracle — a var-binding and a `dyn T[]` array of dyn — where the
+		// pre-slice self-host bound them to unknown and silently over-rejected.
+		// The E021 object-safety pass keys off the annotation text (Greet is
+		// object-safe), so no code fires; the self-host must stay silent.
+		{"dyn-bind-ok", "trait Greet { function hi(self: Self): i32; }\nstruct Dog { }\nimpl Greet for Dog { function hi(self: Self): i32 { return 7; } }\nfunction main(): i32 { var d: dyn Greet = Dog { }; return 0; }\n"},
+		{"dyn-array-ok", "trait Greet { function hi(self: Self): i32; }\nstruct Dog { }\nimpl Greet for Dog { function hi(self: Self): i32 { return 7; } }\nfunction main(): i32 { var ds: dyn Greet[] = [Dog { }]; return ds.len(); }\n"},
 	}
 
 	for _, tc := range progs {
