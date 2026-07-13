@@ -1,0 +1,117 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_extremum_by_test.fern — pure-Fern coverage of std/array's
+// comparator-driven extremum verbs `max_by` / `min_by` (free-function and method
+// forms). The comparator companions to `max_by_i32_key` / `min_by_i32_key`:
+// where the key form projects to an i32, these take an arbitrary three-way
+// comparator (the `sort_by` convention, `cmp(a, b) < 0 == a-before-b`), so the
+// extremum can be by string length, lexicographic order, or any struct rule.
+// Ties keep the FIRST extremum; empty → None.
+//
+// Deliberately kept in its OWN file (not folded into array_hof_test): the
+// self-host merged bundle for array_hof already sits near the asm_ir 512-function
+// IR budget, and adding these functions to its reachable set tips it over,
+// flipping unrelated functions (sort_by / partition) to the legacy AST emitter
+// that miscompiles them (regressed the array_hof self-host gate — this file is
+// the follow-up fix that un-tips that budget).
+//
+// Interp-gated only (NOT in selfHostStdTestCases): a string-element `max_by` /
+// `min_by` — Option[string] returned from the generic comparator body — crashes
+// the arm64 self-host emitter (exit -1) even as a standalone under-budget
+// bundle, though it runs correctly on the x86-64 self-host path AND on all four
+// native backends (interp / x86-64 / wasm / arm64, pinned by the Go-side
+// differential TestNativeArrayMinMaxBy). The arm64 self-host string-payload gap
+// is compiler territory, tracked separately; here we cover the verbs on interp,
+// mirroring the iter_combinators precedent (interp-only for a self-host gap).
+
+function cmp_i(a: i32, b: i32): i32 { return a - b; }
+function cmp_len(a: string, b: string): i32 { return a.len() - b.len(); }
+
+function test_max_by(): test.TestOutcome {
+    var xs: i32[] = [3, 7, 2, 9, 4];
+    match (xs.max_by(cmp_i)) {
+        Some(v) => { return test.assert_eq(v, 9); },
+        None => { return test.fail("max_by of non-empty expected Some"); }
+    }
+}
+
+function test_min_by(): test.TestOutcome {
+    var xs: i32[] = [3, 7, 2, 9, 4];
+    match (array.min_by(xs, cmp_i)) {
+        Some(v) => { return test.assert_eq(v, 2); },
+        None => { return test.fail("min_by of non-empty expected Some"); }
+    }
+}
+
+function test_max_by_empty(): test.TestOutcome {
+    var xs: i32[] = [];
+    match (xs.max_by(cmp_i)) {
+        Some(v) => { return test.fail("max_by of empty expected None"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_min_by_empty(): test.TestOutcome {
+    var xs: i32[] = [];
+    match (array.min_by(xs, cmp_i)) {
+        Some(v) => { return test.fail("min_by of empty expected None"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_max_by_len(): test.TestOutcome {
+    // Comparator over an arbitrary ordering (string length), not an i32 key.
+    var xs: string[] = ["bb", "a", "cccc", "ddd"];
+    match (xs.max_by(cmp_len)) {
+        Some(v) => { return test.assert_eq(v, "cccc"); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function test_min_by_len(): test.TestOutcome {
+    var xs: string[] = ["bb", "a", "cccc", "ddd"];
+    match (array.min_by(xs, cmp_len)) {
+        Some(v) => { return test.assert_eq(v, "a"); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function test_max_by_ties_first(): test.TestOutcome {
+    // Two elements tie on length 4; the FIRST is kept.
+    var xs: string[] = ["wxyz", "q", "abcd"];
+    match (xs.max_by(cmp_len)) {
+        Some(v) => { return test.assert_eq(v, "wxyz"); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function test_min_by_ties_first(): test.TestOutcome {
+    // Two elements tie on length 1; the FIRST is kept.
+    var xs: string[] = ["a", "bbbb", "z"];
+    match (xs.min_by(cmp_len)) {
+        Some(v) => { return test.assert_eq(v, "a"); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function test_max_by_single(): test.TestOutcome {
+    var xs: i32[] = [42];
+    match (xs.max_by(cmp_i)) {
+        Some(v) => { return test.assert_eq(v, 42); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array extremum-by");
+    r = r.it("max_by",            test_max_by());
+    r = r.it("min_by",            test_min_by());
+    r = r.it("max_by empty",      test_max_by_empty());
+    r = r.it("min_by empty",      test_min_by_empty());
+    r = r.it("max_by len",        test_max_by_len());
+    r = r.it("min_by len",        test_min_by_len());
+    r = r.it("max_by ties first", test_max_by_ties_first());
+    r = r.it("min_by ties first", test_min_by_ties_first());
+    r = r.it("max_by single",     test_max_by_single());
+    return r.finish();
+}
