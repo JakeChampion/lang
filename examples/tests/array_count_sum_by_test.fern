@@ -1,0 +1,75 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_count_sum_by_test.fern — pure-Fern coverage of std/array's
+// closure-aggregate verbs count_where (tally of matching elements — the
+// allocation-free companion to filter(…).len()) and sum_by (sum of an i32
+// projection over any element type — the projection sibling of the i32[]-only
+// sum). Free-function and method forms, over i32 and string arrays, incl. the
+// empty and none-match cases.
+//
+// Interp-gated only (NOT in selfHostStdTestCases): the self-host compiler
+// miscompiles `sum_by` with an i32-identity projection — `ns.sum_by(x => x)`
+// returns -1 instead of the sum — even though `count_where`, `sum_by` over a
+// string projection, and the i32-identity case on ALL FOUR native backends
+// (interp / x86-64 / wasm / arm64, pinned by the Go-side
+// TestNativeArrayCountWhereSumBy) are correct. The gap is in the self-host
+// monomorphiser/codegen, tracked separately; mirrors the array_extremum_by /
+// iter_combinators precedent (interp-only for a self-host-compiler gap).
+
+function cs_is_even(x: i32): boolean { return x % 2 == 0; }
+function cs_is_neg(x: i32): boolean { return x < 0; }
+function cs_idn(x: i32): i32 { return x; }
+function cs_slen(s: string): i32 { return s.len(); }
+
+function test_count_where(): test.TestOutcome {
+    var ns: i32[] = [1, 2, 3, 4, 5, 6];
+    return test.assert_eq(array.count_where(ns, cs_is_even), 3);
+}
+
+function test_count_where_method(): test.TestOutcome {
+    var ns: i32[] = [1, 2, 3, 4, 5, 6];
+    return test.assert_eq(ns.count_where(cs_is_even), 3);
+}
+
+function test_count_where_none(): test.TestOutcome {
+    var ns: i32[] = [1, 2, 3];
+    return test.assert_eq(ns.count_where(cs_is_neg), 0);
+}
+
+function test_count_where_empty(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_eq(array.count_where(e, cs_is_even), 0);
+}
+
+function test_sum_by_strings(): test.TestOutcome {
+    var ws: string[] = ["a", "bb", "ccc"];
+    return test.assert_eq(array.sum_by(ws, cs_slen), 6);
+}
+
+function test_sum_by_method(): test.TestOutcome {
+    var ws: string[] = ["a", "bb", "ccc"];
+    return test.assert_eq(ws.sum_by(cs_slen), 6);
+}
+
+function test_sum_by_identity(): test.TestOutcome {
+    var ns: i32[] = [10, 20, 30];
+    return test.assert_eq(ns.sum_by(cs_idn), 60);
+}
+
+function test_sum_by_empty(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_eq(array.sum_by(e, cs_idn), 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array count/sum by");
+    r = r.it("count_where",         test_count_where());
+    r = r.it("count_where method",  test_count_where_method());
+    r = r.it("count_where none",    test_count_where_none());
+    r = r.it("count_where empty",   test_count_where_empty());
+    r = r.it("sum_by strings",      test_sum_by_strings());
+    r = r.it("sum_by method",       test_sum_by_method());
+    r = r.it("sum_by identity",     test_sum_by_identity());
+    r = r.it("sum_by empty",        test_sum_by_empty());
+    return r.finish();
+}
