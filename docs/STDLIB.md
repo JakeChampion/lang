@@ -64,7 +64,8 @@ Receiver methods on i32 / byte values.
 - **Overflow-aware:** `saturating_add`/`saturating_sub` (clamp to
   i64::MAX/MIN), `checked_add`/`checked_sub` (`Option[i64]`, `None` on
   overflow)
-- **String:** `to_string`
+- **String:** `to_string`, `to_string_radix(base)` (arbitrary base
+  2–36; renders i64::MIN cleanly via a u64 magnitude)
 
 ### `std/u32`
 

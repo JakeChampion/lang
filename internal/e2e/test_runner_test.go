@@ -390,6 +390,27 @@ func TestRunnerI64ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i64_to_string_radix_test.fern` covers std/i64's
+// to_string_radix(base) — render an i64 in an arbitrary base (2..36) via a u64
+// magnitude, so it renders i64::MIN cleanly and exercises unsigned u64 div/rem.
+// Several bases, sign, zero, values past the i32 range, i64::MAX/MIN, and
+// out-of-range bases. On the interp gate and the self-host x86-64 + arm64 gates;
+// the Go-side TestI64ToStringRadix pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI64ToStringRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_to_string_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 to_string_radix", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/i64_bit_ops_test.fern` covers std/i64's bit ops (wider
 // counterparts to std/i32's): count_ones (set bits in the 64-bit two's-
 // complement rep) and bit_length (bits to represent |n|, i64::MIN special-
