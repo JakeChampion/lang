@@ -1,0 +1,25 @@
+// `.with` on an array of CONCRETE droppable enums (a pointer payload, so
+// enumNeedsDrop is true). The overwrite drops the OLD element through
+// dropStructField; under the free-off differential leg
+// (Test*FixturesFreeMatchesNoFree) that drop must NOT route to the
+// worklist-generated __drop_enum_<Name> — the worklist only runs free-on,
+// so the call would be an undefined symbol at link (first hit by
+// std/regex's RInst[] program patching). Minimal standalone regression
+// for that exact shape.
+enum EAW { EAWNum(i32), EAWTxt(string) }
+
+function main(): i32 {
+    var xs: EAW[] = [EAWNum(1), EAWTxt("two"), EAWNum(3)];
+    xs = xs.with(1, EAWNum(2));
+    xs = xs.with(0, EAWTxt("zero"));
+    var r: i32 = 0;
+    match (xs[1]) {
+        EAWNum(n) => { r = 40 + n; },
+        EAWTxt(_) => { r = 1; }
+    }
+    match (xs[0]) {
+        EAWTxt(s) => { if (s == "zero") { r = r + 0; } else { r = 1; } },
+        EAWNum(_) => { r = 2; }
+    }
+    return r;
+}
