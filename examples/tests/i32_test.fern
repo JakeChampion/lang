@@ -110,9 +110,30 @@ function test_reverse_digits_min(): test.TestOutcome {
 function test_digits_basic(): test.TestOutcome {
     return test.assert_true((0).digits() == 1 && (7).digits() == 1 && (1000).digits() == 4);
 }
+function test_ordinal(): test.TestOutcome {
+    if ((1).ordinal() != "1st") { return test.fail("1st"); }
+    if ((2).ordinal() != "2nd") { return test.fail("2nd"); }
+    if ((3).ordinal() != "3rd") { return test.fail("3rd"); }
+    if ((4).ordinal() != "4th") { return test.fail("4th"); }
+    // Tens carry the suffix through: 21st, 102nd.
+    if ((21).ordinal() != "21st") { return test.fail("21st"); }
+    return test.assert_eq((102).ordinal(), "102nd");
+}
+function test_ordinal_exceptions(): test.TestOutcome {
+    // 11/12/13 are always "th", and the pattern recurs at 111/112/113.
+    if ((11).ordinal() != "11th") { return test.fail("11th"); }
+    if ((12).ordinal() != "12th") { return test.fail("12th"); }
+    if ((13).ordinal() != "13th") { return test.fail("13th"); }
+    if ((113).ordinal() != "113th") { return test.fail("113th"); }
+    // Zero is "0th"; a negative keeps its sign.
+    if ((0).ordinal() != "0th") { return test.fail("0th"); }
+    return test.assert_eq((0 - 1).ordinal(), "-1st");
+}
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i32");
+    r = r.it("ordinal suffixes",    test_ordinal());
+    r = r.it("ordinal exceptions",  test_ordinal_exceptions());
     r = r.it("abs negative",        test_abs_neg());
     r = r.it("abs positive",        test_abs_pos());
     r = r.it("signum",              test_signum());

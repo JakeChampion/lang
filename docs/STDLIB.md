@@ -43,7 +43,8 @@ Receiver methods on i32 / byte values.
   `rotate_left`, `rotate_right`
 - **String formatting:** `to_string`, `to_string_padded`,
   `to_string_with_sep`, `to_hex`, `to_binary`, `to_oct`,
-  `to_rgb_hex`, `digits`, `pluralize`
+  `to_rgb_hex`, `digits`, `pluralize`, `ordinal` (English ordinal,
+  `1`→`"1st"`/`2`→`"2nd"`/`11`→`"11th"`, with the 11/12/13 exception)
 
 ### `std/i64`
 

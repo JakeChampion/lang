@@ -732,6 +732,26 @@ pub function (n: i32) pluralize(singular: string, plural: string): string {
     return plural;
 }
 
+// `(n: i32) ordinal()` — the English ordinal string: `1` → `"1st"`,
+// `2` → `"2nd"`, `3` → `"3rd"`, `4` → `"4th"`, with the 11/12/13
+// exception (`11` → `"11th"`, `112` → `"112th"`) and the tens carrying
+// through (`21` → `"21st"`, `102` → `"102nd"`). The suffix is chosen
+// from |n|, so a negative keeps its sign (`-1` → `"-1st"`). For turning
+// a rank into display text ("the 3rd result").
+pub function (n: i32) ordinal(): string {
+    var m: i32 = n.abs();
+    var suffix: string = "th";
+    var mod100: i32 = m % 100;
+    // 11, 12, 13 are always "th"; otherwise the last digit decides.
+    if (mod100 < 11 || mod100 > 13) {
+        var mod10: i32 = m % 10;
+        if (mod10 == 1) { suffix = "st"; }
+        else if (mod10 == 2) { suffix = "nd"; }
+        else if (mod10 == 3) { suffix = "rd"; }
+    }
+    return n.to_string() + suffix;
+}
+
 // `(i32).to_string()` / `(u32).to_string()` /
 // `(i64).to_string()` / `(u64).to_string()` — method-syntax
 // wrappers around the formatter. The receiver-method
