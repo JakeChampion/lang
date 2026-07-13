@@ -26,6 +26,19 @@ pub function (n: i32) abs(): i32 {
     }
     return n;
 }
+
+// `abs_diff(other)` — the absolute difference `|n - other|`, always
+// non-negative for any pair whose true difference fits in i32. Branches on the
+// ordering and subtracts the smaller from the larger so the result is the
+// non-negative magnitude directly (unlike `(n - other).abs()`, which trips
+// `abs`'s own i32::MIN edge). Like Rust's `i32::abs_diff` in spirit, but the
+// return is i32 (not u32), so a difference exceeding i32::MAX — only reachable
+// when the operands straddle nearly the whole range, e.g. MAX vs MIN — wraps;
+// widen to i64 first if that range matters.
+pub function (n: i32) abs_diff(other: i32): i32 {
+    if (n >= other) { return n - other; }
+    return other - n;
+}
 // ASCII byte predicates — `is_digit` / `is_alpha` / `is_alnum` /
 // `is_ascii_white_space` classify a single byte (typically an
 // `s[i]` index into a string, i.e. a UTF-8 code unit, hence the
@@ -597,6 +610,12 @@ pub function (n: i32) count_ones(): i32 {
         i = i + 1;
     }
     return c;
+}
+
+// `count_zeros` — the number of ZERO bits in the 32-bit two's-complement
+// representation; the complement of `count_ones` (the two always sum to 32).
+pub function (n: i32) count_zeros(): i32 {
+    return 32 - n.count_ones();
 }
 
 pub function (n: i32) leading_zeros(): i32 {
