@@ -50,6 +50,12 @@ function main(): i32 {
     if (nc.group_count() == 1 && nc.group(1) == "c" && all.len() == 2 && all[1].group(2) == "d") { return 42; }
     return 0;
 }`},
+	// $-template replacement over captures (__rx_expand + __rx_join).
+	{"replace-groups", `import "std/regex";
+function main(): i32 {
+    if (regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1") == "b@a d@c") { return 42; }
+    return 0;
+}`},
 }
 
 func TestSelfHostRegexModuleIR(t *testing.T) {
