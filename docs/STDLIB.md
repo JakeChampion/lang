@@ -200,7 +200,9 @@ convention.
   `count_where` (tally matching a predicate), `sum_by` (sum of an
   i32 projection over any element type),
   `take`/`drop`/`take_while`/`drop_while`, `slice`, `chunks`,
-  `windows`, `zip`, `enumerate`, `reverse`, `intersperse`,
+  `windows`, `zip`, `enumerate`, `reverse`, `rotate_left`/
+  `rotate_right` (cyclic shift by n mod len; negative n rotates
+  the other way), `intersperse`,
   `flat_map`, `flatten` (`T[][]` → `T[]`), `partition`
   (→ `(kept, rejected)`), `scan` (running left fold, same length
   as input), `max_by_i32_key`/`min_by_i32_key` (extremum by an

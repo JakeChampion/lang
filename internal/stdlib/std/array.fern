@@ -1206,6 +1206,35 @@ pub function reverse[T](xs: T[]): T[] {
     return out;
 }
 
+// `rotate_left(xs, n)` — fresh `T[]` with the elements cyclically shifted
+// left by `n`: the first `n` move to the end. `[1,2,3,4,5]` rotated left by 2
+// is `[3,4,5,1,2]`. `n` is taken modulo the length (so `n >= len` and large
+// `n` wrap), and negative `n` rotates the other way — `rotate_left(xs, -1) ==
+// rotate_right(xs, 1)`. Empty / length-1 / `n % len == 0` → an unchanged copy.
+// Structural (no element comparison), so it works for any element type.
+pub function rotate_left[T](xs: T[], n: i32): T[] {
+    var len: i32 = xs.len();
+    var out: T[] = [];
+    if (len == 0) { return out; }
+    // Normalise the shift into [0, len) — `%` can be negative in Fern, so add
+    // len and take `%` again to fold negatives back into range.
+    var sh: i32 = ((n % len) + len) % len;
+    var i: i32 = 0;
+    while (i < len) {
+        out = out.append(xs[(i + sh) % len]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `rotate_right(xs, n)` — the mirror of `rotate_left`: the last `n` elements
+// move to the front. `[1,2,3,4,5]` rotated right by 2 is `[4,5,1,2,3]`.
+// Implemented as a left-rotate by `len - (n mod len)`; same wrap / negative /
+// empty handling.
+pub function rotate_right[T](xs: T[], n: i32): T[] {
+    return rotate_left(xs, 0 - n);
+}
+
 // `take(xs, n)` — fresh `T[]` of the first `n` elements (the prefix).
 // Clamped: `n <= 0` → empty, `n >= len` → a full copy. The
 // complement of `drop`: `take(xs, n) ++ drop(xs, n) == xs`.
@@ -1710,6 +1739,11 @@ pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] { return flat_map(xs, f);
 // `xs.intersperse(sep)` — insert `sep` between each pair of adjacent
 // elements (fresh array).
 pub function (xs: T[]) intersperse(sep: T): T[] { return intersperse(xs, sep); }
+
+// `xs.rotate_left(n)` / `xs.rotate_right(n)` — cyclic shift by `n` (mod len);
+// negative `n` rotates the other way. Fresh array.
+pub function (xs: T[]) rotate_left(n: i32): T[] { return rotate_left(xs, n); }
+pub function (xs: T[]) rotate_right(n: i32): T[] { return rotate_right(xs, n); }
 
 // `xs.reduce(f)` — seedless left fold; `None` on an empty array.
 pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f); }
