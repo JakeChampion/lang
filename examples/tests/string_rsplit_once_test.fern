@@ -1,0 +1,75 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_rsplit_once_test.fern — pure-Fern coverage of
+// std/string.rsplit_once: split at the LAST occurrence of the separator (the
+// mirror of split_once). Covers multi-occurrence (last wins), no-match,
+// empty-sep, separator at the very start / very end, and a multi-char
+// separator, plus the split_once-vs-rsplit_once contrast. Kept as its own suite
+// so the self-host merged bundle stays under the asm_ir IR budget. The Go-side
+// TestStringRsplitOnce pins these across all four backends; this is the
+// migration-shaped (pure-Fern, std/test-driven) companion.
+
+function pair_is(o: Option[(string, string)], h: string, t: string): boolean {
+    match (o) {
+        Some(p) => { return p.0 == h && p.1 == t; },
+        None => { return false; }
+    }
+}
+
+function test_last_wins(): test.TestOutcome {
+    return test.assert_true(pair_is("a.b.c".rsplit_once("."), "a.b", "c"));
+}
+
+function test_extension(): test.TestOutcome {
+    return test.assert_true(pair_is("file.tar.gz".rsplit_once("."), "file.tar", "gz"));
+}
+
+function test_path_segment(): test.TestOutcome {
+    return test.assert_true(pair_is("a/b/c".rsplit_once("/"), "a/b", "c"));
+}
+
+function test_no_match(): test.TestOutcome {
+    match ("abc".rsplit_once(".")) {
+        Some(p) => { return test.fail("expected None when sep absent"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_empty_sep(): test.TestOutcome {
+    match ("abc".rsplit_once("")) {
+        Some(p) => { return test.fail("expected None for empty sep"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_sep_at_start(): test.TestOutcome {
+    return test.assert_true(pair_is(".hidden".rsplit_once("."), "", "hidden"));
+}
+
+function test_sep_at_end(): test.TestOutcome {
+    return test.assert_true(pair_is("trailing.".rsplit_once("."), "trailing", ""));
+}
+
+function test_multichar_sep(): test.TestOutcome {
+    return test.assert_true(pair_is("a::b::c".rsplit_once("::"), "a::b", "c"));
+}
+
+function test_differs_from_split_once(): test.TestOutcome {
+    // split_once takes the FIRST separator, rsplit_once the LAST.
+    if (!pair_is("a.b.c".split_once("."), "a", "b.c")) { return test.fail("split_once first"); }
+    return test.assert_true(pair_is("a.b.c".rsplit_once("."), "a.b", "c"));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string rsplit_once");
+    r = r.it("last wins",            test_last_wins());
+    r = r.it("extension",            test_extension());
+    r = r.it("path segment",         test_path_segment());
+    r = r.it("no match",             test_no_match());
+    r = r.it("empty sep",            test_empty_sep());
+    r = r.it("sep at start",         test_sep_at_start());
+    r = r.it("sep at end",           test_sep_at_end());
+    r = r.it("multichar sep",        test_multichar_sep());
+    r = r.it("differs from split_once", test_differs_from_split_once());
+    return r.finish();
+}
