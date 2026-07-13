@@ -4797,6 +4797,14 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	if RcPlanHook != nil {
 		RcPlanHook(fn.Name, b.dumpRcPlan())
 	}
+	// `fip` / `fbip` verify-and-enable (plan E2', fip_verify.go): check the
+	// ops just emitted against the annotation's allocation budget — every
+	// fresh (un-reuse-paired) allocation beyond the graded allowance is an
+	// E068 error. Runs on the raw per-function stream, before any later
+	// pass reshapes it, and is read-only over the emitted result.
+	if err := verifyFipAllocs(fn, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

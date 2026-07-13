@@ -30,6 +30,23 @@ func TestFormatSimpleFunction(t *testing.T) {
 	}
 }
 
+// The contextual function modifiers — `fip` / `fbip` (bare + graded) and
+// `async` — carry checked semantics (E053/E068; the P3 async export), so
+// the formatter must re-emit them. They used to be silently dropped.
+func TestFormatKeepsFunctionModifiers(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`fip function f(x: i32): i32 { return x; }`, "fip function f(x: i32): i32 {\n  return x;\n}\n"},
+		{`fbip function f(x: i32): i32 { return x; }`, "fbip function f(x: i32): i32 {\n  return x;\n}\n"},
+		{`pub fip(2) function f(x: i32): i32 { return x; }`, "pub fip(2) function f(x: i32): i32 {\n  return x;\n}\n"},
+		{`fbip(1) function f(x: i32): i32 { return x; }`, "fbip(1) function f(x: i32): i32 {\n  return x;\n}\n"},
+		{`async function f(): i32 { return 0; }`, "async function f(): i32 {\n  return 0;\n}\n"},
+	} {
+		if got := formatSrc(t, tc.in); got != tc.want {
+			t.Errorf("format(%q):\ngot  %q\nwant %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // Nested blocks indent further. `if` / `else` chain stays on the
 // same line as the closing brace of the previous arm.
 func TestFormatIfElseIndents(t *testing.T) {

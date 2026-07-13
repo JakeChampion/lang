@@ -11056,19 +11056,41 @@ pub function parse_module(toks: lexer.Token[]): Module {
             }
             continue;
         }
-        // `fip` is a contextual modifier on a function decl (`fip function
-        // …` / `pub fip function …`): stamp FuncDecl.fip so the checker can
-        // verify the fully-in-place no-allocation guarantee (E053).
-        // Recognised only when directly followed by `function`, so `fip`
-        // stays usable as an ordinary identifier everywhere else — the
-        // exact rule the native parser uses.
+        // `fip` / `fbip` are contextual modifiers on a function decl (`fip
+        // function …` / `pub fbip(1) function …`), each with an optional
+        // graded allowance `(n)`. The self-host STAMPS only the bare `fip`
+        // (the strict E053 subset its checker enforces); `fbip` and the
+        // graded `fip(n)` / `fbip(n)` forms are parse-TOLERATED and
+        // DROPPED: the IR-level E068 verification (plan E2') lives in the
+        // native compiler only until the self-host reuse port (plan E4)
+        // lands, and stamping `fip` on a graded/fbip declaration would send
+        // a legitimately-allocating body into the strict E053 walk. Dropping
+        // the mark is the sound direction (the guarantee simply goes
+        // unchecked here — the native compile of the same program checks
+        // it). Recognised only when the whole modifier shape is directly
+        // followed by `function`, so both names stay usable as ordinary
+        // identifiers everywhere else — the same rule the native parser
+        // uses.
         var decl_fip: boolean = false;
-        if (p.peek_ident() == "fip") {
-            var fip_probe: Par = p.advance();
-            if (fip_probe.peek_keyword() == "function") {
-                p = fip_probe;
+        var fm_name: string = p.peek_ident();
+        if (fm_name == "fip" || fm_name == "fbip") {
+            var fm_probe: Par = p.advance();
+            var fm_graded: boolean = false;
+            if (fm_probe.peek_punct() == "(") {
+                // Graded allowance `(n)`: a single integer literal, then `)`.
+                var fm_num: Par = fm_probe.advance();
+                if (fm_num.peek_is_literal()) {
+                    var fm_close: Par = fm_num.advance();
+                    if (fm_close.peek_punct() == ")") {
+                        fm_probe = fm_close.advance();
+                        fm_graded = true;
+                    }
+                }
+            }
+            if (fm_probe.peek_keyword() == "function") {
+                p = fm_probe;
                 kw = "function";
-                decl_fip = true;
+                decl_fip = fm_name == "fip" && !fm_graded;
             }
         }
         if (kw == "function") {

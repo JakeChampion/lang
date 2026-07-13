@@ -34,6 +34,7 @@ package printer
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -640,6 +641,25 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString("pub(package) ")
 	} else if fn.Public {
 		f.b.WriteString("pub ")
+	}
+	// Contextual modifiers: `fip` / `fbip` (with an optional graded
+	// allowance) and `async`. Dropping one silently changes semantics —
+	// the checked in-place guarantee (E053/E068) or the P3 async export.
+	if fn.Fip || fn.Fbip {
+		if fn.Fbip {
+			f.b.WriteString("fbip")
+		} else {
+			f.b.WriteString("fip")
+		}
+		if fn.FipAllowance > 0 {
+			f.b.WriteByte('(')
+			f.b.WriteString(strconv.Itoa(fn.FipAllowance))
+			f.b.WriteByte(')')
+		}
+		f.b.WriteByte(' ')
+	}
+	if fn.Async {
+		f.b.WriteString("async ")
 	}
 	f.b.WriteString("function ")
 	if fn.Receiver != nil {

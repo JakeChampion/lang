@@ -2627,7 +2627,26 @@ type FuncDecl struct {
 	// non-`fip` function is rejected). It is a verify-don't-enable
 	// annotation — the in-place lowering already happens; `fip` only asserts
 	// and checks it. Default false. Set by the parser for `fip function`.
+	// The IR layer additionally verifies the claim against the ops it
+	// actually emitted (E068, verifyFipAllocs) — see docs/REUSE-CONTRACT.md.
 	Fip bool
+	// Fbip marks a function the source annotated `fbip function …` — the
+	// Koka-style "fully in place with borrowing" sibling of Fip. The checker
+	// runs the same E053 walk with a RELAXED allocation rule: constructor
+	// expressions (struct / tuple literals, payload-carrying enum variants)
+	// are allowed, because the IR layer verifies each such site is
+	// reuse-PAIRED (computeReuseSources / the self-overwrite hooks /
+	// consumingMatchReuse) or covered by FipAllowance — an un-reused site
+	// is an E068 error at lowering time (verify-and-enable, plan E2').
+	// Mutually exclusive with Fip (parse error). Default false; set by the
+	// parser for `fbip function`.
+	Fbip bool
+	// FipAllowance is the graded allowance `n` of `fip(n)` / `fbip(n)`: at
+	// most n fresh (un-reused) constructor allocations are permitted by the
+	// IR-level E068 verification. The bare forms are allowance 0. Stored by
+	// the parser; the checker only relaxes the constructor-shape rule when
+	// it is > 0 (the IR owns the count).
+	FipAllowance int
 	// Async marks a function the source annotated `async function …` —
 	// the WASI Preview-3 component-model-async export surface. On
 	// `-target wasm-bin` the driver lifts the async-marked function with
