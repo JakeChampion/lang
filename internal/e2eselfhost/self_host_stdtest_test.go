@@ -242,6 +242,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"float_exp2_exp10", langSrcAbs(t, "examples/tests/float_exp2_exp10_test.fern"), ""},
 		{"float_recip_copysign_midpoint", langSrcAbs(t, "examples/tests/float_recip_copysign_midpoint_test.fern"), ""},
 		{"i64_roots", langSrcAbs(t, "examples/tests/i64_roots_test.fern"), ""},
+		{"i64_intdiv", langSrcAbs(t, "examples/tests/i64_intdiv_test.fern"), ""},
 		{"float_array_strict_sort", langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern"), ""},
 		{"lines_log", langSrcAbs(t, "examples/tests/lines_log_test.fern"), ""},
 		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern"), ""},
