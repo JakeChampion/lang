@@ -4774,3 +4774,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
     modload/load/heap-bump fixpoints stay byte-identical (the compiler's own
     string maps use get/set, so the runtime additions don't perturb the
     self-compile). Refs #4353.
+
+- 2026-07-13: **#4353 slice 4 (counted get_or/get for value-overwrite) —
+  IMPLEMENTATION SITES PINNED (not yet landed). Read before implementing.**
+  Slices 1–3 landed. Slice 4 is the value-side leak fix and is ATOMIC (like
+  slices 1+2 were coupled) — its four parts cannot land independently without
+  a window of use-after-free or leak, so land them together with the full
+  differential + fixpoint gate. Current state established this session:
+  - The REGISTER `__fern_map_set` overwrite path (`.Lms_found`, asm_ir.fern
+    ~L3248) currently **LEAKS the old string value** — it overwrites
+    `values[i+1]=val` and frees only the discarded KEY (kconsume), never the
+    old value. The WASM `$__fern_map_set` overwrite (wasm.fern ~L8634) already
+    `$__fern_arr_dec`s the old value when `vis`.
+  - `get_or`/`get` return an **uncounted alias** of the map's stored value on
+    every backend, so a live `var old = m.get_or(k, "")` before a
+    `m.set(k, "new")` would DANGLE if the overwrite freed the old value
+    (that's why register leaks instead of freeing — leaking is the current
+    "safe" choice, exactly the delicate balance slices 1–3 each unwound).
+  The coupled slice-4 change:
+  1. **op value-kind flag.** `op_map_get_or` (kind 129) / `op_map_get`
+     (kind 127) and `op_map_set` (kind 125) need a VALUE-is-string flag
+     (thread it like #4353's key/owncols width bits — the value-kind is at
+     the irlower call site via `map_value_of(mty) == "string"`, already
+     computed by the `expr_is_str` get_or arm at irlower.fern ~L2679).
+  2. **Counted reads.** get_or/get emit `__fn___fern_rc_inc` on a string
+     result (register kinds 127/129 in asm_ir.fern ~L4949 / asm_arm64_ir;
+     wasm `$__fern_map_get`/`_get_or`) so a live read holds rc≥2.
+  3. **Overwrite free.** map_set's string-value overwrite rc-aware-frees the
+     old value: register `.Lms_found` gains `__fn___fern_str_free(old_value)`
+     gated on the value-is-string flag (the rc-aware str_free decs a
+     still-read value rc>1, frees at rc==1 — sound BECAUSE of step 2); wasm's
+     existing `arr_dec` is already correct once reads are counted.
+  4. **Reclaim gate (THE CRUX — most regression-prone).** A
+     `var v = m.get_or(k, d)` string result must now be credited for STR
+     reclaim (exit-sweep `__fern_str_free`) since it holds an inc'd
+     reference — the `reclaimable_names_of` / `collect_fresh_str_names`
+     (STR: prefix) gate must recognise a counted get_or/get string result as
+     a fresh-owned string. Both get_or arms yield an owned string (the value
+     path is now inc'd; the default arm is already a fresh/owned temp), so
+     the reclaim balances. Get this wrong and every string-map program
+     (incl. the compiler's own build via the fixpoint) leaks or double-frees.
+  Gates: extend `TestSelfHostMapKeysSnapshotIRX86_64` / `…WasmIR` with a
+  value-overwrite churn case (`var old = m.get_or(k,""); m.set(k,"new"); use(old)`
+  in a loop → flat + `__rc_underflow()==0` + `old` still valid after the set),
+  plus the modload/load/heap-bump fixpoints. Refs #4353 #4451.
