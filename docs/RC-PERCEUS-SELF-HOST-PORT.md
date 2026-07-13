@@ -4818,3 +4818,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   value-overwrite churn case (`var old = m.get_or(k,""); m.set(k,"new"); use(old)`
   in a loop → flat + `__rc_underflow()==0` + `old` still valid after the set),
   plus the modload/load/heap-bump fixpoints. Refs #4353 #4451.
+
+- 2026-07-13 (slice 4 — the reclaim-gate CRUX, code-level findings from a
+  deeper trace; read alongside the "sites pinned" entry above BEFORE the
+  focused implementation). Part 4 (crediting `var v = m.get_or(k,d)` /
+  `m.get(k)` string results for STR reclaim) is NOT a one-line addition —
+  two concrete interlocks make it the delicate part:
+  1. **The fresh-string predicate is SHARED — do not extend it.**
+     `str_local_binding_is_fresh(init)` (irlower.fern ~L3014) is context-free
+     (Expr only) and is used by BOTH `collect_fresh_string_names` (the STR:
+     reclaim credit) AND `is_fresh_str_temp` (the concat-OPERAND reclaim that
+     frees a dead anonymous temp right after a `+`). Adding get_or/get to it
+     would make a counted get_or result used as a concat operand
+     (`m.get_or(k,"") + x`) be freed as a temp — a DOUBLE FREE (it is also
+     inc'd + scope-exit-reclaimed). Slice 4 needs a SEPARATE var-binding-only
+     credit path, never a change to the shared predicate.
+  2. **`reclaimable_names_of` has no map-type context.** Its signature
+     (irlower.fern:18127) is `(body, structs, borrowable, fresh_ret,
+     str_fresh_ret, opt_fresh_ret, tup_fresh_ret)` — no `LowerState`, so it
+     cannot ask `map_value_of(s.map_type_of(slot))`. To credit ONLY
+     string-value get_or results (not i32-value ones) it must resolve the
+     receiver's Map value-type from the AST + `structs` alone (the receiver
+     local's annotation / struct-field type / tuple-elem type — the same
+     resolution the `expr_is_str` get_or arm at ~L2679 does, but that arm has
+     `LowerState`). Either thread the needed map-type view into
+     `reclaimable_names_of`, or gate the new credit behind the slot's `is_str`
+     mark at the sweep site (the STR: credit already only fires reclaim when
+     `slot_is_reclaimable_str` sees `is_str`, which the get_or arm sets only
+     for string values — so an over-credit of an i32 get_or result is inert;
+     verify this interlock holds before relying on it).
+  Net: implement part 4 as a new type-aware var-binding credit (get_or/get on
+  a string-value map, gated by body_unsafe_for + not-reassigned like the
+  other STR: producers), NOT by touching str_local_binding_is_fresh. Validate
+  the concat-operand case (`var v = m.get_or(k,""); var s = v + "x"; use(v)`)
+  explicitly — it is the double-free trap. Refs #4353 #4451.
