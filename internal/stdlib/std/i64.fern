@@ -122,6 +122,42 @@ pub function (n: i64) is_between(lo: i64, hi: i64): boolean {
     return n >= lo && n <= hi;
 }
 
+// === i64 bit ops (the wider counterparts to std/i32's) ===
+
+// `count_ones()` — the number of set bits in `n`'s 64-bit two's-complement
+// representation (so a negative `n` counts the sign-extended high bits, like
+// Rust's `i64::count_ones`). Software popcount, O(64) per call. Returns an i32.
+pub function (n: i64) count_ones(): i32 {
+    var u: u64 = n as u64;
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < 64) {
+        if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; }
+        u = u >> (1 as u64);
+        i = i + 1;
+    }
+    return c;
+}
+
+// `bit_length()` — the number of bits needed to represent the MAGNITUDE `|n|`
+// (highest set bit + 1), the wider counterpart to std/i32's `bit_length`. `0`
+// needs 0 bits; a negative `n` uses its magnitude. i64::MIN is special-cased
+// (its magnitude 2^63 needs 64 bits and `0 - MIN` would overflow). Returns i32.
+pub function (n: i64) bit_length(): i32 {
+    if (n == (0 as i64)) { return 0; }
+    var mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);  // i64::MIN
+    if (n == mn) { return 64; }
+    var mag: i64 = n;
+    if (mag < (0 as i64)) { mag = 0 - mag; }
+    var u: u64 = mag as u64;
+    var c: i32 = 0;
+    while (u != (0 as u64)) {
+        c = c + 1;
+        u = u >> (1 as u64);
+    }
+    return c;
+}
+
 // === i64 saturating / checked arithmetic ===
 //
 // `saturating_*` clamps to i64::MAX / i64::MIN instead of

@@ -1,0 +1,60 @@
+import "std/test";
+import "std/i64";
+// examples/tests/i64_bit_ops_test.fern — pure-Fern coverage of std/i64's bit ops
+// (the wider counterparts to std/i32's): count_ones (set bits in the 64-bit
+// two's-complement representation) and bit_length (bits to represent |n|, i64::
+// MIN special-cased). Values past the i32 range (2^32, i64::MAX/MIN) exercise
+// the full width. Kept as its own suite so the self-host merged bundle stays
+// under the asm_ir IR budget; uses assert_true (both ops return i32). The
+// Go-side TestI64BitOps pins these across all four backends; this is the
+// migration-shaped companion.
+
+function test_count_ones_basic(): test.TestOutcome {
+    if ((0 as i64).count_ones() != 0) { return test.fail("zero"); }
+    if ((7 as i64).count_ones() != 3) { return test.fail("seven"); }
+    return test.assert_true((255 as i64).count_ones() == 8);
+}
+
+function test_count_ones_all(): test.TestOutcome {
+    // -1 is all ones in two's complement.
+    return test.assert_true(((0 as i64) - 1).count_ones() == 64);
+}
+
+function test_count_ones_wide(): test.TestOutcome {
+    // 2^32 has exactly one set bit, past the i32 range.
+    return test.assert_true((4294967296 as i64).count_ones() == 1);
+}
+
+function test_bit_length_small(): test.TestOutcome {
+    if ((0 as i64).bit_length() != 0) { return test.fail("zero"); }
+    if ((1 as i64).bit_length() != 1) { return test.fail("one"); }
+    return test.assert_true((255 as i64).bit_length() == 8);
+}
+
+function test_bit_length_wide(): test.TestOutcome {
+    // 2^32 needs 33 bits.
+    return test.assert_true((4294967296 as i64).bit_length() == 33);
+}
+
+function test_bit_length_negative(): test.TestOutcome {
+    return test.assert_true(((0 as i64) - 5).bit_length() == 3);
+}
+
+function test_bit_length_extremes(): test.TestOutcome {
+    // i64::MAX -> 63, i64::MIN -> 64.
+    if ((9223372036854775807 as i64).bit_length() != 63) { return test.fail("max"); }
+    var mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    return test.assert_true(mn.bit_length() == 64);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i64 bit ops");
+    r = r.it("count_ones basic",     test_count_ones_basic());
+    r = r.it("count_ones all ones",  test_count_ones_all());
+    r = r.it("count_ones wide",      test_count_ones_wide());
+    r = r.it("bit_length small",     test_bit_length_small());
+    r = r.it("bit_length wide",      test_bit_length_wide());
+    r = r.it("bit_length negative",  test_bit_length_negative());
+    r = r.it("bit_length extremes",  test_bit_length_extremes());
+    return r.finish();
+}

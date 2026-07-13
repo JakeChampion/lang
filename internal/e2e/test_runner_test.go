@@ -390,6 +390,26 @@ func TestRunnerI64ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i64_bit_ops_test.fern` covers std/i64's bit ops (wider
+// counterparts to std/i32's): count_ones (set bits in the 64-bit two's-
+// complement rep) and bit_length (bits to represent |n|, i64::MIN special-
+// cased), over values past the i32 range. On the interp gate and the self-host
+// x86-64 + arm64 gates (both return i32); the Go-side TestI64BitOps pins native
+// compilation on all four backends. Passing → exit 0.
+func TestRunnerI64BitOpsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_bit_ops_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 bit ops", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/i64_range_test.fern` covers std/i64's abs_diff (absolute
 // difference, wider counterpart to i32.abs_diff) and the range predicates
 // is_in_range (half-open) / is_between (inclusive), added for parity with

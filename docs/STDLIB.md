@@ -59,6 +59,8 @@ Receiver methods on i32 / byte values.
 - **Sign:** `signum` (-1/0/1), `is_positive`, `is_negative`, `is_zero`
 - **Range:** `is_in_range` (half-open `[lo, hi)`), `is_between`
   (inclusive `[lo, hi]`)
+- **Bit ops:** `count_ones` (set bits in the 64-bit two's-complement
+  rep), `bit_length` (bits to represent `|n|`, i64::MIN → 64)
 - **Overflow-aware:** `saturating_add`/`saturating_sub` (clamp to
   i64::MAX/MIN), `checked_add`/`checked_sub` (`Option[i64]`, `None` on
   overflow)
