@@ -168,7 +168,8 @@ Grouped by family:
   `len` == `count`), `bytes`, `first`, `last`, `before`, `after`,
   `between`, `truncate`, `ellipsis`, `first_line`
 - **Parse:** `parse_bool`, `parse_int`, `parse_hex_int`,
-  `parse_bin_int`, `parse_float`
+  `parse_bin_int`, `parse_int_radix(base)` (arbitrary base 2–36,
+  the general form behind the others), `parse_float`
 - **Build:** `repeat_char`
 
 ### `std/array`

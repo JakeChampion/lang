@@ -319,6 +319,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"string_replace_split", langSrcAbs(t, "examples/tests/string_replace_split_test.fern"), ""},
 		{"string_rsplit_once", langSrcAbs(t, "examples/tests/string_rsplit_once_test.fern"), ""},
 		{"string_partition", langSrcAbs(t, "examples/tests/string_partition_test.fern"), ""},
+		{"string_parse_radix", langSrcAbs(t, "examples/tests/string_parse_radix_test.fern"), ""},
 		{"utf8", langSrcAbs(t, "examples/tests/utf8_test.fern"), ""},
 		{"string_escape_count", langSrcAbs(t, "examples/tests/string_escape_count_test.fern"), ""},
 		{"string_slice_extract", langSrcAbs(t, "examples/tests/string_slice_extract_test.fern"), ""},
