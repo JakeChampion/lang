@@ -1,0 +1,62 @@
+import "std/test";
+import "std/u32";
+import "std/u64";
+// examples/tests/uint_range_test.fern — pure-Fern coverage of the unsigned
+// range/diff helpers added to std/u32 and std/u64 for parity with std/i32 /
+// std/i64: abs_diff (larger minus smaller — always fits, no wrap) and the range
+// predicates is_in_range (half-open [lo, hi)) / is_between (inclusive [lo, hi]).
+// The MAX-value cases are the point: they only pass if the u32/u64 `<` / `>=`
+// use UNSIGNED comparison (a signed compare would treat u32::MAX / u64::MAX as
+// negative). The Go-side TestUintAbsDiffRange pins these across all four
+// backends; this is the migration-shaped (pure-Fern, std/test-driven) companion.
+
+function test_u32_abs_diff(): test.TestOutcome {
+    return test.assert_true((5 as u32).abs_diff(8 as u32) == (3 as u32)
+        && (8 as u32).abs_diff(5 as u32) == (3 as u32));
+}
+
+function test_u32_abs_diff_max(): test.TestOutcome {
+    // u32::MAX via wrap; abs_diff to 0 is MAX itself, no overflow.
+    var big: u32 = (0 as u32) - (1 as u32);
+    return test.assert_true(big.abs_diff(0 as u32) == big);
+}
+
+function test_u32_in_range(): test.TestOutcome {
+    if (!(5 as u32).is_in_range(1 as u32, 10 as u32)) { return test.fail("5 in [1,10)"); }
+    return test.assert_true(!(10 as u32).is_in_range(1 as u32, 10 as u32));
+}
+
+function test_u32_range_max(): test.TestOutcome {
+    // Unsigned compare: MAX is inside [0, MAX] inclusive but not [0, MAX) half-open.
+    var big: u32 = (0 as u32) - (1 as u32);
+    if (!big.is_between(0 as u32, big)) { return test.fail("MAX in inclusive"); }
+    return test.assert_true(!big.is_in_range(0 as u32, big));
+}
+
+function test_u64_abs_diff(): test.TestOutcome {
+    return test.assert_true((5000000000 as u64).abs_diff(3000000000 as u64) == (2000000000 as u64)
+        && (3000000000 as u64).abs_diff(5000000000 as u64) == (2000000000 as u64));
+}
+
+function test_u64_in_range(): test.TestOutcome {
+    if (!(5 as u64).is_in_range(1 as u64, 10 as u64)) { return test.fail("5 in [1,10)"); }
+    return test.assert_true((10 as u64).is_between(1 as u64, 10 as u64));
+}
+
+function test_u64_range_max(): test.TestOutcome {
+    var big: u64 = (0 as u64) - (1 as u64);
+    if (!big.is_between(0 as u64, big)) { return test.fail("MAX in inclusive"); }
+    return test.assert_true(!big.is_in_range(0 as u64, big));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/uint range");
+    r = r.it("u32 abs_diff",       test_u32_abs_diff());
+    r = r.it("u32 abs_diff max",   test_u32_abs_diff_max());
+    r = r.it("u32 in_range",       test_u32_in_range());
+    r = r.it("u32 range max",      test_u32_range_max());
+    r = r.it("u64 abs_diff",       test_u64_abs_diff());
+    r = r.it("u64 in_range",       test_u64_in_range());
+    r = r.it("u64 range max",      test_u64_range_max());
+    return r.finish();
+}
