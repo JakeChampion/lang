@@ -2120,6 +2120,26 @@ func TestRunnerU64RootsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_clamp01_absdiff_muladd_test.fern` covers std/float's
+// clamp01 (restrict to [0,1]), abs_diff (|a-b|), and mul_add (a*b+c, not a
+// fused FMA), f64 and f32. Purely arithmetic, so unlike the transcendentals
+// these lower on all four backends. On the interp gate and both self-host
+// gates; the Go-side TestFloatClamp01AbsDiffMulAdd pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerFloatClamp01AbsDiffMulAddExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_clamp01_absdiff_muladd_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float clamp01/abs_diff/mul_add", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
