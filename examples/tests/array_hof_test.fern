@@ -121,6 +121,58 @@ function test_scan_method(): test.TestOutcome {
     return test.assert_eq_array([5, 5, 5].scan(0, flatten_add), [5, 10, 15]);
 }
 
+function mm_cmp_i(a: i32, b: i32): i32 { return a - b; }
+
+function test_max_by(): test.TestOutcome {
+    var xs: i32[] = [3, 7, 2, 9, 4];
+    match (xs.max_by(mm_cmp_i)) {
+        Some(v) => { return test.assert_eq(v, 9); },
+        None => { return test.fail("max_by of non-empty expected Some"); }
+    }
+}
+
+function test_min_by(): test.TestOutcome {
+    var xs: i32[] = [3, 7, 2, 9, 4];
+    match (array.min_by(xs, mm_cmp_i)) {
+        Some(v) => { return test.assert_eq(v, 2); },
+        None => { return test.fail("min_by of non-empty expected Some"); }
+    }
+}
+
+function test_max_by_empty(): test.TestOutcome {
+    var xs: i32[] = [];
+    match (xs.max_by(mm_cmp_i)) {
+        Some(v) => { return test.fail("max_by of empty expected None"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_max_by_len(): test.TestOutcome {
+    // Comparator over an arbitrary ordering (string length), not an i32 key.
+    var xs: string[] = ["bb", "a", "cccc", "ddd"];
+    match (xs.max_by(function (a: string, b: string): i32 { return a.len() - b.len(); })) {
+        Some(v) => { return test.assert_eq(v, "cccc"); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function test_max_by_ties_first(): test.TestOutcome {
+    // Two elements tie on length 4; the FIRST is kept.
+    var xs: string[] = ["wxyz", "q", "abcd"];
+    match (xs.max_by(function (a: string, b: string): i32 { return a.len() - b.len(); })) {
+        Some(v) => { return test.assert_eq(v, "wxyz"); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
+function test_min_by_free_fn(): test.TestOutcome {
+    var xs: i32[] = [5, 2, 8, 1, 9];
+    match (array.min_by(xs, mm_cmp_i)) {
+        Some(v) => { return test.assert_eq(v, 1); },
+        None => { return test.fail("expected Some"); }
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array higher-order");
     r = r.it("flat_map",         test_flat_map());
@@ -141,5 +193,11 @@ function main(): i32 {
     r = r.it("partition method",  test_partition_method());
     r = r.it("scan",              test_scan());
     r = r.it("scan method",       test_scan_method());
+    r = r.it("max_by",            test_max_by());
+    r = r.it("min_by",            test_min_by());
+    r = r.it("max_by empty",      test_max_by_empty());
+    r = r.it("max_by len",        test_max_by_len());
+    r = r.it("max_by ties first", test_max_by_ties_first());
+    r = r.it("min_by free fn",    test_min_by_free_fn());
     return r.finish();
 }
