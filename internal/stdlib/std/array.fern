@@ -1071,6 +1071,41 @@ pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
     return Some(best);
 }
 
+// `max_by(xs, cmp)` — `Some` of the element that is greatest under the
+// comparator `cmp` (same three-way convention as `sort_by`: `cmp(a, b)` < 0
+// when `a` orders before `b`), or `None` when empty. The comparator form of
+// the extremal search: where `max_by_i32_key` needs a projection to an i32
+// key, this takes an arbitrary ordering, so it finds the "largest" element by
+// lexicographic string order, a struct field, or any custom rule without
+// materialising a key. Ties keep the FIRST maximal element — `best` is only
+// replaced when a later element is STRICTLY greater (`cmp(xs[i], best) > 0`),
+// so the result is stable w.r.t. input order. Like `sort_by`, the closure
+// lowers on every backend and the self-host IR path.
+pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var best: T = xs[0];
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (cmp(xs[i], best) > 0) { best = xs[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `min_by(xs, cmp)` is `max_by`'s mirror: the element that is least under the
+// comparator, or `None` when empty. `best` is replaced only on a STRICTLY
+// smaller element (`cmp(xs[i], best) < 0`), so ties keep the first minimal one.
+pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var best: T = xs[0];
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (cmp(xs[i], best) < 0) { best = xs[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
 // `position(xs, pred)` — `Some(i)` for the FIRST index whose element
 // satisfies `pred`, else `None`. The predicate sibling of `index_of` (which
 // matches by `Eq` value) and the index-returning companion of `find` (which
@@ -1646,6 +1681,11 @@ pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f);
 
 // `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array).
 pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] { return sort_by(xs, cmp); }
+
+// `xs.max_by(cmp)` / `xs.min_by(cmp)` — extremal element under the comparator
+// (first on a tie); `None` when empty.
+pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] { return max_by(xs, cmp); }
+pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] { return min_by(xs, cmp); }
 
 // ---- Element-polymorphic method forms of the Ord/Eq verbs ----------
 //
