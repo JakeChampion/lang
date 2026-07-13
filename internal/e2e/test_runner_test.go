@@ -1693,6 +1693,26 @@ func TestRunnerFloatConvertExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
+// length, overflow-safe scaled form), fract (signed fractional part), and tan
+// (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
+// gates (scalar, no closures; uses assert_eq_f64_near); the Go-side
+// TestFloatHypotFractTan pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerFloatHypotExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_hypot_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float hypot", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/timing_test.fern` exercises the time
 // builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
 // the elapsed-time assertion helpers (`assert_elapsed_lt_ms`

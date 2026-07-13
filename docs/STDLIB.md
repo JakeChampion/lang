@@ -93,8 +93,10 @@ Receiver methods on i32 / byte values.
   fractional digits (no trimming), rounded half away from zero.
 - **Math primitives** (on both f32 and f64; f32 wrappers
   promote to f64, apply, demote): `abs`, `floor`, `ceil`,
-  `round`, `trunc`, `sqrt`, `pow(y)`, `log`, `exp`, `sin`,
-  `cos`. Routed through the checker-injected
+  `round`, `trunc`, `fract` (signed fractional part
+  `x - trunc(x)`), `sqrt`, `pow(y)`, `hypot(y)` (Euclidean
+  length, overflow-safe), `log`, `exp`, `sin`, `cos`, `tan`.
+  Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
   hardware-precise op.
 - **IEEE-754 classification:** `is_nan`, `is_finite`, `is_inf`
