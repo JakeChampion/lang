@@ -63,7 +63,7 @@ pub struct TypeArray { elem: Type }
 // TypeStruct references a user-declared struct by name. The
 // full field list lives in the StructTable (built once per
 // module); this variant is just the nominal handle.
-pub struct TypeStruct { name: string }
+pub struct TypeStruct { name: string, args: Type[] }
 // TypeTuple carries a fixed-arity heterogeneous element-type
 // list. Field access via `.0` / `.1` / … reads the elem type
 // at that position; out-of-range indices surface unknown.
@@ -112,7 +112,14 @@ function t_bool(): Type { return TypeBool { tag: 0 }; }
 function t_string(): Type { return TypeString { tag: 0 }; }
 function t_float(): Type { return TypeFloat { tag: 0 }; }
 function t_array(elem: Type): Type { return TypeArray { elem: elem }; }
-function t_struct(name: string): Type { return TypeStruct { name: name }; }
+function t_struct(name: string): Type { var noargs: Type[] = []; return TypeStruct { name: name, args: noargs }; }
+// t_struct_g builds a struct type carrying its generic instantiation args
+// (`Box[i32]` → TypeStruct{"Box", [i32]}). The args are used ONLY to
+// substitute a field's type parameter at field access (#4346 piece 2);
+// type_eq / type_assignable compare structs by name and ignore args, so a
+// name-only struct (args=[]) and an instantiated one stay interchangeable
+// wherever assignability is checked.
+function t_struct_g(name: string, args: Type[]): Type { return TypeStruct { name: name, args: args }; }
 function t_tuple(elements: Type[]): Type { return TypeTuple { elements: elements }; }
 function t_func(param_types: Type[], ret_type: Type): Type {
     return TypeFunc { param_types: param_types, ret_type: ret_type };
@@ -342,7 +349,7 @@ pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_par
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
 // index i holds (field_names[i], field_types[i]).
-pub struct StructSig { name: string, field_names: string[], field_types: Type[] }
+pub struct StructSig { name: string, field_names: string[], field_types: Type[], type_params: string[], field_type_names: string[] }
 
 // MethodSig: nominal handle for a declared receiver method
 // `function (recv: RecvType) name(p1, p2): RT`. The receiver
@@ -851,7 +858,9 @@ function (s: Scope) lookup_struct(name: string): StructSig {
     // Sentinel: empty name signals "no such struct".
     var empty_n: string[] = [];
     var empty_t: Type[] = [];
-    return StructSig { name: "", field_names: empty_n, field_types: empty_t };
+    var empty_tp: string[] = [];
+    var empty_ftn: string[] = [];
+    return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn };
 }
 
 // field_index returns the index of `name` in a struct sig's field list,
@@ -1565,6 +1574,21 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     var fai: i32 = 0;
                     while (fai < fsig.field_names.len()) {
                         if (fsig.field_names[fai] == fa.field) {
+                            // Generic field substitution (#4346 piece 2): when
+                            // the field's declared type names one of the
+                            // struct's type parameters (`Box[T] { v: T }`) and
+                            // the receiver carries a concrete instantiation arg
+                            // for it, that arg is the field's type — so
+                            // `Box[i32].v` is i32, not the erased unknown. Only
+                            // a field typed by a BARE type parameter is handled;
+                            // a nested spelling (`T[]`, `Box[T]`) falls through
+                            // to the resolved (unknown) type, a further slice.
+                            if (fai < fsig.field_type_names.len()) {
+                                var tpi: i32 = util.index_of_str(fsig.type_params, fsig.field_type_names[fai]);
+                                if (tpi >= 0 && tpi < sn.args.len()) {
+                                    return sn.args[tpi];
+                                }
+                            }
                             return fsig.field_types[fai];
                         }
                         fai = fai + 1;
@@ -1995,13 +2019,19 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
         var sd: parser.StructDecl = structs[k];
         var fnames: string[] = [];
         var ftypes: Type[] = [];
+        var ftnames: string[] = [];
         var j: i32 = 0;
         while (j < sd.fields.len()) {
             fnames = fnames.append(sd.fields[j].name);
             ftypes = ftypes.append(type_from_name_with_names_and_unions(sd.fields[j].type_name, names, union_names));
+            // The field's raw declared type spelling — kept so field access on
+            // a generic-struct instantiation can recognise a field typed by a
+            // type parameter (`v: T`) and substitute the concrete arg (#4346
+            // piece 2).
+            ftnames = ftnames.append(sd.fields[j].type_name);
             j = j + 1;
         }
-        out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes });
+        out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames });
         k = k + 1;
     }
     return out;
@@ -2147,7 +2177,18 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     if (r.args.len() > 0) {
         var gsi: i32 = 0;
         while (gsi < structs.len()) {
-            if (structs[gsi].name == r.base) { return t_struct(r.base); }
+            if (structs[gsi].name == r.base) {
+                // Carry the resolved instantiation args so field access can
+                // substitute a type-parameter field (`Box[i32].v` → i32);
+                // assignability still ignores them (#4346 piece 2).
+                var gargs: Type[] = [];
+                var gai: i32 = 0;
+                while (gai < r.args.len()) {
+                    gargs = gargs.append(type_from_ref_su(r.args[gai], structs, unions));
+                    gai = gai + 1;
+                }
+                return t_struct_g(r.base, gargs);
+            }
             gsi = gsi + 1;
         }
         var gui: i32 = 0;
@@ -3538,7 +3579,9 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
     }
     var none: string[] = [];
     var nonet: Type[] = [];
-    return StructSig { name: "", field_names: none, field_types: nonet };
+    var none_tp: string[] = [];
+    var none_ftn: string[] = [];
+    return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn };
 }
 
 // slit_diags recurses through an expression and emits E005 for every

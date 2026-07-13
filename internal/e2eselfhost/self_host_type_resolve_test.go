@@ -86,10 +86,12 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		// union since the E023 port: the Go checker's resolveType keeps
 		// the shape as an unknown EnumType, and matching on it draws
 		// E023 — the self-host mirrors that with a union whose
-		// lookup_union misses. A DECLARED base (Foo[T] below) keeps the
-		// conservative unknown resolution.
+		// lookup_union misses. A DECLARED generic-struct base (Foo[T])
+		// now resolves NAME-ONLY to that struct (#4346 piece 2, generic-
+		// struct instantiations) — dropping the args, exactly as a bare
+		// `Foo` does and as `Option[i32] => union:Option` does above.
 		"Vec[T] => union:Vec\n" +
-		"Foo[T] => unknown(unrecognised type name: Foo[T])\n" +
+		"Foo[T] => struct:Foo\n" +
 		"Bogus[] => array<unknown(unrecognised type name: Bogus)>\n" +
 		"mod.Thing => unknown(unrecognised type name: mod.Thing)\n" +
 		" => unknown(unrecognised type name: )\n"

@@ -178,6 +178,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// substituted yet — so it's a further slice, kept out of these cases.)
 		{"generic-struct-mismatch", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = 5; return 0; }\n", []string{"E003"}},
 		{"generic-struct-clean", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; return 0; }\n", nil},
+		// Generic-struct FIELD-ACCESS substitution (#4346 piece 2): reading a
+		// field typed by a type parameter off a concrete instantiation
+		// (`Box[i32].v`) yields the substituted arg (i32), so assigning it to a
+		// MISMATCHED destination (`string`) draws E003 — the same code the Go
+		// checker emits — where the pre-slice self-host typed `b.v` as unknown
+		// and E003 never fired. The clean read is pinned by the CLI exit test.
+		{"generic-struct-field-mismatch", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; var s: string = b.v; return 0; }\n", []string{"E003"}},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
