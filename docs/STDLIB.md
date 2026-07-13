@@ -50,9 +50,12 @@ Receiver methods on i32 / byte values.
 
 ### `std/i64`
 
-- **Scalar:** `abs`, `min`, `max`, `clamp`, `pow`, `gcd`, `lcm`
+- **Scalar:** `abs`, `abs_diff` (`|n - other|`), `min`, `max`,
+  `clamp`, `pow`, `gcd`, `lcm`
 - **Parity:** `is_even`, `is_odd`
 - **Sign:** `signum` (-1/0/1), `is_positive`, `is_negative`, `is_zero`
+- **Range:** `is_in_range` (half-open `[lo, hi)`), `is_between`
+  (inclusive `[lo, hi]`)
 - **Overflow-aware:** `saturating_add`/`saturating_sub` (clamp to
   i64::MAX/MIN), `checked_add`/`checked_sub` (`Option[i64]`, `None` on
   overflow)
