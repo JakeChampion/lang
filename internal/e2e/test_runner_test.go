@@ -2101,6 +2101,25 @@ func TestRunnerI64IntdivExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/u64_roots_test.fern` covers std/u64's sqrt_floor,
+// is_power_of_2, next_power_of_2 (capped at 2^63, 0 above), and log2_floor —
+// unsigned root/power helpers spanning the full u64 range. On the interp gate
+// and both self-host gates; the Go-side TestU64Roots pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerU64RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/u64_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u64 roots", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

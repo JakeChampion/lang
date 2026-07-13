@@ -90,6 +90,10 @@ Receiver methods on i32 / byte values.
 
 - **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
   always fits — unsigned)
+- **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact to
+  `(2^32-1)²`), `is_power_of_2` (`n & (n-1)` bit trick), `next_power_of_2`
+  (smallest power `>= n`; caps at 2^63, returns 0 above), `log2_floor`
+  (`floor(log2 n)`, `-1` for `n == 0`)
 - **Predicates:** `is_zero`, `is_even`, `is_odd`
 - **Range (unsigned):** `is_in_range` (half-open `[lo, hi)`),
   `is_between` (inclusive `[lo, hi]`)
