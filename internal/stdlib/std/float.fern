@@ -238,6 +238,22 @@ pub function (x: f64) cos(): f64 { return __cos_f64(x); }
 // existing `sin` / `cos`. Blows up to ±Inf near the odd multiples of π/2
 // where `cos` crosses zero, as expected.
 pub function (x: f64) tan(): f64 { return __sin_f64(x) / __cos_f64(x); }
+// `sinh(x)` / `cosh(x)` / `tanh(x)` — the hyperbolic trig functions, built on
+// the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`) so — like
+// `exp2` / `log2` — they need no new primitive and ride the `__exp_f64` the
+// wasm-IR backend already lowers. `sinh(0)` is `0`, `cosh(0)` is `1`,
+// `tanh(0)` is `0`, and the identity `cosh² - sinh² == 1` holds. `tanh` uses
+// the stable `(e²ˣ - 1)/(e²ˣ + 1)` form and saturates to `±1` past `|x| = 20`
+// (where it already equals `±1` to f64 precision), avoiding the `Inf/Inf` NaN
+// that `sinh/cosh` would give for large magnitudes.
+pub function (x: f64) sinh(): f64 { return (__exp_f64(x) - __exp_f64(0.0 - x)) * 0.5; }
+pub function (x: f64) cosh(): f64 { return (__exp_f64(x) + __exp_f64(0.0 - x)) * 0.5; }
+pub function (x: f64) tanh(): f64 {
+    if (x > 20.0) { return 1.0; }
+    if (x < 0.0 - 20.0) { return 0.0 - 1.0; }
+    var e2: f64 = __exp_f64(x * 2.0);
+    return (e2 - 1.0) / (e2 + 1.0);
+}
 // `pow(x, y)` — two-argument form; method receiver is the
 // base. Use `(b).pow(e)` for `b ^ e`.
 pub function (x: f64) pow(y: f64): f64 { return __pow_f64(x, y); }
@@ -432,6 +448,9 @@ pub function (x: f32) exp10(): f32 { return __exp_f64(x as f64 * 2.3025850929940
 pub function (x: f32) sin(): f32 { return __sin_f64(x as f64) as f32; }
 pub function (x: f32) cos(): f32 { return __cos_f64(x as f64) as f32; }
 pub function (x: f32) tan(): f32 { return (__sin_f64(x as f64) / __cos_f64(x as f64)) as f32; }
+pub function (x: f32) sinh(): f32 { return (x as f64).sinh() as f32; }
+pub function (x: f32) cosh(): f32 { return (x as f64).cosh() as f32; }
+pub function (x: f32) tanh(): f32 { return (x as f64).tanh() as f32; }
 pub function (x: f32) pow(y: f32): f32 {
     return __pow_f64(x as f64, y as f64) as f32;
 }
