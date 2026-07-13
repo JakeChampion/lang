@@ -74,15 +74,25 @@
 // `RClass` / `RStart` / `REnd`, plus `RBound` for a `\b` / `\B`
 // word-boundary assertion) and the composites `RSeq` (concatenation)
 // / `RAlt` (alternation) / `RStar` / `RPlus` / `ROpt` (quantifiers over a
-// sub-node, which a group makes an arbitrary tree). `RGroup(i, inner)`
-// marks a CAPTURING `( … )` group with 1-based index `i` — transparent to
-// the span matcher, a save-slot pair to the capture engine. A
+// sub-node, which a group makes an arbitrary tree). `RGroup(RGroupData)`
+// marks a CAPTURING `( … )` group with 1-based index `idx` — transparent
+// to the span matcher, a save-slot pair to the capture engine. A
 // non-capturing `(?:…)` group contributes no RGroup (its inner tree is
 // spliced in directly, like `( … )` did before captures existed).
+//
+// The group carries a single-field-struct payload (`RGroupData`) rather
+// than a two-payload `RGroup(i32, RNode)` because the self-host compiler's
+// enum variants are single-payload by design (parser.fern's PatVariant:
+// a multi-binding pattern is an E015 arity error), and the legacy AST→asm
+// self-host backend only constructs/binds one payload. Boxing the two
+// fields in a struct keeps std/regex compilable on EVERY backend (native,
+// self-host IR, and the legacy AST path the treeshake gate exercises).
+struct RGroupData { idx: i32, node: RNode }
+
 pub enum RNode {
     RChar(i32), RAny, RClass(string), RStart, REnd, RBound(boolean),
     RSeq(RNode[]), RAlt(RNode[]), RStar(RNode), RPlus(RNode), ROpt(RNode),
-    RGroup(i32, RNode)
+    RGroup(RGroupData)
 }
 
 // RParse threads the recursive-descent parser's cursor: the node parsed
@@ -142,7 +152,7 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
         var inner: RParse = __rx_alt(p, i + 1, g + 1);
         var pos: i32 = inner.pos;
         if (pos < p.len() && p[pos] == 41) { pos = pos + 1; }   // ')'
-        return RParse { node: RGroup(g, inner.node), pos: pos, g: inner.g };
+        return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
     }
     if (c == 91) {                                   // '['
         var j: i32 = i + 1;
@@ -412,7 +422,7 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
         },
         RStar(inner) => { return __rx_closure(inner, t, ti, true, ci); },
         RPlus(inner) => { return __rx_closure(inner, t, ti, false, ci); },
-        RGroup(_, inner) => { return __rx_match(inner, t, ti, ci); }   // transparent to the span matcher
+        RGroup(gd) => { return __rx_match(gd.node, t, ti, ci); }   // transparent to the span matcher
     }
 }
 
@@ -626,14 +636,24 @@ pub function regex_replace(pattern: string, text: string, repl: string): string 
 
 // RInst is one compiled instruction. `IChar` / `IAny` / `IClass` consume a
 // byte; `IAssert(k)` is a zero-width test (0 = `^`, 1 = `$`, 2 = `\b`,
-// 3 = `\B`); `ISplit(a, b)` forks a thread to both targets with `a`
+// 3 = `\B`); `ISplit(RSplit{a, b})` forks a thread to both targets with `a`
 // preferred; `IJmp(a)` continues at `a`; `ISave(s)` records the current
 // text position in capture slot `s` (slot 2i = group i's start, 2i + 1 =
 // its end; group 0 is the whole match); `IMatch` accepts.
+//
+// ISplit's two targets ride in a single-field-struct payload (`RSplit`)
+// for the same reason RGroup does: the self-host compiler's variants are
+// single-payload (see RGroupData above), so a two-payload `ISplit(i32,i32)`
+// wouldn't construct/bind on the legacy AST self-host backend.
+struct RSplit { a: i32, b: i32 }
+
 enum RInst {
     IChar(i32), IAny, IClass(string), IAssert(i32),
-    ISplit(i32, i32), IJmp(i32), ISave(i32), IMatch
+    ISplit(RSplit), IJmp(i32), ISave(i32), IMatch
 }
+
+// __rx_split builds an ISplit instruction targeting `a` (preferred) then `b`.
+function __rx_split(a: i32, b: i32): RInst { return ISplit(RSplit { a: a, b: b }); }
 
 // __rx_emit appends the instructions for `n` to `prog` and returns the
 // extended program. Split targets that point past code not yet emitted are
@@ -650,10 +670,10 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
             if (want) { return prog.append(IAssert(2)); }
             return prog.append(IAssert(3));
         },
-        RGroup(idx, inner) => {
-            var pg: RInst[] = prog.append(ISave(idx + idx));
-            pg = __rx_emit(pg, inner);
-            return pg.append(ISave(idx + idx + 1));
+        RGroup(gd) => {
+            var pg: RInst[] = prog.append(ISave(gd.idx + gd.idx));
+            pg = __rx_emit(pg, gd.node);
+            return pg.append(ISave(gd.idx + gd.idx + 1));
         },
         RSeq(xs) => {
             var ps: RInst[] = prog;
@@ -672,11 +692,11 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
             while (k2 < nb) {
                 if (k2 < nb - 1) {
                     var sp: i32 = pa.len();
-                    pa = pa.append(ISplit(0, 0));                 // placeholder
+                    pa = pa.append(__rx_split(0, 0));             // placeholder
                     pa = __rx_emit(pa, xs[k2]);
                     jmps = jmps.append(pa.len());
                     pa = pa.append(IJmp(0));                      // placeholder
-                    pa = pa.with(sp, ISplit(sp + 1, pa.len()));
+                    pa = pa.with(sp, __rx_split(sp + 1, pa.len()));
                 } else {
                     pa = __rx_emit(pa, xs[k2]);
                 }
@@ -700,28 +720,28 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
             // Go/RE2/Perl. (The dedup still kills a SECOND empty
             // iteration, so nullable bodies terminate.)
             var s1: i32 = prog.len();
-            var pst: RInst[] = prog.append(ISplit(0, 0));         // placeholder
+            var pst: RInst[] = prog.append(__rx_split(0, 0));     // placeholder
             pst = __rx_emit(pst, inner);
             var s2: i32 = pst.len();
-            pst = pst.append(ISplit(0, 0));                       // placeholder
+            pst = pst.append(__rx_split(0, 0));                   // placeholder
             var send: i32 = pst.len();
-            pst = pst.with(s1, ISplit(s1 + 1, send));
-            return pst.with(s2, ISplit(s1 + 1, send));
+            pst = pst.with(s1, __rx_split(s1 + 1, send));
+            return pst.with(s2, __rx_split(s1 + 1, send));
         },
         RPlus(inner) => {
             // body; split(body, next) — looping again is preferred (greedy).
             var b1: i32 = prog.len();
             var pp: RInst[] = __rx_emit(prog, inner);
             var sp2: i32 = pp.len();
-            pp = pp.append(ISplit(0, 0));                         // placeholder
-            return pp.with(sp2, ISplit(b1, sp2 + 1));
+            pp = pp.append(__rx_split(0, 0));                     // placeholder
+            return pp.with(sp2, __rx_split(b1, sp2 + 1));
         },
         ROpt(inner) => {
             // split(body, next) — taking the body is preferred (greedy).
             var s3: i32 = prog.len();
-            var po: RInst[] = prog.append(ISplit(0, 0));          // placeholder
+            var po: RInst[] = prog.append(__rx_split(0, 0));      // placeholder
             po = __rx_emit(po, inner);
-            return po.with(s3, ISplit(s3 + 1, po.len()));
+            return po.with(s3, __rx_split(s3 + 1, po.len()));
         }
     }
 }
@@ -784,9 +804,9 @@ function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string
     sn = sn.with(pc, g);
     match (prog[pc]) {
         IJmp(a) => { return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, a, caps, t, ti); },
-        ISplit(a, b) => {
-            var st2: RAdd = __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, a, caps, t, ti);
-            return __rx_addthread(st2, prog, b, caps, t, ti);
+        ISplit(sp) => {
+            var st2: RAdd = __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, sp.a, caps, t, ti);
+            return __rx_addthread(st2, prog, sp.b, caps, t, ti);
         },
         ISave(slot) => { return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps.with(slot, ti), t, ti); },
         IAssert(k) => {
@@ -843,7 +863,7 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
                 // fails exhaustiveness here instead of silently dropping
                 // threads.
                 IAssert(_) => { },
-                ISplit(_, _) => { },
+                ISplit(_) => { },
                 IJmp(_) => { },
                 ISave(_) => { }
             }
