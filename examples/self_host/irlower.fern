@@ -10215,7 +10215,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // table index and trap.
         parser.ExprIndex(ix) => {
             match (ix.array) {
-                parser.ExprIdent(aid) => { if (s.is_closurearr_slot(s.slot_of(aid.name))) { clo_init = true; } },
+                parser.ExprIdent(aid) => {
+                    if (s.is_closurearr_slot(s.slot_of(aid.name))) { clo_init = true; }
+                    // A fn-typed capture read `var cap: fn = __env[i]` that
+                    // make_clo_func synthesizes at the top of an escaping
+                    // closure body when the closure captured a fn-VALUE: the
+                    // captured value is itself a closure BOX, so `cap(args)`
+                    // inside the body must dispatch env-first, not bare-call
+                    // the box pointer as code (a SIGSEGV otherwise). fn-typed
+                    // params already get this treatment; this is the
+                    // capture-read sibling.
+                    else if (aid.name == "__env" && v.type_name == "fn") { clo_init = true; }
+                },
                 _ => { }
             }
         },

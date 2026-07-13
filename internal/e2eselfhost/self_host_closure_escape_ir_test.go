@@ -45,6 +45,14 @@ var closureEscapeCases = []struct {
 	// Nested: a factory whose body defines and calls a LOCAL closure that
 	// itself returns a closure, then forwards the result (`return inner();`).
 	{"nested-factory", "function outer(): (i32) => i32 { var inner = function (): (i32) => i32 { var g = function (x: i32): i32 { return x + 1; }; return g; }; return inner(); } function main(): i32 { var f = outer(); return f(41); }", 42},
+	// Captured-fn-value escape: a closure that CAPTURES a fn-value and
+	// ESCAPES must dispatch the captured closure env-first when it calls it
+	// inside its body (the synthesized `var base: fn = __env[i]` capture read
+	// is marked a closure local). Before the fix, `base(x)` bare-called the
+	// captured box pointer → SIGSEGV.
+	{"escape-captures-fn", "function mk(base: (i32) => i32): (i32) => i32 { var f = function (x: i32): i32 { return base(x); }; return f; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var g = mk(dbl); return g(21); }", 42},
+	// Composition: the escaped closure captures a fn-value it applies twice.
+	{"escape-compose-twice", "function twice(f: (i32) => i32): (i32) => i32 { var g = function (x: i32): i32 { return f(f(x)); }; return g; } function inc(x: i32): i32 { return x + 1; } function main(): i32 { var d = twice(inc); return d(40); }", 42},
 	// Regression: a directly-returned lambda (bare fn pointer, no box) must
 	// keep working under the extended detection.
 	{"direct-return", "function adder(a: i32): (i32) => i32 { return function (b: i32): i32 { return a + b; }; } function main(): i32 { var add10 = adder(10); return add10(5); }", 15},
