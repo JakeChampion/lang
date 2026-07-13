@@ -156,7 +156,9 @@ Grouped by family:
   `count_chars_in`
 - **Split / pad / center:** `split`, `splitn`, `split_at`,
   `split_once`, `rsplit_once` (split at the LAST separator — the
-  mirror of `split_once`), `pad_start`, `pad_end`, `pad_start_str`,
+  mirror of `split_once`), `partition`/`rpartition` (Python-style
+  three-way `(head, sep, tail)` that KEEPS the separator; first /
+  last occurrence), `pad_start`, `pad_end`, `pad_start_str`,
   `pad_end_str`, `center`, `wrap`, `indent`, `dedent` (strip the
   common leading-whitespace prefix — the inverse of `indent`, à la
   Python `textwrap.dedent`), `repeat_with_sep`

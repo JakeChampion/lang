@@ -1,0 +1,64 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_partition_test.fern — pure-Fern coverage of
+// std/string.partition / rpartition: the Python-style three-way split
+// (head, sep, tail) that KEEPS the separator. partition splits at the FIRST
+// occurrence (absent → (s, "", "")); rpartition at the LAST (absent →
+// ("", "", s)). Covers found, absent, sep-at-start/end, multi-char, and empty
+// sep. Kept as its own suite so the self-host merged bundle stays under the
+// asm_ir IR budget; uses assert_true (no scalar assert_eq[i32]). The Go-side
+// TestStringPartition pins these across all four backends; this is the
+// migration-shaped (pure-Fern, std/test-driven) companion.
+
+function triple_is(t: (string, string, string), a: string, b: string, c: string): boolean {
+    return t.0 == a && t.1 == b && t.2 == c;
+}
+
+function test_partition_found(): test.TestOutcome {
+    return test.assert_true(triple_is("a.b.c".partition("."), "a", ".", "b.c"));
+}
+
+function test_partition_absent(): test.TestOutcome {
+    // Not found → whole string in the FIRST slot.
+    return test.assert_true(triple_is("abc".partition("."), "abc", "", ""));
+}
+
+function test_rpartition_found(): test.TestOutcome {
+    return test.assert_true(triple_is("a.b.c".rpartition("."), "a.b", ".", "c"));
+}
+
+function test_rpartition_absent(): test.TestOutcome {
+    // Not found → whole string in the LAST slot.
+    return test.assert_true(triple_is("abc".rpartition("."), "", "", "abc"));
+}
+
+function test_sep_at_start(): test.TestOutcome {
+    return test.assert_true(triple_is("=x".partition("="), "", "=", "x"));
+}
+
+function test_sep_at_end(): test.TestOutcome {
+    return test.assert_true(triple_is("x=".partition("="), "x", "=", ""));
+}
+
+function test_multichar(): test.TestOutcome {
+    if (!triple_is("a::b::c".partition("::"), "a", "::", "b::c")) { return test.fail("partition ::"); }
+    return test.assert_true(triple_is("a::b::c".rpartition("::"), "a::b", "::", "c"));
+}
+
+function test_empty_sep(): test.TestOutcome {
+    if (!triple_is("abc".partition(""), "abc", "", "")) { return test.fail("partition empty"); }
+    return test.assert_true(triple_is("abc".rpartition(""), "", "", "abc"));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string partition");
+    r = r.it("partition found",    test_partition_found());
+    r = r.it("partition absent",   test_partition_absent());
+    r = r.it("rpartition found",   test_rpartition_found());
+    r = r.it("rpartition absent",  test_rpartition_absent());
+    r = r.it("sep at start",       test_sep_at_start());
+    r = r.it("sep at end",         test_sep_at_end());
+    r = r.it("multichar",          test_multichar());
+    r = r.it("empty sep",          test_empty_sep());
+    return r.finish();
+}
