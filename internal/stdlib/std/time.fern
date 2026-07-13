@@ -125,6 +125,39 @@ pub function duration_millis(ms: i64): Duration {
     return Duration { sec: s, nsec: ns };
 }
 
+// `(d: Duration) to_string()` — the compact canonical form of a
+// duration, e.g. `"1h30m45s"`, `"500ms"`, `"-2h5m"`, `"0s"`. The largest
+// units come first and zero units are omitted (so `"1h5s"` skips the
+// zero minutes). A negative duration gets a leading `-`. Millisecond
+// resolution: the sub-millisecond part of `nsec` is dropped, and a
+// duration under 1ms renders as `"0s"`.
+//
+// Distinct from `format_duration_ms(ms: i32)`, which is the
+// space-separated `"1h 23m 45s"` shape over an i32 millisecond count;
+// this is the i64-range, sign-aware method on the Duration type itself
+// (the Go / Rust `Duration.to_string()` idiom).
+pub function (d: Duration) to_string(): string {
+    // Signed total milliseconds. `nsec` is 0..1e9 and non-negative even
+    // for a negative duration (sec carries the borrow), so the two
+    // combine directly.
+    var total_ms: i64 = d.sec * (1000 as i64) + ((d.nsec / 1000000) as i64);
+    if (total_ms == (0 as i64)) { return "0s"; }
+    var neg: boolean = total_ms < (0 as i64);
+    var ms: i64 = total_ms;
+    if (neg) { ms = (0 as i64) - ms; }
+    var h: i64 = ms / (3600000 as i64);
+    var m: i64 = (ms % (3600000 as i64)) / (60000 as i64);
+    var s: i64 = (ms % (60000 as i64)) / (1000 as i64);
+    var msec: i64 = ms % (1000 as i64);
+    var out: string = "";
+    if (neg) { out = "-"; }
+    if (h > (0 as i64)) { out = out + h.to_string() + "h"; }
+    if (m > (0 as i64)) { out = out + m.to_string() + "m"; }
+    if (s > (0 as i64)) { out = out + s.to_string() + "s"; }
+    if (msec > (0 as i64)) { out = out + msec.to_string() + "ms"; }
+    return out;
+}
+
 // `span_days(n)` — calendar-flavoured interval of n days.
 // Convenience for the common "tomorrow" / "yesterday" use
 // case (`today.add_span(span_days(1))` once Phase 3 lands).
