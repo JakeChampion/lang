@@ -6,6 +6,7 @@ package printer
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -87,6 +88,24 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 		b.WriteString("pub(package) ")
 	} else if fn.Public {
 		b.WriteString("pub ")
+	}
+	// Contextual modifiers (`fip` / `fbip` / graded / `async`) carry checked
+	// semantics — re-emit them (mirrors formatFunc).
+	if fn.Fip || fn.Fbip {
+		if fn.Fbip {
+			b.WriteString("fbip")
+		} else {
+			b.WriteString("fip")
+		}
+		if fn.FipAllowance > 0 {
+			b.WriteByte('(')
+			b.WriteString(strconv.Itoa(fn.FipAllowance))
+			b.WriteByte(')')
+		}
+		b.WriteByte(' ')
+	}
+	if fn.Async {
+		b.WriteString("async ")
 	}
 	b.WriteString("function ")
 	if fn.Receiver != nil {

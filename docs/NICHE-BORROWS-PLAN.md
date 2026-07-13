@@ -306,25 +306,38 @@ types + docs. Self-host checker parity required (differential
 gate) — budget for porting the walk.
 
 **E2. `fip` completion.** [status: (a) self-host parity DONE —
-absorbed upstream; (b)-(d) remain as the E2' follow-up]
+absorbed upstream; (b)-(d) DONE as E2', 2026-07-13 — native only]
 Slice (a) — self-host parity for the `fip` modifier + the E053
 checked subset — was shipped by the parallel checker-port
 completion (#4451 freeze-precondition work, 2026-07-12: FuncDecl
 carries `fip` through the self-host parser, checker.fern has the
 E053 walk, and six e053-fip-* fixtures sit in the now-unfiltered
-differential corpus). The remaining items are unchanged and
-large: `fbip` (destructive-match mutation set — requires wiring
-E053's static view to the IR's actual reuse sites so
-verify-matches-enable), graded `fip(n)`, and docs. These
-coordinate with the goal-2 roadmap per E3/E4 below.
-Native `fip` (E053) is verify-don't-enable. Remaining, in order:
-(a) **self-host parity** for the existing modifier + E053 subset
-(parser + checker port — required before self-host compiler
-sources can use `fip` themselves); (b) `fbip` modifier (allows
-allocation-free *mutation* set: destructive match with reuse
-credit — requires wiring E053's static view to the IR's actual
-reuse sites so "verify" matches "enable"); (c) graded `fip(n)`;
-(d) docs page (`fern explain E053` exists? verify + extend).
+differential corpus). E2' shipped the rest: (b) the `fbip`
+modifier (contextual, mutually exclusive with `fip`; the E053
+walk relaxes exactly the constructor rule for it, and the IR
+layer verifies every constructor site is reuse-PAIRED —
+computeReuseSources / the self-overwrite hooks /
+consumingMatchReuse — via `internal/ir/fip_verify.go`, wired
+into lowerFunc against the DEFAULT pairing path per E3's
+verdict); (c) graded `fip(n)` / `fbip(n)` (`FuncDecl.FipAllowance`;
+the checker admits constructors when n > 0, the IR owns the
+count — n fresh un-paired sites permitted, more is an error);
+(d) docs (`fern explain E053` extended, new `fern explain E068`
+for the IR-verify failures; the runtime is_unique fallback
+branch does NOT count as an allocation — Koka's shape-guarantee
+stance — documented there). Verification is an op-scan over the
+just-lowered stream (paired sites lower to `__alloc_reuse`, so
+every remaining OpAlloc is a fresh site), strictly read-only over
+the pairing results. NOT in scope, deliberately: the self-host
+side — its parser parse-tolerates `fbip` + the graded forms
+(consumed, DROPPED; only bare `fip` stamps) because the E068
+verification needs the reuse analyses, which port at E4. Tests:
+parser (modifier/graded/mutual-exclusion/ident-usability),
+checker (fbip both directions, call-lattice fip⊂fbip), IR
+(per-shape verify + allowance counting, `fip_verify_test.go`),
+e2e (`fbip_verify_test.go` — the R4 list-map runs on interp +
+x86-64 + arm64 + wasm with ZERO bump growth across 5000 Cons
+rebuilds).
 The ICFP 2023 paper is the reference; `OWNERSHIP-INFERENCE-PLAN.md`
 is the standing home for the borrow-side interactions.
 
@@ -374,7 +387,7 @@ D2  crash-only serve: design doc             — docs PR
 E1  must-consume: design + slice 1           — medium PR
 D2' crash-only serve: implementation         — medium PR
 E2  fip: self-host parity slice              — medium PR
-E2' fip: fbip / verify-enable wiring         — large
+E2' fip: fbip / verify-enable wiring         — large [DONE]
 E3  drop-guided evaluation                   — large
 E4  (standing goal-2 roadmap)
 ```

@@ -6684,20 +6684,45 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // Rejected: array / tuple / struct / payload-carrying-enum literals, string
 // concatenation / interpolation, writes to a non-`own` heap value (a copy), and
 // any call the checker can't prove allocation-free.
+//
+// `fbip function` (fully in place with borrowing, plan E2') runs the SAME walk
+// with one relaxation: constructor expressions — struct / tuple literals and
+// payload-carrying enum variants — are allowed, because the IR layer verifies
+// each such site is reuse-PAIRED (or covered by the graded allowance) and
+// rejects the rest with E068 at lowering time. The same relaxation applies to
+// a graded `fip(n)` / `fbip(n)` (FipAllowance > 0): the checker does NOT count
+// n — the IR owns the count — it only stops rejecting the constructor shape.
+// Everything else stays rejected for both: array literals (no array reuse
+// pairing exists), string concat / interpolation, CoW-copy writes, and unproven
+// calls. Call rule: `fip` may only call `fip` (the stronger claim); `fbip` may
+// call `fip` or `fbip`.
 func (c *checker) checkFipFunctions(prog *ast.Program) {
 	fip := map[string]bool{}
+	fbip := map[string]bool{}
 	for _, fn := range prog.Funcs {
 		if fn.Fip {
 			fip[fn.Name] = true
 		}
+		if fn.Fbip {
+			fbip[fn.Name] = true
+		}
 	}
-	if len(fip) == 0 {
+	if len(fip)+len(fbip) == 0 {
 		return
 	}
 	for _, fn := range prog.Funcs {
-		if !fn.Fip || fn.Body == nil {
+		if (!fn.Fip && !fn.Fbip) || fn.Body == nil {
 			continue
 		}
+		kw := "fip"
+		if fn.Fbip {
+			kw = "fbip"
+		}
+		// Constructor expressions are allowed whenever the IR-level E068
+		// verification owns the allocation budget: every `fbip` (each site
+		// must be reuse-paired or within the allowance) and any graded
+		// `fip(n)` (n > 0).
+		ctorOK := fn.Fbip || fn.FipAllowance > 0
 		own := map[string]bool{}
 		for _, p := range fn.Params {
 			if p.Own {
@@ -6707,21 +6732,25 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.ArrayLit:
-				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (array literal)", fn.Name)
+				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (array literal)", kw, fn.Name)
 			case *ast.TupleLit:
-				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (tuple literal)", fn.Name)
+				if !ctorOK {
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (tuple literal)", kw, fn.Name)
+				}
 			case *ast.StructLit:
-				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (struct literal %q)", fn.Name, x.TypeName)
+				if !ctorOK {
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (struct literal %q)", kw, fn.Name, x.TypeName)
+				}
 			case *ast.FString:
-				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (string interpolation)", fn.Name)
+				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string interpolation)", kw, fn.Name)
 			case *ast.Binary:
 				if x.IsStringConcat {
-					c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (string concatenation)", fn.Name)
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string concatenation)", kw, fn.Name)
 				}
 			case *ast.Call:
 				if x.IsVariantCall {
-					if len(x.Args) > 0 {
-						c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (enum variant construction)", fn.Name)
+					if len(x.Args) > 0 && !ctorOK {
+						c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (enum variant construction)", kw, fn.Name)
 					}
 					return true
 				}
@@ -6738,20 +6767,27 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 						return true
 					}
 					if !fipNonAllocMethods[x.Method.Field] {
-						c.errfCode(x.Pos(), "E053", "`fip` function %q may not call method %q (not proven allocation-free)", fn.Name, x.Method.Field)
+						c.errfCode(x.Pos(), "E053", "`%s` function %q may not call method %q (not proven allocation-free)", kw, fn.Name, x.Method.Field)
 					}
 					return true
 				}
 				if id, ok := x.Callee.(*ast.Ident); ok {
-					if !fip[id.Name] {
+					// `fip` is the stronger claim: it may only lean on other
+					// `fip` callees. `fbip` may also call `fbip` (the callee's
+					// own construction sites are E068-verified in turn).
+					if fn.Fbip {
+						if !fip[id.Name] && !fbip[id.Name] {
+							c.errfCode(x.Pos(), "E053", "`fbip` function %q may only call `fip` or `fbip` functions, not %q", fn.Name, id.Name)
+						}
+					} else if !fip[id.Name] {
 						c.errfCode(x.Pos(), "E053", "`fip` function %q may only call other `fip` functions, not %q", fn.Name, id.Name)
 					}
 					return true
 				}
-				c.errfCode(x.Pos(), "E053", "`fip` function %q may not make an indirect call (not proven allocation-free)", fn.Name)
+				c.errfCode(x.Pos(), "E053", "`%s` function %q may not make an indirect call (not proven allocation-free)", kw, fn.Name)
 			case *ast.Assign:
 				if fipWriteAllocates(x.Target, own) {
-					c.errfCode(x.Pos(), "E053", "`fip` function %q may not write to a non-`own` heap value (triggers a copy-on-write)", fn.Name)
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not write to a non-`own` heap value (triggers a copy-on-write)", kw, fn.Name)
 				}
 			}
 			return true

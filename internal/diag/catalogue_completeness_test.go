@@ -33,8 +33,9 @@ func TestEmittedCodesHaveExplanations(t *testing.T) {
 	// siblings. modload/parser share the same emission helpers as checker;
 	// cmd/fern emits E066 (capability enforcement) via checker.Error, and
 	// internal/platforms owns that pass — scan both so new codes there
-	// can't ship without explanations either.
-	dirs := []string{"../checker", "../parser", "../modload", "../platforms", "../../cmd/fern"}
+	// can't ship without explanations either. internal/ir emits E068 (the
+	// fip/fbip verify-enable, fip_verify.go's errfCode) at lowering time.
+	dirs := []string{"../checker", "../parser", "../modload", "../platforms", "../ir", "../../cmd/fern"}
 	emitted := map[string]string{} // code -> first source file it's emitted from
 	for _, d := range dirs {
 		files, err := filepath.Glob(filepath.Join(d, "*.go"))

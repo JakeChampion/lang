@@ -202,6 +202,57 @@ func (p *parser) accept(kind lexer.Kind, text string) (lexer.Token, bool) {
 	return lexer.Token{}, false
 }
 
+// fipModifierAt reports whether the tokens starting at index i spell a
+// `fip` / `fbip` contextual function modifier — the bare ident or the
+// graded `fip(<int>)` / `fbip(<int>)` allowance form — in a position
+// where it IS a modifier: directly followed by the `function` keyword,
+// or by another fip/fbip modifier shape (consumed so the top-level loop
+// can report the fip+fbip conflict rather than a generic decl error).
+// Returns the modifier name, its parsed allowance (0 for the bare form),
+// and the index just past the modifier. Any other shape returns
+// ok=false, keeping `fip` / `fbip` usable as ordinary identifiers.
+func (p *parser) fipModifierAt(i int) (name string, allowance int, next int, ok bool) {
+	if i >= len(p.tokens) || p.tokens[i].Kind != lexer.Ident ||
+		(p.tokens[i].Text != "fip" && p.tokens[i].Text != "fbip") {
+		return "", 0, 0, false
+	}
+	name = p.tokens[i].Text
+	j := i + 1
+	// Optional graded allowance `(<int>)` — a plain (unsuffixed) small
+	// integer literal.
+	if j+2 < len(p.tokens) && p.tokens[j].Kind == lexer.Punct && p.tokens[j].Text == "(" {
+		numTok := p.tokens[j+1]
+		if numTok.Kind != lexer.Number || numTok.Suffix != "" {
+			return "", 0, 0, false
+		}
+		if p.tokens[j+2].Kind != lexer.Punct || p.tokens[j+2].Text != ")" {
+			return "", 0, 0, false
+		}
+		n, err := strconv.Atoi(numTok.Text)
+		if err != nil || n < 0 {
+			return "", 0, 0, false
+		}
+		allowance = n
+		j += 3
+	}
+	if j >= len(p.tokens) {
+		return "", 0, 0, false
+	}
+	t := p.tokens[j]
+	if t.Kind == lexer.Keyword && t.Text == "function" {
+		return name, allowance, j, true
+	}
+	if t.Kind == lexer.Ident && (t.Text == "fip" || t.Text == "fbip") {
+		// Only treat the trailing fip/fbip ident as "the sibling modifier"
+		// when it is itself a modifier shape — otherwise `fip(3)` followed
+		// by an expression ident named fip would misparse.
+		if _, _, _, sibOK := p.fipModifierAt(j); sibOK {
+			return name, allowance, j, true
+		}
+	}
+	return "", 0, 0, false
+}
+
 func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
 	t := p.peek()
 	if t.Kind != kind || (text != "" && t.Text != text) {
@@ -324,9 +375,10 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Keyword, "const") &&
 				!p.match(lexer.Ident, "opaque") &&
 				!p.match(lexer.Ident, "fip") &&
+				!p.match(lexer.Ident, "fbip") &&
 				!p.match(lexer.Ident, "async") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, or `async`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -337,16 +389,44 @@ func (p *parser) parseProgram() *ast.Program {
 			// above) and is NOT also Public.
 			isPub = !isPackage
 		}
-		// `fip` is a contextual modifier on a function decl (`pub fip
-		// function …` / `fip function …`): the checker (E053) verifies the
-		// function performs no heap allocation — a Koka-style fully-in-place
-		// guarantee. Recognised only when directly followed by `function`, so
-		// `fip` stays usable as an ordinary identifier everywhere else.
+		// `fip` / `fbip` are contextual modifiers on a function decl (`fip
+		// function …`, `pub fbip function …`), each with an optional graded
+		// allowance (`fip(2) function …`, `fbip(1) function …`): the checker
+		// (E053) verifies the Koka-style fully-in-place shape rule, and the
+		// IR layer verifies the emitted allocation behaviour matches the
+		// claim (E068 — plan E2', docs/NICHE-BORROWS-PLAN.md). Recognised
+		// only when the whole modifier shape is directly followed by
+		// `function` (or by the sibling modifier, consumed so the fip+fbip
+		// conflict is reported instead of a generic decl error), so both
+		// stay usable as ordinary identifiers everywhere else.
 		isFip := false
-		if p.match(lexer.Ident, "fip") && p.i+1 < len(p.tokens) &&
-			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "function" {
-			p.advance() // fip
-			isFip = true
+		isFbip := false
+		fipAllowance := 0
+		for {
+			name, allowance, next, ok := p.fipModifierAt(p.i)
+			if !ok {
+				break
+			}
+			modPos := p.tokens[p.i].Pos
+			switch {
+			case (name == "fip" && isFbip) || (name == "fbip" && isFip):
+				p.errors = append(p.errors, p.errorf(modPos,
+					"a function may be marked `fip` or `fbip`, not both"))
+			case (name == "fip" && isFip) || (name == "fbip" && isFbip):
+				p.errors = append(p.errors, p.errorf(modPos,
+					"duplicate `%s` modifier", name))
+			}
+			isFip = isFip || name == "fip"
+			isFbip = isFbip || name == "fbip"
+			if allowance > fipAllowance {
+				fipAllowance = allowance
+			}
+			p.i = next
+		}
+		if isFip && isFbip {
+			// Conflict already reported; keep the weaker claim so downstream
+			// phases see a consistent single flag.
+			isFip = false
 		}
 		// `async` is a contextual modifier on a function decl (`async
 		// function …` / `pub async function …`): the WASI Preview-3
@@ -577,6 +657,8 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.Public = isPub
 			fn.PackageScoped = isPackage
 			fn.Fip = isFip
+			fn.Fbip = isFbip
+			fn.FipAllowance = fipAllowance
 			fn.Async = isAsync
 			if importIface != "" {
 				if fn.Body != nil {

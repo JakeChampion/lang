@@ -90,3 +90,91 @@ function main(): i32 { return 0; }`)
 	wantE053(t, "with on non-own array", `fip function f(arr: i32[]): i32[] { return arr.with(0, 9); }
 function main(): i32 { return 0; }`)
 }
+
+// wantFbipE053 is wantE053's fbip sibling: the violation must be reported
+// against the `fbip` keyword.
+func wantFbipE053(t *testing.T, name, src string) {
+	t.Helper()
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatalf("%s: expected E053 (fbip shape violation), got none", name)
+	}
+	if !strings.Contains(err.Error(), "`fbip` function") {
+		t.Errorf("%s: expected an fbip-shape error, got: %v", name, err)
+	}
+}
+
+// `fbip` relaxes exactly the constructor rule of the E053 walk: struct /
+// tuple literals and payload-carrying enum variants pass the CHECKER (the IR
+// then verifies each site is reuse-paired — E068); everything else E053
+// rejects stays rejected. Graded `fip(n)` gets the same constructor
+// relaxation (the IR owns the count).
+func TestFbipAcceptsConstructors(t *testing.T) {
+	wantNoErr(t, "fbip struct literal", `struct P { x: i32, y: i32 }
+fbip function f(a: i32): P { return P { x: a, y: a }; }
+function main(): i32 { return 0; }`)
+
+	wantNoErr(t, "fbip tuple literal", `fbip function f(a: i32): (i32, i32) { return (a, a + 1); }
+function main(): i32 { return 0; }`)
+
+	wantNoErr(t, "fbip enum construction", `enum L { C(i32, L), N }
+fbip function f(own t: L): L { return C(1, t); }
+function main(): i32 { return 0; }`)
+
+	// The R4 consuming-match rebuild — the canonical fbip shape.
+	wantNoErr(t, "fbip consuming match", `enum List { Cons(i32, List), Nil }
+fbip function map_inc(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, map_inc(t)); },
+        Nil => { return Nil; },
+    }
+}
+function main(): i32 { return 0; }`)
+
+	// Graded fip(n): constructors pass the checker too (the IR counts them).
+	wantNoErr(t, "graded fip(1) struct literal", `struct P { x: i32, y: i32 }
+fip(1) function f(a: i32): P { return P { x: a, y: a }; }
+function main(): i32 { return 0; }`)
+
+	// fbip may call fip: the callee's claim is strictly stronger.
+	wantNoErr(t, "fbip calls fip", `fip function inc(x: i32): i32 { return x + 1; }
+fbip function f(x: i32): i32 { return inc(x); }
+function main(): i32 { return 0; }`)
+
+	// fbip may call fbip.
+	wantNoErr(t, "fbip calls fbip", `struct P { x: i32 }
+fbip function g(a: i32): P { return P { x: a }; }
+fbip function f(a: i32): P { return g(a); }
+function main(): i32 { return 0; }`)
+}
+
+func TestFbipRejectsNonConstructorAllocation(t *testing.T) {
+	// Array literals stay rejected — no array reuse pairing exists.
+	wantFbipE053(t, "fbip array literal", `fbip function f(): i32[] { return [1, 2, 3]; }
+function main(): i32 { return 0; }`)
+
+	wantFbipE053(t, "fbip string concat", `fbip function f(a: string, b: string): string { return a + b; }
+function main(): i32 { return 0; }`)
+
+	wantFbipE053(t, "fbip string interpolation", `fbip function f(a: i32): string { return f"v={a}"; }
+function main(): i32 { return 0; }`)
+
+	wantFbipE053(t, "fbip calls unmarked", `function alloc(): i32[] { return [1]; }
+fbip function f(): i32 { var a: i32[] = alloc(); return a[0]; }
+function main(): i32 { return 0; }`)
+
+	wantFbipE053(t, "fbip cow write", `struct H { v: i32 }
+fbip function f(arr: i32[]): i32[] { return arr.with(0, 9); }
+function main(): i32 { return 0; }`)
+
+	// Bare fip stays strict: it may NOT call fbip (the weaker claim) …
+	wantE053(t, "fip calls fbip", `struct P { x: i32 }
+fbip function g(a: i32): P { return P { x: a }; }
+fip function f(a: i32): i32 { var p: P = g(a); return p.x; }
+function main(): i32 { return 0; }`)
+
+	// … and bare fip(0) still rejects constructors at the checker.
+	wantE053(t, "bare fip struct literal still rejected", `struct P { x: i32 }
+fip function f(a: i32): P { return P { x: a } ; }
+function main(): i32 { return 0; }`)
+}

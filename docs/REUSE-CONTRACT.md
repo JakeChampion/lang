@@ -18,11 +18,18 @@ these behaviors), and (c) the drop-guided evaluation (plan E3).
 dynamically guarded*: a site fires only when the static analysis
 recognises the pattern AND the runtime uniqueness check passes.
 The shapes below are stable, documented, and test-locked — users
-may rely on them firing for the described patterns. What Fern
-does NOT yet have is Koka's *visibility* half (a way to SEE that
-a site qualified — `fip`/`fbip` in verify-and-enable form, plan
-E2) or the drop-guided source selection (plan E3). Where a shape
-has known non-firing edges, they are listed under "taints".
+may rely on them firing for the described patterns. Koka's
+*visibility* half now exists in verify-and-enable form on the
+NATIVE compiler (plan E2', 2026-07-13): annotate a function
+`fbip` (or graded `fbip(n)` / `fip(n)`) and the IR layer errors
+with **E068** unless every constructor site is reuse-paired
+(R1–R4 below) or within the allowance — `fern explain E068` for
+the exact contract, `internal/ir/fip_verify.go` for the pass.
+The self-host compiler parse-tolerates the annotations but does
+not verify them until the reuse analyses port (plan E4). Still
+open: the drop-guided source selection default (plan E3 —
+evaluated, kept off). Where a shape has known non-firing edges,
+they are listed under "taints".
 
 ## The two-layer model
 
@@ -158,10 +165,20 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
   is identical under both strategies by construction (shared
   gates + is_unique guard + degrade path; 224-seed differential
   in `drop_guided_differential_test.go`).
-- **Visibility** (`fip`/`fbip` verify-and-enable): plan item
-  **E2**. Until then, the way to *see* reuse is the rc dump
+- **Visibility** (`fip`/`fbip` verify-and-enable): **CLOSED on the
+  native compiler** (plan item **E2'**, 2026-07-13). `fbip` /
+  `fbip(n)` / `fip(n)` make the pairing programmer-visible: the IR
+  op-scan (`internal/ir/fip_verify.go`, run per function right
+  after lowering) errors with E068 when a constructor site is NOT
+  reuse-paired — a paired site lowers to `__alloc_reuse`, so every
+  remaining `OpAlloc` is a fresh site; the runtime `is_unique`
+  fallback inside the paired form deliberately does not count
+  (fip/fbip is the SHAPE guarantee — shared inputs may copy).
+  Remaining gap: the SELF-HOST compiler parse-tolerates (and
+  drops) the annotations without verifying — closes with the E4
+  reuse port. For un-annotated code, the rc dump
   (`internal/ir/rc_dump.go`) and the allocation counters in the
-  reuse tests.
+  reuse tests remain the inspection tools.
 
 ## Contract for the self-host port
 
