@@ -47,6 +47,31 @@ func TestFormatKeepsFunctionModifiers(t *testing.T) {
 	}
 }
 
+// An unsigned literal whose magnitude exceeds i64::MAX is stored by
+// the parser as a negative int64 bit pattern (via ParseUint). The
+// formatter must render it back as the unsigned decimal, not via
+// `-x.Value` (which overflowed for the 2^63 / math.MinInt64 pattern
+// and produced a spurious `--`). These are the boundary values: 2^63,
+// (2^32-1)^2, and u64::MAX.
+func TestFormatUnsignedLargeLiteral(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`function main(): i32 { var a: u64 = 9223372036854775808 as u64; return 0; }`,
+			"9223372036854775808 as u64"},
+		{`function main(): i32 { var a: u64 = 18446744065119617025 as u64; return 0; }`,
+			"18446744065119617025 as u64"},
+		{`function main(): i32 { var a: u64 = 18446744073709551615 as u64; return 0; }`,
+			"18446744073709551615 as u64"},
+	} {
+		got := formatSrc(t, tc.in)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("format(%q):\ngot  %q\nwant substring %q", tc.in, got, tc.want)
+		}
+		if strings.Contains(got, "--") || strings.Contains(got, "-9223372036854775808") {
+			t.Errorf("format(%q) emitted a spurious negation: %q", tc.in, got)
+		}
+	}
+}
+
 // Nested blocks indent further. `if` / `else` chain stays on the
 // same line as the closing brace of the previous arm.
 func TestFormatIfElseIndents(t *testing.T) {

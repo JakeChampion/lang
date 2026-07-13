@@ -1118,14 +1118,17 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 		}
 		if x.Value < 0 {
-			needsParens := parentPrec >= precUnary
-			if needsParens {
-				f.b.WriteByte('(')
-			}
-			fmt.Fprintf(&f.b, "-%d%s", -x.Value, suffix)
-			if needsParens {
-				f.b.WriteByte(')')
-			}
+			// A negative Value in formatter input can only be an unsigned
+			// literal whose magnitude exceeds i64::MAX: the parser stored the
+			// bit pattern via `int64(strconv.ParseUint(...))`. (Source
+			// negatives like `-5` are `ast.Unary` nodes wrapping a positive
+			// NumberLit, handled by the Unary case — they never reach here.)
+			// So emit the unsigned decimal. The old `-%d` with `-x.Value`
+			// overflowed for math.MinInt64 (== 2^63, e.g.
+			// `9223372036854775808 as u64`), leaving it negative and emitting
+			// a spurious `--` that grew another `-` on every format pass and
+			// broke idempotency.
+			fmt.Fprintf(&f.b, "%s%s", strconv.FormatUint(uint64(x.Value), 10), suffix)
 		} else {
 			fmt.Fprintf(&f.b, "%d%s", x.Value, suffix)
 		}
