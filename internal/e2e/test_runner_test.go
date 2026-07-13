@@ -871,6 +871,28 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_rotate_test.fern` covers std/array's structural
+// rotation verbs rotate_left / rotate_right (free + method forms): cyclic shift
+// by n (mod len), wrap when n >= len, negative n, zero / full shift, and empty.
+// On the interp gate and the self-host x86-64 + arm64 gates (i32, structural, no
+// closures; uses assert_eq_array / assert_true). The Go-side
+// TestNativeArrayRotate pins native compilation on all four backends including
+// string-element rotation (which the self-host compiler miscompiles, so it's
+// native-differential-only). Passing → exit 0.
+func TestRunnerArrayRotateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_rotate_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array rotate", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_batch_test.fern` covers std/array's batch verbs
 // slice / chunks / windows (#4416) — half-open clamped range, even /
 // uneven / empty chunking, and overlapping / too-wide / full-width
