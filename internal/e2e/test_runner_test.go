@@ -2161,6 +2161,25 @@ func TestRunnerU32RootsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_cbrt_hypot3_test.fern` covers std/float's cbrt (real
+// cube root, defined for negatives) and hypot3 (overflow-safe 3-D Euclidean
+// length), f64 and f32. On the interp gate and both self-host gates; the Go-side
+// TestFloatCbrt / TestFloatHypot3 pin native compilation (cbrt's wasmbin leg
+// skips libm pow, hypot3 covers all four). Passing → exit 0.
+func TestRunnerFloatCbrtHypot3Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_cbrt_hypot3_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float cbrt/hypot3", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
