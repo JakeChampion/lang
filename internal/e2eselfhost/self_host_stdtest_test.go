@@ -306,6 +306,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"array_accessors", langSrcAbs(t, "examples/tests/array_accessors_test.fern"), ""},
 		{"array_dedup", langSrcAbs(t, "examples/tests/array_dedup_test.fern"), ""},
 		{"array_binary_search", langSrcAbs(t, "examples/tests/array_binary_search_test.fern"), ""},
+		{"array_min_max_index", langSrcAbs(t, "examples/tests/array_min_max_index_test.fern"), ""},
 		{"array_rotate", langSrcAbs(t, "examples/tests/array_rotate_test.fern"), ""},
 		{"array_batch", langSrcAbs(t, "examples/tests/array_batch_test.fern"), ""},
 		{"iter_combinators", langSrcAbs(t, "examples/tests/iter_combinators_test.fern"), ""},

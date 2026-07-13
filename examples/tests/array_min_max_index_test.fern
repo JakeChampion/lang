@@ -1,0 +1,63 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_min_max_index_test.fern — pure-Fern coverage of
+// std/array's max_index / min_index[T: cmp.Ord] (free + method forms): the INDEX
+// of the largest / smallest element by Ord, as Option[i32] (None on empty, first
+// index on a tie). Covers i32 elements, single, empty, and all-equal. Kept as
+// its own suite so the self-host merged bundle stays under the asm_ir IR budget;
+// uses assert_true + match (no scalar assert_eq[i32]).
+//
+// The i32 cases here are self-host-gated; STRING-element min/max_index is
+// native-differential-only. Unlike binary_search (which compares an element to a
+// separate `target` arg and self-hosts fine over strings), min/max_index
+// compares two array ELEMENTS — `xs[i].cmp(xs[best])` — and that element-vs-
+// element string compare trips the self-host compiler, the same pointer-payload
+// class of gap that limits the T[]-returning generics. The Go-side
+// TestArrayMinMaxIndex exercises a string[] on all four native backends.
+
+function idx(o: Option[i32]): i32 {
+    match (o) { Some(v) => { return v; }, None => { return 0 - 1; } }
+}
+
+function test_max_index(): test.TestOutcome {
+    // 9 is the largest, at index 5.
+    return test.assert_true(idx([3, 1, 4, 1, 5, 9, 2, 6].max_index()) == 5);
+}
+
+function test_min_index_tie_first(): test.TestOutcome {
+    // Two 1s; the FIRST (index 1) wins.
+    return test.assert_true(idx([3, 1, 4, 1, 5].min_index()) == 1);
+}
+
+function test_free_fn(): test.TestOutcome {
+    return test.assert_true(idx(array.max_index([10, 40, 20])) == 1);
+}
+
+function test_single(): test.TestOutcome {
+    if (idx([42].max_index()) != 0) { return test.fail("single max"); }
+    return test.assert_true(idx([42].min_index()) == 0);
+}
+
+function test_empty(): test.TestOutcome {
+    var e: i32[] = [];
+    match (e.max_index()) {
+        Some(v) => { return test.fail("expected None for empty"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_all_equal(): test.TestOutcome {
+    // No strict improvement → first index kept.
+    return test.assert_true(idx([7, 7, 7].max_index()) == 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array min/max index");
+    r = r.it("max_index",          test_max_index());
+    r = r.it("min_index tie first", test_min_index_tie_first());
+    r = r.it("free fn",            test_free_fn());
+    r = r.it("single",             test_single());
+    r = r.it("empty",              test_empty());
+    r = r.it("all equal",          test_all_equal());
+    return r.finish();
+}
