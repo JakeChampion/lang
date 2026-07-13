@@ -422,7 +422,7 @@ pub struct StructSig { name: string, field_names: string[], field_types: Type[],
 // is implicit at the call site (`obj.name(a, b)`) so it's
 // stored separately from param_types. Plain functions live
 // in the FuncSig table; the two tables don't overlap.
-pub struct MethodSig { name: string, receiver_type: string, param_types: Type[], ret_type: Type }
+pub struct MethodSig { name: string, receiver_type: string, param_types: Type[], ret_type: Type, ret_type_name: string }
 
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
@@ -1005,6 +1005,14 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     var i: i32 = 0;
     while (i < s.methods.len()) {
         var rt_match: boolean = s.methods[i].receiver_type == recv_type;
+        // A generic receiver method stores its receiver spelling WITH the
+        // type parameters (`function (b: Box[T]) get()` → "Box[T]"), but the
+        // call site names the base struct ("Box"). Match on the base so an
+        // instantiation (`Box[i32]`) dispatches its generic methods — the
+        // #4346-piece-2 companion to the generic-method return substitution.
+        if (!rt_match && parser.parse_type_ref(s.methods[i].receiver_type).base == recv_type) {
+            rt_match = true;
+        }
         // `bool` and `boolean` are interchangeable in source —
         // accept either spelling at the call site.
         if (!rt_match && recv_type == "bool" && s.methods[i].receiver_type == "boolean") {
@@ -1022,7 +1030,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
         i = i + 1;
     }
     var empty_pt: Type[] = [];
-    return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method") };
+    return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "" };
 }
 
 function (s: Scope) lookup_union(name: string): UnionSig {
@@ -1334,6 +1342,28 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
                 return t_unknown("arg-type mismatch calling method `" + name + "`");
             }
             mi = mi + 1;
+        }
+        // Generic-receiver method return substitution (#4346 piece 2): a method
+        // whose declared return type names one of the receiver struct's type
+        // parameters (`function (b: Box[T]) get(): T`, or a nested `T[]`)
+        // resolves that spelling to `unknown` at collect time. When the receiver
+        // is a concrete instantiation (`Box[i32]`, carrying args [i32]),
+        // substitute the struct's type parameters with those args throughout the
+        // return spelling — so `b.get()` is i32, not the erased unknown. Mirrors
+        // the field-access substitution; reuses type_from_ref_subst.
+        if (type_contains_unknown(msig.ret_type) && msig.ret_type_name.len() > 0) {
+            match (recv_ty) {
+                TypeStruct(rsn) => {
+                    if (rsn.args.len() > 0) {
+                        var rssig: StructSig = s.lookup_struct(rsn.name);
+                        if (rssig.name.len() > 0 && rssig.type_params.len() > 0) {
+                            var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
+                            return type_from_ref_subst(rref, rssig.type_params, rsn.args, s.structs, s.unions);
+                        }
+                    }
+                },
+                _ => { }
+            }
         }
         return msig.ret_type;
     }
@@ -2061,7 +2091,8 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
                 name: fd.name,
                 receiver_type: fd.receiver_type,
                 param_types: pts,
-                ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions)
+                ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions),
+                ret_type_name: fd.ret_type
             });
         }
         i = i + 1;
@@ -2493,6 +2524,19 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
     // so genuine errors are unaffected; only the uncoded over-reject signal is
     // suppressed for generic bodies. Non-generic bodies keep the strict check.
     var generic: boolean = fd.type_params.len() > 0 || fd.type_param_count > 0;
+    // A generic-RECEIVER method (`function (b: Box[T]) get(): T`) binds its
+    // type parameters through the receiver spelling, not the method's own
+    // `[...]` list, so type_param_count is 0 — yet its body operates on
+    // opaque-typed values (`b.v` is `T` → unknown) exactly like a generic
+    // function's. Detect it: the resolved receiver type carries an unknown
+    // component (the erased `[T]`), so treat the body as generic and suppress
+    // the uncoded over-reject, the same way a `[T]` function does (#4346
+    // piece 2). A concrete receiver resolves without unknown and stays strict.
+    if (!generic && fd.receiver_type.len() > 0) {
+        if (type_contains_unknown(type_from_name_with_structs_unions(fd.receiver_type, structs, unions))) {
+            generic = true;
+        }
+    }
     var ok: boolean = true;
     var j: i32 = 0;
     while (j < fd.body.len()) {
