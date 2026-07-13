@@ -1664,6 +1664,27 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
     return None;
 }
 
+// `s.rsplit_once(sep)` — the LAST-occurrence mirror of `split_once`: splits
+// at the FINAL occurrence of `sep`, returning `Some((head, tail))` with the
+// separator dropped. `None` when `sep` doesn't appear or is empty. Where
+// `split_once("a.b.c", ".")` gives `("a", "b.c")`, `rsplit_once` gives
+// `("a.b", "c")` — the shape you want for splitting off a file extension, the
+// last path segment, or a trailing `:port`.
+pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
+    if (sep.len() == 0) { return None; }
+    var n: i32 = s.len();
+    var sLen: i32 = sep.len();
+    // Scan from the last possible start position backwards.
+    var i: i32 = n - sLen;
+    while (i >= 0) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
+        }
+        i = i - 1;
+    }
+    return None;
+}
+
 // `s.trim_start_matches(sub)` / `s.trim_end_matches(sub)` —
 // peel sub off the beginning / end as many times as it
 // appears, contiguously. Symmetric with the regular trim()

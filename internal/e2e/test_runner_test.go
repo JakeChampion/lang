@@ -533,6 +533,26 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerStringRsplitOnceExamplePasses gates std/string.rsplit_once — split
+// at the LAST occurrence of a separator (the mirror of split_once) — under the
+// interpreter. Also on the self-host x86-64 + arm64 gates (uses assert_true /
+// fail / pass, no generic assert_eq[i32] monomorph); the Go-side
+// TestStringRsplitOnce pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerStringRsplitOnceExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_rsplit_once_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string rsplit_once", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // TestRunnerStringFindAllExamplePasses gates std/string.find_all — the start
 // indices of every non-overlapping occurrence of a substring — under the
 // interpreter. Interp-gated only: the self-host compiler fails to emit the
