@@ -1,0 +1,72 @@
+import "std/test";
+import "std/i64";
+// examples/tests/i64_range_test.fern — pure-Fern coverage of std/i64's abs_diff
+// (absolute difference, the wider counterpart to i32.abs_diff) and the range
+// predicates is_in_range (half-open [lo, hi)) / is_between (inclusive [lo, hi]),
+// added for parity with std/i32. Values past the i32 range exercise the i64
+// width. Kept as its own suite rather than folded into i64_test so the self-host
+// merged bundle stays under the asm_ir IR budget. The Go-side
+// TestI64AbsDiffRange pins these across all four backends; this is the
+// migration-shaped (pure-Fern, std/test-driven) companion.
+
+function test_abs_diff_wide(): test.TestOutcome {
+    var a: i64 = 5000000000 as i64;
+    var b: i64 = 3000000000 as i64;
+    return test.assert_eq(a.abs_diff(b), 2000000000 as i64);
+}
+
+function test_abs_diff_reversed(): test.TestOutcome {
+    var a: i64 = 5000000000 as i64;
+    var b: i64 = 3000000000 as i64;
+    return test.assert_eq(b.abs_diff(a), 2000000000 as i64);
+}
+
+function test_abs_diff_mixed_sign(): test.TestOutcome {
+    return test.assert_eq((0 as i64).abs_diff(0 - (7 as i64)), 7 as i64);
+}
+
+function test_abs_diff_both_negative(): test.TestOutcome {
+    return test.assert_eq((0 - (100 as i64)).abs_diff(0 - (40 as i64)), 60 as i64);
+}
+
+function test_abs_diff_equal(): test.TestOutcome {
+    return test.assert_eq((10 as i64).abs_diff(10 as i64), 0 as i64);
+}
+
+function test_in_range_inside(): test.TestOutcome {
+    return test.assert_true((5 as i64).is_in_range(1 as i64, 10 as i64));
+}
+
+function test_in_range_excludes_hi(): test.TestOutcome {
+    // Half-open: hi is excluded.
+    return test.assert_true(!(10 as i64).is_in_range(1 as i64, 10 as i64));
+}
+
+function test_in_range_wide(): test.TestOutcome {
+    return test.assert_true((4000000000 as i64).is_in_range(0 as i64, 5000000000 as i64));
+}
+
+function test_between_includes_bounds(): test.TestOutcome {
+    // Inclusive: both lo and hi are in range.
+    if (!(10 as i64).is_between(1 as i64, 10 as i64)) { return test.fail("hi should be included"); }
+    return test.assert_true((1 as i64).is_between(1 as i64, 10 as i64));
+}
+
+function test_between_outside(): test.TestOutcome {
+    return test.assert_true(!(11 as i64).is_between(1 as i64, 10 as i64));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i64 range");
+    r = r.it("abs_diff wide",          test_abs_diff_wide());
+    r = r.it("abs_diff reversed",      test_abs_diff_reversed());
+    r = r.it("abs_diff mixed sign",    test_abs_diff_mixed_sign());
+    r = r.it("abs_diff both negative", test_abs_diff_both_negative());
+    r = r.it("abs_diff equal",         test_abs_diff_equal());
+    r = r.it("is_in_range inside",     test_in_range_inside());
+    r = r.it("is_in_range excludes hi", test_in_range_excludes_hi());
+    r = r.it("is_in_range wide",       test_in_range_wide());
+    r = r.it("is_between includes bounds", test_between_includes_bounds());
+    r = r.it("is_between outside",     test_between_outside());
+    return r.finish();
+}

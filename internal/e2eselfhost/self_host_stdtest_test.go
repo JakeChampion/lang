@@ -288,6 +288,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"i32", langSrcAbs(t, "examples/tests/i32_test.fern"), ""},
 		{"i32_bit_arith", langSrcAbs(t, "examples/tests/i32_bit_arith_test.fern"), ""},
 		{"i64", langSrcAbs(t, "examples/tests/i64_test.fern"), ""},
+		{"i64_range", langSrcAbs(t, "examples/tests/i64_range_test.fern"), ""},
 		// u64 routes IR now that mono_infer types an `as u64` cast arg, so a
 		// bounded-generic assert_eq(x.min(y), v as u64) binds T=u64 (#3457).
 		{"u64", langSrcAbs(t, "examples/tests/u64_test.fern"), ""},

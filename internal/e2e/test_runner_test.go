@@ -349,6 +349,26 @@ func TestRunnerI64ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i64_range_test.fern` covers std/i64's abs_diff (absolute
+// difference, wider counterpart to i32.abs_diff) and the range predicates
+// is_in_range (half-open) / is_between (inclusive), added for parity with
+// std/i32, over values past the i32 range. Kept out of i64_test to keep the
+// self-host bundle under the asm_ir IR budget; the Go-side TestI64AbsDiffRange
+// pins these across all four backends. Passing suite → exit 0.
+func TestRunnerI64RangeExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 range", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerU64ExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/u64_test.fern")
