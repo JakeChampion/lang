@@ -12422,16 +12422,7 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
 		return
 	}
-	// The generated __drop_struct_/__drop_enum_/__drop_tuple_ bodies come
-	// from the post-pass worklist, which only runs when RcFreeEnabled —
-	// routing to one here under free-off emits a call to a symbol that is
-	// never generated (an undefined reference at link). Free-off falls
-	// through to the flat one-level dec instead, matching the free-off
-	// baseline everywhere else. First hit by emitArraySet's old-element
-	// drop on a concrete-enum-element array (`RInst[].with` in std/regex)
-	// under the FreeMatchesNoFree differential: __drop_enum_regex__RInst
-	// was called but never emitted.
-	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
+	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
@@ -12442,9 +12433,7 @@ func (b *builder) dropStructField(t ast.Type) {
 		// the array, so a shared one only dec's). Array-of-struct also
 		// deep-drops each element box (Stage B loop); array-of-rc frees the
 		// outer buffer + flat-dec's inner; plain arrays free the buffer.
-		// Same RcFreeEnabled gate as above: the __drop_arr_* bodies are
-		// worklist-generated, free-on only.
-		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
+		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -14979,18 +14968,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	//   - overwriting index i must drop the OLD element there (it is being
 	//     replaced) and retain the NEW value if it is an alias.
 	// Scalar-element arrays keep the byte-identical straight-line path.
-	//
-	// Gated on RcFreeEnabled (like the push-grow retain in emitArrayPush):
-	// free-off never walk-frees elements, so the shared-pointer copy is safe
-	// there and the plain helper keeps that baseline byte-identical. The gate
-	// is also load-bearing for LINKING: the old-element drop routes through
-	// dropFnNameFor (`__drop_enum_<E>` / `__drop_struct_<E>` / …), and the
-	// worklist that GENERATES those bodies only runs under RcFreeEnabled — an
-	// ungated call here left free-off builds of any `.with` on an
-	// rc-tracked-element array referencing an undefined symbol (first hit by
-	// std/regex's `RInst[]` `.with` patching: `__drop_enum_regex__RInst`
-	// undefined in every free-off fixture link, #4958's red lanes).
-	rcTracked := arrElemIsRcTracked(elemType) && ast.RcFreeEnabled
+	rcTracked := arrElemIsRcTracked(elemType)
 	storeOp, storeWidth := arraySetStoreOp(elemType, b.ptrW)
 	idxHelper := "__arr_idx"
 	switch stride {
@@ -15063,15 +15041,11 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		// reference); on the in-place branch it is the sole owner's release
 		// (frees on last reference). dropStructField is the type-appropriate
 		// deep drop, is_unique-gated internally, so a shared element only decs.
-		//
-		// Gated on RcFreeEnabled like every other drop-site: no-free mode
-		// emits no drops (the replaced element leaks — safe, arena-only), and
-		// dropStructField routes an RC-tracked struct/enum/array element to a
-		// named `__drop_<...>` fn whose BODY the post-pass worklist only
-		// generates under RcFreeEnabled. Emitting the CALL here in no-free
-		// mode left that symbol undefined at link time — the `.with`-patched
-		// RInst[] (enum with a string payload) in std/regex's __rx_emit was
-		// the first construct to hit it (#4956 regex_captures fixture).
+		// Gated on RcFreeEnabled: free-off is the no-reclamation baseline
+		// (the old element just leaks), and dropStructField's generated
+		// __drop_struct_/__drop_enum_ callees only exist when the flag-gated
+		// helper worklist runs — an ungated call here left free-off builds
+		// with an undefined __drop_enum_<E> reference (regex_captures).
 		if ast.RcFreeEnabled {
 			b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 			b.emit(Op{Kind: OpLoad, Width: storeWidth})

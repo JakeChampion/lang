@@ -97,14 +97,14 @@ func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, 
 
 func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
+		// Restore via t.Cleanup, not straight-line code: runFixtureX86_64
+		// t.Fatal's on a compile/link failure, and an inline restore after
+		// it would never run — leaking RcFreeEnabled=false into every
+		// subsequent test in the package (which is how one broken fixture
+		// used to cascade into unrelated dyn/StdError failures).
 		prev := ast.RcFreeEnabled
-		ast.RcFreeEnabled = false
-		// t.Cleanup, not a straight-line restore: a t.Fatalf inside the
-		// free-off runner (a link failure) exits this subtest with the flag
-		// still false, poisoning every later test in the package — the CI
-		// failure mode was one bad fixture cascading into unrelated
-		// TestArm64* link errors.
 		t.Cleanup(func() { ast.RcFreeEnabled = prev })
+		ast.RcFreeEnabled = false
 		outOff, exitOff := runFixtureX86_64(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = prev
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
@@ -116,9 +116,11 @@ func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 
 func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
+		// t.Cleanup restore: see the x86_64 variant — a t.Fatal inside
+		// runFixtureArm64 must not leak RcFreeEnabled=false package-wide.
 		prev := ast.RcFreeEnabled
+		t.Cleanup(func() { ast.RcFreeEnabled = prev })
 		ast.RcFreeEnabled = false
-		t.Cleanup(func() { ast.RcFreeEnabled = prev }) // see the x86_64 sibling
 		outOff, exitOff := runFixtureArm64(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = prev
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
@@ -130,9 +132,11 @@ func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 
 func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
+		// t.Cleanup restore: see the x86_64 variant — a t.Fatal inside
+		// runFixtureWasm must not leak a flipped flag package-wide.
 		prev := ast.RcFreeEnabled
+		t.Cleanup(func() { ast.RcFreeEnabled = prev })
 		ast.RcFreeEnabled = false
-		t.Cleanup(func() { ast.RcFreeEnabled = prev }) // see the x86_64 sibling
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = true
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
@@ -153,8 +157,8 @@ func TestX86_64ReuseMatchesNoReuse(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
 		prev := ast.RcReuseEnabled
+		t.Cleanup(func() { ast.RcReuseEnabled = prev })
 		ast.RcReuseEnabled = false
-		t.Cleanup(func() { ast.RcReuseEnabled = prev }) // Fatalf-safe restore, like the free tests
 		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
 		ast.RcReuseEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
@@ -167,8 +171,8 @@ func TestArm64ReuseMatchesNoReuse(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		prev := ast.RcReuseEnabled
+		t.Cleanup(func() { ast.RcReuseEnabled = prev })
 		ast.RcReuseEnabled = false
-		t.Cleanup(func() { ast.RcReuseEnabled = prev }) // Fatalf-safe restore, like the free tests
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		ast.RcReuseEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
@@ -180,14 +184,11 @@ func TestArm64ReuseMatchesNoReuse(t *testing.T) {
 func TestWASMReuseMatchesNoReuse(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		prevFree := ast.RcFreeEnabled
+		t.Cleanup(func() { ast.RcFreeEnabled = prevFree })
 		ast.RcFreeEnabled = true
-		prevReuse := ast.RcReuseEnabled
-		// Fatalf-safe restore for both flags, like the free tests.
-		t.Cleanup(func() {
-			ast.RcReuseEnabled = prevReuse
-			ast.RcFreeEnabled = prevFree
-		})
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
+		prevReuse := ast.RcReuseEnabled
+		t.Cleanup(func() { ast.RcReuseEnabled = prevReuse })
 		ast.RcReuseEnabled = false
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.RcReuseEnabled = prevReuse
