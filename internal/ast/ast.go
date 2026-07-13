@@ -7,6 +7,7 @@ package ast
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -1102,6 +1103,26 @@ var OwnedByDefault = true
 var BorrowInferEnabled = true
 
 var RcReuseEnabled = true
+
+// RcReuseDropGuided selects the ICFP 2022 "frame-limited / drop-guided"
+// SOURCE-SELECTION strategy inside computeReuseSources (plan item E3,
+// docs/NICHE-BORROWS-PLAN.md — an EVALUATION axis behind a flag, not a
+// default flip). It is ORTHOGONAL to RcReuseEnabled: reuse must be on for
+// either strategy to run, and with this flag OFF the selection is the
+// existing PLDI-2021-style pairing, byte-identical to before the flag
+// existed. With it ON, reuse tokens are derived from DROP POINTS: a token
+// is born where a donor D's last use ends, flows FORWARD along
+// straight-line control flow within the frame (including into a dominated,
+// non-loop if/match arm), and is claimed by the FIRST same-class
+// construction C reached; tokens die at joins they cannot soundly cross
+// and at frame exit. Every proposed pair still passes the identical gates
+// (reuseClassOf class match, freeEligible, never-reassigned, name-unique,
+// not moved / borrow-source) and the shared lowering's runtime is_unique
+// guard + degrade-to-fresh-alloc, so like the other rc axes it can never
+// change observable output — only WHICH pairs are proposed. Default off
+// (evaluation only); settable via the FERN_RC_REUSE_DROP_GUIDED=1 env var
+// so test subprocesses and the CLI can toggle it without a fork.
+var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside

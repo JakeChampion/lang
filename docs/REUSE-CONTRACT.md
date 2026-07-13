@@ -142,12 +142,22 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 - **5f** — cross-local reuse through aliases needs the alias
   analysis the borrow model postponed.
 - **5g** — string reuse is hard-blocked on the SSO native flip.
-- **Drop-guided selection** (ICFP 2022): today's pairing is the
-  PLDI 2021 algorithm; the drop-guided variant is documented-
-  superior under transformation and is plan item **E3** (an
-  evaluation behind a flag, verdict recorded in
-  `RC-PERCEUS-PLAN.md` before the self-host port commits to an
-  algorithm).
+- **Drop-guided selection** (ICFP 2022): **evaluated 2026-07-13**
+  (plan item **E3**) — implemented behind `ast.RcReuseDropGuided`
+  (default OFF; `FERN_RC_REUSE_DROP_GUIDED=1`) in
+  `internal/ir/rc_dropguided.go`. Finding: on this codebase's
+  shapes the token flow selects a **superset** of the PLDI
+  pairing — equal on every shape above (R1–R6/M unchanged), plus
+  one genuinely new shape: a donor whose LAST USE sits inside a
+  dominated non-loop if/match arm, claimed by a later
+  construction in the same arm (`drop_guided_reuse_test.go`,
+  `TestDropGuidedFiresArmDropShape`). Verdict — **keep pairing
+  as the default, revisit at the self-host port** — with the
+  measured numbers lives in `RC-PERCEUS-PLAN.md` ("E3 drop-guided
+  reuse evaluation — verdict"). The shapes' observable behavior
+  is identical under both strategies by construction (shared
+  gates + is_unique guard + degrade path; 224-seed differential
+  in `drop_guided_differential_test.go`).
 - **Visibility** (`fip`/`fbip` verify-and-enable): plan item
   **E2**. Until then, the way to *see* reuse is the rc dump
   (`internal/ir/rc_dump.go`) and the allocation counters in the
