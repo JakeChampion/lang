@@ -243,6 +243,35 @@ pub function (x: f64) clamp(lo: f64, hi: f64): f64 {
     return lo.max(x.min(hi));
 }
 
+// `signum(x)` — `1.0` if positive, `-1.0` if negative, the value itself
+// (`0.0` / `-0.0`) at zero, and `NaN` for `NaN`. Matches Rust's `f64::signum`
+// EXCEPT at zero, where Rust returns `±1.0` on signed zeros; here signed zero
+// returns zero, which is the more common "sign of a magnitude" expectation.
+pub function (x: f64) signum(): f64 {
+    if (x != x) { return x; }
+    if (x > 0.0) { return 1.0; }
+    if (x < 0.0) { return 0.0 - 1.0; }
+    return x;
+}
+
+// `lerp(a, b, t)` — linear interpolation from `a` (at `t == 0`) to `b`
+// (at `t == 1`). Uses the precise `a + (b - a) * t` form; `t` outside
+// `[0, 1]` extrapolates. NaN in any operand propagates.
+pub function (a: f64) lerp(b: f64, t: f64): f64 {
+    return a + (b - a) * t;
+}
+
+// `to_radians()` / `to_degrees()` — convert between degrees and radians,
+// the natural companions to `sin` / `cos` (which take radians). Uses a
+// high-precision π; the round-trip `d.to_radians().to_degrees()` recovers
+// `d` to f64 accuracy.
+pub function (deg: f64) to_radians(): f64 {
+    return deg * (3.141592653589793 / 180.0);
+}
+pub function (rad: f64) to_degrees(): f64 {
+    return rad * (180.0 / 3.141592653589793);
+}
+
 // f32 mirror methods. Lang's float literals default to f32
 // (`3.14` is `f32`, not `f64`), so callers writing
 // `(3.14).sqrt()` reach for the f32 receiver method. Each
@@ -291,4 +320,20 @@ pub function (x: f32) max(y: f32): f32 {
 }
 pub function (x: f32) clamp(lo: f32, hi: f32): f32 {
     return lo.max(x.min(hi));
+}
+
+pub function (x: f32) signum(): f32 {
+    if (x != x) { return x; }
+    if (x > (0.0 as f32)) { return 1.0 as f32; }
+    if (x < (0.0 as f32)) { return (0.0 as f32) - (1.0 as f32); }
+    return x;
+}
+pub function (a: f32) lerp(b: f32, t: f32): f32 {
+    return a + (b - a) * t;
+}
+pub function (deg: f32) to_radians(): f32 {
+    return (deg as f64 * (3.141592653589793 / 180.0)) as f32;
+}
+pub function (rad: f32) to_degrees(): f32 {
+    return (rad as f64 * (180.0 / 3.141592653589793)) as f32;
 }
