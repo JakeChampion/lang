@@ -2062,6 +2062,26 @@ func TestRunnerFloatRecipCopysignMidpointExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/i64_roots_test.fern` covers std/i64's sqrt_floor (floor of √n
+// via Newton), is_power_of_2 (n&(n-1) bit trick), and is_perfect_square
+// (sqrt_floor(n)²==n) — the i64 siblings of the std/i32 predicates, exact past
+// the i32 range. Scalar-only, so on the interp gate and both self-host gates;
+// the Go-side TestI64Roots pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI64RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 roots", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
