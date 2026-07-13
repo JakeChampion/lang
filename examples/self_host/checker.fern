@@ -278,6 +278,52 @@ function is_unknown(t: Type): boolean {
     return false;
 }
 
+// type_contains_unknown reports whether `t` is unknown or has any unknown
+// component anywhere in its shape — an array whose element, a tuple whose
+// member, a map whose key/value, a struct whose instantiation arg, or a
+// function whose param/return is unknown. In this partial type system a
+// generic struct's type parameters erase to unknown when its field types are
+// collected, so a field spelled with a type parameter — bare (`v: T` →
+// unknown) OR nested (`items: T[]` → array<unknown>, `kv: (K, V)` →
+// tuple<unknown, unknown>) — leaves an unknown somewhere in the collected
+// field type. Constructing such a field can't be verified (the arg's concrete
+// type isn't tracked at collect time), so the struct-literal check skips it,
+// exactly as the bare-`T` case did before this generalisation (#4346 piece 2).
+function type_contains_unknown(t: Type): boolean {
+    match (t) {
+        TypeUnknown(_) => { return true; },
+        TypeArray(ae) => { return type_contains_unknown(ae.elem); },
+        TypeTuple(tt) => {
+            var i: i32 = 0;
+            while (i < tt.elements.len()) {
+                if (type_contains_unknown(tt.elements[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        TypeMap(m) => { return type_contains_unknown(m.key) || type_contains_unknown(m.value); },
+        TypeStruct(sn) => {
+            var j: i32 = 0;
+            while (j < sn.args.len()) {
+                if (type_contains_unknown(sn.args[j])) { return true; }
+                j = j + 1;
+            }
+            return false;
+        },
+        TypeFunc(f) => {
+            if (type_contains_unknown(f.ret_type)) { return true; }
+            var k: i32 = 0;
+            while (k < f.param_types.len()) {
+                if (type_contains_unknown(f.param_types[k])) { return true; }
+                k = k + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_composite_type reports whether `t` is a struct / enum (union) /
 // array / tuple — a heap value whose `==` would otherwise mean
 // pointer identity. The native compiler routes composite `==` to the
@@ -1527,12 +1573,13 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                         if (ssig.field_names[ufi] == uname) {
                             found = true;
                             var uft: Type = check_expr(sl.field_values[ui], s);
-                            // A field of unknown declared type is an opaque
-                            // generic field (`Box[T] { v: T }` — T erases to
-                            // unknown); any value is acceptable, so skip rather
-                            // than mis-flag a mismatch (#4346 piece 2, mirrors
-                            // the opaque-param skips elsewhere).
-                            if (!is_unknown(ssig.field_types[ufi]) && !type_eq(uft, ssig.field_types[ufi])) {
+                            // A field whose declared type erases a type
+                            // parameter to unknown — bare (`Box[T] { v: T }`) or
+                            // nested (`Wrapper[T] { items: T[] }`) — is an
+                            // opaque generic field; any value is acceptable, so
+                            // skip rather than mis-flag a mismatch (#4346 piece
+                            // 2, mirrors the opaque-param skips elsewhere).
+                            if (!type_contains_unknown(ssig.field_types[ufi]) && !type_eq(uft, ssig.field_types[ufi])) {
                                 return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
                             }
                         }
@@ -1554,9 +1601,10 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     return t_unknown("struct " + sl.type_name + " field name mismatch at index " + sl.field_names[sli]);
                 }
                 var ft: Type = check_expr(sl.field_values[sli], s);
-                // An opaque generic field (`Box[T] { v: T }`, T → unknown)
-                // accepts any value — skip the check (#4346 piece 2).
-                if (!is_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
+                // An opaque generic field — bare (`Box[T] { v: T }`, T →
+                // unknown) or nested (`items: T[]` → array<unknown>) — accepts
+                // any value; skip the check (#4346 piece 2).
+                if (!type_contains_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
                     return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
                 }
                 sli = sli + 1;
@@ -1575,19 +1623,18 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     while (fai < fsig.field_names.len()) {
                         if (fsig.field_names[fai] == fa.field) {
                             // Generic field substitution (#4346 piece 2): when
-                            // the field's declared type names one of the
-                            // struct's type parameters (`Box[T] { v: T }`) and
-                            // the receiver carries a concrete instantiation arg
-                            // for it, that arg is the field's type — so
-                            // `Box[i32].v` is i32, not the erased unknown. Only
-                            // a field typed by a BARE type parameter is handled;
-                            // a nested spelling (`T[]`, `Box[T]`) falls through
-                            // to the resolved (unknown) type, a further slice.
-                            if (fai < fsig.field_type_names.len()) {
-                                var tpi: i32 = util.index_of_str(fsig.type_params, fsig.field_type_names[fai]);
-                                if (tpi >= 0 && tpi < sn.args.len()) {
-                                    return sn.args[tpi];
-                                }
+                            // the receiver carries concrete instantiation args
+                            // (`Box[i32]`) substitute the struct's type
+                            // parameters with them throughout the field's
+                            // declared spelling — so a bare type-param field
+                            // (`v: T` → i32), a nested one (`items: T[]` →
+                            // i32[], `kv: (K, V)` → (i32, string), `m:
+                            // Map[string, T]` → map<string, i32>) all resolve
+                            // to the instantiated field type rather than the
+                            // erased unknown.
+                            if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
+                                var fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
+                                return type_from_ref_subst(fref, fsig.type_params, sn.args, s.structs, s.unions);
                             }
                             return fsig.field_types[fai];
                         }
@@ -2235,6 +2282,45 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
         if (!bk) { return t_union(r.base); }
     }
     return t_unknown("unrecognised type name: " + name);
+}
+
+// type_from_ref_subst resolves a field's declared type spelling against a
+// struct's concrete instantiation args — substituting each type-parameter leaf
+// with the matching arg Type throughout the spelling (#4346 piece 2, nested
+// generic field spellings). It mirrors type_from_ref_su's shape recursion
+// (array peel, tuple, Map) but, at a bare non-generic leaf whose name is one of
+// `tparams`, returns the corresponding `targs` entry instead of resolving the
+// name. So for `Box[i32]` (v: T) `.v` is i32, for `Wrapper[i32]` (items: T[])
+// `.items` is i32[], and for `Pair[i32, string]` (kv: (K, V)) `.kv` is
+// (i32, string). Any leaf that is NOT a type parameter resolves through the
+// plain resolver, so mixed spellings (`(T, i32)`) work. A nested generic-struct
+// arg (`inner: Box[T]`) falls to the plain name-only resolution — its args are
+// erased, matching how this partial type system carries no generic args on a
+// bare name.
+function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: Type[], structs: StructSig[], unions: UnionSig[]): Type {
+    if (r.array_depth > 0) {
+        var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+        return t_array(type_from_ref_subst(elem, tparams, targs, structs, unions));
+    }
+    if (!r.is_tuple && r.args.len() == 0) {
+        var tpi: i32 = util.index_of_str(tparams, r.base);
+        if (tpi >= 0 && tpi < targs.len()) {
+            return targs[tpi];
+        }
+    }
+    if (r.is_tuple && r.args.len() >= 2) {
+        var elems: Type[] = [];
+        var pi: i32 = 0;
+        while (pi < r.args.len()) {
+            elems = elems.append(type_from_ref_subst(r.args[pi], tparams, targs, structs, unions));
+            pi = pi + 1;
+        }
+        return t_tuple(elems);
+    }
+    if (r.base == "Map" && r.args.len() == 2) {
+        return t_map(type_from_ref_subst(r.args[0], tparams, targs, structs, unions), type_from_ref_subst(r.args[1], tparams, targs, structs, unions));
+    }
+    return type_from_ref_su(r, structs, unions);
 }
 
 

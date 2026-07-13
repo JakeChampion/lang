@@ -545,6 +545,30 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-generic-nested-field-ok", func(t *testing.T) {
+		// #4346 piece 2 (nested generic field spellings): a type-parameter that
+		// appears INSIDE a field's spelling — `items: T[]`, `kv: (K, V)` — is now
+		// substituted throughout, so off a `Wrapper[i32]` the field `items` is
+		// i32[] (its element indexes to i32) and off a `Pair[i32, string]` the
+		// field `kv` is the tuple (i32, string). The program reads both and
+		// returns an i32, passing self-host `-check` (exit 0) where the pre-slice
+		// self-host typed the nested field as unknown and over-rejected.
+		srcPath := filepath.Join(dir, "generic_nested_field.fern")
+		src := "struct Wrapper[T] { items: T[] }\n" +
+			"struct Pair[K, V] { kv: (K, V) }\n" +
+			"function main(): i32 {\n" +
+			"    var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] };\n" +
+			"    var p: Pair[i32, string] = Pair { kv: (7, \"hi\") };\n" +
+			"    return w.items[0] + p.kv.0;\n" +
+			"}\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a nested generic field-access program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
 		// #4346: the partial checker's `Type` union still can't model a
 		// `dyn Trait` annotation (the self-host has no dyn-trait Type), so a
