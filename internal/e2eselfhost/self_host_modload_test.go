@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +61,8 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	cases := []struct {
 		name     string
 		files    map[string]string
-		entryRel string // entry file relative to the program dir (default main.fern)
+		entryRel string            // entry file relative to the program dir (default main.fern)
+		lockDeps map[string]string // dep name → target dir (rel to progDir), written into fern.lock with abs paths
 		wantExit int
 	}{
 		{
@@ -124,11 +126,60 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			// meaningful; the driver entry is prog/main.fern.
 			name: "manifest-path-dep",
 			files: map[string]string{
-				"builtins.fern":  string(builtinsSrc),
+				"builtins.fern": string(builtinsSrc),
 				"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\ndbl = { path = \"../dbl\" }\n",
 				"app/main.fern": "import \"dbl\";\nfunction main(): i32 { return dbl.dbl(21); }\n",
-				"dbl/fern.toml":  "[package]\nname = \"dbl\"\nlib = \"api.fern\"\n",
-				"dbl/api.fern":   "pub function dbl(x: i32): i32 { return x * 2; }\n",
+				"dbl/fern.toml": "[package]\nname = \"dbl\"\nlib = \"api.fern\"\n",
+				"dbl/api.fern":  "pub function dbl(x: i32): i32 { return x * 2; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 42,
+		},
+		{
+			// Workspace member dep: app declares `lexer = { workspace = true }`
+			// and imports it by name; the loader walks up to the [workspace]
+			// root (ws/fern.toml) and resolves the member whose package name
+			// is "lexer" (its dir is ws/lexer). tok() = 42.
+			name: "workspace-member-dep",
+			files: map[string]string{
+				"ws/fern.toml":       "[workspace]\nmembers = [\"app\", \"lexer\"]\n",
+				"ws/app/fern.toml":   "[package]\nname = \"app\"\n[dependencies]\nlexer = { workspace = true }\n",
+				"ws/app/main.fern":   "import \"lexer\";\nfunction main(): i32 { return lexer.tok(); }\n",
+				"ws/lexer/fern.toml": "[package]\nname = \"lexer\"\n",
+				"ws/lexer/lib.fern":  "pub function tok(): i32 { return 42; }\n",
+			},
+			entryRel: "ws/app/main.fern",
+			wantExit: 42,
+		},
+		{
+			// Vendored mode: a declared path dep is resolved from
+			// <dir>vendor/<name>/ (the vendored copy), not its original
+			// ../ext location. val() = 42.
+			name: "vendored-dep",
+			files: map[string]string{
+				"app/fern.toml":            "[package]\nname = \"app\"\n[dependencies]\next = { path = \"../ext\" }\n",
+				"app/main.fern":            "import \"ext\";\nfunction main(): i32 { return ext.val(); }\n",
+				"app/vendor/ext/fern.toml": "[package]\nname = \"ext\"\n",
+				"app/vendor/ext/lib.fern":  "pub function val(): i32 { return 42; }\n",
+				// The original ../ext gives a DIFFERENT value, so a pass proves
+				// vendor/ took precedence.
+				"ext/fern.toml": "[package]\nname = \"ext\"\n",
+				"ext/lib.fern":  "pub function val(): i32 { return 7; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 42,
+		},
+		{
+			// Versioned dep resolved through fern.lock with a `path` source:
+			// app declares `foo = "1.0.0"` and a fern.lock pins foo to a local
+			// directory (written with its absolute path by the test). v() = 42.
+			name:     "lock-path-dep",
+			lockDeps: map[string]string{"foo": "foo-1.0.0"},
+			files: map[string]string{
+				"app/fern.toml":       "[package]\nname = \"app\"\nindex = \"index.toml\"\n[dependencies]\nfoo = \"1.0.0\"\n",
+				"app/main.fern":       "import \"foo\";\nfunction main(): i32 { return foo.v(); }\n",
+				"foo-1.0.0/fern.toml": "[package]\nname = \"foo\"\n",
+				"foo-1.0.0/lib.fern":  "pub function v(): i32 { return 42; }\n",
 			},
 			entryRel: "app/main.fern",
 			wantExit: 42,
@@ -145,6 +196,19 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 				}
 				if err := os.WriteFile(dst, []byte(src), 0o644); err != nil {
 					t.Fatalf("write %s: %v", name, err)
+				}
+			}
+			// A fern.lock with absolute path sources (native writes absolute
+			// paths); the entry package's dir gets the lock.
+			if len(tc.lockDeps) > 0 {
+				lockDir := filepath.Dir(filepath.Join(progDir, filepath.FromSlash(tc.entryRel)))
+				var b strings.Builder
+				for dep, rel := range tc.lockDeps {
+					fmt.Fprintf(&b, "[[package]]\nname = %q\nversion = \"1.0.0\"\npath = %q\n\n",
+						dep, filepath.ToSlash(filepath.Join(progDir, filepath.FromSlash(rel))))
+				}
+				if err := os.WriteFile(filepath.Join(lockDir, "fern.lock"), []byte(b.String()), 0o644); err != nil {
+					t.Fatalf("write fern.lock: %v", err)
 				}
 			}
 			entryRel := tc.entryRel

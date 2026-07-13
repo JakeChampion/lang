@@ -1,30 +1,43 @@
-// examples/self_host/fern_toml.fern — a minimal fern.toml reader for the
-// self-hosted compiler's module loader, mirroring the native
-// internal/manifest for the one thing the self-host path needs today:
-// resolving a bare `import "<dep>"` through a declared PATH dependency.
+// examples/self_host/fern_toml.fern — a fern.toml / fern.lock reader for
+// the self-hosted compiler's module loader, mirroring the native
+// internal/manifest + internal/mvs for the DISK-resolvable dependency
+// forms.
 //
-// Scope (kept deliberately small, matching the native slice-1 shape):
-// the [dependencies] table's `name = { path = "../dir" }` entries, plus
-// the [package] `lib` key. url/workspace/version deps are native-only
-// for now — a self-host program using those still falls back to the
-// existing on-disk resolution. Uses only the self-host emitter's subset
-// (string index/slice/len/append, ==, match, Option, while, structs), so
-// it compiles with either compiler. Additive: the loader consults it
-// only when a fern.toml is present, so a manifest-less build (every
-// current compiler source) is byte-for-byte unchanged.
+// Covered: [package] name/lib; [dependencies] `path`, `workspace = true`,
+// and `version` (bare "1.2.0" or { version = "…" }) deps; [workspace]
+// members; and fern.lock `[[package]]` entries with a `path` source. All
+// of these resolve from disk with no network or cache lookup.
+//
+// NOT covered: url+hash deps, and versioned deps whose lock source is a
+// `url` — those live in the per-machine content-addressed store, and the
+// self-host runtime has no getenv/home access to compute the store path
+// (a separate runtime-builtin item). A self-host program using those
+// forms falls back to plain on-disk resolution.
+//
+// Uses only the self-host emitter's subset (string index/slice/len/
+// append, ==, match, Option, while, structs), so it compiles with either
+// compiler. Additive: the loader consults it only when a fern.toml /
+// fern.lock is present, so a manifest-less build (every current compiler
+// source) is byte-for-byte unchanged.
 
-// PathDep is one declared path dependency: the import name and the
-// directory it points at (relative to the manifest).
-pub struct PathDep {
+// Dep is one declared dependency. `kind` tags the form the loader must
+// resolve: "path" (dir given by `path`), "workspace" (a sibling
+// workspace member, located by name), or "version" (an MVS dependency
+// resolved through fern.lock — `path` unused, the lock pins the source).
+pub struct Dep {
     name: string,
+    kind: string,
     path: string,
 }
 
-// Manifest is the subset the loader reads: the [package] lib module
-// (empty ⇒ default "lib.fern") and the path dependencies.
+// Manifest is the subset the loader reads: the [package] name + lib
+// module (empty lib ⇒ default "lib.fern"), the declared dependencies,
+// and the [workspace] members list (empty ⇒ not a workspace).
 pub struct Manifest {
+    name: string,
     lib: string,
-    deps: PathDep[],
+    deps: Dep[],
+    members: string[],
 }
 
 // trim strips leading and trailing ASCII spaces and tabs.
@@ -89,8 +102,10 @@ function split_lines(src: string): string[] {
 // dependency forms (url/workspace/version) are skipped here — the loader
 // handles those natively or falls back to on-disk resolution.
 pub function parse(src: string): Manifest {
+    var name: string = "";
     var lib: string = "lib.fern";
-    var deps: PathDep[] = [];
+    var deps: Dep[] = [];
+    var members: string[] = [];
     var section: string = "";
     var lines: string[] = split_lines(src);
     var li: i32 = 0;
@@ -109,34 +124,157 @@ pub function parse(src: string): Manifest {
         var key: string = trim(line[0:eq]);
         var val: string = trim(line[eq + 1:line.len()]);
         if (section == "package") {
+            if (key == "name") {
+                match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
+            }
             if (key == "lib") {
-                match (quoted_value(val, 0)) {
-                    Some(v) => { lib = v; },
-                    None => { },
-                }
+                match (quoted_value(val, 0)) { Some(v) => { lib = v; }, None => { } }
             }
             continue;
         }
+        if (section == "workspace") {
+            if (key == "members") { members = parse_str_array(val); }
+            continue;
+        }
         if (section == "dependencies") {
-            // Only path deps: the inline table must contain `path = "..."`.
-            var p: i32 = index_of_str(val, "path");
-            if (p < 0) { continue; }
-            var eq2: i32 = index_of(val, 61, p);   // '=' after path
-            if (eq2 < 0) { continue; }
+            deps = deps.append(parse_dep(key, val));
+        }
+    }
+    return Manifest { name: name, lib: lib, deps: deps, members: members };
+}
+
+// parse_dep classifies a dependency value line into a Dep. A bare quoted
+// string ("1.2.0") or `{ version = "..." }` is a version dep; an inline
+// table with `workspace = true` is a workspace dep; one with `path = "..."`
+// is a path dep. Anything else (url/hash) parses to kind "" (native-only;
+// the loader falls back to on-disk resolution).
+function parse_dep(name: string, val: string): Dep {
+    // Bare quoted string ⇒ version dep.
+    if (val.len() > 0 && val[0] == 34) {   // '"'
+        return Dep { name: name, kind: "version", path: "" };
+    }
+    if (index_of_str(val, "workspace") >= 0 && index_of_str(val, "true") >= 0) {
+        return Dep { name: name, kind: "workspace", path: "" };
+    }
+    var vp: i32 = index_of_str(val, "version");
+    if (vp >= 0) {
+        return Dep { name: name, kind: "version", path: "" };
+    }
+    var p: i32 = index_of_str(val, "path");
+    if (p >= 0) {
+        var eq2: i32 = index_of(val, 61, p);   // '=' after path
+        if (eq2 >= 0) {
             match (quoted_value(val, eq2)) {
-                Some(pv) => { deps = deps.append(PathDep { name: key, path: pv }); },
+                Some(pv) => { return Dep { name: name, kind: "path", path: pv }; },
                 None => { },
             }
         }
     }
-    return Manifest { lib: lib, deps: deps };
+    return Dep { name: name, kind: "", path: "" };   // url/hash — native-only
 }
 
-// dep_path returns the declared path of dependency `name`, or None.
+// parse_str_array parses a single-line inline array of quoted strings:
+// `["a", "b/c"]` → ["a", "b/c"].
+function parse_str_array(val: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < val.len()) {
+        if (val[i] == 34) {   // '"'
+            var j: i32 = index_of(val, 34, i + 1);
+            if (j < 0) { return out; }
+            out = out.append(val[i + 1:j] + "");
+            i = j + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// dep_path returns the declared PATH of a path dependency `name`, or
+// None. Iterates m.deps directly (no Option[Dep] intermediary): a struct-
+// payload Option (Some(dep)) is outside the self-host IR emitter's lowered
+// subset, so returning the primitive Option[string] keeps this module
+// per-module-IR-eligible.
 pub function dep_path(m: Manifest, name: string): Option[string] {
     var i: i32 = 0;
     while (i < m.deps.len()) {
-        if (m.deps[i].name == name) { return Some(m.deps[i].path + ""); }
+        if (m.deps[i].name == name && m.deps[i].kind == "path") {
+            return Some(m.deps[i].path + "");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// dep_kind returns the kind of dependency `name` ("path"/"workspace"/
+// "version"/""), or "" when undeclared. Iterates m.deps directly (see
+// dep_path on why no Option[Dep] intermediary).
+pub function dep_kind(m: Manifest, name: string): string {
+    var i: i32 = 0;
+    while (i < m.deps.len()) {
+        if (m.deps[i].name == name) { return m.deps[i].kind + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// LockEntry is one resolved dependency from fern.lock: the package name
+// and, for a `path`-sourced version, its directory. A `url`-sourced
+// version has an empty path — the self-host loader cannot reach the
+// content-addressed store (no getenv/cache-dir builtin), so those stay
+// native-only.
+pub struct LockEntry {
+    name: string,
+    path: string,
+}
+
+// parse_lock reads a fern.lock's `[[package]]` entries, keeping the name
+// and (when the source is `path = "..."`) the directory. url-sourced
+// entries get an empty path.
+pub function parse_lock(src: string): LockEntry[] {
+    var out: LockEntry[] = [];
+    var name: string = "";
+    var path: string = "";
+    var have: boolean = false;
+    var lines: string[] = split_lines(src);
+    var li: i32 = 0;
+    while (li < lines.len()) {
+        var line: string = trim(lines[li]);
+        li = li + 1;
+        if (line.len() == 0) { continue; }
+        if (line[0] == 35) { continue; }              // '#'
+        if (line == "[[package]]") {
+            if (have) { out = out.append(LockEntry { name: name, path: path }); }
+            name = "";
+            path = "";
+            have = true;
+            continue;
+        }
+        var eq: i32 = index_of(line, 61, 0);          // '='
+        if (eq < 0) { continue; }
+        var key: string = trim(line[0:eq]);
+        var val: string = trim(line[eq + 1:line.len()]);
+        if (key == "name") {
+            match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
+        }
+        if (key == "path") {
+            match (quoted_value(val, 0)) { Some(v) => { path = v; }, None => { } }
+        }
+    }
+    if (have) { out = out.append(LockEntry { name: name, path: path }); }
+    return out;
+}
+
+// lock_path_of returns the resolved directory of a `path`-sourced locked
+// dependency `name`, or None (undeclared, or a url source the self-host
+// can't reach).
+pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        if (entries[i].name == name && entries[i].path.len() > 0) {
+            return Some(entries[i].path + "");
+        }
         i = i + 1;
     }
     return None;
