@@ -278,6 +278,31 @@ function is_unknown(t: Type): boolean {
     return false;
 }
 
+// type_has_unknown reports whether `t` is unknown or STRUCTURALLY CONTAINS an
+// unknown leaf (`unknown[]`, `(i32, unknown)`, `Map[string, unknown]`, …). A
+// generic-struct field spelled with a type parameter erases its leaf to
+// unknown — `items: T[]` → `unknown[]`, `pair: (T, U)` → `(unknown, unknown)`
+// — so this is the array/tuple/map generalisation of the bare-`is_unknown`
+// opaque-generic-field skip at struct construction (#4346 piece 2): such a
+// field accepts any concretely-typed value, exactly as `v: T` does.
+function type_has_unknown(t: Type): boolean {
+    match (t) {
+        TypeUnknown(_) => { return true; },
+        TypeArray(a) => { return type_has_unknown(a.elem); },
+        TypeTuple(tt) => {
+            var i: i32 = 0;
+            while (i < tt.elements.len()) {
+                if (type_has_unknown(tt.elements[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        TypeMap(m) => { return type_has_unknown(m.key) || type_has_unknown(m.value); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_composite_type reports whether `t` is a struct / enum (union) /
 // array / tuple — a heap value whose `==` would otherwise mean
 // pointer identity. The native compiler routes composite `==` to the
@@ -1527,12 +1552,13 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                         if (ssig.field_names[ufi] == uname) {
                             found = true;
                             var uft: Type = check_expr(sl.field_values[ui], s);
-                            // A field of unknown declared type is an opaque
-                            // generic field (`Box[T] { v: T }` — T erases to
-                            // unknown); any value is acceptable, so skip rather
-                            // than mis-flag a mismatch (#4346 piece 2, mirrors
-                            // the opaque-param skips elsewhere).
-                            if (!is_unknown(ssig.field_types[ufi]) && !type_eq(uft, ssig.field_types[ufi])) {
+                            // A field whose declared type is unknown OR contains
+                            // an unknown leaf is an opaque generic field
+                            // (`Box[T] { v: T }` → unknown, `Vec[T] { items: T[] }`
+                            // → unknown[]); any value is acceptable, so skip
+                            // rather than mis-flag a mismatch (#4346 piece 2,
+                            // mirrors the opaque-param skips elsewhere).
+                            if (!type_has_unknown(ssig.field_types[ufi]) && !type_eq(uft, ssig.field_types[ufi])) {
                                 return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
                             }
                         }
@@ -1554,9 +1580,11 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     return t_unknown("struct " + sl.type_name + " field name mismatch at index " + sl.field_names[sli]);
                 }
                 var ft: Type = check_expr(sl.field_values[sli], s);
-                // An opaque generic field (`Box[T] { v: T }`, T → unknown)
-                // accepts any value — skip the check (#4346 piece 2).
-                if (!is_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
+                // An opaque generic field (`Box[T] { v: T }` → unknown,
+                // `Vec[T] { items: T[] }` → unknown[]) accepts any value — skip
+                // the check when the declared type contains an unknown leaf
+                // (#4346 piece 2).
+                if (!type_has_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
                     return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
                 }
                 sli = sli + 1;
@@ -1574,19 +1602,28 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     var fai: i32 = 0;
                     while (fai < fsig.field_names.len()) {
                         if (fsig.field_names[fai] == fa.field) {
-                            // Generic field substitution (#4346 piece 2): when
-                            // the field's declared type names one of the
-                            // struct's type parameters (`Box[T] { v: T }`) and
-                            // the receiver carries a concrete instantiation arg
-                            // for it, that arg is the field's type — so
-                            // `Box[i32].v` is i32, not the erased unknown. Only
-                            // a field typed by a BARE type parameter is handled;
-                            // a nested spelling (`T[]`, `Box[T]`) falls through
-                            // to the resolved (unknown) type, a further slice.
+                            // Generic field substitution (#4346 piece 2):
+                            // substitute the struct's type parameter through the
+                            // field's declared spelling against the receiver's
+                            // concrete instantiation args. A bare param `v: T`
+                            // yields the arg (`Box[i32].v` is i32); an
+                            // array-of-param `xs: T[]` (any nesting depth) yields
+                            // array<arg> (`Vec[i32].items` is i32[]). A non-param
+                            // base (`i32[]`, a nested `Box[T]`) or a missing arg
+                            // falls through to the resolved field type.
                             if (fai < fsig.field_type_names.len()) {
-                                var tpi: i32 = util.index_of_str(fsig.type_params, fsig.field_type_names[fai]);
+                                var spell: string = fsig.field_type_names[fai];
+                                var depth: i32 = 0;
+                                while (spell.len() >= 2 && spell[spell.len() - 2] == 91 && spell[spell.len() - 1] == 93) {
+                                    spell = spell[0:spell.len() - 2] + "";   // strip a trailing "[]"
+                                    depth = depth + 1;
+                                }
+                                var tpi: i32 = util.index_of_str(fsig.type_params, spell);
                                 if (tpi >= 0 && tpi < sn.args.len()) {
-                                    return sn.args[tpi];
+                                    var st: Type = sn.args[tpi];
+                                    var d: i32 = 0;
+                                    while (d < depth) { st = t_array(st); d = d + 1; }
+                                    return st;
                                 }
                             }
                             return fsig.field_types[fai];

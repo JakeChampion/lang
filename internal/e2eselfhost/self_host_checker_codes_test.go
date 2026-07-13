@@ -185,6 +185,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// checker emits — where the pre-slice self-host typed `b.v` as unknown
 		// and E003 never fired. The clean read is pinned by the CLI exit test.
 		{"generic-struct-field-mismatch", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; var s: string = b.v; return 0; }\n", []string{"E003"}},
+		// Generic-struct ARRAY-of-type-parameter field (#4346 piece 2, the `T[]`
+		// refinement): `Vec[T] { items: T[] }` erases `items` to `unknown[]`.
+		// Before this slice the construction's field-value check compared the
+		// concrete `i32[]` value to `unknown[]` (not a bare unknown, so the skip
+		// missed) and over-rejected the VALID program; reading `v.items` also
+		// typed to `unknown[]` instead of `i32[]`. Now the construction skips the
+		// unknown-containing field and field access substitutes the arg, so the
+		// clean program draws no code (matching the Go oracle) and a MISMATCHED
+		// read (`i32[]` into `string[]`) draws E003 — the substitution proof.
+		{"generic-struct-array-field-clean", "struct Vec[T] { items: T[] }\nfunction main(): i32 { var v: Vec[i32] = Vec { items: [1, 2] }; var xs: i32[] = v.items; return xs[1]; }\n", nil},
+		{"generic-struct-array-field-mismatch", "struct Vec[T] { items: T[] }\nfunction main(): i32 { var v: Vec[i32] = Vec { items: [1, 2] }; var s: string[] = v.items; return 0; }\n", []string{"E003"}},
+		{"generic-struct-nested-array-field-clean", "struct Grid[T] { rows: T[][] }\nfunction main(): i32 { var g: Grid[i32] = Grid { rows: [[1, 2], [3]] }; var r: i32[][] = g.rows; return r[0][1]; }\n", nil},
 		// E064: a bare nominal annotation that names no declared type, in a
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},

@@ -545,6 +545,22 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-generic-struct-array-field-ok", func(t *testing.T) {
+		// #4346 piece 2 (the `T[]` refinement): a generic-struct field spelled
+		// as an ARRAY of the type parameter (`Vec[T] { items: T[] }`) now both
+		// constructs (the field-value check skips the unknown-containing `T[]`)
+		// and reads back with the arg substituted through the array (`Vec[i32]
+		// .items` is `i32[]`), so this program — construct, read, index — passes
+		// self-host `-check` (exit 0). Pre-slice it over-rejected at construction.
+		srcPath := filepath.Join(dir, "generic_struct_array_field.fern")
+		if err := os.WriteFile(srcPath, []byte("struct Vec[T] { items: T[] }\nfunction main(): i32 { var v: Vec[i32] = Vec { items: [1, 2, 3] }; var xs: i32[] = v.items; return xs[1]; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a generic-struct array-field program exited %d, want 0", code)
+		}
+	})
+
 	t.Run("check-overreject-not-silent", func(t *testing.T) {
 		// #4346: the partial checker's `Type` union still can't model a
 		// `dyn Trait` annotation (the self-host has no dyn-trait Type), so a
