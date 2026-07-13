@@ -890,6 +890,28 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_all_equal_test.fern` covers std/array's
+// all_equal[T: cmp.Eq] (free + method forms): true iff every element equals the
+// first (≤ 1 distinct value), vacuously true for length < 2. i32 cases
+// (all-equal / distinct / first-or-last differs / empty / single / free-fn) on
+// interp + the self-host x86-64 + arm64 gates. STRING-element all_equal is
+// native-differential-only (element-vs-element string compare trips the
+// self-host compiler); the Go-side TestArrayAllEqual pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerArrayAllEqualExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_all_equal_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array all_equal", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_min_max_index_test.fern` covers std/array's
 // max_index / min_index[T: cmp.Ord] (free + method forms): the INDEX of the
 // largest / smallest element by Ord → Option[i32] (None on empty, first on a
