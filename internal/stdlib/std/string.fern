@@ -2086,6 +2086,29 @@ pub function (s: string) count(sub: string): i32 {
     return c;
 }
 
+// `s.find_all(sub)` — the start indices of every NON-overlapping occurrence
+// of `sub`, in ascending order (the positions `count` tallies). After a match
+// the scan resumes past it, so `"aaaa".find_all("aa")` is `[0, 2]`, not
+// `[0, 1, 2]`. Empty needle or no match → `[]`; the returned length always
+// equals `s.count(sub)`. Useful for highlighting / span extraction where you
+// need the positions, not just how many.
+pub function (s: string) find_all(sub: string): i32[] {
+    var out: i32[] = [];
+    if (sub.len() == 0) { return out; }
+    var n: i32 = s.len();
+    var subLen: i32 = sub.len();
+    var i: i32 = 0;
+    while (i + subLen <= n) {
+        if (__substr_eq(s, i, sub, subLen)) {
+            out = out.append(i);
+            i = i + subLen;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
 // `s.count_byte(b)` — number of bytes equal to b. O(n)
 // single-pass; cheaper than count(byte.to_ascii_string())
 // when the needle is known to be a single byte.
