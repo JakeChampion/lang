@@ -238,6 +238,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"float_convert", langSrcAbs(t, "examples/tests/float_convert_test.fern"), ""},
 		{"float_hypot", langSrcAbs(t, "examples/tests/float_hypot_test.fern"), ""},
 		{"float_round_to", langSrcAbs(t, "examples/tests/float_round_to_test.fern"), ""},
+		{"float_log2_log10", langSrcAbs(t, "examples/tests/float_log2_log10_test.fern"), ""},
 		{"float_array_strict_sort", langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern"), ""},
 		{"lines_log", langSrcAbs(t, "examples/tests/lines_log_test.fern"), ""},
 		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern"), ""},

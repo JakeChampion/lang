@@ -103,7 +103,9 @@ Receiver methods on i32 / byte values.
   away from zero; negative `digits` round to tens/hundreds),
   `trunc`, `fract` (signed fractional part
   `x - trunc(x)`), `sqrt`, `pow(y)`, `hypot(y)` (Euclidean
-  length, overflow-safe), `log`, `exp`, `sin`, `cos`, `tan`.
+  length, overflow-safe), `log` (natural), `log2` / `log10`
+  (base-2 / base-10, via change-of-base ÷ ln2 / ÷ ln10),
+  `exp`, `sin`, `cos`, `tan`.
   Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
   hardware-precise op.

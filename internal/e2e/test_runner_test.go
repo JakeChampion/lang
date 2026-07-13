@@ -2000,6 +2000,26 @@ func TestRunnerFloatRoundToExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_log2_log10_test.fern` covers std/float's log2 / log10 —
+// base-2 and base-10 logarithms via change-of-base (natural log ÷ ln2 / ÷ ln10),
+// f64 and f32. On the interp gate and the self-host x86-64 + arm64 gates (uses
+// assert_eq_f64_near); the Go-side TestFloatLog2Log10 pins native compilation on
+// interp/x86-64/arm64 (wasmbin skips libm transcendentals, the known gap
+// log/sin/cos share). Passing → exit 0.
+func TestRunnerFloatLog2Log10Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_log2_log10_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float log2/log10", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

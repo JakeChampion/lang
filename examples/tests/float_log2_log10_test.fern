@@ -1,0 +1,62 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_log2_log10_test.fern — pure-Fern coverage of
+// std/float.log2 / log10: base-2 and base-10 logarithms via change-of-base
+// (natural log ÷ ln2 / ÷ ln10). Powers of two / ten land on their integer
+// exponents up to rounding, so the checks are tolerance-banded with
+// assert_eq_f64_near. Both f64 and f32. The Go-side TestFloatLog2Log10 pins
+// these across interp / x86-64 / arm64 (wasmbin skips libm transcendentals,
+// the same known gap log/sin/cos already carry); this is the migration-shaped
+// companion.
+
+function test_log2_pow2(): test.TestOutcome {
+    return test.assert_eq_f64_near((8.0).log2(), 3.0, 0.0001);
+}
+
+function test_log2_large(): test.TestOutcome {
+    return test.assert_eq_f64_near((1024.0).log2(), 10.0, 0.0001);
+}
+
+function test_log2_below_one(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.5).log2(), 0.0 - 1.0, 0.0001);
+}
+
+function test_log2_one(): test.TestOutcome {
+    return test.assert_eq_f64_near((1.0).log2(), 0.0, 0.0001);
+}
+
+function test_log10_pow10(): test.TestOutcome {
+    return test.assert_eq_f64_near((1000.0).log10(), 3.0, 0.0001);
+}
+
+function test_log10_hundred(): test.TestOutcome {
+    return test.assert_eq_f64_near((100.0).log10(), 2.0, 0.0001);
+}
+
+function test_log10_below_one(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.01).log10(), 0.0 - 2.0, 0.0001);
+}
+
+function test_f32(): test.TestOutcome {
+    if (!float_near((16.0 as f32).log2() as f64, 4.0)) { return test.fail("log2 f32"); }
+    return test.assert_eq_f64_near((10000.0 as f32).log10() as f64, 4.0, 0.001);
+}
+
+function float_near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float log2/log10");
+    r = r.it("log2 power of two",   test_log2_pow2());
+    r = r.it("log2 large",          test_log2_large());
+    r = r.it("log2 below one",      test_log2_below_one());
+    r = r.it("log2 one",            test_log2_one());
+    r = r.it("log10 power of ten",  test_log10_pow10());
+    r = r.it("log10 hundred",       test_log10_hundred());
+    r = r.it("log10 below one",     test_log10_below_one());
+    r = r.it("f32",                 test_f32());
+    return r.finish();
+}
