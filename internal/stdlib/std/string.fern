@@ -1335,6 +1335,28 @@ pub function (s: string) to_upper(): string {
     return __string_case_fold(s, 97, 65);     // a-z → A-Z
 }
 
+// `s.swap_case()` — toggle the case of every ASCII letter: `A-Z` become `a-z`
+// and vice versa, everything else (digits, punctuation, non-ASCII bytes)
+// passes through unchanged. Python's `str.swapcase`, ASCII-only like
+// `to_upper` / `to_lower`. `swap_case` is its own inverse: `s.swap_case()
+// .swap_case() == s`.
+pub function (s: string) swap_case(): string {
+    var n: i32 = s.len();
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b >= 65 && b <= 90) {        // A-Z → a-z
+            b = b + 32;
+        } else if (b >= 97 && b <= 122) { // a-z → A-Z
+            b = b - 32;
+        }
+        buf = buf.with(i, b as u8);
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // `s.split(sep)` — splits on every non-overlapping
 // occurrence of sep. Empty pieces around adjacent
 // separators are preserved (`",a,b,".split(",")` →

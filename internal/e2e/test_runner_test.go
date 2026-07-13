@@ -554,6 +554,25 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerStringSwapCaseExamplePasses gates std/string.swap_case — toggle the
+// case of every ASCII letter — under the interpreter. Also on the self-host
+// x86-64 + arm64 gates (string return, uses assert_true); the Go-side
+// TestStringSwapCase pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerStringSwapCaseExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_swap_case_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string swap_case", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // TestRunnerStringZfillExamplePasses gates std/string.zfill(width) — zero-pad a
 // numeric string keeping the sign in front — under the interpreter. Also on the
 // self-host x86-64 + arm64 gates (string return, uses assert_true); the Go-side

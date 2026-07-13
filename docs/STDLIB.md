@@ -130,6 +130,7 @@ Grouped by family:
   `None` instead) so a forgotten `< 0` check can't read a
   bogus index — consistent with `split_once` / `strip_prefix`.
 - **Casing / transform:** `capitalize`, `to_lower`, `to_upper`,
+  `swap_case` (toggle ASCII case, à la Python `str.swapcase`),
   `snake_case`, `kebab_case`, `title_case`, `to_acronym`,
   `word_count`, `eq_ignore_ascii_case`, `slugify` (free-form text →
   URL slug: lowercased, non-`[a-z0-9]` runs collapsed to `-`, ends
