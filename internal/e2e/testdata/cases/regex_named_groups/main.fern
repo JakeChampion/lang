@@ -1,0 +1,40 @@
+// std/regex named capture groups (`(?<name>…)`) on the native backends:
+// named extraction, coexistence with positional numbering, mixed
+// named/unnamed groups, unknown-name handling, has_group_named,
+// ${name} template substitution, and (?i) interop. Each check sets a
+// bit; all eight hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+
+    var m: regex.RCaps = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07 x");
+    if (m.found && m.group_named("year") == "2026" && m.group_named("mon") == "07") { r = r + 1; }
+    // a named group is still positional: group 1 == year, index lookup agrees
+    if (m.group(1) == "2026" && m.group_index("year") == 1 && m.group_index("mon") == 2) { r = r + 2; }
+
+    // mixed named + unnamed, numbered by `(` order
+    var mix: regex.RCaps = regex.regex_captures("(\\w+)@(?<host>\\w+)", "a@b");
+    if (mix.group(1) == "a" && mix.group_named("host") == "b" && mix.group_index("host") == 2) { r = r + 4; }
+
+    // unknown name → "" / -1
+    if (m.group_named("nope") == "" && m.group_index("nope") == 0 - 1) { r = r + 8; }
+
+    // has_group_named: optional named group absent vs present
+    var absent: regex.RCaps = regex.regex_captures("a(?<b>bc)?d", "ad");
+    var present: regex.RCaps = regex.regex_captures("a(?<b>bc)?d", "abcd");
+    if (!absent.has_group_named("b") && present.has_group_named("b") && present.group_named("b") == "bc") { r = r + 16; }
+
+    // named group inside a quantified subexpression still names its index (last iteration)
+    var q: regex.RCaps = regex.regex_captures("(?<pair>(a|b)c)+", "acbc");
+    if (q.group_named("pair") == "bc" && q.group_index("pair") == 1) { r = r + 32; }
+
+    // ${name} template substitution (and $0 still works alongside)
+    if (regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=22", "${v}:${k}") == "1:a 22:b") { r = r + 64; }
+
+    // (?i) flag composes with named groups
+    var ci: regex.RCaps = regex.regex_captures("(?i)(?<g>HEL+O)", "say hello");
+    if (ci.group_named("g") == "hello") { r = r + 128; }
+
+    return r;
+}
