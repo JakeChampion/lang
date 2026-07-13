@@ -1,0 +1,84 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_convert_test.fern — pure-Fern coverage of std/float's
+// convenience methods layered atop the math primitives: signum (sign as a
+// float, zero at zero), lerp (precise a+(b-a)*t linear interpolation, incl.
+// endpoints and extrapolation), and to_radians / to_degrees (degree↔radian
+// conversion via a high-precision π, with the round-trip). f64 and f32
+// receivers. Kept as its own suite rather than folded into float_math_test so
+// the self-host merged bundle stays well under the asm_ir IR budget. The
+// Go-side TestFloatSignumLerp pins these across all four backends; this is the
+// migration-shaped (pure-Fern, std/test-driven) companion.
+
+function test_signum_positive(): test.TestOutcome {
+    var x: f64 = 5.0;
+    return test.assert_eq_f64_near(x.signum(), 1.0, 0.0);
+}
+
+function test_signum_negative(): test.TestOutcome {
+    var x: f64 = 0.0 - 8.0;
+    return test.assert_eq_f64_near(x.signum(), 0.0 - 1.0, 0.0);
+}
+
+function test_signum_zero(): test.TestOutcome {
+    var x: f64 = 0.0;
+    return test.assert_eq_f64_near(x.signum(), 0.0, 0.0);
+}
+
+function test_lerp_mid(): test.TestOutcome {
+    var a: f64 = 10.0;
+    return test.assert_eq_f64_near(a.lerp(20.0, 0.5), 15.0, 0.0);
+}
+
+function test_lerp_quarter(): test.TestOutcome {
+    var a: f64 = 0.0;
+    return test.assert_eq_f64_near(a.lerp(100.0, 0.25), 25.0, 0.0);
+}
+
+function test_lerp_endpoints(): test.TestOutcome {
+    var a: f64 = 4.0;
+    if (a.lerp(8.0, 0.0) != 4.0) { return test.fail("t=0 should give a"); }
+    return test.assert_eq_f64_near(a.lerp(8.0, 1.0), 8.0, 0.0);
+}
+
+function test_lerp_extrapolate(): test.TestOutcome {
+    var a: f64 = 0.0;
+    return test.assert_eq_f64_near(a.lerp(10.0, 2.0), 20.0, 0.0);
+}
+
+function test_to_radians(): test.TestOutcome {
+    var d: f64 = 180.0;
+    return test.assert_eq_f64_near(d.to_radians(), 3.141592653589793, 0.0001);
+}
+
+function test_to_degrees(): test.TestOutcome {
+    var r: f64 = 3.141592653589793;
+    return test.assert_eq_f64_near(r.to_degrees(), 180.0, 0.0001);
+}
+
+function test_deg_rad_round_trip(): test.TestOutcome {
+    var d: f64 = 90.0;
+    return test.assert_eq_f64_near(d.to_radians().to_degrees(), 90.0, 0.0001);
+}
+
+function test_signum_lerp_f32(): test.TestOutcome {
+    if ((5.0 as f32).signum() != (1.0 as f32)) { return test.fail("f32 signum"); }
+    if ((10.0 as f32).lerp(20.0 as f32, 0.5 as f32) != (15.0 as f32)) { return test.fail("f32 lerp"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float convert");
+    r = r.it("signum positive",     test_signum_positive());
+    r = r.it("signum negative",     test_signum_negative());
+    r = r.it("signum zero",         test_signum_zero());
+    r = r.it("lerp mid",            test_lerp_mid());
+    r = r.it("lerp quarter",        test_lerp_quarter());
+    r = r.it("lerp endpoints",      test_lerp_endpoints());
+    r = r.it("lerp extrapolate",    test_lerp_extrapolate());
+    r = r.it("to_radians",          test_to_radians());
+    r = r.it("to_degrees",          test_to_degrees());
+    r = r.it("deg-rad round trip",  test_deg_rad_round_trip());
+    r = r.it("signum/lerp f32",     test_signum_lerp_f32());
+    return r.finish();
+}

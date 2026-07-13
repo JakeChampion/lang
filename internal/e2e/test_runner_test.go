@@ -1526,6 +1526,27 @@ func TestRunnerFloatMathExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_convert_test.fern` exercises std/float's convenience
+// methods layered on the math primitives: signum (sign as a float, zero at
+// zero), lerp (precise a+(b-a)*t interpolation, incl. endpoints and
+// extrapolation), and to_radians / to_degrees (degree↔radian conversion with
+// the round-trip). f64 and f32 receivers. Kept out of float_math_test to keep
+// the self-host bundle under the asm_ir IR budget; the Go-side
+// TestFloatSignumLerp pins these across all four backends. Passing → exit 0.
+func TestRunnerFloatConvertExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_convert_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float convert", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/timing_test.fern` exercises the time
 // builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
 // the elapsed-time assertion helpers (`assert_elapsed_lt_ms`
