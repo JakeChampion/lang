@@ -1120,6 +1120,35 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
     return None;
 }
 
+// `count_where(xs, pred)` — how many elements satisfy `pred`. The aggregate
+// companion to `filter` (which materialises the matches) and `position` (which
+// finds the first): `count_where` just tallies, so it avoids `filter(…).len()`'s
+// throwaway allocation. Works for any element type via the closure; empty → 0.
+pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (pred(xs[i])) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+// `sum_by(xs, key)` — the sum of the i32 projection `key(x)` over every
+// element. The projection sibling of the `i32[]`-only `sum`: where `sum` needs
+// the elements to already be i32, this sums an i32 field / derived value of any
+// element type (e.g. total line length over a `string[]`, total price over a
+// `Cart[]`). `key` is evaluated once per element; empty → 0.
+pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        total = total + key(xs[i]);
+        i = i + 1;
+    }
+    return total;
+}
+
 // `take_while(xs, pred)` — fresh `T[]` of the LONGEST leading run whose every
 // element satisfies `pred`; stops at (and excludes) the first that doesn't.
 // The predicate form of the count-based `take`. `[]` when the first element
@@ -1654,6 +1683,12 @@ pub function (xs: T[]) all(pred: (T) => boolean): boolean { return all(xs, pred)
 
 // `xs.find(pred)` — first element satisfying `pred`, or `None`.
 pub function (xs: T[]) find(pred: (T) => boolean): Option[T] { return find(xs, pred); }
+
+// `xs.count_where(pred)` — how many elements satisfy `pred`.
+pub function (xs: T[]) count_where(pred: (T) => boolean): i32 { return count_where(xs, pred); }
+
+// `xs.sum_by(key)` — sum of the i32 projection `key(x)` over all elements.
+pub function (xs: T[]) sum_by(key: (T) => i32): i32 { return sum_by(xs, key); }
 
 // `xs.enumerate()` — pair each element with its 0-based index.
 pub function (xs: T[]) enumerate(): (i32, T)[] { return enumerate(xs); }

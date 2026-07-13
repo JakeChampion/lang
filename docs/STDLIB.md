@@ -186,6 +186,8 @@ convention.
 - **generic `[T]` combinators** (free + method forms): `map`,
   `filter`, `fold`, `reduce`, `any`, `all`, `find`, `find_map`
   (first `Some` of a projection returning `Option[U]`), `position`,
+  `count_where` (tally matching a predicate), `sum_by` (sum of an
+  i32 projection over any element type),
   `take`/`drop`/`take_while`/`drop_while`, `slice`, `chunks`,
   `windows`, `zip`, `enumerate`, `reverse`, `intersperse`,
   `flat_map`, `flatten` (`T[][]` → `T[]`), `partition`

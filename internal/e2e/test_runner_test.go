@@ -766,6 +766,28 @@ func TestRunnerArrayExtremumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_count_sum_by_test.fern` covers std/array's
+// closure-aggregate verbs count_where (tally of matching elements) and sum_by
+// (sum of an i32 projection over any element type), free + method forms, over
+// i32 and string arrays incl. the empty and none-match cases. Interp-gated only
+// (NOT in selfHostStdTestCases): the self-host compiler miscompiles sum_by with
+// an i32-identity projection (returns -1); the file header documents it. Native
+// compilation on all four backends is pinned by the Go-side
+// TestNativeArrayCountWhereSumBy. Passing → exit 0.
+func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_count_sum_by_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array count/sum by", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_batch_test.fern` covers std/array's batch verbs
 // slice / chunks / windows (#4416) — half-open clamped range, even /
 // uneven / empty chunking, and overlapping / too-wide / full-width
