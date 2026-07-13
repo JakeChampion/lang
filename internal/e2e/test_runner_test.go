@@ -967,6 +967,26 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_none_test.fern` covers std/array's none[T](xs, pred)
+// (free + method forms): true iff pred holds for no element, the complement of
+// any; short-circuits, vacuously true for empty. Closure over a generic T[], so
+// the i32 cases are on interp + the self-host x86-64 + arm64 gates; the Go-side
+// TestNativeArrayNone pins native compilation on all four backends (incl. a
+// string-closure case). Passing → exit 0.
+func TestRunnerArrayNoneExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_none_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array none", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_all_equal_test.fern` covers std/array's
 // all_equal[T: cmp.Eq] (free + method forms): true iff every element equals the
 // first (≤ 1 distinct value), vacuously true for length < 2. i32 cases

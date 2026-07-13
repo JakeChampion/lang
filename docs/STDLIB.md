@@ -207,7 +207,8 @@ convention.
 - **generic `[T]` combinators** (free + method forms): `is_empty`,
   `first`/`last` (→ `Option[T]`, `None` when empty), `get(i)`
   (bounds-checked → `Option[T]`, negative index → `None`), `map`,
-  `filter`, `fold`, `reduce`, `any`, `all`, `find`, `find_map`
+  `filter`, `fold`, `reduce`, `any`, `all`, `none` (complement of
+  `any`), `find`, `find_map`
   (first `Some` of a projection returning `Option[U]`), `position`,
   `count_where` (tally matching a predicate), `sum_by` (sum of an
   i32 projection over any element type), `max_index`/`min_index`

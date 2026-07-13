@@ -1,0 +1,45 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_none_test.fern — pure-Fern coverage of std/array's
+// none[T](xs, pred) (free + method forms): true iff pred holds for NO element,
+// the readable complement of any; short-circuits, vacuously true for empty.
+// Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
+// budget; uses assert_true. Closure-based over a generic T[] (same shape as
+// any/all), so the i32 cases lower on the self-host IR path. The Go-side
+// TestNativeArrayNone pins native compilation on all four backends (incl. a
+// string-closure case); this is the migration-shaped companion.
+
+function is_neg(x: i32): boolean { return x < 0; }
+function is_even(x: i32): boolean { return x % 2 == 0; }
+
+function test_none_true(): test.TestOutcome {
+    return test.assert_true([1, 2, 3, 4].none(is_neg));
+}
+
+function test_none_false(): test.TestOutcome {
+    return test.assert_true(![1, 2, 3, 4].none(is_even));
+}
+
+function test_free_fn(): test.TestOutcome {
+    return test.assert_true(array.none([1, 2, 3], is_neg));
+}
+
+function test_empty_vacuous(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_true(e.none(is_neg));
+}
+
+function test_all_match(): test.TestOutcome {
+    // Every element negative → none(is_neg) is false.
+    return test.assert_true(![0 - 1, 0 - 2, 0 - 3].none(is_neg));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array none");
+    r = r.it("none true",      test_none_true());
+    r = r.it("none false",     test_none_false());
+    r = r.it("free fn",        test_free_fn());
+    r = r.it("empty vacuous",  test_empty_vacuous());
+    r = r.it("all match",      test_all_match());
+    return r.finish();
+}
