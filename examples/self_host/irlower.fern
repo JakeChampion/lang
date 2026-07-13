@@ -27981,6 +27981,42 @@ pub function (s: LowerState) is_user_fn(name: string): boolean {
     return false;
 }
 
+// body_binds_closure_local reports whether `body` binds local `name` (via a
+// top-level `var name = …`) to a CLOSURE BOX: a lambda (always boxed at its
+// binding, capturing or not — see the clo_init rule in the StmtVar lowering),
+// a `__mkclo$…` env-box constructor, or a call to a function already known to
+// return a closure box (`closureset`). Used by closure_ret_fns_of to detect a
+// factory whose last statement is `return name`, so the caller's `var g =
+// factory()` binds g a closure local and `g(args)` dispatches env-first
+// instead of calling the raw box pointer as code (a SIGSEGV otherwise).
+function body_binds_closure_local(body: parser.Stmt[], name: string, closureset: string[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprLambda(_) => { return true; },
+                        parser.ExprCall(cc) => {
+                            match (cc.callee) {
+                                parser.ExprIdent(cid) => {
+                                    if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") { return true; }
+                                    if (util.index_of_str(closureset, cid.name) >= 0) { return true; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var gfns: string[] = [];
     var gi: i32 = 0;
@@ -27989,23 +28025,45 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         gi = gi + 1;
     }
     var out: string[] = [];
-    var fi: i32 = 0;
-    while (fi < funcs.len()) {
-        var b: parser.Stmt[] = funcs[fi].body;
-        if (b.len() > 0) {
-            match (b[b.len() - 1]) {
-                parser.StmtReturn(r) => {
-                    match (r.value) {
-                        parser.ExprLambda(lam) => {
-                            if (!lambda_has_no_captures(lam, gfns)) { out = out.append(funcs[fi].name); }
+    // Two forms produce a closure box the caller must dispatch env-first:
+    //   (a) `return <capturing lambda>` — a fresh box built at the return.
+    //   (b) `return <ident>` where the ident is a top-level local bound to a
+    //       closure box (a lambda, `__mkclo$`, or a closure-returning call) —
+    //       e.g. `var f = function (b) { … }; return f;`. Form (b) is gated on
+    //       a declared `fn` return type so it only fires for genuine
+    //       higher-order factories, never the compiler's own no-fn-return
+    //       sources — keeping the self-compile fixpoint byte-identical. The
+    //       fixpoint loop resolves (b)'s transitive `var f = other_factory()`
+    //       chains.
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var fi: i32 = 0;
+        while (fi < funcs.len()) {
+            if (util.index_of_str(out, funcs[fi].name) < 0) {
+                var b: parser.Stmt[] = funcs[fi].body;
+                if (b.len() > 0) {
+                    match (b[b.len() - 1]) {
+                        parser.StmtReturn(r) => {
+                            match (r.value) {
+                                parser.ExprLambda(lam) => {
+                                    if (!lambda_has_no_captures(lam, gfns)) { out = out.append(funcs[fi].name); changed = true; }
+                                },
+                                parser.ExprIdent(rid) => {
+                                    if (funcs[fi].ret_type == "fn" && body_binds_closure_local(b, rid.name, out)) {
+                                        out = out.append(funcs[fi].name);
+                                        changed = true;
+                                    }
+                                },
+                                _ => { }
+                            }
                         },
                         _ => { }
                     }
-                },
-                _ => { }
+                }
             }
+            fi = fi + 1;
         }
-        fi = fi + 1;
     }
     return out;
 }
