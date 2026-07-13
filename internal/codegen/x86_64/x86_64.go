@@ -76,6 +76,11 @@ const (
 	sysClockGettime = 228
 	// nanosleep(2): x86-64 syscall 35. Used by `__fern_sleep_ms`.
 	sysNanosleep = 35
+	// fork(2) / wait4(2): x86-64 syscalls 57 / 61. Back
+	// `__fern_proc_fork` / `__fern_proc_waitpid` — the crash-only
+	// supervision primitives (docs/CRASH-ONLY-SERVE.md D2').
+	sysFork  = 57
+	sysWait4 = 61
 	// poll(2): x86-64 syscall 7. Used by `__fern_poll` — the readiness
 	// multiplexer behind the std/task reactor
 	// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits on a set of
@@ -381,6 +386,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
 	}
+	if g.usesProcFork {
+		g.emitProcForkRuntime()
+	}
+	if g.usesProcWaitpid {
+		g.emitProcWaitpidRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -553,7 +564,15 @@ type generator struct {
 	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
-	usesSleepMs           bool
+	usesSleepMs bool
+	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
+	// fork(2) (#57): 0 in child, pid in parent, -errno on failure —
+	// and `__fern_proc_waitpid(pid)` — wait4(2) (#61) + status-word
+	// decode: exit code 0..255 for a normal exit, 128+signal for a
+	// signal death, -errno passthrough. The crash-only supervision
+	// primitives (docs/CRASH-ONLY-SERVE.md D2').
+	usesProcFork          bool
+	usesProcWaitpid       bool
 	usesTcp               bool
 	usesEnv               bool
 	usesArgs              bool
@@ -882,6 +901,10 @@ func (g *generator) recordUse(target string) {
 		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
+	case "proc_fork":
+		g.usesProcFork = true
+	case "proc_waitpid":
+		g.usesProcWaitpid = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
@@ -2134,6 +2157,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_now_ns"
 		case "sleep_ms":
 			target = "__fern_sleep_ms"
+		case "proc_fork":
+			target = "__fern_proc_fork"
+		case "proc_waitpid":
+			target = "__fern_proc_waitpid"
 		case "tcp_listen":
 			target = "__fern_tcp_listen"
 		case "tcp_accept":
@@ -5816,6 +5843,71 @@ func (g *generator) emitSleepMsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_sleep_ms, .-__fern_sleep_ms")
+}
+
+// emitProcForkRuntime emits `__fern_proc_fork()` — fork(2)
+// (syscall 57, no args). The kernel's return shape is already
+// the builtin's contract: 0 in the child, the child's pid in
+// the parent, -errno on failure — so this is a bare syscall
+// wrapper. Result in eax (i32). The crash-only supervision
+// primitive (docs/CRASH-ONLY-SERVE.md D2').
+func (g *generator) emitProcForkRuntime() {
+	g.line("")
+	g.line(".globl __fern_proc_fork")
+	g.line(".type __fern_proc_fork, @function")
+	g.label("__fern_proc_fork")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit(fmt.Sprintf("mov eax, %d", sysFork))
+	g.emit("syscall")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_proc_fork, .-__fern_proc_fork")
+}
+
+// emitProcWaitpidRuntime emits `__fern_proc_waitpid(pid)` —
+// blocking wait4(2) (syscall 61: pid, &status, options=0,
+// rusage=NULL; status on the stack) plus the status-word decode:
+//
+//	WIFEXITED  ((status & 0x7f) == 0) → (status >> 8) & 0xff
+//	else (signal death)               → 128 + (status & 0x7f)
+//
+// (the shell convention — a bounds-trap worker surfaces as its
+// raw exit code, e.g. 134). A negative rax from the syscall
+// (-errno, e.g. -ECHILD) returns as-is. Result in eax (i32).
+func (g *generator) emitProcWaitpidRuntime() {
+	g.line("")
+	g.line(".globl __fern_proc_waitpid")
+	g.line(".type __fern_proc_waitpid, @function")
+	g.label("__fern_proc_waitpid")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")     // status slot (16 keeps rsp 16-aligned)
+	g.emit("movsxd rdi, edi") // pid
+	g.emit("mov rsi, rsp")    // &status
+	g.emit("xor edx, edx")    // options = 0
+	g.emit("xor r10d, r10d")  // rusage = NULL
+	g.emit(fmt.Sprintf("mov eax, %d", sysWait4))
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lproc_wait_done")      // -errno → return as-is
+	g.emit("mov ecx, dword ptr [rsp]") // status word
+	g.emit("mov eax, ecx")
+	g.emit("and eax, 0x7f")
+	g.emit("jnz .Lproc_wait_sig")
+	// Normal exit: (status >> 8) & 0xff.
+	g.emit("mov eax, ecx")
+	g.emit("shr eax, 8")
+	g.emit("and eax, 0xff")
+	g.emit("jmp .Lproc_wait_done")
+	g.label(".Lproc_wait_sig")
+	// Signal death: 128 + signal (eax already holds status & 0x7f).
+	g.emit("add eax, 128")
+	g.label(".Lproc_wait_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_proc_waitpid, .-__fern_proc_waitpid")
 }
 
 // emitPutcharRuntime emits `__fern_putchar(c)` — write a

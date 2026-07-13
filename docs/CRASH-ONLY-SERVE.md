@@ -76,22 +76,41 @@ This doc exists so that when that changes, the shape is already
 decided. D2' should land when native serving grows a real
 consumer, not before.
 
-## Chosen shape (D2' scope)
+## Chosen shape (D2' scope) — IMPLEMENTED
 
 - New native-only runtime builtins, capability-gated (E066)
   under a new `proc` capability granted by the four native
   targets only: `proc_fork(): i32` (0 in child, pid in parent,
   negative errno on failure) and `proc_waitpid(pid: i32): i32`
-  (child's exit code, or negative errno). Both are thin syscall
-  wrappers (fork/wait4) on arm64 + x86-64 Linux and arm64-darwin;
-  NOT wired on wasm targets (no processes in wasi) — the gate
-  makes that a check-time error, per the D1 machinery.
+  (child's exit code 0..255; 128+signal for a signal death —
+  shell convention; negative errno on failure). Both are thin
+  syscall wrappers: x86-64 Linux `fork`(57)/`wait4`(61); arm64
+  Linux `clone(SIGCHLD,0,0,0,0)`(220 — no bare fork syscall)/
+  `wait4`(260); arm64-darwin BSD `fork`(2, XNU's x1 child-flag
+  normalised to 0-in-child) / `wait4`(7) with the carry-set
+  +errno convention negated to Linux-shaped -errno. NOT wired
+  on wasm targets (no processes in wasi) — the gate makes that
+  a check-time error, per the D1 machinery.
+- **Interp parity is via fallback, not emulated fork.** The
+  interpreter cannot bare-fork (Go's runtime is threaded; a raw
+  fork(2) in a multithreaded process is UB in the child), so its
+  `proc_fork` returns **-38 (ENOSYS)** permanently (and
+  `proc_waitpid` -10/ECHILD — no child can exist).
+  `tcp_serve_supervised` detects the -38, logs one
+  "supervision unavailable; serving single-process" line to
+  stderr, and runs the plain accept loop — graceful degradation,
+  so the function is runnable under `-interp` (and on any future
+  fork-less target) with the same observable serving behaviour,
+  minus isolation. The interp builtins are deliberately NOT
+  capability-gated (Enforce only runs for compiled targets).
 - `std/tcp` grows `tcp_serve_supervised(port, handler): i32` —
   parent creates the listener (so the backlog survives worker
   deaths), then the fork/waitpid/backoff loop above; the child
-  runs the existing accept loop against the inherited listener
-  fd. `tcp_serve` itself stays exactly as-is (single-process,
-  dev-friendly, debuggable).
+  runs the existing accept loop (factored as `__serve_loop`,
+  which takes the listener fd — `tcp_serve` now calls it too)
+  against the inherited listener fd. `tcp_serve` itself stays
+  exactly as-is behaviourally (single-process, dev-friendly,
+  debuggable).
 - The synthesised handler `main` keeps calling plain `tcp_serve`
   — supervision is opt-in by writing your own `main`. Flipping
   the synthesised default is a separate decision once D2' has
@@ -111,8 +130,10 @@ An e2e test (native x86-64, mirroring the tcp e2e harness) that:
    give-up rather than spinning forever.
 
 Interp parity: `proc_fork`/`proc_waitpid` get interp builtins
-(interp already has host-process access — `subprocess` precedent)
-so the supervised path is testable under `-interp` too.
+returning -38 (ENOSYS) / -10 (ECHILD) — see "Chosen shape" — so
+under `-interp` the supervised path degrades to single-process
+serving rather than being untestable; the e2e suite covers both
+the native supervised path and the interp fallback.
 
 ## Deliberately deferred
 
@@ -121,3 +142,7 @@ so the supervised path is testable under `-interp` too.
 - Graceful drain (SIGTERM → stop accepting, finish in-flight) —
   orthogonal; belongs to a signals design.
 - Windows — no native Windows target exists.
+- Self-host compiler support for `proc_fork`/`proc_waitpid` —
+  native serve supervision is a native-target runtime feature and
+  the self-host compiler doesn't compile std/tcp servers in its
+  test corpus; wire it when (if) that changes.

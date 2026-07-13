@@ -215,9 +215,24 @@ or gate it behind target-supplied mode the self-host driver
 doesn't take yet). Roc's model (verified) is the design
 reference; this also advances `PLATFORM-RESEARCH.md` Phase 2.
 
-**D2. Crash-only native serve.** [status: design shipped —
-`docs/CRASH-ONLY-SERVE.md`; implementation (D2') pending a real
-native-serving consumer]
+**D2. Crash-only native serve.** [status: SHIPPED — design +
+D2' implementation]
+D2' landed per the design's chosen shape: `proc_fork` /
+`proc_waitpid` native builtins (x86-64 fork/wait4; arm64
+clone(SIGCHLD)/wait4 — no fork syscall on arm64; arm64-darwin BSD
+fork/wait4 with the XNU child-flag normalisation,
+runtime-verified by CI's macos lane), gated under the new `proc`
+capability (native targets only — wasm worlds reject at check
+time via E066). The interp returns -38/ENOSYS (Go cannot
+bare-fork) and `tcp_serve_supervised` degrades gracefully to
+single-process serving — a design amendment recorded in
+CRASH-ONLY-SERVE.md. std/tcp's accept loop is factored into
+`__serve_loop`; the supervisor owns the listener (backlog
+survives worker deaths), logs each death's raw exit code,
+backs off 100ms→5s, resets after ≥100ms-lived workers, and gives
+up after 8 consecutive fast deaths. e2e: survives-handler-trap,
+crash-loop-giveup, interp-fallback, and per-backend
+fork/waitpid contract tests.
 Decision: supervisor shape (parent owns the listener, forks the
 accept-loop worker, waitpid + bounded-backoff refork, crash-loop
 give-up); in-process trap recovery permanently rejected as

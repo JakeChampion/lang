@@ -1400,6 +1400,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
+	// proc_fork(): i32 — fork the process (docs/CRASH-ONLY-SERVE.md
+	// D2'). Returns 0 in the child, the child's pid in the parent,
+	// or a negative errno on failure. Capability-gated (`proc`,
+	// native targets only — E066 elsewhere). The interpreter cannot
+	// bare-fork (Go's runtime is threaded) and returns -38 (ENOSYS);
+	// callers like `tcp_serve_supervised` treat that as "supervision
+	// unavailable" and degrade to single-process serving.
+	c.info.FuncSigs["proc_fork"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// proc_waitpid(pid): i32 — block until the child `pid` exits and
+	// return its exit code 0..255; for a signal death, 128+signal
+	// (shell convention). Negative errno on failure (interp: -10 /
+	// ECHILD — no forked children can exist there). Same `proc`
+	// capability gate as proc_fork.
+	c.info.FuncSigs["proc_waitpid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return its absolute path.
 	// `prefix` is appended to a random suffix so concurrent
