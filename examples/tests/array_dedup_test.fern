@@ -1,0 +1,52 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_dedup_test.fern — pure-Fern coverage of std/array's
+// dedup[T: cmp.Eq] (free + method forms): collapse each run of CONSECUTIVE equal
+// elements to one, the single-pass complement of distinct. Covers runs,
+// all-equal, no-dup, sorted (behaves like distinct), and empty. Kept as its own
+// suite so the self-host merged bundle stays under the asm_ir IR budget; uses
+// assert_eq_array / assert_true (no scalar assert_eq[i32]).
+//
+// The i32 cases here are self-host-gated; STRING-element dedup is covered only
+// by the Go-side native differential (TestNativeArrayDedup exercises a string[]
+// dedup on all four native backends) because the self-host compiler mishandles
+// the generic cmp.Eq dedup over pointer-payload (string) elements — the same
+// gap that keeps array_rotate / array_accessors' string cases native-only.
+
+function test_runs(): test.TestOutcome {
+    // Only ADJACENT dups collapse — the trailing 1 survives.
+    return test.assert_eq_array(array.dedup([1, 1, 2, 2, 1]), [1, 2, 1]);
+}
+
+function test_all_equal(): test.TestOutcome {
+    return test.assert_eq_array([7, 7, 7, 7].dedup(), [7]);
+}
+
+function test_no_dups(): test.TestOutcome {
+    return test.assert_eq_array([1, 2, 3].dedup(), [1, 2, 3]);
+}
+
+function test_sorted_like_distinct(): test.TestOutcome {
+    // On sorted input, dedup matches distinct in one pass.
+    return test.assert_eq_array([1, 1, 2, 3, 3, 3, 4].dedup(), [1, 2, 3, 4]);
+}
+
+function test_empty(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_true(array.dedup(e).len() == 0);
+}
+
+function test_single(): test.TestOutcome {
+    return test.assert_eq_array([5].dedup(), [5]);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array dedup");
+    r = r.it("runs",                 test_runs());
+    r = r.it("all equal",            test_all_equal());
+    r = r.it("no dups",              test_no_dups());
+    r = r.it("sorted like distinct", test_sorted_like_distinct());
+    r = r.it("empty",                test_empty());
+    r = r.it("single",               test_single());
+    return r.finish();
+}

@@ -213,7 +213,9 @@ convention.
   i32 projection), `max_by`/`min_by` (extremum under a `sort_by`-
   style comparator; first on a tie, `None` when empty).
   Eq/Ord-bounded: `contains`, `index_of`,
-  `index_of_last`, `distinct`, `count`, `is_sorted`, `equal`,
+  `index_of_last`, `distinct` (remove all duplicates), `dedup`
+  (collapse consecutive runs — single-pass complement of
+  `distinct`), `count`, `is_sorted`, `equal`,
   `starts_with`/`ends_with`.
 
 ### `std/unicode`
