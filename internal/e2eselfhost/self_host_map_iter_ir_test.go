@@ -47,12 +47,16 @@ function main(): i32 { return f(); }`, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
-			// 25 KB keeps a wide margin below the ~40 KB+ AST-bail signature
+			// 30 KB keeps a wide margin below the ~40 KB+ AST-bail signature
 			// while tolerating IR-runtime growth: the 20 KB threshold tripped
 			// at ~20.2–21 KB when #4355's always-emitted
-			// __fn___fern_str_arr_free helper landed, with the programs still
-			// fully on the IR path.
-			if len(asm) == 0 || len(asm) > 25000 {
+			// __fn___fern_str_arr_free helper landed (bumped to 25 KB), and the
+			// 25 KB threshold in turn tripped at ~25.1–25.4 KB (keys-string /
+			// keys-continue) as later IR-runtime growth (the fip/fbip + RC
+			// reclamation passes) landed — the programs still fully on the IR
+			// path (values-i32 / keys-i32 stay well under and run correctly, and
+			// 25 KB is nowhere near the AST-bail size).
+			if len(asm) == 0 || len(asm) > 30000 {
 				t.Fatalf("asm is %d bytes — expected IR output; the map-iteration module likely bailed to the AST runtime", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "map_iter_"+tc.name, string(asm))
