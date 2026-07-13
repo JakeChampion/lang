@@ -32,13 +32,15 @@ Receiver methods on i32 / byte values.
   `is_zero`, `is_in_range`, `is_between`, `is_multiple_of`,
   `is_perfect_square`, `is_palindrome`, `is_even`, `is_odd`,
   `is_power_of_2`, `is_prime`
-- **Scalar:** `abs`, `min`, `max`, `clamp`, `min_zero`, `sign_str`,
+- **Scalar:** `abs`, `abs_diff` (`|n - other|`), `min`, `max`,
+  `clamp`, `min_zero`, `sign_str`,
   `percent_of`, `reverse_digits`, `sum_of_digits`, `has_digit`,
   `saturating_add`, `saturating_sub`, `checked_add`,
   `checked_sub`, `checked_div`, `pow`, `gcd`, `lcm`, `factorial`,
   `next_power_of_2`, `log2_floor`, `sqrt_floor`, `ceil_div`,
   `round_up_to`, `round_down_to`, `divmod`
-- **Bit ops:** `count_ones`, `leading_zeros`, `trailing_zeros`,
+- **Bit ops:** `count_ones`, `count_zeros` (`32 - count_ones`),
+  `leading_zeros`, `trailing_zeros`,
   `bit`, `set_bit`, `clear_bit`, `toggle_bit`, `byte_swap`,
   `rotate_left`, `rotate_right`
 - **String formatting:** `to_string`, `to_string_padded`,

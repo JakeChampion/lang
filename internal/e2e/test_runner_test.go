@@ -311,6 +311,25 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i32_bit_arith_test.fern` covers std/i32's abs_diff (absolute
+// difference via an ordering branch) and count_zeros (complement of count_ones;
+// the two sum to 32). Kept out of i32_test to keep the self-host bundle under
+// the asm_ir IR budget; the Go-side TestI32AbsDiffCountZeros pins these across
+// all four backends. Passing suite → exit 0.
+func TestRunnerI32BitArithExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_bit_arith_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 bit + arith", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/i64_test.fern` covers std/i64's signed-64-bit receiver
 // methods (the wider counterpart to std/i32) — abs / min / max / clamp /
 // pow (incl. a value past the i32 range) / gcd / lcm / to_string (incl.

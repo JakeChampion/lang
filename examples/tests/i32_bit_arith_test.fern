@@ -1,0 +1,70 @@
+import "std/test";
+import "std/i32";
+// examples/tests/i32_bit_arith_test.fern — pure-Fern coverage of std/i32's
+// abs_diff (absolute difference, the non-negative magnitude via an ordering
+// branch) and count_zeros (the complement of count_ones; the two sum to 32).
+// Kept as its own suite rather than folded into i32_test so the self-host
+// merged bundle stays well under the asm_ir IR budget. The Go-side
+// TestI32AbsDiffCountZeros pins these across all four backends; this is the
+// migration-shaped (pure-Fern, std/test-driven) companion.
+
+function test_abs_diff_pos(): test.TestOutcome {
+    return test.assert_eq((5).abs_diff(8), 3);
+}
+
+function test_abs_diff_reversed(): test.TestOutcome {
+    // Symmetric: order of operands doesn't change the magnitude.
+    return test.assert_eq((8).abs_diff(5), 3);
+}
+
+function test_abs_diff_mixed_sign(): test.TestOutcome {
+    return test.assert_eq((0 - 3).abs_diff(4), 7);
+}
+
+function test_abs_diff_both_negative(): test.TestOutcome {
+    return test.assert_eq((0 - 10).abs_diff(0 - 2), 8);
+}
+
+function test_abs_diff_equal(): test.TestOutcome {
+    return test.assert_eq((7).abs_diff(7), 0);
+}
+
+function test_count_zeros_zero(): test.TestOutcome {
+    return test.assert_eq((0).count_zeros(), 32);
+}
+
+function test_count_zeros_all_ones(): test.TestOutcome {
+    // -1 is all ones in two's complement → no zero bits.
+    return test.assert_eq((0 - 1).count_zeros(), 0);
+}
+
+function test_count_zeros_one(): test.TestOutcome {
+    return test.assert_eq((1).count_zeros(), 31);
+}
+
+function test_count_zeros_seven(): test.TestOutcome {
+    return test.assert_eq((7).count_zeros(), 29);
+}
+
+function test_ones_plus_zeros(): test.TestOutcome {
+    // Invariant across an arbitrary bit pattern.
+    if ((305419896).count_ones() + (305419896).count_zeros() != 32) {
+        return test.fail("count_ones + count_zeros should be 32");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i32 bit + arith");
+    r = r.it("abs_diff pos",           test_abs_diff_pos());
+    r = r.it("abs_diff reversed",      test_abs_diff_reversed());
+    r = r.it("abs_diff mixed sign",    test_abs_diff_mixed_sign());
+    r = r.it("abs_diff both negative", test_abs_diff_both_negative());
+    r = r.it("abs_diff equal",         test_abs_diff_equal());
+    r = r.it("count_zeros zero",       test_count_zeros_zero());
+    r = r.it("count_zeros all ones",   test_count_zeros_all_ones());
+    r = r.it("count_zeros one",        test_count_zeros_one());
+    r = r.it("count_zeros seven",      test_count_zeros_seven());
+    r = r.it("ones + zeros == 32",     test_ones_plus_zeros());
+    return r.finish();
+}
