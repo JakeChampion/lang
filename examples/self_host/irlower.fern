@@ -6720,7 +6720,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[1], mset);
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), meqfn));
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -6760,14 +6760,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             return mdel.emit(ir.op_map_delete(mkk2, meqfn));
                         }
                         if (fa.field == "keys" && c.args.len() == 0) {
+                            // Element-kind flag (#4353): 0 = scalar i32 column →
+                            // the register backends snapshot-copy (the `var ks =
+                            // m.keys()` binding is is_arr-marked and exit-swept,
+                            // which reclaims the fresh copy — NOT the map's live
+                            // buffer, as the historical alias made it). 1 =
+                            // string/other column → raw-buffer alias (slice 3).
                             var mks: LowerState = lower_expr(fa.obj, s);
                             if (!mks.ok) { return mks; }
-                            return mks.emit(ir.op_map_keys());
+                            return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys")));
                         }
                         if (fa.field == "values" && c.args.len() == 0) {
                             var mvs: LowerState = lower_expr(fa.obj, s);
                             if (!mvs.ok) { return mvs; }
-                            return mvs.emit(ir.op_map_values());
+                            return mvs.emit(ir.op_map_values(map_kv_elem_flag(mtype, "values")));
                         }
                         if (fa.field == "iter" && c.args.len() == 0) {
                             // m.iter() -> a fresh MapIter box [map_ptr@0, cursor@8].
@@ -6819,7 +6825,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             emset = lower_expr(c.args[1], emset);
                             if (!emset.ok) { return emset; }
                             var emtt: string = expr_map_type_tag(fa.obj, s);
-                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_key_eqfn(emtt)));
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_key_eqfn(emtt)));
                         }
                     }
                     // Qualified built-in Option/Result construction:
@@ -12000,14 +12006,20 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         return lower_string_foreach(fr.var_name, fr.iter, fr.body, s);
     }
     // `for k in m.keys()` / `for v in m.values()` over a map LOCAL —
-    // single-var map iteration. op_map_keys / op_map_values return a
-    // BORROW of the map's internal array (no inc), so the snapshot local
-    // must NOT be array-marked (the exit-sweep must not dec it) and the
-    // arr_len / arr_get are emitted explicitly — exactly as the 2-var
-    // `for k, v in m` form below does. Checked before the generic
-    // lower_foreach_snapshot, which would (wrongly) treat the result as an
-    // OWNED array and free it. `mki_method` is "" unless fr.iter is a
-    // keys()/values() call on a map local.
+    // single-var map iteration. The hidden column local is NOT array-marked
+    // (the exit-sweep never decs it) and the arr_len / arr_get are emitted
+    // explicitly — exactly as the 2-var `for k, v in m` form below does.
+    // Checked before the generic lower_foreach_snapshot, which would
+    // (wrongly) treat the result as an OWNED array and free it. Column
+    // ownership follows op_map_keys/op_map_values' element flag (#4353):
+    // a scalar i32 column (flag 0) is a fresh SNAPSHOT on every backend, so
+    // it is explicitly released (__fern_rc_dec) right after the loop — flat,
+    // and a body that mutates the map iterates the entry-time snapshot
+    // (matching native) instead of a buffer the map may grow-free from under
+    // it. A string/other column (flag 1) stays a register-backend BORROW of
+    // the map's internal array (no inc, no post-loop free — slice 3).
+    // `mki_method` is "" unless fr.iter is a keys()/values() call on a map
+    // local.
     if (!for_var_comma) {
         var mki_method: string = "";
         var mki_mtype: string = "";
@@ -12060,8 +12072,9 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             var mkisslot: i32 = mkf.slot_of(mkisn);
             mkf = lower_expr(mki_recv, mkf);
             if (!mkf.ok) { return mkf; }
-            if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys()); }
-            else { mkf = mkf.emit(ir.op_map_values()); }
+            var mki_flag: i32 = map_kv_elem_flag(mkimty, mki_method);
+            if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag)); }
+            else { mkf = mkf.emit(ir.op_map_values(mki_flag)); }
             mkf = mkf.emit(ir.op_store_local(mkisslot));
             // hidden index
             var mkidxn: string = "$formki" + util.i32_to_string(mkf.locals.len());
@@ -12094,7 +12107,20 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             if (!mkf.ok) { return mkf; }
             mkf = mkf.emit(ir.op_br(0));
             mkf = mkf.emit(ir.op_end());
-            return mkf.emit(ir.op_end()).exit_loop();
+            mkf = mkf.emit(ir.op_end()).exit_loop();
+            // Scalar column (flag 0): the hidden local holds a fresh rc=1
+            // SNAPSHOT (every backend), released here — `break` exits land
+            // after the block end, so they release too; an early `return`
+            // inside the body skips it (a bounded, sound leak, like every
+            // non-swept hidden temp). Zero the slot afterwards for hygiene.
+            if (mki_flag == 0) {
+                mkf = mkf.emit(ir.op_load_local(mkisslot));
+                mkf = mkf.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                mkf = mkf.emit(ir.op_drop());
+                mkf = mkf.emit(ir.op_const_i32(0));
+                mkf = mkf.emit(ir.op_store_local(mkisslot));
+            }
+            return mkf;
         }
     }
     // `for c in r.cells` over a leak-safe array-typed STRUCT FIELD
@@ -12189,14 +12215,16 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     }
     // `for k, v in m` over a map LOCAL → snapshot keys()/values() into
     // two hidden locals, then a counted loop binding k = keys[i],
-    // v = values[i]. The two snapshots share iteration order on every
-    // backend (the live parallel arrays on x86-64/arm64; the
-    // probe-order snapshot on wasm, where map_keys/map_values walk the
-    // same slots), so keys[i] pairs with values[i]. The snapshot
-    // locals are deliberately NOT array-marked: on x86-64/arm64 they
-    // alias the map's internal arrays (a borrow, no inc), so the
-    // exit-sweep must not dec them; arr_len/arr_get are emitted
-    // explicitly so they don't need the mark.
+    // v = values[i]. The two column reads share iteration order on every
+    // backend (the parallel arrays on x86-64/arm64; the probe-order
+    // snapshot on wasm, where map_keys/map_values walk the same slots),
+    // so keys[i] pairs with values[i]. The hidden locals are deliberately
+    // NOT array-marked (the exit-sweep never decs them); arr_len/arr_get
+    // are emitted explicitly so they don't need the mark. Per column
+    // (#4353): a scalar i32 column (elem flag 0) is a fresh rc=1 SNAPSHOT
+    // on every backend and is explicitly released right after the loop;
+    // a string/other column (flag 1) stays a register-backend BORROW of
+    // the map's internal array (no inc, no post-loop free — slice 3).
     var mslot: i32 = 0 - 1;
     match (fr.iter) {
         parser.ExprIdent(mid0) => { mslot = s.slot_of(mid0.name); },
@@ -12214,19 +12242,21 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         var vty: string = map_value_of(mty);
         var kname: string = trim_spaces(fr.var_name[0 : kvcomma]);
         var vname: string = trim_spaces(fr.var_name[kvcomma + 1 : fr.var_name.len()]);
-        // keys snapshot -> hidden local
+        // keys column -> hidden local
+        var mkv_kflag: i32 = map_kv_elem_flag(mty, "keys");
+        var mkv_vflag: i32 = map_kv_elem_flag(mty, "values");
         var ksn: string = "$forks" + util.i32_to_string(s.locals.len());
         var fm: LowerState = s.add_local(ksn);
         var ksslot: i32 = fm.slot_of(ksn);
         fm = fm.emit(ir.op_load_local(mslot));
-        fm = fm.emit(ir.op_map_keys());
+        fm = fm.emit(ir.op_map_keys(mkv_kflag));
         fm = fm.emit(ir.op_store_local(ksslot));
-        // values snapshot -> hidden local
+        // values column -> hidden local
         var vsn: string = "$forvs" + util.i32_to_string(fm.locals.len());
         fm = fm.add_local(vsn);
         var vsslot: i32 = fm.slot_of(vsn);
         fm = fm.emit(ir.op_load_local(mslot));
-        fm = fm.emit(ir.op_map_values());
+        fm = fm.emit(ir.op_map_values(mkv_vflag));
         fm = fm.emit(ir.op_store_local(vsslot));
         // hidden index
         var idxn: string = "$foridx" + util.i32_to_string(fm.locals.len());
@@ -12268,7 +12298,27 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         if (!fm.ok) { return fm; }
         fm = fm.emit(ir.op_br(0));
         fm = fm.emit(ir.op_end());
-        return fm.emit(ir.op_end()).exit_loop();
+        fm = fm.emit(ir.op_end()).exit_loop();
+        // Release the SNAPSHOT columns (flag 0 — scalar i32, a fresh rc=1
+        // copy on every backend) right after the loop; `break` exits land
+        // here too. Borrowed columns (flag 1) are the map's own buffers and
+        // must NOT be dec'd. An early `return` in the body skips this — a
+        // bounded, sound leak, like every non-swept hidden temp.
+        if (mkv_kflag == 0) {
+            fm = fm.emit(ir.op_load_local(ksslot));
+            fm = fm.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            fm = fm.emit(ir.op_drop());
+            fm = fm.emit(ir.op_const_i32(0));
+            fm = fm.emit(ir.op_store_local(ksslot));
+        }
+        if (mkv_vflag == 0) {
+            fm = fm.emit(ir.op_load_local(vsslot));
+            fm = fm.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            fm = fm.emit(ir.op_drop());
+            fm = fm.emit(ir.op_const_i32(0));
+            fm = fm.emit(ir.op_store_local(vsslot));
+        }
+        return fm;
     }
     // `for x in <arr>` over an array LOCAL/PARAM (i32[] or string[]) →
     // a counted loop using existing ops. Other iter forms (calls,
@@ -30532,6 +30582,38 @@ function map_value_is_ptr(vt: string): boolean {
     if (vt == "bool" || vt == "boolean") { return false; }
     if (vt == "u8" || vt == "u32" || vt == "u64") { return false; }
     return true;
+}
+
+// map_owncols (#4353 slices 1+2): the map's declared "Map[K, V]" type has i32
+// keys AND i32 values, so BOTH its keys()/values() reads snapshot-copy
+// (map_kv_elem_flag returns 0 for both columns) and the map is therefore the
+// sole owner of its column buffers — op_map_set may free the superseded buffer
+// on a grow (__fern_arr_push_owned) instead of leaking it. Strictly "i32"-tag
+// only: i64/f64 values stay on the alias/leak path (their keys()/values() are
+// not snapshotted — see map_kv_elem_tag's exclusion note), and a generic /
+// unparseable tag ("Map[K, V]", "") is conservatively NOT owned. (A boolean
+// value annotation normalizes to i32 in the type tag before reaching here, so
+// Map[i32, boolean] IS owned — consistently, its keys()/values() reads see the
+// same normalized tag and snapshot.)
+function map_owncols(mty: string): boolean {
+    if (map_key_kind_of(mty) != 1) { return false; }
+    return map_value_of(mty) == "i32";
+}
+
+// map_kv_elem_flag derives op_map_keys / op_map_values' element-kind flag from
+// the map's "Map[K, V]" type tag: 0 = scalar i32 column (the register backends
+// SNAPSHOT it — a fresh owned rc=1 copy), 1 = pointer/string/i64/f64/generic/
+// unknown column (the register backends keep today's raw-buffer ALIAS; the
+// string-column snapshot is #4353 slice 3). Must stay consistent with
+// map_owncols above: owncols is only sound because BOTH columns of an i32/i32
+// map read back as snapshots, never as buffer aliases.
+function map_kv_elem_flag(mty: string, field: string): i32 {
+    if (field == "keys") {
+        if (map_key_kind_of(mty) == 1) { return 0; }
+        return 1;
+    }
+    if (map_value_of(mty) == "i32") { return 0; }
+    return 1;
 }
 
 pub function map_value_of(typestr: string): string {

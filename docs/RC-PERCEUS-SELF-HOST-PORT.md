@@ -4660,3 +4660,70 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   correct first move in a focused session: write the coupled (keys/values-snapshot +
   map-owns-buffers) change together, then validate the whole balance (churn flat,
   __rc_underflow()==0, get_or/iter correctness, fixpoint) as a unit.
+
+- 2026-07-12: **#4353 coupled slices 1+2 LANDED — scalar keys()/values() snapshot
+  + map-owns-buffers (owned grow), gated to i32-class columns, all together.**
+  Implemented exactly as the addendum above prescribed, as ONE change:
+  - `op_map_keys` / `op_map_values` now carry an ELEMENT-kind flag (`i32_imm`:
+    0 = scalar i32 column, 1 = pointer/string/i64/f64/generic/unknown), derived
+    at the irlower sites from the map's type tag (`map_kv_elem_flag`, keyed off
+    map_key_kind_of / map_value_of — strictly "i32", everything else stays 1).
+    Flag 0 → the register backends SNAPSHOT the column into a fresh rc=1 copy
+    via a new `__fern_map_snapshot_col` runtime helper (asm_ir.fern x86 +
+    asm_arm64.fern arm64, __fern_arr_box-layout, registered in
+    emit_runtime_globls for the per-module link; "maps"-need-gated, kinds
+    131/132 flag-0 mark the need and op_allocates now admits 131/132). Flag 1 →
+    the historical raw keys@0/vals@8 alias, byte-for-byte (string columns are
+    slice 3). wasm ignores the flag (always snapshotted).
+  - `op_map_set` gained width bit 2 = `owncols` (`map_owncols`: i32 keys AND
+    i32 values). The register `__fern_map_set`s take it via the existing flag
+    register (%r9 / x4, now a bitfield: bit 0 kconsume, bit 1 owncols) and, on
+    the append path, route BOTH column appends through the sole-owner
+    `__fern_arr_push_owned` when set — the superseded buffer is freed on grow,
+    closing the #4877 cap-0/grow leak (sound now that no scalar read aliases
+    the buffers). All other maps keep the LEAK-ONLY `__fern_arr_push`. wasm
+    masks its vconsume/kconsume reads to bits 0/1 (already frees on grow). The
+    arm64 AST insert call site now zeroes x4 explicitly (it previously left the
+    shared map_set's kconsume register uninitialised — a latent #4885 hazard).
+  - The exit-sweep needed NO flip: `var ks = m.keys()` was already is_arr +
+    swept — under the alias that dec freed the MAP's live buffer and
+    `__fern_map_free` then double-dec'd it (a keys()-taken fresh map ticked
+    `__rc_underflow`); with the snapshot the sweep frees the COPY and map_free
+    frees the map's own buffers exactly once. Balance restored, not rewired.
+  - The `for k in m.keys()` / `for (k, v) in m` hidden column locals: a flag-0
+    (scalar) column is a snapshot on EVERY backend now, so the loop lowering
+    releases it (`__fern_rc_dec`) right after the loop end (break exits
+    included; an early return leaks it — bounded, sound) and zeroes the slot.
+    Flag-1 columns stay borrows (register) / leaked snapshots (wasm),
+    unchanged. CONSEQUENCE (deliberate): a body that mutates the map iterates
+    the ENTRY-TIME snapshot — matching the wasm self-host backend, but NOT
+    native, which iterates the live map (`for (k,v)` + insert-in-body sees new
+    entries natively). The old register behaviour (live until a grow, then a
+    stale frozen buffer) was neither, and with owned grow it would have been a
+    UAF; snapshot is the only memory-safe choice short of counted reads
+    (slice 4). Expression-position `m.keys().len()` on a scalar column now
+    allocates a copy nobody frees (previously a free alias read) — a bounded
+    sound leak, same class as other unswept expression temps.
+  - REMAINING known hole (pre-existing, unchanged in kind): type-tag-derived
+    gating means a map viewed through a GENERIC signature (`Map[K, V]`) reads
+    its columns as pointer-ish (flag 1 alias, no owncols) while a concrete
+    i32/i32 view of the SAME map snapshots + owned-grows. A keys() alias taken
+    under the generic view that outlives the call while concrete code grows
+    the map can dangle — the same uncounted-alias root the correction entry
+    names; counted reads (slice 4) is the real fix. No in-tree code hits this
+    (the compiler sources use no keys()/values() at all).
+  Tests: TestSelfHostMapKeysSnapshotIRX86_64 (7 cases: snapshot semantics
+  across a grow, i32/i32 grow-churn ABSOLUTE flatness ≤4 KB/2000 builds,
+  keys()-taken churn flatness + underflow==0, mutate-during-iteration
+  snapshot + grow, for-(k,v) churn flatness, break-path release, mixed
+  i32/string-value map balance) + TestSelfHostMapKeysSnapshotIRArm64 (qemu,
+  4 cases) + TestSelfHostMapKeysSnapshotWasmIR (4 cases incl. the for-(k,v)
+  snapshot release, which was a per-loop wasm leak before). FALLOUT: the
+  TestSelfHostMapKsReclaim{IRX86_64,IRArm64} differential-flatness legs used a
+  Map[i32, i32] baseline precisely BECAUSE it shared the grow floor — now it
+  is flat, so those baselines moved to a LITERAL-keyed Map[string, i32] (same
+  buffer shape, still leak-only grow; verified the differential cancels
+  again). Gotcha found on the way: an [i32, boolean] annotation NORMALIZES to
+  "Map[i32, i32]" in the type tag before map_owncols sees it, so
+  boolean-valued i32-keyed maps are owned too (consistent — their
+  keys()/values() snapshot off the same normalized tag). Refs #4353 #4451.

@@ -201,6 +201,11 @@ pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 124 || r.ops[i].kind_tag == 125 || r.ops[i].kind_tag == 126) { return true; }  // map_new, map_set, map_len
+            // map_keys / map_values call $__fern_map_keys / $__fern_map_values
+            // (the wasm snapshot helpers), so they need the map runtime even in
+            // a module that never constructs a map (e.g. a keys() read on a
+            // map param). #4353.
+            if (r.ops[i].kind_tag == 131 || r.ops[i].kind_tag == 132) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -1692,10 +1697,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // reclaim rather than leak by one, #4353 wasm bug 2). A consume implies
             // its column is a pointer; an ALIASED key/value stays consume=0 so the
             // map retains and the source local's own sweep balances the extra ref.
+            // Bit tests (width % 2 / width / 2 % 2), not equality: width bit 2 is
+            // the register-only owncols flag (#4353 grow-leak) — wasm ignores it
+            // (its map already frees old buffers on grow), but a set bit 2 must
+            // not stop bits 0/1 from being read.
             var vcons: string = "0";
-            if (o.width == 1 || o.width == 3) { vcons = "1"; }
+            if (o.width % 2 == 1) { vcons = "1"; }
             var kcons: string = "0";
-            if (o.width == 2 || o.width == 3) { kcons = "1"; }
+            if ((o.width / 2) % 2 == 1) { kcons = "1"; }
             out = out + "    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    call $__fern_map_set\n";
         } else if (o.kind_tag == 126) {  // map_len
             // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
