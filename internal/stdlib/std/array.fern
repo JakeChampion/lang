@@ -1100,6 +1100,38 @@ pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
     return Some(best);
 }
 
+// `max_index(xs)` / `min_index(xs)` — the INDEX of the largest / smallest
+// element under the element type's `Ord` ordering, as `Option[i32]` (`None`
+// for an empty array). The index-returning companions to `core/cmp`'s
+// value-returning `max_of` / `min_of`: use these when you need the position
+// (e.g. to look the element up in a parallel array, or to remove it). Ties keep
+// the FIRST extremal index — a strict improvement (`> 0` / `< 0` from `.cmp`)
+// only replaces. The `T: cmp.Ord` bound monomorphises the compare per element
+// type (scalar for `i32`, lexicographic for `string`); the return is
+// `Option[i32]` regardless of `T`.
+pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
+    if (xs.len() == 0) { return None; }
+    var best: i32 = 0;
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (xs[i].cmp(xs[best]) > 0) { best = i; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `min_index` is `max_index`'s mirror: the index of the smallest element.
+pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
+    if (xs.len() == 0) { return None; }
+    var best: i32 = 0;
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (xs[i].cmp(xs[best]) < 0) { best = i; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
 // `max_by(xs, cmp)` — `Some` of the element that is greatest under the
 // comparator `cmp` (same three-way convention as `sort_by`: `cmp(a, b)` < 0
 // when `a` orders before `b`), or `None` when empty. The comparator form of
@@ -1855,6 +1887,11 @@ pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean { return cmp.is_sorted(x
 // assuming `xs` is sorted ascending. O(log n). The method form of
 // array.binary_search.
 pub function (xs: T[]) binary_search[T: cmp.Ord](target: T): Option[i32] { return binary_search(xs, target); }
+
+// `xs.max_index()` / `xs.min_index()` — index of the largest / smallest element
+// by `Ord` (first on a tie), `None` when empty.
+pub function (xs: T[]) max_index[T: cmp.Ord](): Option[i32] { return max_index(xs); }
+pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] { return min_index(xs); }
 
 // `xs.equal(other)` — structural element-wise equality (same length and
 // equal elements at every index). The method form of array.equal.

@@ -871,6 +871,28 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_min_max_index_test.fern` covers std/array's
+// max_index / min_index[T: cmp.Ord] (free + method forms): the INDEX of the
+// largest / smallest element by Ord → Option[i32] (None on empty, first on a
+// tie). i32 cases (single / empty / all-equal) on interp + the self-host x86-64
+// + arm64 gates. STRING-element min/max_index is native-differential-only: it
+// compares two array elements (xs[i].cmp(xs[best])), and that element-vs-element
+// string compare trips the self-host compiler. The Go-side TestArrayMinMaxIndex
+// pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerArrayMinMaxIndexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_min_max_index_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array min/max index", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_binary_search_test.fern` covers std/array's
 // binary_search[T: cmp.Ord] (free + method forms): O(log n) search of an
 // ascending-sorted array → Option[i32]. Found (first/middle/last), absent
