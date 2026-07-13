@@ -2082,6 +2082,25 @@ func TestRunnerI64RootsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/i64_intdiv_test.fern` covers std/i64's is_multiple_of,
+// next_power_of_2 (capped at 2^62, 0 above), ceil_div, and log2_floor
+// (halving-count, since i64 has no leading_zeros) — scalar integer helpers
+// ported from std/i32. On the interp gate and both self-host gates; the Go-side
+// TestI64Intdiv pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerI64IntdivExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_intdiv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 intdiv", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

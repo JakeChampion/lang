@@ -57,7 +57,11 @@ Receiver methods on i32 / byte values.
   `clamp`, `pow`, `gcd`, `lcm`
 - **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact
   into the i64 range), `is_power_of_2` (`n & (n-1)` bit trick),
-  `is_perfect_square` (`sqrt_floor(n)² == n`)
+  `is_perfect_square` (`sqrt_floor(n)² == n`), `next_power_of_2`
+  (smallest power of two `>= n`; caps at 2^62, returns 0 above),
+  `log2_floor` (`floor(log2 n)`, `-1` for `n <= 0`)
+- **Integer division:** `is_multiple_of(d)` (`d == 0` → false),
+  `ceil_div(d)` (round toward +∞; `d <= 0` → 0)
 - **Parity:** `is_even`, `is_odd`
 - **Sign:** `signum` (-1/0/1), `is_positive`, `is_negative`, `is_zero`
 - **Range:** `is_in_range` (half-open `[lo, hi)`), `is_between`
