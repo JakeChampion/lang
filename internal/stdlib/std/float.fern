@@ -303,6 +303,29 @@ pub function (x: f64) clamp(lo: f64, hi: f64): f64 {
     return lo.max(x.min(hi));
 }
 
+// `clamp01(x)` — restrict to the unit interval `[0, 1]`, the common case for
+// colour channels, probabilities, and interpolation weights. Shorthand for
+// `clamp(0, 1)`; NaN propagates like `clamp`.
+pub function (x: f64) clamp01(): f64 {
+    return (0.0).max(x.min(1.0));
+}
+
+// `abs_diff(a, b)` — the absolute difference `|a - b|`, the float sibling of the
+// i32 / i64 helpers. NaN in either operand propagates.
+pub function (a: f64) abs_diff(b: f64): f64 {
+    var d: f64 = a - b;
+    if (d < 0.0) { return 0.0 - d; }
+    return d;
+}
+
+// `mul_add(a, b, c)` — `a * b + c`. A convenience for the common
+// multiply-accumulate step; note this is NOT a hardware-fused FMA — the
+// intermediate `a * b` rounds before the add, so it is exactly `a * b + c` in
+// f64 arithmetic, not the single-rounding `fma`.
+pub function (a: f64) mul_add(b: f64, c: f64): f64 {
+    return a * b + c;
+}
+
 // `signum(x)` — `1.0` if positive, `-1.0` if negative, the value itself
 // (`0.0` / `-0.0`) at zero, and `NaN` for `NaN`. Matches Rust's `f64::signum`
 // EXCEPT at zero, where Rust returns `±1.0` on signed zeros; here signed zero
@@ -422,6 +445,17 @@ pub function (x: f32) max(y: f32): f32 {
 }
 pub function (x: f32) clamp(lo: f32, hi: f32): f32 {
     return lo.max(x.min(hi));
+}
+pub function (x: f32) clamp01(): f32 {
+    return (0.0 as f32).max(x.min(1.0 as f32));
+}
+pub function (a: f32) abs_diff(b: f32): f32 {
+    var d: f32 = a - b;
+    if (d < (0.0 as f32)) { return (0.0 as f32) - d; }
+    return d;
+}
+pub function (a: f32) mul_add(b: f32, c: f32): f32 {
+    return a * b + c;
 }
 
 pub function (x: f32) signum(): f32 {

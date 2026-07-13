@@ -125,7 +125,9 @@ Receiver methods on i32 / byte values.
 - **IEEE-754 classification:** `is_nan`, `is_finite`, `is_inf`
 - **Combinators:** `min(y)`, `max(y)`, `clamp(lo, hi)` — NaN
   propagates (any NaN input → NaN output), matching Go's
-  `math.Min` / `math.Max` semantics
+  `math.Min` / `math.Max` semantics; `clamp01` (restrict to
+  `[0, 1]`), `abs_diff(b)` (`|a - b|`), `mul_add(b, c)`
+  (`a*b + c`; not a hardware-fused FMA — the multiply rounds first)
 - **Convenience:** `signum` (`±1.0`, `0.0` at zero, NaN-preserving),
   `lerp(b, t)` (precise `a + (b - a) * t` linear interpolation;
   `t` outside `[0, 1]` extrapolates), `recip` (`1 / x`),

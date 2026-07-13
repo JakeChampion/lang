@@ -1,0 +1,46 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_clamp01_absdiff_muladd_test.fern — pure-Fern coverage of
+// std/float.clamp01 / abs_diff / mul_add: three purely-arithmetic helpers
+// (restrict to [0,1]; absolute difference |a-b|; a*b+c, not a fused FMA). No
+// libm primitive, so unlike the transcendentals these lower on all four
+// backends. Both f64 and f32. The Go-side TestFloatClamp01AbsDiffMulAdd pins
+// these across all four backends; this is the migration-shaped companion.
+
+function test_clamp01(): test.TestOutcome {
+    if (!float_near((0.5).clamp01(), 0.5)) { return test.fail("0.5 in range"); }
+    if (!float_near((0.0 - 0.3).clamp01(), 0.0)) { return test.fail("below 0"); }
+    return test.assert_eq_f64_near((1.7).clamp01(), 1.0, 0.0001);
+}
+
+function test_abs_diff(): test.TestOutcome {
+    if (!float_near((3.0).abs_diff(7.0), 4.0)) { return test.fail("3,7"); }
+    if (!float_near((7.0).abs_diff(3.0), 4.0)) { return test.fail("7,3 symmetric"); }
+    return test.assert_eq_f64_near((0.0 - 2.0).abs_diff(2.0), 4.0, 0.0001);
+}
+
+function test_mul_add(): test.TestOutcome {
+    if (!float_near((3.0).mul_add(4.0, 5.0), 17.0)) { return test.fail("3*4+5"); }
+    return test.assert_eq_f64_near((2.0).mul_add(0.0 - 1.5, 1.0), 0.0 - 2.0, 0.0001);
+}
+
+function test_f32(): test.TestOutcome {
+    if (!float_near((1.7 as f32).clamp01() as f64, 1.0)) { return test.fail("clamp01 f32"); }
+    if (!float_near((3.0 as f32).abs_diff(7.0 as f32) as f64, 4.0)) { return test.fail("abs_diff f32"); }
+    return test.assert_eq_f64_near((3.0 as f32).mul_add(4.0 as f32, 5.0 as f32) as f64, 17.0, 0.001);
+}
+
+function float_near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float clamp01/abs_diff/mul_add");
+    r = r.it("clamp01",   test_clamp01());
+    r = r.it("abs_diff",  test_abs_diff());
+    r = r.it("mul_add",   test_mul_add());
+    r = r.it("f32",       test_f32());
+    return r.finish();
+}
