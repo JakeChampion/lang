@@ -533,6 +533,25 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerStringParseRadixExamplePasses gates std/string.parse_int_radix(base)
+// — the method form of the arbitrary-base (2..36) i32 parser — under the
+// interpreter. Also on the self-host x86-64 + arm64 gates (Option[i32] return,
+// uses assert_true); the Go-side TestStringParseIntRadix pins native
+// compilation on all four backends. Passing → exit 0.
+func TestRunnerStringParseRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_parse_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string parse_int_radix", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // TestRunnerStringPartitionExamplePasses gates std/string.partition /
 // rpartition — the Python-style three-way (head, sep, tail) split that keeps the
 // separator — under the interpreter. Also on the self-host x86-64 + arm64 gates

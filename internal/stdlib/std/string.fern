@@ -2453,6 +2453,16 @@ pub function (s: string) parse_bin_int(): Option[i32] {
     return int.parse_int_radix(s, 2);
 }
 
+// `s.parse_int_radix(base)` — parse an i32 in an arbitrary `base` (2..36),
+// digits `0-9a-z` (case-insensitive), with an optional leading `+`/`-`. The
+// general form behind `parse_int` (base 10) / `parse_hex_int` (16) /
+// `parse_bin_int` (2) — reach for it to read base-36 ids, octal (`base 8`), or
+// any other radix. `None` on an out-of-range base, empty input, a lone sign, or
+// any digit `>= base`.
+pub function (s: string) parse_int_radix(base: i32): Option[i32] {
+    return int.parse_int_radix(s, base);
+}
+
 // `s.parse_float()` — decimal f32 parser. Grammar:
 //   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
 // At least one of integer or fraction digits required;
