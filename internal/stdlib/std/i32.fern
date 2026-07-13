@@ -723,6 +723,16 @@ pub function (n: i32) to_oct(): string {
     return int.int_to_string_radix(n, 8);
 }
 
+// `(n: i32) to_string_radix(base)` — render `n` in an arbitrary `base` (2..36),
+// digits `0-9a-z` (lowercase), signed (a negative `n` gets a leading `-`). The
+// general form behind `to_binary` (2) / `to_oct` (8) / `to_hex` (16) — reach for
+// it for base-36 ids or any other radix. The exact write-side inverse of
+// `string.parse_int_radix`: `n.to_string_radix(b).parse_int_radix(b) == Some(n)`
+// for any valid base. An out-of-range base (< 2 or > 36) yields `""`.
+pub function (n: i32) to_string_radix(base: i32): string {
+    return int.int_to_string_radix(n, base);
+}
+
 
 // `(n: i32) digits()` — number of decimal digits in n. The
 // minus sign isn't counted. Zero has 1 digit. Useful for
