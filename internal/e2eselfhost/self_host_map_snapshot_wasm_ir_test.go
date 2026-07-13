@@ -141,6 +141,68 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+		// #4353 SLICE 3 (string columns): iterating a string-KEYED map with
+		// `for k in m.keys()` now takes a RETAINING snapshot ($__fern_map_keys_inc)
+		// released deep after the loop ($__fern_arr_dec_ptr) — before slice 3
+		// the wasm snapshot leaked its buffer every loop AND the string boxes
+		// were double-counted. Churn must be FLAT vs a no-iteration baseline,
+		// and __rc_underflow()==0 proves the deep release never over-frees a
+		// map-owned key. The keys must still all be seen (correctness).
+		{"map-string-keys-iter-churn-flat-wasm", `function build_iter(n: i32): i32 {
+    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    var seen: i32 = 0;
+    for k in m.keys() { seen = seen + k.len(); }
+    return seen;
+}
+function build_noiter(n: i32): i32 {
+    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    return m.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
+    var s0: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 500) { acc = acc + build_iter(j); j = j + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 500) { acc = acc + build_noiter(k); k = k + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+		// String-VALUED map iterated via `for (k, v) in m`: the value column
+		// snapshots+retains and deep-releases too. Same flatness + underflow
+		// contract; the values must be seen (each is length 2).
+		{"map-string-values-iter-churn-flat-wasm", `function build_iter(n: i32): i32 {
+    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    var seen: i32 = 0;
+    for (k, v) in m { seen = seen + v.len(); }
+    return seen;
+}
+function build_noiter(n: i32): i32 {
+    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    return m.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
+    var s0: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 500) { acc = acc + build_iter(j); j = j + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 500) { acc = acc + build_noiter(k); k = k + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
 	}
 
 	for _, tc := range cases {

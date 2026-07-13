@@ -1080,20 +1080,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
-    // __fern_str_free(box) — reclaim a FRESH, sole-owned HEAP string (#2649
-    // string RC). A self-host string is a header-LESS 16-byte box {data@0, len@8}
-    // whose data buffer was __fern_alloc'd (bump/freelist), so it carries no rc
-    // word — it cannot ride __fern_arr_dec. This helper frees BOTH the data buffer
-    // (size class = ceil(len/8) words, matching the __fern_alloc(len) that made it)
-    // AND the 16-byte box (class 2), returning each to the size-classed freelist.
-    // Called ONLY on compile-time-proven fresh, non-escaping, non-aliased heap
-    // string temporaries (irlower slot_is_reclaimable_str), so single-ownership —
-    // and therefore freeing exactly once — is guaranteed by the emit site (a cow-
-    // guarded rebind free + the exit sweep), never here: there is no rc word to
-    // detect a double free, unlike the array path. A literal (data in .rodata) is
-    // never passed (expr fresh-str classifier excludes it), so the data-buffer
-    // free never writes read-only memory. len==0 / large-tier buffers leak (sound).
-    // Stack-arg ABI (box at 8(%rsp)); %rax=box, %rcx/%rdx/%rsi/%r8 scratch.
+    // __fern_str_free(box) — RC-AWARE release of a HEAP string box (#2649
+    // Option A rc-headered string). A self-host heap string is the 24-byte
+    // block __fern_str_box builds: {rc@base, data@base+8, len@base+16}, with
+    // box = base+8 (so box[0]=data, box[8]=len, box-8=rc). This helper is the
+    // per-element step of __fern_str_arr_free and the rc-aware analogue of
+    // __fern_arr_dec: rc<0 = immortal/literal (skip), rc>1 = shared (dec, keep),
+    // rc==1 = sole owner (free the data buffer at size-class ceil(len/8) words
+    // AND the 24-byte box at class 3), rc==0 = double free (underflow counter,
+    // no heap corruption). So it is SAFE to call on any string box — including a
+    // map column element that other owners still reference (it only decs) — not
+    // just a compile-time-proven-unique temp. A literal's data lives below
+    // heap_base and is guarded out of the data-buffer free; len==0 / large-tier
+    // buffers leak (sound). Stack-arg ABI (box at 8(%rsp)); %rax=box, scratch
+    // %rcx/%rdx/%rsi/%r8. (The former "header-less, no rc word, unique-only"
+    // contract described the pre-#2649 layout and was stale — the code below
+    // reads/decrements rc at box-8 and matches __fern_str_box's 24-byte block.)
     s = s.write("__fn___fern_str_free:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // box
     s = s.write("    testq %rax, %rax\n");
@@ -3122,6 +3124,53 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_snapshot_col, .-__fern_map_snapshot_col\n");
 
+    // __fern_map_snapshot_col_str(%rdi = column buffer) -> %rax = fresh rc=1
+    // copy with each STRING element retained (#4353 slice 3). Same box shape
+    // as __fern_map_snapshot_col; after the bit copy, each element is
+    // __fn___fern_rc_inc'd (its guards skip NULL / SSO-tagged / low-address /
+    // static-literal values), so the snapshot co-owns every string and the
+    // deep __fern_str_arr_free release (rc-aware per-element __fern_str_free,
+    // dec each element, then the buffer) balances exactly. The map keeps its
+    // own references — it stays a co-owner, exactly like an element read
+    // through m.get() that gets stored.
+    s = s.write(".globl __fern_map_snapshot_col_str\n");
+    s = s.write(".type __fern_map_snapshot_col_str, @function\n");
+    s = s.write("__fern_map_snapshot_col_str:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");                // dest (callee-saved across inc calls)
+    s = s.write("    subq $8, %rsp\n");             // 16-byte align pad (rbp+3 pushes = odd)
+    s = s.write("    movq %rdi, %rbx\n");           // src column
+    s = s.write("    movq (%rbx), %r12\n");         // len
+    s = s.write("    movq %r12, %rdi\n");
+    s = s.write("    call __fern_arr_box\n");       // -> data ptr (cap=len, rc=1)
+    s = s.write("    movq %r12, (%rax)\n");         // len = src len
+    s = s.write("    movq %rax, %r13\n");           // dest
+    s = s.write("    movq $1, %rcx\n");             // slot index 1..len
+    s = s.write(".Lmscs_copy:\n");
+    s = s.write("    cmpq %r12, %rcx\n");
+    s = s.write("    jg .Lmscs_done\n");
+    s = s.write("    movq (%rbx,%rcx,8), %rdx\n");
+    s = s.write("    movq %rdx, (%r13,%rcx,8)\n");
+    s = s.write("    pushq %rcx\n");                // save index across the call
+    s = s.write("    pushq %rdx\n");                // stack arg for __fn___fern_rc_inc (arg at 8(%rsp)); rsp aligned
+    s = s.write("    call __fn___fern_rc_inc\n");   // retain element (guards skip literals/SSO/null)
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    jmp .Lmscs_copy\n");
+    s = s.write(".Lmscs_done:\n");
+    s = s.write("    movq %r13, %rax\n");           // return dest
+    s = s.write("    addq $8, %rsp\n");             // drop align pad
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_map_snapshot_col_str, .-__fern_map_snapshot_col_str\n");
+
     // __fern_map_set (transcribed from asm.fern for the IR map path).
     s = s.write(".globl __fern_map_set\n");
     s = s.write(".type __fern_map_set, @function\n");
@@ -4192,9 +4241,10 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_open_fd",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
-        // scalar keys()/values() snapshot (#4353): a library module's kind
-        // 131/132 flag-0 read calls this; the entry owns the definition.
-        "__fern_map_snapshot_col",
+        // scalar / string keys()/values() snapshots (#4353): a library
+        // module's kind 131/132 flag-0/flag-2 read calls these; the entry
+        // owns the definitions.
+        "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
         "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
@@ -4398,7 +4448,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         // map_keys / map_values with a SCALAR column (i32_imm 0, #4353) call
         // __fern_map_snapshot_col, which lives in the maps runtime block; a
         // pointer-column read (i32_imm 1) is a raw load and needs nothing.
-        if ((dopop.kind_tag == 131 || dopop.kind_tag == 132) && dopop.i32_imm == 0) { s = s.need("maps"); }
+        if ((dopop.kind_tag == 131 || dopop.kind_tag == 132) && dopop.i32_imm != 1) { s = s.need("maps"); }
         if (ir.op_allocates(dopop.kind_tag)) { s = s.need("heap"); }
         dop = dop + 1;
     }
@@ -4978,14 +5028,22 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // historical raw-buffer alias (slice 3).
             if (o.i32_imm == 0) {
                 s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
+            } else if (o.i32_imm == 2) {
+                // String column (#4353 slice 3): snapshot + per-element
+                // rc-inc, so the read owns its strings; the SARR post-loop
+                // release deep-frees the copy via __fern_str_arr_free.
+                s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col_str\n    pushq %rax\n");
             } else {
                 s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 132) {  // map_values
             // parallel-array map: values[] pointer at box+8. Same scalar-column
-            // snapshot / pointer-column alias split as map_keys above.
+            // snapshot / string-column retain-snapshot / pointer-column alias
+            // split as map_keys above.
             if (o.i32_imm == 0) {
                 s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
+            } else if (o.i32_imm == 2) {
+                s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col_str\n    pushq %rax\n");
             } else {
                 s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
             }

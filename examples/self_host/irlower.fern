@@ -6765,15 +6765,29 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // m.keys()` binding is is_arr-marked and exit-swept,
                             // which reclaims the fresh copy — NOT the map's live
                             // buffer, as the historical alias made it). 1 =
-                            // string/other column → raw-buffer alias (slice 3).
+                            // string/other column → raw-buffer alias.
+                            // NOTE (#4353 slice 3): the string SNAPSHOT (flag 2)
+                            // is emitted ONLY at the `for`-loop positions, where
+                            // the hidden column local is deep-released right
+                            // after the loop (self-balanced). At this
+                            // EXPRESSION / `var ks =` position there is no such
+                            // release, so a retaining snapshot would leak the
+                            // copy + its per-element incs every call — clamp
+                            // string columns back to the raw-buffer alias here
+                            // (unchanged behaviour; a SARR-credited var snapshot
+                            // is a later follow-up).
                             var mks: LowerState = lower_expr(fa.obj, s);
                             if (!mks.ok) { return mks; }
-                            return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys")));
+                            var mks_kf: i32 = map_kv_elem_flag(mtype, "keys");
+                            if (mks_kf == 2) { mks_kf = 1; }
+                            return mks.emit(ir.op_map_keys(mks_kf));
                         }
                         if (fa.field == "values" && c.args.len() == 0) {
                             var mvs: LowerState = lower_expr(fa.obj, s);
                             if (!mvs.ok) { return mvs; }
-                            return mvs.emit(ir.op_map_values(map_kv_elem_flag(mtype, "values")));
+                            var mvs_vf: i32 = map_kv_elem_flag(mtype, "values");
+                            if (mvs_vf == 2) { mvs_vf = 1; }
+                            return mvs.emit(ir.op_map_values(mvs_vf));
                         }
                         if (fa.field == "iter" && c.args.len() == 0) {
                             // m.iter() -> a fresh MapIter box [map_ptr@0, cursor@8].
@@ -12120,6 +12134,19 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
                 mkf = mkf.emit(ir.op_const_i32(0));
                 mkf = mkf.emit(ir.op_store_local(mkisslot));
             }
+            // String column (flag 2, #4353 slice 3): the hidden local holds a
+            // fresh snapshot whose elements were rc-inc'd on copy, so the
+            // release is the DEEP __fern_str_arr_free (rc-aware per-element
+            // __fern_str_free — dec each element, free at rc==1 — then the
+            // buffer), the exact inverse of __fern_map_snapshot_col_str. Same
+            // break/early-return caveats as the scalar arm above.
+            if (mki_flag == 2) {
+                mkf = mkf.emit(ir.op_load_local(mkisslot));
+                mkf = mkf.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                mkf = mkf.emit(ir.op_drop());
+                mkf = mkf.emit(ir.op_const_i32(0));
+                mkf = mkf.emit(ir.op_store_local(mkisslot));
+            }
             return mkf;
         }
     }
@@ -12311,9 +12338,26 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             fm = fm.emit(ir.op_const_i32(0));
             fm = fm.emit(ir.op_store_local(ksslot));
         }
+        // String KEY column (flag 2, #4353 slice 3): deep-release the retaining
+        // snapshot (__fern_str_arr_free — per-element rc-aware free + buffer).
+        if (mkv_kflag == 2) {
+            fm = fm.emit(ir.op_load_local(ksslot));
+            fm = fm.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+            fm = fm.emit(ir.op_drop());
+            fm = fm.emit(ir.op_const_i32(0));
+            fm = fm.emit(ir.op_store_local(ksslot));
+        }
         if (mkv_vflag == 0) {
             fm = fm.emit(ir.op_load_local(vsslot));
             fm = fm.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            fm = fm.emit(ir.op_drop());
+            fm = fm.emit(ir.op_const_i32(0));
+            fm = fm.emit(ir.op_store_local(vsslot));
+        }
+        // String VALUE column (flag 2): same deep-release.
+        if (mkv_vflag == 2) {
+            fm = fm.emit(ir.op_load_local(vsslot));
+            fm = fm.emit(ir.op_call_direct("__fern_str_arr_free", 1));
             fm = fm.emit(ir.op_drop());
             fm = fm.emit(ir.op_const_i32(0));
             fm = fm.emit(ir.op_store_local(vsslot));
@@ -30610,9 +30654,18 @@ function map_owncols(mty: string): boolean {
 function map_kv_elem_flag(mty: string, field: string): i32 {
     if (field == "keys") {
         if (map_key_kind_of(mty) == 1) { return 0; }
+        // #4353 slice 3: a STRING column snapshots with per-element retain
+        // (flag 2) — __fern_map_snapshot_col_str copies the column and
+        // rc-incs each element (string boxes are rc-headered: __fern_str_box
+        // builds {rc,data,len} with box-8 the rc word), so the read owns its
+        // strings and the SARR deep release (__fern_str_arr_free, rc-aware
+        // per-element __fern_str_free) balances exactly. Flag 1 (raw alias)
+        // remains only for i64/f64/struct/generic columns.
+        if (map_key_of(mty) == "string") { return 2; }
         return 1;
     }
     if (map_value_of(mty) == "i32") { return 0; }
+    if (map_value_of(mty) == "string") { return 2; }
     return 1;
 }
 

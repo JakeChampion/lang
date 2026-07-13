@@ -8174,6 +8174,45 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_snapshot_col, .-__fern_map_snapshot_col\n");
 
+        // __fern_map_snapshot_col_str(x0 = column buffer) → x0 = fresh rc=1
+        // copy with each STRING element retained (#4353 slice 3 — the arm64
+        // mirror of asm_ir's x86-64 helper). After the bit copy each element
+        // is __fn___fern_rc_inc'd (its guards skip NULL / SSO-tagged /
+        // low-address / static-literal values), so the snapshot co-owns
+        // every string and the deep __fern_str_arr_free release (rc-aware
+        // per-element __fern_str_free, then the buffer) balances exactly.
+        s = s.write(".globl __fern_map_snapshot_col_str\n");
+        s = s.write(".type __fern_map_snapshot_col_str, %function\n");
+        s = s.write("__fern_map_snapshot_col_str:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");             // src column
+        s = s.write("    ldr x20, [x19]\n");          // len
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __fern_arr_box\n");       // -> data ptr (cap=len, rc=1)
+        s = s.write("    str x20, [x0]\n");           // len = src len
+        s = s.write("    mov x21, x0\n");             // dest (callee-saved across incs)
+        s = s.write("    mov x22, #1\n");             // slot index 1..len
+        s = s.write(".Lmscs_copy:\n");
+        s = s.write("    cmp x22, x20\n");
+        s = s.write("    b.gt .Lmscs_done\n");
+        s = s.write("    ldr x10, [x19, x22, lsl #3]\n");
+        s = s.write("    str x10, [x21, x22, lsl #3]\n");
+        s = s.write("    str x10, [sp, #-16]!\n");    // stack arg for __fn___fern_rc_inc
+        s = s.write("    bl __fn___fern_rc_inc\n");   // retain element (guards skip literals/SSO/null)
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lmscs_copy\n");
+        s = s.write(".Lmscs_done:\n");
+        s = s.write("    mov x0, x21\n");             // return dest
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_snapshot_col_str, .-__fern_map_snapshot_col_str\n");
+
         // __fern_map_set(x0 = mapbox, x1 = key, x2 = val) → mapbox.
         // Updates in place on a key hit, else appends.
         s = s.write(".globl __fern_map_set\n");

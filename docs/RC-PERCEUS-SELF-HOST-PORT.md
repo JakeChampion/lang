@@ -4729,39 +4729,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   keys()/values() snapshot off the same normalized tag). Refs #4353 #4451.
 
 - 2026-07-13: **#4353 slice 3 (string-column keys()/values() snapshot) —
-  ATTEMPTED, PARKED on a string-layout trap. Read this before implementing.**
-  The obvious port of the slice-1 shape (a `__fern_map_snapshot_col_str` that
-  copies the column and `__fn___fern_rc_inc`s each element, flag 2 on
-  op_map_keys/op_map_values, and a deep `__fern_str_arr_free` post-loop
-  release in the shared irlower `for k in m.keys()` lowering) was written and
-  compiled clean, then REVERTED before landing because the register backends'
-  string layout makes its soundness unproven:
-  - `__fern_str_free`'s contract comment (asm_ir.fern) says a self-host
-    string is a **header-LESS 16-byte box {data@0, len@8}** with "no rc word
-    to detect a double free", freeing UNCONDITIONALLY — under that layout,
-    per-element `rc_inc(elem)` writes to `elem-8` (another object's memory:
-    corruption) and the deep release's per-element `__fern_str_free` frees
-    the MAP's still-owned keys (use-after-free).
-  - But irlower's `__fern_str_arr_free` comment calls the same per-element
-    step "rc==1-gated / rc-aware", and emitted binaries carry `.4byte
-    0x80000000` immortal-rc headers before literal string DATA — evidence of
-    an rc word at data-8 for string DATA buffers at least.
-  - So the open question that gates slice 3 on the register backends: **what
-    exactly do map COLUMN slots hold — the headerless {data,len} box, or an
-    rc-headered pointer — and is `elem-8` a real rc word for every value a
-    column can carry** (fresh built strings, literals, SSO forms)? Answer it
-    by reading the map_set key/value store path + `__fern_str_arr_free`'s
-    actual element loop (not the comments — they disagree), and the
-    RC-STRINGS-PLAN / SSO docs for which layout era is current.
-  - The WASM half is sound on its own (wasm strings are single inline
-    rc-headered blocks; `$__fern_map_snapshot` exists; the retaining variant
-    is ~15 lines next to it) — but the post-loop release choice lives in the
-    SHARED irlower lowering, so it cannot land wasm-only without a
-    backend-conditional op or flag semantics, which defeats the shared-IR
-    design. Land all backends together once the layout question is answered.
-  - Everything else from the attempt is mechanical and can be re-applied
-    verbatim: flag 2 derivation in `map_kv_elem_flag` (string key/value
-    columns), kind-131/132 flag-2 branches in asm_ir / asm_arm64_ir /
-    wasm_ir, the `__fern_map_snapshot_col_str` x86+arm64 helpers (copy loop +
-    guarded per-element retain), `$__fern_map_snapshot_inc` on wasm, the
-    flag-2 deep post-loop release, and the globls registration. Refs #4353.
+  LANDED.** The earlier same-day "parked on a string-layout trap" entry was
+  based on a STALE comment, now corrected. The layout question it posed is
+  answered: `__fern_str_box` (asm_ir.fern) allocates a **24-byte** block
+  `{rc@base, data@base+8, len@base+16}` and returns `box = base+8`, so
+  `box-8` IS a real rc word; `__fern_str_free`'s CODE reads/decrements it
+  (rc<0 immortal→skip, rc>1→dec, rc==1→free, rc==0→underflow) — it is
+  rc-AWARE, not the "header-less, unique-only, unconditional-free" its former
+  contract comment claimed (that comment described the pre-#2649 layout and
+  was fixed in this change). So per-element `rc_inc` on a column string
+  correctly retains it, and the deep `__fern_str_arr_free` release only decs
+  a still-shared (map-owned) key/value — no corruption, no double-free. The
+  landed shape:
+  - `map_kv_elem_flag` returns **flag 2** for a string key/value column
+    (0 = scalar i32, 1 = i64/f64/struct/generic alias, 2 = string).
+  - The register backends snapshot flag-2 columns into a fresh rc=1 array via
+    the new `__fern_map_snapshot_col_str` (x86 in asm_ir.fern, arm64 in
+    asm_arm64.fern) — a bit copy of the box pointers, then `__fn___fern_rc_inc`
+    on each (its guards skip null / SSO / literal / immortal). Registered in
+    `emit_runtime_globls` for the per-module link. wasm gets the retaining
+    `$__fern_map_snapshot_inc` / `_keys_inc` / `_values_inc` next to the
+    plain snapshot.
+  - The SHARED irlower `for k in m.keys()` / `for (k, v) in m` loop lowering
+    deep-releases a flag-2 hidden column local right after the loop via
+    `__fern_str_arr_free` (rc-aware per-element `__fern_str_free` then the
+    buffer) — the exact inverse of the retaining snapshot. Break paths land
+    after the release; an early `return` in the body skips it (bounded sound
+    leak, like every non-swept hidden temp), matching the scalar arm.
+  - SCOPE: the snapshot is emitted **only at the loop positions** (self-
+    balanced). The `var ks = m.keys()` / expression `m.keys().len()` sites
+    clamp string columns back to the raw-buffer ALIAS (flag 1) — a retaining
+    snapshot there would leak (no reclaim); unchanged behaviour, a SARR-
+    credited var snapshot is a later follow-up. The map still keeps leak-only
+    string column buffers (no owned-grow for string columns — that is the
+    separate slice-2-for-strings); map_free_ks/vs deep-free them at death,
+    disjoint from the snapshot copies.
+  - CONSEQUENCE (deliberate, matches wasm + native intent): a `for (k,v) in m`
+    body that mutates the map iterates the entry-time string snapshot. Also
+    CLOSES the wasm per-loop string-column snapshot leak (the snapshot was
+    non-retaining + leaked every loop before; now retained + deep-released).
+  - Tests: `map-string-keys-iter-churn-flat` + `map-string-values-iter-churn-flat`
+    on both `TestSelfHostMapKeysSnapshotIRX86_64` and `…WasmIR` (absolute
+    churn flatness vs a no-iteration baseline + `__rc_underflow()==0`). The
+    modload/load/heap-bump fixpoints stay byte-identical (the compiler's own
+    string maps use get/set, so the runtime additions don't perturb the
+    self-compile). Refs #4353.
