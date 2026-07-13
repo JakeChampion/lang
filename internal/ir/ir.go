@@ -14968,7 +14968,18 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	//   - overwriting index i must drop the OLD element there (it is being
 	//     replaced) and retain the NEW value if it is an alias.
 	// Scalar-element arrays keep the byte-identical straight-line path.
-	rcTracked := arrElemIsRcTracked(elemType)
+	//
+	// Gated on RcFreeEnabled (like the push-grow retain in emitArrayPush):
+	// free-off never walk-frees elements, so the shared-pointer copy is safe
+	// there and the plain helper keeps that baseline byte-identical. The gate
+	// is also load-bearing for LINKING: the old-element drop routes through
+	// dropFnNameFor (`__drop_enum_<E>` / `__drop_struct_<E>` / …), and the
+	// worklist that GENERATES those bodies only runs under RcFreeEnabled — an
+	// ungated call here left free-off builds of any `.with` on an
+	// rc-tracked-element array referencing an undefined symbol (first hit by
+	// std/regex's `RInst[]` `.with` patching: `__drop_enum_regex__RInst`
+	// undefined in every free-off fixture link, #4958's red lanes).
+	rcTracked := arrElemIsRcTracked(elemType) && ast.RcFreeEnabled
 	storeOp, storeWidth := arraySetStoreOp(elemType, b.ptrW)
 	idxHelper := "__arr_idx"
 	switch stride {
