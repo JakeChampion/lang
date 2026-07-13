@@ -99,7 +99,9 @@ Receiver methods on i32 / byte values.
   fractional digits (no trimming), rounded half away from zero.
 - **Math primitives** (on both f32 and f64; f32 wrappers
   promote to f64, apply, demote): `abs`, `floor`, `ceil`,
-  `round`, `trunc`, `fract` (signed fractional part
+  `round`, `round_to(digits)` (round to N decimal places, half
+  away from zero; negative `digits` round to tens/hundreds),
+  `trunc`, `fract` (signed fractional part
   `x - trunc(x)`), `sqrt`, `pow(y)`, `hypot(y)` (Euclidean
   length, overflow-safe), `log`, `exp`, `sin`, `cos`, `tan`.
   Routed through the checker-injected

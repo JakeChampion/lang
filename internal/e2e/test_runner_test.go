@@ -1980,6 +1980,26 @@ func TestRunnerFloatConvertExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_round_to_test.fern` covers std/float's round_to(digits)
+// — round to N decimal places, half away from zero (positive digits round the
+// fraction, negative digits round to tens/hundreds), f64 and f32. On the interp
+// gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near); the
+// Go-side TestFloatRoundTo pins native compilation on all four backends. Passing
+// → exit 0.
+func TestRunnerFloatRoundToExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_round_to_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float round_to", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
