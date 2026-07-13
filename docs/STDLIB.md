@@ -117,8 +117,11 @@ Receiver methods on i32 / byte values.
   `math.Min` / `math.Max` semantics
 - **Convenience:** `signum` (`±1.0`, `0.0` at zero, NaN-preserving),
   `lerp(b, t)` (precise `a + (b - a) * t` linear interpolation;
-  `t` outside `[0, 1]` extrapolates), `to_radians` / `to_degrees`
-  (degree↔radian conversion via a high-precision π)
+  `t` outside `[0, 1]` extrapolates), `recip` (`1 / x`),
+  `copysign(sign)` (magnitude of the receiver, sign of the argument;
+  `sign < 0` test, so `-0.0` reads positive), `midpoint(b)`
+  (overflow-safe halfway point `a*0.5 + b*0.5`), `to_radians` /
+  `to_degrees` (degree↔radian conversion via a high-precision π)
 
 ### `std/string`
 
