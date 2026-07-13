@@ -158,6 +158,45 @@ pub function (n: i64) bit_length(): i32 {
     return c;
 }
 
+// `to_string_radix(base)` — render `n` in an arbitrary `base` (2..36), digits
+// `0-9a-z` (lowercase), signed (a negative `n` gets a leading `-`); the wider
+// counterpart to std/i32's `to_string_radix`. The magnitude is taken as a u64
+// (unsigned negation, so i64::MIN's magnitude 2^63 renders correctly without
+// overflow) and divided down in `base`. An out-of-range base (< 2 or > 36)
+// yields `""`. The write-side inverse of parsing an i64 in that base.
+pub function (n: i64) to_string_radix(base: i32): string {
+    if (base < 2 || base > 36) { return ""; }
+    if (n == (0 as i64)) { return "0"; }
+    var neg: boolean = (n < (0 as i64));
+    var mag: u64 = n as u64;
+    if (neg) { mag = (0 as u64) - mag; }        // unsigned negation → magnitude
+    var b: u64 = base as u64;
+    // Worst case is 64 binary digits + sign; allocate slack.
+    var digits: u8[] = __alloc_u8(65);
+    var k: i32 = 0;
+    while (mag > (0 as u64)) {
+        var d: i32 = (mag % b) as i32;
+        digits = digits.with(k, int.__radix_char(d) as u8);
+        k = k + 1;
+        mag = mag / b;
+    }
+    var out_len: i32 = k;
+    if (neg) { out_len = k + 1; }
+    var buf: u8[] = __alloc_u8(out_len);
+    var bi: i32 = 0;
+    if (neg) {
+        buf = buf.with(0, 45 as u8);            // '-'
+        bi = 1;
+    }
+    var j: i32 = k - 1;
+    while (j >= 0) {
+        buf = buf.with(bi, digits[j]);
+        bi = bi + 1;
+        j = j - 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // === i64 saturating / checked arithmetic ===
 //
 // `saturating_*` clamps to i64::MAX / i64::MIN instead of
