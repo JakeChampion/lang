@@ -4727,3 +4727,41 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   "Map[i32, i32]" in the type tag before map_owncols sees it, so
   boolean-valued i32-keyed maps are owned too (consistent — their
   keys()/values() snapshot off the same normalized tag). Refs #4353 #4451.
+
+- 2026-07-13: **#4353 slice 3 (string-column keys()/values() snapshot) —
+  ATTEMPTED, PARKED on a string-layout trap. Read this before implementing.**
+  The obvious port of the slice-1 shape (a `__fern_map_snapshot_col_str` that
+  copies the column and `__fn___fern_rc_inc`s each element, flag 2 on
+  op_map_keys/op_map_values, and a deep `__fern_str_arr_free` post-loop
+  release in the shared irlower `for k in m.keys()` lowering) was written and
+  compiled clean, then REVERTED before landing because the register backends'
+  string layout makes its soundness unproven:
+  - `__fern_str_free`'s contract comment (asm_ir.fern) says a self-host
+    string is a **header-LESS 16-byte box {data@0, len@8}** with "no rc word
+    to detect a double free", freeing UNCONDITIONALLY — under that layout,
+    per-element `rc_inc(elem)` writes to `elem-8` (another object's memory:
+    corruption) and the deep release's per-element `__fern_str_free` frees
+    the MAP's still-owned keys (use-after-free).
+  - But irlower's `__fern_str_arr_free` comment calls the same per-element
+    step "rc==1-gated / rc-aware", and emitted binaries carry `.4byte
+    0x80000000` immortal-rc headers before literal string DATA — evidence of
+    an rc word at data-8 for string DATA buffers at least.
+  - So the open question that gates slice 3 on the register backends: **what
+    exactly do map COLUMN slots hold — the headerless {data,len} box, or an
+    rc-headered pointer — and is `elem-8` a real rc word for every value a
+    column can carry** (fresh built strings, literals, SSO forms)? Answer it
+    by reading the map_set key/value store path + `__fern_str_arr_free`'s
+    actual element loop (not the comments — they disagree), and the
+    RC-STRINGS-PLAN / SSO docs for which layout era is current.
+  - The WASM half is sound on its own (wasm strings are single inline
+    rc-headered blocks; `$__fern_map_snapshot` exists; the retaining variant
+    is ~15 lines next to it) — but the post-loop release choice lives in the
+    SHARED irlower lowering, so it cannot land wasm-only without a
+    backend-conditional op or flag semantics, which defeats the shared-IR
+    design. Land all backends together once the layout question is answered.
+  - Everything else from the attempt is mechanical and can be re-applied
+    verbatim: flag 2 derivation in `map_kv_elem_flag` (string key/value
+    columns), kind-131/132 flag-2 branches in asm_ir / asm_arm64_ir /
+    wasm_ir, the `__fern_map_snapshot_col_str` x86+arm64 helpers (copy loop +
+    guarded per-element retain), `$__fern_map_snapshot_inc` on wasm, the
+    flag-2 deep post-loop release, and the globls registration. Refs #4353.
