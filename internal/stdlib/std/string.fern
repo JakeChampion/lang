@@ -1664,6 +1664,45 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
     return None;
 }
 
+// `s.partition(sep)` — split at the FIRST occurrence of `sep` into the
+// three-tuple `(head, sep, tail)`, KEEPING the separator in the middle (unlike
+// `split_once`, which drops it). When `sep` is absent (or empty), returns
+// `(s, "", "")` — the whole string in the first slot, matching Python's
+// `str.partition`. Useful when you need to preserve/inspect the delimiter, or
+// to reconstruct the original by concatenation.
+pub function (s: string) partition(sep: string): (string, string, string) {
+    if (sep.len() == 0) { return (s.to_owned(), "", ""); }
+    var n: i32 = s.len();
+    var sLen: i32 = sep.len();
+    var i: i32 = 0;
+    while (i + sLen <= n) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
+        }
+        i = i + 1;
+    }
+    return (s.to_owned(), "", "");
+}
+
+// `s.rpartition(sep)` — the LAST-occurrence mirror of `partition`: split at the
+// FINAL occurrence into `(head, sep, tail)`, keeping the separator. When `sep`
+// is absent (or empty), returns `("", "", s)` — the whole string in the LAST
+// slot (Python's `str.rpartition` convention, the mirror of `partition`'s
+// first-slot fallback).
+pub function (s: string) rpartition(sep: string): (string, string, string) {
+    if (sep.len() == 0) { return ("", "", s.to_owned()); }
+    var n: i32 = s.len();
+    var sLen: i32 = sep.len();
+    var i: i32 = n - sLen;
+    while (i >= 0) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
+        }
+        i = i - 1;
+    }
+    return ("", "", s.to_owned());
+}
+
 // `s.rsplit_once(sep)` — the LAST-occurrence mirror of `split_once`: splits
 // at the FINAL occurrence of `sep`, returning `Some((head, tail))` with the
 // separator dropped. `None` when `sep` doesn't appear or is empty. Where

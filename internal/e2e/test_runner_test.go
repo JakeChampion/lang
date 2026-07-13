@@ -533,6 +533,25 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerStringPartitionExamplePasses gates std/string.partition /
+// rpartition — the Python-style three-way (head, sep, tail) split that keeps the
+// separator — under the interpreter. Also on the self-host x86-64 + arm64 gates
+// (uses assert_true, no assert_eq[i32]); the Go-side TestStringPartition pins
+// native compilation on all four backends. Passing → exit 0.
+func TestRunnerStringPartitionExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_partition_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string partition", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // TestRunnerStringRsplitOnceExamplePasses gates std/string.rsplit_once — split
 // at the LAST occurrence of a separator (the mirror of split_once) — under the
 // interpreter. Also on the self-host x86-64 + arm64 gates (uses assert_true /
