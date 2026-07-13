@@ -785,15 +785,23 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // unconditionally, so no need is set). Push x0 for the drop.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_sleep_ms\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 125) {  // map_set
-            // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=kconsume).
+            // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=flags).
             s = s.need("maps");
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            // x4 = kconsume: the KEY arg is a fresh sole-owned string temp (o.width
-            // bit 1, from irlower's is_fresh_str_temp). map_set frees the discarded
-            // key on an overwrite so a recurring computed key doesn't leak (the arm64
-            // twin of the x86-IR fix). i32/interned keys are never fresh → x4=0 →
-            // old behaviour, so the compiler's own maps + fixpoint are unaffected.
-            if (o.width == 2 || o.width == 3) { s = s.write("    mov x4, #1\n"); } else { s = s.write("    mov x4, #0\n"); }
+            // x4 = per-insert flag bits (mirrors the x86-IR %r9):
+            //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
+            //     (o.width bit 1, from irlower's is_fresh_str_temp) — map_set frees
+            //     the discarded key on an overwrite so a recurring computed key
+            //     doesn't leak (the arm64 twin of the x86-IR fix).
+            //   bit 1 = owncols (o.width bit 2, #4353): i32-key AND i32-value map
+            //     — its keys()/values() reads snapshot (kinds 131/132 flag 0), so
+            //     the grow path may free the superseded buffer (arr_push_owned).
+            // i32/interned keys are never fresh and string/pointer columns never
+            // set owncols → x4=0 → old behaviour for the compiler's own maps.
+            var x4bits: i32 = 0;
+            if (o.width == 2 || o.width == 3 || o.width == 6 || o.width == 7) { x4bits = x4bits + 1; }
+            if (o.width >= 4) { x4bits = x4bits + 2; }
+            s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
             s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 126) {  // map_len
             // pop map; len = keys-array length ([[map]]).
@@ -821,11 +829,31 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    ldr x0, [x0, #8]\n    b " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 131) {  // map_keys
-            // parallel-array map: keys[] pointer at box+0.
-            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+            // parallel-array map: keys[] pointer at box+0. Scalar column
+            // (i32_imm 0, #4353): SNAPSHOT into a fresh rc=1 copy via
+            // __fern_map_snapshot_col (asm_arm64.fern map runtime) so the read
+            // is an owned array — the exit sweep reclaims the copy, and
+            // map_set's owned grow can free the superseded live buffer without
+            // dangling it. Pointer/string column (i32_imm 1): the historical
+            // raw-buffer alias (slice 3). The helper allocates (__fern_arr_box),
+            // so mark the heap + maps needs like map_iter does.
+            if (o.i32_imm == 0) {
+                s = s.need("maps");
+                s = s.mark_heap();
+                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 132) {  // map_values
-            // parallel-array map: values[] pointer at box+8.
-            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+            // parallel-array map: values[] pointer at box+8. Same scalar-column
+            // snapshot / pointer-column alias split as map_keys above.
+            if (o.i32_imm == 0) {
+                s = s.need("maps");
+                s = s.mark_heap();
+                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 133) {  // map_iter
             // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm_arm64.fern:1243).
             // arm64 has no central op_allocates heap gate, so mark_heap explicitly.

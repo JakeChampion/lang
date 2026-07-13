@@ -9,8 +9,10 @@ import (
 // TestSelfHostMapKsReclaimIRArm64 is the arm64 port of
 // TestSelfHostMapKsReclaimIRX86_64 (#4353 string-KEY / both-column deep-release):
 // the arm64 __fn___fern_map_free_ks / _kvs bodies free the keys (resp. both)
-// column via __fn___fern_str_arr_free. Differential flatness; lighter churn under
-// qemu.
+// column via __fn___fern_str_arr_free. Differential flatness against a
+// LITERAL-keyed Map[string, i32] baseline (same buffer shape, still on the
+// leak-only grow — an i32-keyed baseline no longer shares the grow floor since
+// #4353's owned grow); lighter churn under qemu.
 func TestSelfHostMapKsReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -46,7 +48,7 @@ func TestSelfHostMapKsReclaimIRArm64(t *testing.T) {
     return 1;
 }
 function build_ik(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return 1;
 }
 function main(): i32 {
@@ -72,7 +74,7 @@ function main(): i32 {
     return 1;
 }
 function build_ii(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return 1;
 }
 function main(): i32 {
@@ -109,8 +111,8 @@ function main(): i32 {
 
 	// OVERWRITE with a recurring FRESH key (word-count / histogram
 	// m.set(computed_key, n)): the arm64 __fern_map_set frees the discarded fresh
-	// key (kconsume via x24) on an overwrite. Differential against an i32-keyed map
-	// doing the same overwrites. Lighter churn under qemu.
+	// key (kconsume via x24) on an overwrite. Differential against a literal-keyed
+	// map doing the same overwrites. Lighter churn under qemu.
 	run(t, `function build_sk_over(n: i32): i32 {
     var m: Map[string, i32] = Map { "wo" + "rd": 0 };
     var j: i32 = 0;
@@ -118,9 +120,9 @@ function main(): i32 {
     return 1;
 }
 function build_ik_over(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 7: 0 };
+    var m: Map[string, i32] = Map { "k": 0 };
     var j: i32 = 0;
-    while (j < 8) { m.set(7, j); j = j + 1; }
+    while (j < 8) { m.set("k", j); j = j + 1; }
     return 1;
 }
 function main(): i32 {

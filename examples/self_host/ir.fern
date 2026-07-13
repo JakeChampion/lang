@@ -554,18 +554,28 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind_tag: 1
 // The x86-64 linear-scan runtime dispatches struct keys through it
 // (passed in %r8); wasm ignores it (its hash map still only supports
 // scalar/string keys — struct keys there are a separate slice). #2671.
-// `width` carries the wasm-only fresh-consume flags (bit 0 = `vconsume`, bit 1 =
-// `kconsume`): a set bit means the inserted VALUE (resp. KEY) is a FRESH pointer
-// temp with no other owner, so $__fern_map_set must TAKE its single ref instead
-// of retaining — the per-insert twin of the register MAPVS / MAPKS analyses.
-// This balances $__fern_map_release's per-slot dec so a fresh string key/value
-// is reclaimed rather than leaked by one (#4353 wasm bug 2). Only wasm reads
-// `width`; the x86-64 / arm64 runtimes ignore it for this op (their maps don't
-// rc-manage columns per-insert — the MAPVS/MAPKS credits free them at reclaim).
-pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, eqfn: string): Op {
+// `width` carries per-insert flags as bits. Bits 0/1 are the wasm-only
+// fresh-consume flags (bit 0 = `vconsume`, bit 1 = `kconsume`): a set bit means
+// the inserted VALUE (resp. KEY) is a FRESH pointer temp with no other owner,
+// so $__fern_map_set must TAKE its single ref instead of retaining — the
+// per-insert twin of the register MAPVS / MAPKS analyses. This balances
+// $__fern_map_release's per-slot dec so a fresh string key/value is reclaimed
+// rather than leaked by one (#4353 wasm bug 2). The x86-64 / arm64 runtimes
+// ignore bits 0/1's vconsume half (their maps don't rc-manage values
+// per-insert — the MAPVS/MAPKS credits free them at reclaim) but read bit 1
+// (kconsume: free the discarded fresh key on an overwrite, #4881/#4885).
+// Bit 2 = `owncols` (#4353 grow-leak): the map's key AND value types are BOTH
+// i32, so — now that scalar keys()/values() snapshot-copy instead of aliasing
+// the raw column buffers — the map is the SOLE owner of its keys[]/vals[]
+// buffers and the register map_set's grow path may free the superseded buffer
+// (__fern_arr_push_owned) instead of leaking it. String/pointer/i64/f64
+// columns keep owncols=0 (their keys()/values() still alias, slice 3). wasm
+// ignores bit 2 (its map already frees old buffers on grow).
+pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, eqfn: string): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }
     if (kconsume) { w = w + 2; }
+    if (owncols) { w = w + 4; }
     return Op { kind_tag: 125, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
 }
 pub function op_map_len(): Op { return op0("map_len"); }
@@ -725,12 +735,21 @@ pub function op_map_get_or(keykind: i32, eqfn: string): Op { return Op { kind_ta
 // `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
 // Key kind in i32_imm.
 pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { kind_tag: 130, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
-// `map_keys` / `map_values` pop [map] → the array of live keys / values. On the
-// parallel-array backends (x86-64 / arm64) this is the map's internal keys[] /
-// values[] pointer (box @0 / @8); on wasm it snapshots the hash map into a fresh
-// array. Order is backend-defined, so consumers must be order-independent.
-pub function op_map_keys(): Op { return op0("map_keys"); }
-pub function op_map_values(): Op { return op0("map_values"); }
+// `map_keys` / `map_values` pop [map] → the array of live keys / values.
+// `i32_imm` is the ELEMENT-kind flag (#4353 counted-reads slice 1+2):
+//   0 = scalar (i32) column → the register backends (x86-64 / arm64) SNAPSHOT
+//       the column into a fresh rc=1 array (__fern_map_snapshot_col), so the
+//       result is an owned copy the exit sweep reclaims and later `m.set`
+//       mutations don't leak into it (matching native + wasm semantics). This
+//       is what lets an i32/i32 map own + free its own buffers (op_map_set
+//       owncols) without dangling a live keys()/values() read.
+//   1 = pointer/string (or i64/f64/unknown) column → the register backends
+//       return the RAW keys[]@0 / vals[]@8 buffer pointer, an uncounted alias
+//       (today's historical behaviour; the string-column snapshot is slice 3).
+// wasm always snapshots (hash map, no raw column) and ignores the flag.
+// Order is backend-defined, so consumers must be order-independent.
+pub function op_map_keys(elemptr: i32): Op { return Op { kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_values(elemptr: i32): Op { return Op { kind_tag: 132, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 // Map iteration (the parallel-array backends, x86-64 / arm64). `map_iter` pops
 // [map] and pushes a fresh 16-byte iterator box [map_ptr@0, cursor@8] (cursor 0)
 // — the ONLY allocating op of the cluster. `mapiter_has_next` pops [iter] -> i32
@@ -1565,6 +1584,10 @@ pub function op_allocates(tag: i32): boolean {
     // map_iter allocates the 16-byte iterator box via __fern_alloc; the other
     // mapiter ops are pure loads / a cursor store (no allocation).
     if (tag == 133) { return true; }
+    // map_keys / map_values allocate on wasm (hash-map snapshot) and — for a
+    // scalar column (i32_imm 0, #4353) — on the register backends too
+    // (__fern_map_snapshot_col builds a fresh rc=1 copy via __fern_arr_box).
+    if (tag == 131 || tag == 132) { return true; }
     // Byte/string builders that materialise a fresh box.
     if (tag == 185 || tag == 104 || tag == 105) { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per

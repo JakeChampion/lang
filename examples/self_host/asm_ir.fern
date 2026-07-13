@@ -3085,6 +3085,43 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_new, .-__fern_map_new\n");
 
+    // __fern_map_snapshot_col(%rdi = column buffer) -> %rax = fresh rc=1 copy.
+    // #4353 scalar keys()/values() snapshot: allocates a fresh __fern_arr_box
+    // of the column's length (cap = len, rc = 1, len at data+0 — the same
+    // layout arr_slice / array literals build), copies the len elements
+    // (slots 1..len), and returns the copy. Kinds 131/132 call it for a
+    // scalar (i32) column so the read result is an OWNED array: the exit
+    // sweep's arr_dec reclaims the copy, and map_set's owned grow can free
+    // the superseded live buffer without dangling the read. Elements are
+    // copied bit-for-bit and NOT rc-inc'd — scalar columns only; the
+    // string-column snapshot (element inc + deep free) is slice 3.
+    s = s.write(".globl __fern_map_snapshot_col\n");
+    s = s.write(".type __fern_map_snapshot_col, @function\n");
+    s = s.write("__fern_map_snapshot_col:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    movq %rdi, %rbx\n");           // src column
+    s = s.write("    movq (%rbx), %r12\n");         // len
+    s = s.write("    movq %r12, %rdi\n");
+    s = s.write("    call __fern_arr_box\n");       // -> data ptr (cap=len, rc=1, len=cap)
+    s = s.write("    movq %r12, (%rax)\n");         // len = src len (cap == len already)
+    s = s.write("    movq $1, %rcx\n");             // slot index 1..len
+    s = s.write(".Lmsc_copy:\n");
+    s = s.write("    cmpq %r12, %rcx\n");
+    s = s.write("    jg .Lmsc_done\n");
+    s = s.write("    movq (%rbx,%rcx,8), %rdx\n");
+    s = s.write("    movq %rdx, (%rax,%rcx,8)\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    jmp .Lmsc_copy\n");
+    s = s.write(".Lmsc_done:\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_map_snapshot_col, .-__fern_map_snapshot_col\n");
+
     // __fern_map_set (transcribed from asm.fern for the IR map path).
     s = s.write(".globl __fern_map_set\n");
     s = s.write(".type __fern_map_set, @function\n");
@@ -3097,14 +3134,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r14\n");
     s = s.write("    pushq %r15\n");
     s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -48(%rbp), or 0
-    // %r9 = kconsume (the incoming KEY is a fresh, sole-owned string temp — the
-    // per-insert freshness flag from irlower, o.width bit 1). Saved to the frame
+    // %r9 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
+    // fresh, sole-owned string temp, from irlower's is_fresh_str_temp; bit 1 =
+    // owncols: i32-key AND i32-value map whose keys()/values() reads snapshot,
+    // so the map solely owns its column buffers — #4353). Saved to the frame
     // because the probe loop's __fern_str_eq / eq-fn calls clobber caller-saved
-    // %r9; reloaded at .Lms_found to free the DISCARDED new key on an overwrite
-    // (the register twin of the wasm #4876 fix — a recurring computed key, e.g.
-    // word-count `m.set(word, n)`, otherwise leaks one key box per overwrite).
+    // %r9; bit 0 is reloaded at .Lms_found to free the DISCARDED new key on an
+    // overwrite (the register twin of the wasm #4876 fix — a recurring computed
+    // key, e.g. word-count `m.set(word, n)`, otherwise leaks one key box per
+    // overwrite); bit 1 is reloaded at .Lms_append to pick the reclaim-on-grow
+    // __fern_arr_push_owned over the leak-only __fern_arr_push.
     // The extra pad keeps the frame 16-byte aligned for the inner calls.
-    s = s.write("    pushq %r9\n");                 // saved kconsume @ -56(%rbp)
+    s = s.write("    pushq %r9\n");                 // saved flag bits @ -56(%rbp)
     s = s.write("    pushq %r9\n");                 // 16-byte align pad @ -64(%rbp)
     s = s.write("    movq %rdi, %r12\n");          // mapbox
     s = s.write("    movq %rsi, %r13\n");          // key
@@ -3166,8 +3207,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // safely by str_free's guards) so a recurring computed key doesn't leak. An
     // aliased key (kconsume 0) is left untouched — its source local's sweep owns
     // it. str_free preserves %r12/%r13, so the mapbox return is intact.
-    s = s.write("    movq -56(%rbp), %rax\n");      // reload kconsume
-    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    movq -56(%rbp), %rax\n");      // reload flag bits
+    s = s.write("    testq $1, %rax\n");            // bit 0 = kconsume
     s = s.write("    jz .Lms_found_nokf\n");
     s = s.write("    pushq %r13\n");                // discarded fresh key
     s = s.write("    call __fn___fern_str_free\n");
@@ -3175,23 +3216,36 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lms_found_nokf:\n");
     s = s.write("    jmp .Lms_ret\n");
     s = s.write(".Lms_append:\n");
+    // owncols (flag bit 1, #4353): an i32-key/i32-value map's keys()/values()
+    // reads SNAPSHOT (kinds 131/132 flag 0 → __fern_map_snapshot_col), so the
+    // map is the sole owner of its column buffers — route the appends through
+    // the reclaim-on-grow __fern_arr_push_owned (frees the superseded rc==1
+    // buffer, closing the cap-0 grow-leak #4877). Every other map (string /
+    // pointer / i64/f64 column, generic view) keeps the LEAK-ONLY
+    // __fern_arr_push: its keys()/values() still return the RAW keys@0 / vals@8
+    // buffer (an uncounted alias), and arr_push_owned would free the buffer a
+    // live `var ks = m.keys()` still points to (use-after-free). The leak keeps
+    // that buffer alive until the string-column snapshot lands (slice 3).
+    s = s.write("    movq -56(%rbp), %rax\n");      // reload flag bits
+    s = s.write("    testq $2, %rax\n");            // bit 1 = owncols
+    s = s.write("    jnz .Lms_append_owned\n");
     s = s.write("    movq (%r12), %rdi\n");
     s = s.write("    movq %r13, %rsi\n");
-    // NOTE: these two appends must stay on the LEAK-ONLY __fern_arr_push, not the
-    // sole-owner __fern_arr_push_owned, until map_keys/map_values snapshot-copy
-    // (kinds 131/132 currently return the RAW keys@0 / vals@8 buffer with NO
-    // rc-inc — an uncounted alias). arr_push_owned frees the superseded buffer on
-    // an rc==1 grow, which WOULD close the register map's cap-0 grow-leak (48
-    // B/build) — but a live `var ks = m.keys()` alias followed by a growing
-    // `m.set` would then free the buffer `ks` still points to (use-after-free).
-    // The leak keeps that buffer alive and masks the hazard. Closing it needs the
-    // keys/values snapshot-copy (the wasm map already snapshots) or counted-alias
-    // rc accounting first — a goal-2 slice. #4353.
     s = s.write("    call __fern_arr_push\n");      // keys.append(key)
     s = s.write("    movq %rax, (%r12)\n");
     s = s.write("    movq 8(%r12), %rdi\n");
     s = s.write("    movq %r14, %rsi\n");
     s = s.write("    call __fern_arr_push\n");      // values.append(val)
+    s = s.write("    movq %rax, 8(%r12)\n");
+    s = s.write("    jmp .Lms_ret\n");
+    s = s.write(".Lms_append_owned:\n");
+    s = s.write("    movq (%r12), %rdi\n");
+    s = s.write("    movq %r13, %rsi\n");
+    s = s.write("    call __fern_arr_push_owned\n"); // keys.append(key), frees old buffer on grow
+    s = s.write("    movq %rax, (%r12)\n");
+    s = s.write("    movq 8(%r12), %rdi\n");
+    s = s.write("    movq %r14, %rsi\n");
+    s = s.write("    call __fern_arr_push_owned\n"); // values.append(val), frees old buffer on grow
     s = s.write("    movq %rax, 8(%r12)\n");
     s = s.write(".Lms_ret:\n");
     s = s.write("    movq %r12, %rax\n");
@@ -4138,6 +4192,9 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_open_fd",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
+        // scalar keys()/values() snapshot (#4353): a library module's kind
+        // 131/132 flag-0 read calls this; the entry owns the definition.
+        "__fern_map_snapshot_col",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
         "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
@@ -4338,6 +4395,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     while (dop < r.ops.len()) {
         var dopop: ir.Op = r.ops[dop];
         if (dopop.kind_tag == 124 || dopop.kind_tag == 125 || dopop.kind_tag == 126) { s = s.need("maps"); }  // map_new, map_set, map_len
+        // map_keys / map_values with a SCALAR column (i32_imm 0, #4353) call
+        // __fern_map_snapshot_col, which lives in the maps runtime block; a
+        // pointer-column read (i32_imm 1) is a raw load and needs nothing.
+        if ((dopop.kind_tag == 131 || dopop.kind_tag == 132) && dopop.i32_imm == 0) { s = s.need("maps"); }
         if (ir.op_allocates(dopop.kind_tag)) { s = s.need("heap"); }
         dop = dop + 1;
     }
@@ -4866,13 +4927,22 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // 0 for a scalar/string key. __fern_map_set dispatches struct
             // keys through it (call *) instead of i32/string compare. #2671.
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-            // %r9 = kconsume: the KEY arg is a fresh sole-owned string temp
-            // (o.width bit 1, set by irlower's is_fresh_str_temp). map_set frees the
-            // discarded key on an overwrite so a recurring computed key doesn't leak
-            // (the register twin of wasm #4876). i32/interned keys are never fresh
-            // (width bit 1 clear) → %r9=0 → old behaviour, so the compiler's own maps
-            // and the fixpoint are unaffected.
-            if (o.width == 2 || o.width == 3) { s = s.write("    movq $1, %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
+            // %r9 = per-insert flag bits:
+            //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
+            //     (o.width bit 1, set by irlower's is_fresh_str_temp). map_set
+            //     frees the discarded key on an overwrite so a recurring computed
+            //     key doesn't leak (the register twin of wasm #4876).
+            //   bit 1 = owncols (o.width bit 2, #4353): i32-key AND i32-value map
+            //     — its keys()/values() reads snapshot (kinds 131/132 flag 0), so
+            //     the map solely owns its column buffers and the grow path may
+            //     free the superseded buffer (__fern_arr_push_owned).
+            // A string-keyed / string-valued map has owncols clear → %r9 bit 1 = 0
+            // → old leak-only grow, and an i32/interned key is never fresh → bit 0
+            // = 0 → no overwrite key free: exactly the historical behaviour.
+            var r9bits: i32 = 0;
+            if (o.width == 2 || o.width == 3 || o.width == 6 || o.width == 7) { r9bits = r9bits + 1; }
+            if (o.width >= 4) { r9bits = r9bits + 2; }
+            if (r9bits != 0) { s = s.write("    movq $" + util.i32_to_string(r9bits) + ", %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
         } else if (o.kind_tag == 126) {  // map_len
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");
@@ -4899,11 +4969,26 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    movq 8(%rax), %rax\n    jmp " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
         } else if (o.kind_tag == 131) {  // map_keys
-            // parallel-array map: keys[] pointer at box+0.
-            s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
+            // parallel-array map: keys[] pointer at box+0. Scalar column
+            // (i32_imm 0, #4353): SNAPSHOT it into a fresh rc=1 copy via
+            // __fern_map_snapshot_col so the result is an owned array (the
+            // exit sweep reclaims the copy, not the map's live buffer) and a
+            // later growing m.set can free the superseded buffer without
+            // dangling this read. Pointer/string column (i32_imm 1): keep the
+            // historical raw-buffer alias (slice 3).
+            if (o.i32_imm == 0) {
+                s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
+            } else {
+                s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
+            }
         } else if (o.kind_tag == 132) {  // map_values
-            // parallel-array map: values[] pointer at box+8.
-            s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+            // parallel-array map: values[] pointer at box+8. Same scalar-column
+            // snapshot / pointer-column alias split as map_keys above.
+            if (o.i32_imm == 0) {
+                s = s.write("    popq %rdi\n    movq 8(%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
+            } else {
+                s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+            }
         } else if (o.kind_tag == 133) {  // map_iter
             // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm.fern:1258).
             // heap need is set centrally by op_allocates(map_iter); push the box.

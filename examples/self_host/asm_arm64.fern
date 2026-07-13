@@ -1179,6 +1179,12 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    ldr x1, [sp], #16\n");   // k
         s = s.write("    ldr x0, [sp], #16\n");   // mapbox
         s = s.write("    mov x3, #" + kk_set + "\n");   // keykind
+        // x4 = per-insert flag bits (kconsume / owncols — the IR path's
+        // reclaim flags). The AST path never proves key freshness or column
+        // ownership, so pass 0 explicitly: the shared __fern_map_set reads
+        // x4, and an uninitialised register here would randomly free the
+        // overwritten key or the superseded grow buffer.
+        s = s.write("    mov x4, #0\n");
         s = s.write("    bl __fern_map_set\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
@@ -8133,6 +8139,41 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_new, .-__fern_map_new\n");
 
+        // __fern_map_snapshot_col(x0 = column buffer) → x0 = fresh rc=1 copy.
+        // #4353 scalar keys()/values() snapshot (the arm64 mirror of asm_ir's
+        // x86-64 helper): allocates a fresh __fern_arr_box of the column's
+        // length (cap = len, rc = 1), copies the len elements (slots 1..len),
+        // and returns the copy. The IR path's kinds 131/132 call it for a
+        // scalar (i32) column so the read result is an OWNED array: the exit
+        // sweep's arr_dec reclaims the copy, and map_set's owned grow can free
+        // the superseded live buffer without dangling the read. Elements are
+        // copied bit-for-bit and NOT rc-inc'd — scalar columns only; the
+        // string-column snapshot (element inc + deep free) is slice 3.
+        s = s.write(".globl __fern_map_snapshot_col\n");
+        s = s.write(".type __fern_map_snapshot_col, %function\n");
+        s = s.write("__fern_map_snapshot_col:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");             // src column
+        s = s.write("    ldr x20, [x19]\n");          // len
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __fern_arr_box\n");       // -> data ptr (cap=len, rc=1, len=cap)
+        s = s.write("    str x20, [x0]\n");           // len = src len (cap == len already)
+        s = s.write("    mov x9, #1\n");              // slot index 1..len
+        s = s.write(".Lmsc_copy:\n");
+        s = s.write("    cmp x9, x20\n");
+        s = s.write("    b.gt .Lmsc_done\n");
+        s = s.write("    ldr x10, [x19, x9, lsl #3]\n");
+        s = s.write("    str x10, [x0, x9, lsl #3]\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lmsc_copy\n");
+        s = s.write(".Lmsc_done:\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_snapshot_col, .-__fern_map_snapshot_col\n");
+
         // __fern_map_set(x0 = mapbox, x1 = key, x2 = val) → mapbox.
         // Updates in place on a key hit, else appends.
         s = s.write(".globl __fern_map_set\n");
@@ -8146,13 +8187,18 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x19, x0\n");           // mapbox
         s = s.write("    mov x20, x1\n");           // key
         s = s.write("    mov x21, x2\n");           // val
-        // x24 = kconsume (the incoming KEY is a fresh sole-owned string temp, from
-        // irlower o.width bit 1). x24 is callee-saved (already stp'd) and otherwise
-        // unused here, so it survives the probe loop's __fern_str_eq calls without
-        // extra saves; reloaded at .Lms_found to free the DISCARDED new key on an
-        // overwrite (the arm64 twin of the x86-IR #4881 fix — a recurring computed
-        // key, e.g. word-count `m.set(word, n)`, otherwise leaks one key box each).
-        s = s.write("    mov x24, x4\n");           // kconsume
+        // x24 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
+        // fresh sole-owned string temp, from irlower o.width bit 1; bit 1 =
+        // owncols: i32-key AND i32-value map whose keys()/values() reads
+        // snapshot, so the map solely owns its column buffers — #4353). x24 is
+        // callee-saved (already stp'd) and otherwise unused here, so it survives
+        // the probe loop's __fern_str_eq calls without extra saves; bit 0 is
+        // tested at .Lms_found to free the DISCARDED new key on an overwrite
+        // (the arm64 twin of the x86-IR #4881 fix — a recurring computed key,
+        // e.g. word-count `m.set(word, n)`, otherwise leaks one key box each);
+        // bit 1 is tested at .Lms_append to pick the reclaim-on-grow
+        // __fern_arr_push_owned over the leak-only __fern_arr_push.
+        s = s.write("    mov x24, x4\n");           // flag bits
         s = s.write("    ldr x22, [x19]\n");        // keys arr
         s = s.write("    mov x23, #0\n");           // i
         s = s.write("    cbnz x3, .Lms_loop_i32\n"); // keykind (1 = i32)
@@ -8187,13 +8233,21 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // by str_free's guards). str_free clobbers only x0-x3/x9/x10/w4 and preserves
         // x19/x20 (callee-saved), so the mapbox return is intact. An aliased key
         // (kconsume 0) is left untouched — its source local's sweep owns it.
-        s = s.write("    cbz x24, .Lms_found_nokf\n");
+        s = s.write("    tbz x24, #0, .Lms_found_nokf\n");   // bit 0 = kconsume
         s = s.write("    str x20, [sp, #-16]!\n");   // discarded fresh key (16-byte aligned push)
         s = s.write("    bl __fn___fern_str_free\n");
         s = s.write("    add sp, sp, #16\n");
         s = s.write(".Lms_found_nokf:\n");
         s = s.write("    b .Lms_ret\n");
         s = s.write(".Lms_append:\n");
+        // owncols (x24 bit 1, #4353): an i32-key/i32-value map's keys()/values()
+        // reads SNAPSHOT (__fern_map_snapshot_col), so the map is the sole owner
+        // of its column buffers — route the appends through the reclaim-on-grow
+        // __fern_arr_push_owned (frees the superseded rc==1 buffer, closing the
+        // cap-0 grow-leak #4877). Every other map keeps the LEAK-ONLY
+        // __fern_arr_push: its keys()/values() still return the RAW buffer (an
+        // uncounted alias) that an owned grow would free from under a live read.
+        s = s.write("    tbnz x24, #1, .Lms_append_owned\n");
         s = s.write("    ldr x0, [x19]\n");
         s = s.write("    mov x1, x20\n");
         s = s.write("    bl __fern_arr_push\n");      // keys.append(key)
@@ -8201,6 +8255,16 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldr x0, [x19, #8]\n");
         s = s.write("    mov x1, x21\n");
         s = s.write("    bl __fern_arr_push\n");      // values.append(val)
+        s = s.write("    str x0, [x19, #8]\n");
+        s = s.write("    b .Lms_ret\n");
+        s = s.write(".Lms_append_owned:\n");
+        s = s.write("    ldr x0, [x19]\n");
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_arr_push_owned\n"); // keys.append(key), frees old buffer on grow
+        s = s.write("    str x0, [x19]\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    mov x1, x21\n");
+        s = s.write("    bl __fern_arr_push_owned\n"); // values.append(val), frees old buffer on grow
         s = s.write("    str x0, [x19, #8]\n");
         s = s.write(".Lms_ret:\n");
         s = s.write("    mov x0, x19\n");

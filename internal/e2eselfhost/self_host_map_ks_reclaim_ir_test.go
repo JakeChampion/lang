@@ -12,8 +12,13 @@ import (
 // `Map[string, V]` whose every key is a fresh string is credited "MAPKS:" and
 // routed to __fern_map_free_ks (keys column freed via __fern_str_arr_free); a
 // `Map[string, string]` with fresh keys AND values routes to __fern_map_free_kvs
-// (both columns). Flatness is DIFFERENTIAL against an i32-keyed map so the shared
-// arr_push grow-leak cancels. The maps are built-and-dropped without a lookup
+// (both columns). Flatness is DIFFERENTIAL against a LITERAL-keyed
+// Map[string, i32] baseline so the shared arr_push grow-leak cancels: since
+// #4353's owned grow, an i32-keyed map no longer shares that floor (i32/boolean
+// values normalize to i32 in the type tag, so any i32-keyed scalar map is
+// owncols and its grow frees the superseded buffers) — a string-keyed map with
+// .rodata literal keys has the identical buffer shape and stays on the
+// leak-only push. The maps are built-and-dropped without a lookup
 // (m.has("a"+"b") would allocate a fresh lookup-key temp that leaks independently).
 func TestSelfHostMapKsReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -46,13 +51,15 @@ func TestSelfHostMapKsReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// string-KEY column: Map[string, i32] must not grow more than Map[i32, i32].
+	// string-KEY column: fresh-concat keys must not grow more than the
+	// same-shape literal-keyed baseline (still on the leak-only grow, unlike
+	// the now-flat i32-keyed owncols maps).
 	run(t, `function build_sk(n: i32): i32 {
     var m: Map[string, i32] = Map { "a" + "b": 1, "c" + "d": 2 };
     return 1;
 }
 function build_ik(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return 1;
 }
 function main(): i32 {
@@ -78,7 +85,7 @@ function main(): i32 {
     return 1;
 }
 function build_ii(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return 1;
 }
 function main(): i32 {
@@ -135,9 +142,10 @@ function main(): i32 {
 	// OVERWRITE with a recurring FRESH key (the word-count / histogram
 	// m.set(computed_key, n) pattern): each re-insert of the same key overwrites
 	// the slot and discards the incoming fresh key temp, which __fern_map_set now
-	// frees (kconsume) rather than leaking. Differential against an i32-keyed map
-	// doing the same overwrites (i32 keys carry no rc → no leak), so the shared
-	// map buffer grow-leak cancels. The register twin of the wasm overwrite fix.
+	// frees (kconsume) rather than leaking. Differential against a literal-keyed
+	// map doing the same overwrites (a .rodata literal key is guarded by
+	// str_free, so nothing accrues), so the shared map buffer grow-leak
+	// cancels. The register twin of the wasm overwrite fix.
 	run(t, `function build_sk_over(n: i32): i32 {
     var m: Map[string, i32] = Map { "wo" + "rd": 0 };
     var j: i32 = 0;
@@ -145,9 +153,9 @@ function main(): i32 {
     return 1;
 }
 function build_ik_over(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 7: 0 };
+    var m: Map[string, i32] = Map { "k": 0 };
     var j: i32 = 0;
-    while (j < 8) { m.set(7, j); j = j + 1; }
+    while (j < 8) { m.set("k", j); j = j + 1; }
     return 1;
 }
 function main(): i32 {
