@@ -311,6 +311,26 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i32_bit_length_test.fern` covers std/i32's bit_length — the
+// number of bits needed to represent |n| (highest set bit + 1). Zero, small
+// values, powers of two, negatives (magnitude), i32::MAX, and the i32::MIN
+// widen-to-i64 edge. On the interp gate and the self-host x86-64 + arm64 gates;
+// the Go-side TestI32BitLength pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI32BitLengthExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_bit_length_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 bit_length", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/i32_to_string_radix_test.fern` covers std/i32's
 // to_string_radix(base) — render an i32 in an arbitrary base (2..36), the
 // general form behind to_binary/to_oct/to_hex and the write-side inverse of

@@ -644,6 +644,26 @@ pub function (n: i32) trailing_zeros(): i32 {
     return c;
 }
 
+// `(n: i32) bit_length()` — the number of bits needed to represent the
+// MAGNITUDE `|n|`: the position of the highest set bit, plus one. `0` needs 0
+// bits, `1` needs 1, `5` (101) needs 3, `255` needs 8, `256` needs 9. Negative
+// `n` uses its magnitude, so `bit_length(-5) == bit_length(5) == 3` (except
+// i32::MIN, whose magnitude 2^31 needs 32). Matches Rust's `i32::ilog2() + 1`
+// / Python's `int.bit_length`. Handy for sizing bitfields and buffers.
+pub function (n: i32) bit_length(): i32 {
+    if (n == 0) { return 0; }
+    // Magnitude as u32 (i32::MIN's negation is representable here).
+    var mag: i64 = n as i64;
+    if (mag < (0 as i64)) { mag = 0 - mag; }
+    var u: u32 = mag as u32;
+    var c: i32 = 0;
+    while (u != (0 as u32)) {
+        c = c + 1;
+        u = u >> (1 as u32);
+    }
+    return c;
+}
+
 // `(n: i32) bit(i)` — read bit at position i (0 = LSB).
 // Out-of-range returns false. Useful for unpacking bit-
 // packed flags / nibbles.
