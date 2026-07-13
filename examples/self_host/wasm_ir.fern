@@ -1725,11 +1725,24 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: map, k, default -> $__fern_map_get_or -> value.
             out = out + "    call $__fern_map_get_or\n";
         } else if (o.kind_tag == 131) {  // map_keys
-            // hash map: snapshot the live keys into a fresh array (probe order).
-            out = out + "    call $__fern_map_keys\n";
+            // hash map: snapshot the live keys into a fresh array (probe
+            // order). A STRING column (i32_imm 2, #4353 slice 3) uses the
+            // RETAINING snapshot — each element rc-inc'd on copy — so the
+            // shared post-loop deep release ($__fern_arr_dec_ptr) balances
+            // and the per-loop string-column snapshot no longer leaks.
+            if (o.i32_imm == 2) {
+                out = out + "    call $__fern_map_keys_inc\n";
+            } else {
+                out = out + "    call $__fern_map_keys\n";
+            }
         } else if (o.kind_tag == 132) {  // map_values
-            // hash map: snapshot the live values into a fresh array (probe order).
-            out = out + "    call $__fern_map_values\n";
+            // hash map: snapshot the live values into a fresh array (probe
+            // order). Same string-column retaining split as map_keys above.
+            if (o.i32_imm == 2) {
+                out = out + "    call $__fern_map_values_inc\n";
+            } else {
+                out = out + "    call $__fern_map_values\n";
+            }
         } else if (o.kind_tag == 138) {  // struct_make
             // nf field values on the stack (field nf-1 on top, decl order). Box =
             // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an

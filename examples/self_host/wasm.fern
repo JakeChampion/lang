@@ -8749,6 +8749,29 @@ pub function map_helpers(): string {
     o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 8))))\n";
     o = o + "  (func $__fern_map_values (param $box i32) (result i32)\n";
     o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 12))))\n";
+    // $__fern_map_snapshot_inc: the RETAINING snapshot (#4353 slice 3) — the
+    // same probe-order copy as $__fern_map_snapshot, but each copied STRING
+    // element is $__fern_rc_inc'd, so the fresh array co-owns its elements
+    // and the deep post-loop release ($__fern_arr_dec_ptr — dec each element
+    // then the buffer) balances exactly. The map keeps its construction-incs.
+    // Used only at the `for`-loop positions (flag 2), where irlower emits the
+    // deep release; the var/expr positions keep the plain non-retaining
+    // snapshot (flag 1 after the irlower clamp), matching prior behaviour.
+    o = o + "  (func $__fern_map_snapshot_inc (param $box i32) (param $src i32) (result i32)\n";
+    o = o + "    (local $arr i32) (local $i i32) (local $n i32)\n";
+    o = o + "    (local.set $arr (call $__fern_map_snapshot (local.get $box) (local.get $src)))\n";
+    o = o + "    (local.set $n (i32.load (local.get $arr)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (drop (call $__fern_rc_inc (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    o = o + "  (func $__fern_map_keys_inc (param $box i32) (result i32)\n";
+    o = o + "    (return (call $__fern_map_snapshot_inc (local.get $box) (i32.const 8))))\n";
+    o = o + "  (func $__fern_map_values_inc (param $box i32) (result i32)\n";
+    o = o + "    (return (call $__fern_map_snapshot_inc (local.get $box) (i32.const 12))))\n";
     // $__fern_map_release(box) -> box: Perceus map free. When `box` is the LAST
     // owner ([box-8]==1, about to free) release its three structural arrays —
     // keys ([box+8]), vals ([box+12]), used ([box+16]) — FLAT via the shared

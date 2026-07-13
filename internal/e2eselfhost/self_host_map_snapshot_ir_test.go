@@ -221,4 +221,68 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "map-mixed-keys-snapshot", 0)
+
+	// #4353 SLICE 3 (string columns, register x86-64): `for k in m.keys()`
+	// over a string-KEYED map takes a RETAINING snapshot
+	// (__fern_map_snapshot_col_str, per-element rc-inc) released deep after
+	// the loop (__fern_str_arr_free). Churn must be FLAT vs a no-iteration
+	// baseline (the snapshot copy + its element incs are fully reclaimed),
+	// and __rc_underflow()==0 proves the deep release never over-frees a
+	// map-owned key string (rc-aware __fern_str_free decs at rc>1). Keys seen
+	// (correctness).
+	run(t, `function build_iter(n: i32): i32 {
+    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    var seen: i32 = 0;
+    for k in m.keys() { seen = seen + k.len(); }
+    return seen;
+}
+function build_noiter(n: i32): i32 {
+    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    return m.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
+    var s0: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + build_iter(j); j = j + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 2000) { acc = acc + build_noiter(k); k = k + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "map-string-keys-iter-churn-flat", 0)
+
+	// String-VALUED map via `for (k, v) in m`: the value column snapshots +
+	// retains + deep-releases. Same flatness + underflow contract.
+	run(t, `function build_iter(n: i32): i32 {
+    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    var seen: i32 = 0;
+    for (k, v) in m { seen = seen + v.len(); }
+    return seen;
+}
+function build_noiter(n: i32): i32 {
+    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    return m.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
+    var s0: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + build_iter(j); j = j + 1; }
+    var s1: i32 = __heap_bump_bytes();
+    var k: i32 = 0;
+    while (k < 2000) { acc = acc + build_noiter(k); k = k + 1; }
+    var s2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "map-string-values-iter-churn-flat", 0)
 }

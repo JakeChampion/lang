@@ -841,16 +841,27 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
                 s = s.need("maps");
                 s = s.mark_heap();
                 s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
+            } else if (o.i32_imm == 2) {
+                // String column (#4353 slice 3): snapshot + per-element
+                // rc-inc; the SARR post-loop release deep-frees the copy.
+                s = s.need("maps");
+                s = s.mark_heap();
+                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col_str\n    str x0, [sp, #-16]!\n");
             } else {
                 s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 132) {  // map_values
             // parallel-array map: values[] pointer at box+8. Same scalar-column
-            // snapshot / pointer-column alias split as map_keys above.
+            // snapshot / string-column retain-snapshot / pointer-column alias
+            // split as map_keys above.
             if (o.i32_imm == 0) {
                 s = s.need("maps");
                 s = s.mark_heap();
                 s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
+            } else if (o.i32_imm == 2) {
+                s = s.need("maps");
+                s = s.mark_heap();
+                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col_str\n    str x0, [sp, #-16]!\n");
             } else {
                 s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
             }
