@@ -47,6 +47,15 @@ pub function (n: u32) abs_diff(other: u32): u32 {
     return other - n;
 }
 
+// `(n: u32) midpoint(other)` — the average of `n` and `other` computed WITHOUT
+// overflow via `(a & b) + ((a ^ b) >> 1)` (the unsigned shift is logical). The
+// naive `(a + b) / 2` wraps for large unsigned operands — the classic
+// binary-search bug, especially common with unsigned bounds — whereas this form
+// never does. `midpoint(u32::MAX, u32::MAX - 2)` is `u32::MAX - 1`.
+pub function (n: u32) midpoint(other: u32): u32 {
+    return (n & other) + ((n ^ other) >> (1 as u32));
+}
+
 // `is_in_range(lo, hi)` — true iff `lo <= n < hi` (half-open), using unsigned
 // comparison. Empty / inverted ranges → false. Mirrors std/i32 / std/i64.
 pub function (n: u32) is_in_range(lo: u32, hi: u32): boolean {
