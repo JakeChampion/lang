@@ -1,0 +1,55 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_distance_normalize_test.fern — pure-Fern coverage of
+// std/array's distance_f64 (Euclidean distance = norm(a - b)) and normalize_f64
+// (unit vector, each element / the norm; zero and empty vectors returned
+// unchanged). distance returns a plain f64, normalize an f64[] — both scalar
+// payload, so this rides all four native backends and both self-host gates. The
+// Go-side TestArrayDistanceNormalize pins the native backends; this is the
+// migration-shaped companion.
+
+function near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function test_distance(): test.TestOutcome {
+    // origin to (3,4) is 5.
+    if (!near(array.distance_f64([0.0, 0.0], [3.0, 4.0]), 5.0)) { return test.fail("3-4-5"); }
+    // sqrt(9 + 16 + 0) = 5.
+    return test.assert_eq_f64_near(array.distance_f64([1.0, 2.0, 3.0], [4.0, 6.0, 3.0]), 5.0, 0.0001);
+}
+
+function test_distance_equal(): test.TestOutcome {
+    return test.assert_eq_f64_near(array.distance_f64([1.0, 2.0], [1.0, 2.0]), 0.0, 0.0001);
+}
+
+function test_normalize(): test.TestOutcome {
+    var u: f64[] = array.normalize_f64([3.0, 4.0]);
+    if (!near(u[0], 0.6)) { return test.fail("x component"); }
+    if (!near(u[1], 0.8)) { return test.fail("y component"); }
+    // the result is a unit vector.
+    return test.assert_eq_f64_near(array.norm_f64(u), 1.0, 0.0001);
+}
+
+function test_normalize_zero(): test.TestOutcome {
+    // zero vector returned unchanged, no NaN.
+    var z: f64[] = array.normalize_f64([0.0, 0.0]);
+    if (!near(z[0], 0.0)) { return test.fail("zero unchanged"); }
+    return test.assert_true(z.len() == 2);
+}
+
+function test_normalize_empty(): test.TestOutcome {
+    return test.assert_true(array.normalize_f64([]).len() == 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array f64 distance/normalize");
+    r = r.it("distance",        test_distance());
+    r = r.it("distance equal",  test_distance_equal());
+    r = r.it("normalize",       test_normalize());
+    r = r.it("normalize zero",  test_normalize_zero());
+    r = r.it("normalize empty", test_normalize_empty());
+    return r.finish();
+}

@@ -1023,6 +1023,40 @@ pub function norm_f64(arr: f64[]): f64 {
     return __sqrt_f64(s);
 }
 
+// `distance_f64(a, b)` — the Euclidean distance `sqrt(sum((a[i]-b[i])^2))`, i.e.
+// `norm(a - b)`. On a length mismatch the sum runs to the shorter length; equal
+// vectors (and empty inputs) give `0`. Returns a plain f64.
+pub function distance_f64(a: f64[], b: f64[]): f64 {
+    var n: i32 = a.len();
+    var m: i32 = b.len();
+    if (m < n) { n = m; }
+    var s: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n) {
+        var d: f64 = a[i] - b[i];
+        s = s + d * d;
+        i = i + 1;
+    }
+    return __sqrt_f64(s);
+}
+
+// `normalize_f64(arr)` — the unit vector in the same direction: each element
+// divided by `norm(arr)`, so the result has norm 1. A zero vector (norm 0) and
+// the empty vector are returned unchanged rather than producing NaNs from a
+// divide-by-zero.
+pub function normalize_f64(arr: f64[]): f64[] {
+    var mag: f64 = norm_f64(arr);
+    if (mag == 0.0) { return arr; }
+    var out: f64[] = [];
+    var n: i32 = arr.len();
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append(arr[i] / mag);
+        i = i + 1;
+    }
+    return out;
+}
+
 // =================== GENERIC ARRAY COMBINATORS ===================
 //
 // `map` / `filter` / `fold` / `any` / `all` / `find` /
