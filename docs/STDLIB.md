@@ -231,7 +231,9 @@ convention.
   `sum_u64`, `max_u64`, `min_u64`;
   `sum_f64`, `max_f64`, `min_f64`, `avg_f64`,
   `variance_f64` / `stddev_f64` (population variance and its
-  square root, `Option[f64]`, `None` for empty)
+  square root, `Option[f64]`, `None` for empty),
+  `median_f64` (averages the two middles for even length),
+  `range_f64` (`max - min` spread)
 - **string[] core:** `join`, `index_of`, `position`, `contains`,
   `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,

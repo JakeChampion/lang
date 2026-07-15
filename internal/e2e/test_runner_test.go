@@ -2238,6 +2238,25 @@ func TestRunnerSortF64Example(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_median_range_test.fern` covers std/array's median_f64
+// (averaging the two middles for even length) and range_f64 (max - min), both
+// Option[f64]. On the interp gate and both self-host gates; the Go-side
+// TestArrayMedianRange pins native compilation on interp/x86-64/arm64 (the
+// wasmbin leg skips Option over a 64-bit payload). Passing → exit 0.
+func TestRunnerArrayMedianRangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_median_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 median/range", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
