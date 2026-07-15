@@ -124,7 +124,8 @@ Receiver methods on i32 / byte values.
   (base-2 / base-10, via change-of-base ÷ ln2 / ÷ ln10),
   `exp`, `exp2` / `exp10` (base-2 / base-10 exponentials,
   inverses of `log2` / `log10`, via `e^(x·ln2)` / `e^(x·ln10)`),
-  `sin`, `cos`, `tan`.
+  `sin`, `cos`, `tan`, `sinh` / `cosh` / `tanh` (hyperbolic,
+  built on `exp`; `tanh` saturates to `±1` past `|x| = 20`).
   Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
   hardware-precise op.

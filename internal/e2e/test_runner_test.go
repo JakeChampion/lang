@@ -2180,6 +2180,25 @@ func TestRunnerFloatCbrtHypot3Example(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_hyperbolic_test.fern` covers std/float's sinh / cosh /
+// tanh — the hyperbolic trig functions built on the natural exp, f64 and f32.
+// On the interp gate and both self-host gates; the Go-side TestFloatHyperbolic
+// pins native compilation on interp/x86-64/arm64 (wasmbin skips libm exp, the
+// gap exp/log/sin share). Passing → exit 0.
+func TestRunnerFloatHyperbolicExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_hyperbolic_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float sinh/cosh/tanh", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

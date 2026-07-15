@@ -246,6 +246,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"u64_roots", langSrcAbs(t, "examples/tests/u64_roots_test.fern"), ""},
 		{"float_clamp01_absdiff_muladd", langSrcAbs(t, "examples/tests/float_clamp01_absdiff_muladd_test.fern"), ""},
 		{"float_cbrt_hypot3", langSrcAbs(t, "examples/tests/float_cbrt_hypot3_test.fern"), ""},
+		{"float_hyperbolic", langSrcAbs(t, "examples/tests/float_hyperbolic_test.fern"), ""},
 		// NOTE: u32_roots is deliberately NOT gated here. It is native-differential
 		// + interp only: the self-host compiler's u32 arithmetic doesn't truncate /
 		// compare as unsigned near the 2^31 boundary (the documented u32 self-host
