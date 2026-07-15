@@ -272,6 +272,87 @@ pub function sort_u64_asc(arr: u64[]): u64[] {
     return src;
 }
 
+// `sort_f64_asc(arr)` / `sort_f64_desc(arr)` — stable bottom-up merge sort of
+// an f64[] (O(n log n)), the floating-point siblings of the integer sorts.
+// NaN ordering is unspecified: IEEE comparisons against NaN are all false, so
+// any NaN elements are left roughly where they started rather than moved to an
+// end — callers that care should filter NaNs out first.
+pub function sort_f64_asc(arr: f64[]): f64[] {
+    var n: i32 = arr.len();
+    if (n < 2) { return arr; }
+    var src: f64[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: f64[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] < src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        src = dst;
+        width = width + width;
+    }
+    return src;
+}
+
+pub function sort_f64_desc(arr: f64[]): f64[] {
+    var n: i32 = arr.len();
+    if (n < 2) { return arr; }
+    var src: f64[] = arr;
+    var width: i32 = 1;
+    while (width < n) {
+        var dst: f64[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (src[j] > src[i]) {
+                    dst = dst.with(k, src[j]);
+                    j = j + 1;
+                } else {
+                    dst = dst.with(k, src[i]);
+                    i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        src = dst;
+        width = width + width;
+    }
+    return src;
+}
+
 pub function sort_i32_desc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }

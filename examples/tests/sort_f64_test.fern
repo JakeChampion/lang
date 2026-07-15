@@ -1,0 +1,62 @@
+import "std/test";
+import "std/sort" as sort;
+// examples/tests/sort_f64_test.fern — pure-Fern coverage of std/sort's
+// sort_f64_asc / sort_f64_desc: bottom-up merge sort of an f64[], the
+// floating-point siblings of the integer sorts. Covers ascending / descending
+// order, input immutability, the single / empty edge cases, and negatives.
+// f64 arrays are scalar-payload, so this rides all four native backends and
+// both self-host gates. The Go-side TestSortF64 pins the native backends; this
+// is the migration-shaped companion.
+
+function near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function test_ascending(): test.TestOutcome {
+    var xs: f64[] = [3.5, 1.2, 4.8, 1.1, 5.9, 2.6];
+    var asc: f64[] = sort.sort_f64_asc(xs);
+    if (!near(asc[0], 1.1)) { return test.fail("min first"); }
+    if (!near(asc[1], 1.2)) { return test.fail("second"); }
+    return test.assert_true(near(asc[5], 5.9));
+}
+
+function test_descending(): test.TestOutcome {
+    var xs: f64[] = [3.5, 1.2, 4.8, 1.1, 5.9, 2.6];
+    var desc: f64[] = sort.sort_f64_desc(xs);
+    if (!near(desc[0], 5.9)) { return test.fail("max first"); }
+    return test.assert_true(near(desc[5], 1.1));
+}
+
+function test_immutable(): test.TestOutcome {
+    var xs: f64[] = [3.5, 1.2, 4.8];
+    var sorted: f64[] = sort.sort_f64_asc(xs);
+    // original untouched
+    if (!near(xs[0], 3.5)) { return test.fail("input mutated"); }
+    return test.assert_true(near(sorted[0], 1.2));
+}
+
+function test_edge_cases(): test.TestOutcome {
+    var one: f64[] = [42.0];
+    if (!near(sort.sort_f64_asc(one)[0], 42.0)) { return test.fail("single"); }
+    var empty: f64[] = [];
+    return test.assert_true(sort.sort_f64_asc(empty).len() == 0);
+}
+
+function test_negatives(): test.TestOutcome {
+    var neg: f64[] = [0.0 - 1.0, 2.0, 0.0 - 3.0, 0.0];
+    var nasc: f64[] = sort.sort_f64_asc(neg);
+    if (!near(nasc[0], 0.0 - 3.0)) { return test.fail("most negative first"); }
+    return test.assert_true(near(nasc[3], 2.0));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/sort f64");
+    r = r.it("ascending",   test_ascending());
+    r = r.it("descending",  test_descending());
+    r = r.it("immutable",   test_immutable());
+    r = r.it("edge cases",  test_edge_cases());
+    r = r.it("negatives",   test_negatives());
+    return r.finish();
+}
