@@ -934,6 +934,34 @@ pub function avg_f64(arr: f64[]): Option[f64] {
     return Some(sum_f64(arr) / (n as f64));
 }
 
+// `variance_f64(arr)` — the POPULATION variance (mean of the squared deviations
+// from the mean, dividing by n, not n-1). `None` for an empty array. Uses the
+// two-pass form (compute the mean, then the sum of squared deviations), which
+// is numerically stabler than the one-pass sum-of-squares.
+pub function variance_f64(arr: f64[]): Option[f64] {
+    var n: i32 = arr.len();
+    if (n == 0) { return None; }
+    var mean: f64 = sum_f64(arr) / (n as f64);
+    var acc: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n) {
+        var d: f64 = arr[i] - mean;
+        acc = acc + d * d;
+        i = i + 1;
+    }
+    return Some(acc / (n as f64));
+}
+
+// `stddev_f64(arr)` — the POPULATION standard deviation, `sqrt(variance)`.
+// `None` for an empty array. `sqrt` goes through the `__sqrt_f64` builtin
+// directly so this needs no std/float import.
+pub function stddev_f64(arr: f64[]): Option[f64] {
+    match (variance_f64(arr)) {
+        Some(v) => { return Some(__sqrt_f64(v)); },
+        None => { return None; }
+    }
+}
+
 // =================== GENERIC ARRAY COMBINATORS ===================
 //
 // `map` / `filter` / `fold` / `any` / `all` / `find` /
