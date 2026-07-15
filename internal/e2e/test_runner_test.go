@@ -2219,6 +2219,25 @@ func TestRunnerArrayStatsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/sort_f64_test.fern` covers std/sort's sort_f64_asc /
+// sort_f64_desc — bottom-up merge sort of an f64[], the float siblings of the
+// integer sorts. On the interp gate and both self-host gates; the Go-side
+// TestSortF64 pins native compilation on all four backends (f64 arrays are
+// scalar-payload, so no wasm skip). Passing → exit 0.
+func TestRunnerSortF64Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/sort_f64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/sort f64", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

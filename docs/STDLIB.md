@@ -397,6 +397,8 @@ the small-list convenience cases.
 - `sort_i32_asc(arr)`, `sort_i32_desc(arr)`
 - `sort_i64_asc(arr)`, `sort_i64_desc(arr)`
 - `sort_u32_asc(arr)`, `sort_u64_asc(arr)`
+- `sort_f64_asc(arr)`, `sort_f64_desc(arr)` (NaN ordering
+  unspecified — filter NaNs first if it matters)
 - `sort_strings_asc(arr)`, `sort_strings_desc(arr)`,
   `sort_strings_asc_ci(arr)`
 - `string_cmp(a, b)`, `string_cmp_ci(a, b)`
