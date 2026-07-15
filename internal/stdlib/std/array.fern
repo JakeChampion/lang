@@ -935,6 +935,37 @@ pub function cumsum_f64(arr: f64[]): f64[] {
     return out;
 }
 
+// `cumprod_f64(arr)` — the running (prefix) product: element `i` of the result
+// is `product(arr[0..=i])`. Same length as the input, the multiplicative
+// counterpart to `cumsum`; empty in, empty out.
+pub function cumprod_f64(arr: f64[]): f64[] {
+    var n: i32 = arr.len();
+    var out: f64[] = [];
+    var p: f64 = 1.0;
+    var i: i32 = 0;
+    while (i < n) {
+        p = p * arr[i];
+        out = out.append(p);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `diff_f64(arr)` — the successive differences `arr[i+1] - arr[i]`, so the
+// result is one shorter than the input (empty for fewer than 2 elements). The
+// discrete counterpart to differentiation and the left-inverse of `cumsum`:
+// `diff(cumsum(xs))` recovers `xs` (minus its first element).
+pub function diff_f64(arr: f64[]): f64[] {
+    var n: i32 = arr.len();
+    var out: f64[] = [];
+    var i: i32 = 1;
+    while (i < n) {
+        out = out.append(arr[i] - arr[i - 1]);
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function max_f64(arr: f64[]): Option[f64] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }

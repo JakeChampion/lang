@@ -2334,6 +2334,25 @@ func TestRunnerArrayScaleAddExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_cumprod_diff_test.fern` covers std/array's cumprod_f64
+// (running product) and diff_f64 (successive differences, one shorter than the
+// input) — scan-style ops, both f64[] returns. On the interp gate and both
+// self-host gates; the Go-side TestArrayCumprodDiff pins native compilation on
+// all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayCumprodDiffExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_cumprod_diff_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 cumprod/diff", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
