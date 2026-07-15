@@ -962,6 +962,35 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
     }
 }
 
+// `median_f64(arr)` — the median after an ascending sort. Unlike the i32
+// `median` (which returns the lower middle), this AVERAGES the two middle
+// elements for even-length input, the standard continuous-data convention.
+// `None` for empty. Odd length returns the exact middle element.
+pub function median_f64(arr: f64[]): Option[f64] {
+    var n: i32 = arr.len();
+    if (n == 0) { return None; }
+    var sorted: f64[] = sort.sort_f64_asc(arr);
+    if (n % 2 == 1) { return Some(sorted[n / 2]); }
+    var hi: i32 = n / 2;
+    return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
+}
+
+// `range_f64(arr)` — the spread `max - min` (always `>= 0`). A single element
+// has range 0. `None` for empty. Computed in one pass, so it needs no sort.
+pub function range_f64(arr: f64[]): Option[f64] {
+    var n: i32 = arr.len();
+    if (n == 0) { return None; }
+    var lo: f64 = arr[0];
+    var hi: f64 = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (arr[i] < lo) { lo = arr[i]; }
+        if (arr[i] > hi) { hi = arr[i]; }
+        i = i + 1;
+    }
+    return Some(hi - lo);
+}
+
 // =================== GENERIC ARRAY COMBINATORS ===================
 //
 // `map` / `filter` / `fold` / `any` / `all` / `find` /
