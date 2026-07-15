@@ -991,6 +991,38 @@ pub function range_f64(arr: f64[]): Option[f64] {
     return Some(hi - lo);
 }
 
+// `dot_f64(a, b)` — the dot product `sum(a[i] * b[i])`. When the two arrays
+// differ in length, the extra tail of the longer one is ignored (the sum runs
+// to the shorter length); empty inputs give `0`. Returns a plain f64 (no
+// Option) since the natural identity for the empty sum is `0`.
+pub function dot_f64(a: f64[], b: f64[]): f64 {
+    var n: i32 = a.len();
+    var m: i32 = b.len();
+    if (m < n) { n = m; }
+    var s: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + a[i] * b[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// `norm_f64(arr)` — the Euclidean norm (L2 magnitude) `sqrt(sum(x*x))`, i.e.
+// `sqrt(dot(arr, arr))`. `0` for empty. A naive sum of squares, so very large
+// magnitudes can overflow before the sqrt — callers near the f64 max should
+// scale first; typical data is fine.
+pub function norm_f64(arr: f64[]): f64 {
+    var n: i32 = arr.len();
+    var s: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + arr[i] * arr[i];
+        i = i + 1;
+    }
+    return __sqrt_f64(s);
+}
+
 // =================== GENERIC ARRAY COMBINATORS ===================
 //
 // `map` / `filter` / `fold` / `any` / `all` / `find` /
