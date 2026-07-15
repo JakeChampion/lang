@@ -1,0 +1,48 @@
+import "std/test";
+import "std/i32" as i32m;
+import "std/i64" as i64m;
+// examples/tests/int_midpoint_test.fern — pure-Fern coverage of std/i32.midpoint
+// and std/i64.midpoint: the overflow-safe average (a & b) + ((a ^ b) >> 1),
+// rounded toward negative infinity. The naive (a+b)/2 overflows for large
+// same-sign operands (the classic binary-search bug); this form never does, so
+// the near-MAX cases are the crux. Scalar bit-ops, so this rides all four
+// native backends and both self-host gates. The Go-side TestIntMidpoint pins
+// the native backends; this is the migration-shaped companion.
+
+function test_i32_basic(): test.TestOutcome {
+    if ((4).midpoint(6) != 5) { return test.fail("4,6"); }
+    if ((2).midpoint(4) != 3) { return test.fail("2,4"); }
+    return test.assert_true((7).midpoint(7) == 7);
+}
+
+function test_i32_negatives(): test.TestOutcome {
+    if ((0 - 4).midpoint(0 - 2) != (0 - 3)) { return test.fail("-4,-2"); }
+    return test.assert_true((0 - 2).midpoint(4) == 1);
+}
+
+function test_i32_no_overflow(): test.TestOutcome {
+    // (a+b)/2 would overflow i32 here; midpoint does not.
+    if ((2147483647).midpoint(2147483645) != 2147483646) { return test.fail("near MAX"); }
+    return test.assert_true((2000000000).midpoint(2000000000) == 2000000000);
+}
+
+function test_i64_basic(): test.TestOutcome {
+    if ((4 as i64).midpoint(6 as i64) != (5 as i64)) { return test.fail("4,6"); }
+    return test.assert_true(((0 as i64) - 100).midpoint(50 as i64) == ((0 as i64) - 25));
+}
+
+function test_i64_no_overflow(): test.TestOutcome {
+    var mx: i64 = (9223372036854775807 as i64);
+    if (mx.midpoint(mx - (2 as i64)) != (mx - (1 as i64))) { return test.fail("near i64::MAX"); }
+    return test.assert_true((5000000000 as i64).midpoint(5000000000 as i64) == (5000000000 as i64));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/int midpoint");
+    r = r.it("i32 basic",       test_i32_basic());
+    r = r.it("i32 negatives",   test_i32_negatives());
+    r = r.it("i32 no overflow", test_i32_no_overflow());
+    r = r.it("i64 basic",       test_i64_basic());
+    r = r.it("i64 no overflow", test_i64_no_overflow());
+    return r.finish();
+}

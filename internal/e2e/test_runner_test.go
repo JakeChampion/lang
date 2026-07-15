@@ -2353,6 +2353,25 @@ func TestRunnerArrayCumprodDiffExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/int_midpoint_test.fern` covers std/i32.midpoint and
+// std/i64.midpoint — the overflow-safe average via (a & b) + ((a ^ b) >> 1).
+// Scalar bit-ops, so on the interp gate and both self-host gates; the Go-side
+// TestIntMidpoint pins native compilation on all four backends (no wasm skip).
+// Passing → exit 0.
+func TestRunnerIntMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/int_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/int midpoint", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64

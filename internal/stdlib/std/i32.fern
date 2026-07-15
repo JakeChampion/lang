@@ -39,6 +39,16 @@ pub function (n: i32) abs_diff(other: i32): i32 {
     if (n >= other) { return n - other; }
     return other - n;
 }
+
+// `(n: i32) midpoint(other)` — the average of `n` and `other`, rounded toward
+// negative infinity, computed WITHOUT overflow via the classic
+// `(a & b) + ((a ^ b) >> 1)` identity. The naive `(a + b) / 2` overflows for
+// large same-sign operands (the well-known binary-search bug); this form never
+// does. `midpoint(4, 6)` is `5`, `midpoint(i32::MAX, i32::MAX - 2)` is
+// `i32::MAX - 1`, and `midpoint(-2, 4)` is `1`.
+pub function (n: i32) midpoint(other: i32): i32 {
+    return (n & other) + ((n ^ other) >> 1);
+}
 // ASCII byte predicates — `is_digit` / `is_alpha` / `is_alnum` /
 // `is_ascii_white_space` classify a single byte (typically an
 // `s[i]` index into a string, i.e. a UTF-8 code unit, hence the
