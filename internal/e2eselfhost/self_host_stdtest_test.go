@@ -256,6 +256,13 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"array_scale_add", langSrcAbs(t, "examples/tests/array_scale_add_test.fern"), ""},
 		{"array_cumprod_diff", langSrcAbs(t, "examples/tests/array_cumprod_diff_test.fern"), ""},
 		{"int_midpoint", langSrcAbs(t, "examples/tests/int_midpoint_test.fern"), ""},
+		// NOTE: uint_midpoint is NOT gated here. It is native-differential + interp
+		// only: the arm64 self-host compiler emits an ARITHMETIC (sign-extending)
+		// shift for the unsigned u32 `>>`, so `(a ^ b) >> 1` gives the wrong result
+		// when the high bit is set (the near-u32::MAX case) — the same u32 self-host
+		// gap that keeps u32_roots interp-only. All four NATIVE backends (incl.
+		// arm64) handle it correctly — see internal/e2e/uint_midpoint_test.go. (The
+		// signed int_midpoint above is fine: its arithmetic shift is correct.)
 		// NOTE: u32_roots is deliberately NOT gated here. It is native-differential
 		// + interp only: the self-host compiler's u32 arithmetic doesn't truncate /
 		// compare as unsigned near the 2^31 boundary (the documented u32 self-host

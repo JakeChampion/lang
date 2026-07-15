@@ -80,7 +80,8 @@ Receiver methods on i32 / byte values.
 ### `std/u32`
 
 - **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
-  always fits — unsigned)
+  always fits — unsigned), `midpoint(other)` (overflow-safe average
+  via `(a&b)+((a^b)>>1)`)
 - **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact to
   `(2^16-1)²`), `is_power_of_2` (`n & (n-1)` bit trick), `next_power_of_2`
   (smallest power `>= n`; caps at 2^31, returns 0 above), `log2_floor`
@@ -96,7 +97,8 @@ Receiver methods on i32 / byte values.
 ### `std/u64`
 
 - **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
-  always fits — unsigned)
+  always fits — unsigned), `midpoint(other)` (overflow-safe average,
+  u64 sibling of the u32 one)
 - **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact to
   `(2^32-1)²`), `is_power_of_2` (`n & (n-1)` bit trick), `next_power_of_2`
   (smallest power `>= n`; caps at 2^63, returns 0 above), `log2_floor`

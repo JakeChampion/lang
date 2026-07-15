@@ -42,6 +42,14 @@ pub function (n: u64) abs_diff(other: u64): u64 {
     return other - n;
 }
 
+// `(n: u64) midpoint(other)` — the overflow-safe average via
+// `(a & b) + ((a ^ b) >> 1)` (logical shift), the u64 sibling of std/u32's
+// `midpoint`. `(a + b) / 2` wraps for large unsigned operands; this form never
+// does, so it is exact across the whole u64 range.
+pub function (n: u64) midpoint(other: u64): u64 {
+    return (n & other) + ((n ^ other) >> (1 as u64));
+}
+
 // `is_in_range(lo, hi)` — half-open `[lo, hi)`, unsigned. Mirrors std/i64.
 pub function (n: u64) is_in_range(lo: u64, hi: u64): boolean {
     return n >= lo && n < hi;

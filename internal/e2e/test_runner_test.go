@@ -2372,6 +2372,27 @@ func TestRunnerIntMidpointExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/uint_midpoint_test.fern` covers std/u32.midpoint and
+// std/u64.midpoint — the overflow-safe unsigned average via
+// (a & b) + ((a ^ b) >> 1). Interp gate only (NOT self-host gated): the arm64
+// self-host compiler sign-extends the unsigned u32 `>>`, breaking the
+// near-u32::MAX case (the documented u32 self-host gap). The Go-side
+// TestUintMidpoint pins native compilation on all four backends (no wasm skip);
+// all four handle it correctly. Passing → exit 0.
+func TestRunnerUintMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/uint_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uint midpoint", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
