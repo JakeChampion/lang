@@ -2276,6 +2276,26 @@ func TestRunnerArrayVectorExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_distance_normalize_test.fern` covers std/array's
+// distance_f64 (Euclidean distance) and normalize_f64 (unit vector; zero /
+// empty returned unchanged). distance returns f64, normalize an f64[] — both
+// scalar payload, so on the interp gate and both self-host gates; the Go-side
+// TestArrayDistanceNormalize pins native compilation on all four backends (no
+// wasm skip). Passing → exit 0.
+func TestRunnerArrayDistanceNormalizeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_distance_normalize_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 distance/normalize", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
