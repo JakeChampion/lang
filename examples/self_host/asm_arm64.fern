@@ -3941,7 +3941,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         fi = fi + 1;
     }
     // #4355: admit the replaced-STRING-field arm per type from the

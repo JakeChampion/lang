@@ -93,7 +93,7 @@ pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs), cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
         fi = fi + 1;
     }
     return out;
@@ -1050,7 +1050,7 @@ pub function fn_support_section(cache: irlower.LowerResult[]): string {
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
 function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[], consume_safe_params: string[]): string {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs), irlower.str_fresh_ret_fns_of(funcs), irlower.opt_fresh_ret_fns_of(funcs, structs), irlower.strfld_reclaim_ok_types_of(funcs, structs), irlower.tuple_fresh_ret_fns_of(funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.closurearr_ret_fns_of(funcs), irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs), irlower.str_fresh_ret_fns_of(funcs), irlower.opt_fresh_ret_fns_of(funcs, structs), irlower.strfld_reclaim_ok_types_of(funcs, structs), irlower.tuple_fresh_ret_fns_of(funcs));
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
