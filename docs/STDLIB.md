@@ -229,7 +229,8 @@ convention.
   `sum_i64`, `max_i64`, `min_i64`, `avg_i64`;
   `sum_u32`, `max_u32`, `min_u32`;
   `sum_u64`, `max_u64`, `min_u64`;
-  `sum_f64`, `max_f64`, `min_f64`, `avg_f64`,
+  `sum_f64`, `product_f64` (empty = 1), `cumsum_f64` (running
+  prefix sum), `max_f64`, `min_f64`, `avg_f64`,
   `variance_f64` / `stddev_f64` (population variance and its
   square root, `Option[f64]`, `None` for empty),
   `median_f64` (averages the two middles for even length),

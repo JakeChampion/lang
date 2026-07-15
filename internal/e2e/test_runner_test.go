@@ -2296,6 +2296,25 @@ func TestRunnerArrayDistanceNormalizeExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_product_cumsum_test.fern` covers std/array's product_f64
+// (product of all elements, empty = 1) and cumsum_f64 (running prefix sum).
+// product returns f64, cumsum an f64[] — both scalar payload, so on the interp
+// gate and both self-host gates; the Go-side TestArrayProductCumsum pins native
+// compilation on all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayProductCumsumExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_product_cumsum_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 product/cumsum", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
