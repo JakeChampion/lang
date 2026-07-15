@@ -1,0 +1,68 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_stats_test.fern — pure-Fern coverage of
+// std/array.variance_f64 / stddev_f64: population variance (mean of squared
+// deviations, /n) and its square root, both Option[f64] (None for empty). Uses
+// the textbook {2,4,4,4,5,5,7,9} set (mean 5, variance 4, stddev 2) plus the
+// single-element / constant / empty edge cases. The Go-side TestArrayStats pins
+// these across interp / x86-64 / arm64 (the wasmbin leg skips Option over a
+// 64-bit payload, the enum-i64/f64 gap avg_f64 / max_f64 share); this is the
+// migration-shaped companion. Option[f64] lowers on the self-host asm_ir path,
+// so this rides both self-host gates too.
+
+function unwrap(o: Option[f64]): f64 {
+    match (o) {
+        Some(v) => { return v; },
+        None => { return 0.0 - 999.0; }
+    }
+}
+
+function is_none(o: Option[f64]): boolean {
+    match (o) {
+        Some(v) => { return false; },
+        None => { return true; }
+    }
+}
+
+function test_variance(): test.TestOutcome {
+    var xs: f64[] = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+    return test.assert_eq_f64_near(unwrap(array.variance_f64(xs)), 4.0, 0.0001);
+}
+
+function test_stddev(): test.TestOutcome {
+    var xs: f64[] = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+    return test.assert_eq_f64_near(unwrap(array.stddev_f64(xs)), 2.0, 0.0001);
+}
+
+function test_single(): test.TestOutcome {
+    var single: f64[] = [42.0];
+    if (!is_zero(unwrap(array.variance_f64(single)))) { return test.fail("variance of one"); }
+    return test.assert_eq_f64_near(unwrap(array.stddev_f64(single)), 0.0, 0.0001);
+}
+
+function test_constant(): test.TestOutcome {
+    var flat: f64[] = [3.0, 3.0, 3.0];
+    return test.assert_eq_f64_near(unwrap(array.variance_f64(flat)), 0.0, 0.0001);
+}
+
+function test_empty_none(): test.TestOutcome {
+    var empty: f64[] = [];
+    if (!is_none(array.variance_f64(empty))) { return test.fail("variance of empty"); }
+    return test.assert_true(is_none(array.stddev_f64(empty)));
+}
+
+function is_zero(x: f64): boolean {
+    var d: f64 = x;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array f64 stats");
+    r = r.it("variance",     test_variance());
+    r = r.it("stddev",       test_stddev());
+    r = r.it("single value", test_single());
+    r = r.it("constant",     test_constant());
+    r = r.it("empty -> none", test_empty_none());
+    return r.finish();
+}
