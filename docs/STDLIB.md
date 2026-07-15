@@ -233,7 +233,9 @@ convention.
   `variance_f64` / `stddev_f64` (population variance and its
   square root, `Option[f64]`, `None` for empty),
   `median_f64` (averages the two middles for even length),
-  `range_f64` (`max - min` spread)
+  `range_f64` (`max - min` spread),
+  `dot_f64(a, b)` (dot product, runs to the shorter length),
+  `norm_f64` (Euclidean / L2 norm, `sqrt(dot(self, self))`)
 - **string[] core:** `join`, `index_of`, `position`, `contains`,
   `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,

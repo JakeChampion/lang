@@ -250,6 +250,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"array_stats", langSrcAbs(t, "examples/tests/array_stats_test.fern"), ""},
 		{"sort_f64", langSrcAbs(t, "examples/tests/sort_f64_test.fern"), ""},
 		{"array_median_range", langSrcAbs(t, "examples/tests/array_median_range_test.fern"), ""},
+		{"array_vector", langSrcAbs(t, "examples/tests/array_vector_test.fern"), ""},
 		// NOTE: u32_roots is deliberately NOT gated here. It is native-differential
 		// + interp only: the self-host compiler's u32 arithmetic doesn't truncate /
 		// compare as unsigned near the 2^31 boundary (the documented u32 self-host

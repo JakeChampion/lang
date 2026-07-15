@@ -2257,6 +2257,25 @@ func TestRunnerArrayMedianRangeExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_vector_test.fern` covers std/array's dot_f64 (dot
+// product, running to the shorter length) and norm_f64 (Euclidean / L2 norm).
+// Both return a plain f64, so on the interp gate and both self-host gates; the
+// Go-side TestArrayVector pins native compilation on all four backends (no wasm
+// skip). Passing → exit 0.
+func TestRunnerArrayVectorExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_vector_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 vector", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
