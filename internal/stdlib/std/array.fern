@@ -1088,6 +1088,36 @@ pub function normalize_f64(arr: f64[]): f64[] {
     return out;
 }
 
+// `scale_f64(arr, k)` — every element multiplied by the scalar `k`, returning a
+// new array of the same length (the input is untouched). `scale(arr, 0)` is the
+// zero vector; empty in, empty out.
+pub function scale_f64(arr: f64[], k: f64): f64[] {
+    var out: f64[] = [];
+    var n: i32 = arr.len();
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append(arr[i] * k);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `add_f64(a, b)` — the element-wise sum `a[i] + b[i]`. On a length mismatch
+// the result runs to the shorter length (the longer tail is dropped); empty in,
+// empty out. The vector-addition companion to `scale_f64`.
+pub function add_f64(a: f64[], b: f64[]): f64[] {
+    var n: i32 = a.len();
+    var m: i32 = b.len();
+    if (m < n) { n = m; }
+    var out: f64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append(a[i] + b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // =================== GENERIC ARRAY COMBINATORS ===================
 //
 // `map` / `filter` / `fold` / `any` / `all` / `find` /

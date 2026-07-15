@@ -238,7 +238,9 @@ convention.
   `dot_f64(a, b)` (dot product, runs to the shorter length),
   `norm_f64` (Euclidean / L2 norm, `sqrt(dot(self, self))`),
   `distance_f64(a, b)` (Euclidean distance `norm(a - b)`),
-  `normalize_f64` (unit vector; zero / empty returned unchanged)
+  `normalize_f64` (unit vector; zero / empty returned unchanged),
+  `scale_f64(arr, k)` (scalar multiply), `add_f64(a, b)`
+  (element-wise sum, runs to the shorter length)
 - **string[] core:** `join`, `index_of`, `position`, `contains`,
   `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,
