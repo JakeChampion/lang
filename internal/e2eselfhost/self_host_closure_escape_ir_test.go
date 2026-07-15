@@ -53,6 +53,13 @@ var closureEscapeCases = []struct {
 	{"escape-captures-fn", "function mk(base: (i32) => i32): (i32) => i32 { var f = function (x: i32): i32 { return base(x); }; return f; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var g = mk(dbl); return g(21); }", 42},
 	// Composition: the escaped closure captures a fn-value it applies twice.
 	{"escape-compose-twice", "function twice(f: (i32) => i32): (i32) => i32 { var g = function (x: i32): i32 { return f(f(x)); }; return g; } function inc(x: i32): i32 { return x + 1; } function main(): i32 { var d = twice(inc); return d(40); }", 42},
+	// Return an ARRAY of closures, then call an element via the caller's
+	// binding: `var arr = mk(); arr[0](x)`. The caller must mark arr's slot
+	// is_closurearr (mk returns `((i32) => i32)[]`) so `arr[0](x)` dispatches
+	// env-first; before the fix it bare-called the box pointer → SIGSEGV.
+	{"return-closure-array-via-var", "function mk(): ((i32) => i32)[] { var n = 5; var a = [function (x: i32): i32 { return x + n; }]; return a; } function main(): i32 { var arr = mk(); return arr[0](37); }", 42},
+	// Same, with the array returned directly (`return [<closure>]`).
+	{"return-closure-array-direct", "function mk(): ((i32) => i32)[] { return [function (x: i32): i32 { return x + 1; }]; } function main(): i32 { var arr = mk(); return arr[0](41); }", 42},
 	// Regression: a directly-returned lambda (bare fn pointer, no box) must
 	// keep working under the extended detection.
 	{"direct-return", "function adder(a: i32): (i32) => i32 { return function (b: i32): i32 { return a + b; }; } function main(): i32 { var add10 = adder(10); return add10(5); }", 15},
