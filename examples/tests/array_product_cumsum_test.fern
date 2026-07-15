@@ -1,0 +1,54 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_product_cumsum_test.fern — pure-Fern coverage of
+// std/array's product_f64 (product of all elements, empty = 1) and cumsum_f64
+// (running prefix sum, same length as input). product returns a plain f64,
+// cumsum an f64[] — both scalar payload, so this rides all four native backends
+// and both self-host gates. The Go-side TestArrayProductCumsum pins the native
+// backends; this is the migration-shaped companion.
+
+function near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function test_product(): test.TestOutcome {
+    // 1*2*3*4 = 24
+    if (!near(array.product_f64([1.0, 2.0, 3.0, 4.0]), 24.0)) { return test.fail("1..4"); }
+    // 2 * -3 = -6
+    return test.assert_eq_f64_near(array.product_f64([2.0, 0.0 - 3.0]), 0.0 - 6.0, 0.0001);
+}
+
+function test_product_empty(): test.TestOutcome {
+    // empty product is the multiplicative identity.
+    return test.assert_eq_f64_near(array.product_f64([]), 1.0, 0.0001);
+}
+
+function test_cumsum(): test.TestOutcome {
+    var cs: f64[] = array.cumsum_f64([1.0, 2.0, 3.0, 4.0]);
+    if (!near(cs[0], 1.0)) { return test.fail("prefix 0"); }
+    if (!near(cs[2], 6.0)) { return test.fail("prefix 2"); }
+    // last prefix sum is the total.
+    return test.assert_eq_f64_near(cs[3], 10.0, 0.0001);
+}
+
+function test_cumsum_negatives(): test.TestOutcome {
+    var d: f64[] = array.cumsum_f64([5.0, 0.0 - 2.0, 1.0]);
+    if (!near(d[1], 3.0)) { return test.fail("5-2"); }
+    return test.assert_eq_f64_near(d[2], 4.0, 0.0001);
+}
+
+function test_cumsum_empty(): test.TestOutcome {
+    return test.assert_true(array.cumsum_f64([]).len() == 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array f64 product/cumsum");
+    r = r.it("product",           test_product());
+    r = r.it("product empty",     test_product_empty());
+    r = r.it("cumsum",            test_cumsum());
+    r = r.it("cumsum negatives",  test_cumsum_negatives());
+    r = r.it("cumsum empty",      test_cumsum_empty());
+    return r.finish();
+}
