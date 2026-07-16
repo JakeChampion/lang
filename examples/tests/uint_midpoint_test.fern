@@ -7,10 +7,12 @@ import "std/u64" as u64m;
 // unsigned operands (the classic binary-search bug); this form never does, so
 // the near-MAX cases are the crux. The Go-side TestUintMidpoint pins these
 // across all four NATIVE backends; this is the migration-shaped companion.
-// Interp-gated only, NOT self-host gated: the arm64 self-host compiler emits an
-// arithmetic (sign-extending) shift for the unsigned u32 `>>`, breaking the
-// near-u32::MAX case (the documented u32 self-host gap). All four native
-// backends — including arm64 — handle it correctly.
+// Both interp- AND self-host-gated (x86-64 / arm64 / wasm IR). This was once
+// interp-only, blamed on a "u32 self-host gap" (an arithmetic/sign-extending
+// `>>`); the real cause was irlower's expr_recv_prim_type having no u32 branch,
+// so `(a as u32).midpoint(...)` dispatched to the SIGNED std/i32.midpoint (whose
+// `>>` is arithmetic) instead of std/u32.midpoint. Fixed — the self-host
+// compilers now match the interpreter on the near-u32::MAX case.
 
 function test_u32_basic(): test.TestOutcome {
     if ((4 as u32).midpoint(6 as u32) != (5 as u32)) { return test.fail("4,6"); }

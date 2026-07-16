@@ -5,10 +5,13 @@ import "std/u32" as u32m;
 // power helpers, the u32 mirror of the u64 set. sqrt_floor is exact up to
 // (2^16-1)^2, the power helpers reach 2^31, and log2_floor spans 0..31. The
 // Go-side TestU32Roots pins these across all four NATIVE backends; this is the
-// migration-shaped companion. Interp-gated only, NOT self-host gated: the
-// self-host compiler's u32 arithmetic doesn't truncate / compare as unsigned
-// near the 2^31 boundary (the documented u32 self-host gap), which spins
-// next_power_of_2's doubling loop forever in the self-host-compiled binary.
+// migration-shaped companion. Both interp- AND self-host-gated (x86-64 / arm64 /
+// wasm IR). Formerly interp-only: the u32 root/power methods dispatched to their
+// SIGNED std/i32 namesakes (irlower's expr_recv_prim_type lacked a u32 branch,
+// so a u32 receiver keyed "i32.<method>"), so next_power_of_2 ran the signed
+// version whose `p < n` compare goes negative past 2^31 and spun forever, and
+// sqrt_floor / is_power_of_2 / log2_floor used signed arithmetic near the
+// boundary. Fixed in expr_recv_prim_type — all now match the interpreter.
 
 function test_sqrt_floor(): test.TestOutcome {
     if ((100 as u32).sqrt_floor() != (10 as u32)) { return test.fail("sqrt 100"); }

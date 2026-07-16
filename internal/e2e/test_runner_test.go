@@ -2142,10 +2142,11 @@ func TestRunnerFloatClamp01AbsDiffMulAddExample(t *testing.T) {
 
 // `examples/tests/u32_roots_test.fern` covers std/u32's sqrt_floor,
 // is_power_of_2, next_power_of_2 (capped at 2^31, 0 above), and log2_floor —
-// unsigned root/power helpers, the u32 mirror of the u64 set. Interp gate only
-// (NOT self-host gated): the self-host compiler's u32 arithmetic doesn't
-// truncate / compare as unsigned near 2^31, spinning next_power_of_2's doubling
-// loop forever — the documented u32 self-host gap. The Go-side TestU32Roots
+// unsigned root/power helpers, the u32 mirror of the u64 set. On the interp gate
+// AND both self-host gates (formerly interp-only: a u32-receiver method call
+// dispatched to its SIGNED std/i32 namesake because irlower's
+// expr_recv_prim_type lacked a u32 branch, so next_power_of_2 ran the signed
+// version and spun forever past 2^31 — fixed there). The Go-side TestU32Roots
 // pins native compilation on all four backends. Passing → exit 0.
 func TestRunnerU32RootsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -2374,11 +2375,12 @@ func TestRunnerIntMidpointExample(t *testing.T) {
 
 // `examples/tests/uint_midpoint_test.fern` covers std/u32.midpoint and
 // std/u64.midpoint — the overflow-safe unsigned average via
-// (a & b) + ((a ^ b) >> 1). Interp gate only (NOT self-host gated): the arm64
-// self-host compiler sign-extends the unsigned u32 `>>`, breaking the
-// near-u32::MAX case (the documented u32 self-host gap). The Go-side
-// TestUintMidpoint pins native compilation on all four backends (no wasm skip);
-// all four handle it correctly. Passing → exit 0.
+// (a & b) + ((a ^ b) >> 1). On the interp gate AND both self-host gates
+// (formerly interp-only: `(a as u32).midpoint(...)` dispatched to the SIGNED
+// std/i32.midpoint — whose `>>` is arithmetic — because irlower's
+// expr_recv_prim_type lacked a u32 branch; fixed there). The Go-side
+// TestUintMidpoint pins native compilation on all four backends (no wasm skip).
+// Passing → exit 0.
 func TestRunnerUintMidpointExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/uint_midpoint_test.fern")

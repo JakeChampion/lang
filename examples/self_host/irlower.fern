@@ -2335,6 +2335,15 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // method_recv_tyname's u64 branch.
     if (expr_is_u64(e, s)) { return "u64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
+    // u32 BEFORE the "i32" fallback: a u32 value is width-32 (so it escapes the
+    // width-64 checks above), but its method dispatch must key "u32.<m>" — std/u32's
+    // methods are recorded under their u32 base type. Without this a u32 receiver
+    // silently dispatched to the SIGNED "i32.<m>" (which std/i32 also defines, so
+    // calls_only_known passed and the module did NOT bail — a real miscompile, not
+    // an AST fallback): abs_diff used a signed compare, midpoint a sign-extending
+    // (arithmetic) `>>`. Both diverge from the unsigned answer once bit 31 is set.
+    // Mirrors the expr_is_u64 branch just above.
+    if (expr_is_u32(e, s)) { return "u32"; }
     return "i32";
 }
 
