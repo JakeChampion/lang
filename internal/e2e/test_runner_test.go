@@ -99,6 +99,28 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/regex_test.fern` covers std/regex through the pure-Fern
+// runner: the matcher (match / search / find / anchors / classes /
+// quantifiers / alternation / (?i)), the bulk ops (count / find_all /
+// replace / replace_all / split / full_match), and the capture engine
+// (regex_captures positional + optional + quantified-last-iteration,
+// captures_all, named groups (?<name>…) + .group_named / .group_index /
+// .has_group_named, and $-template replacement incl. ${name} and $$).
+// The regex module had only Go-side coverage. Passing suite → exit 0.
+func TestRunnerRegexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/regex_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/regex", "# pass 22", "# fail 0", "1..22"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/iter_test.fern` covers the core/iter stdlib (the
 // generic Iterator[T] protocol + Range / ArrayIter and the eager
 // drivers — sum / count / of / product / nth / last / min / max /
