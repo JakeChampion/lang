@@ -1,0 +1,40 @@
+// Regex capture groups — a tour of std/regex's extraction API.
+//
+// The Thompson-NFA matcher (`regex_match` / `regex_search`) answers "does it
+// match, and where". The capture engine answers "what did each group match".
+// `regex_captures` runs a linear-time Pike VM (no backtracking blow-up) and
+// returns an `RCaps` carrying every group's span; groups are numbered by their
+// `(` from 1, and a `(?<name>…)` group is ALSO reachable by name. None of this
+// is built into the language — it is ordinary Fern over the raw-byte matcher,
+// and it lowers on every backend (interp / x86-64 / arm64 / wasm).
+import "std/regex" as regex;
+import "std/string";
+
+function main(): i32 {
+  // Parse a request-log line into named fields with one pattern.
+  var line: string = "GET /api/users 200 15ms";
+  var pat: string = "(?<method>\\w+) (?<path>\\S+) (?<status>\\d+) (?<ms>\\d+)ms";
+  var m: regex.RCaps = regex.regex_captures(pat, line);
+
+  // Named extraction — `.group_named` resolves the label to its span. The
+  // same groups are still positional: `.group_index("status") == 3`.
+  var status: i32 = m.group_named("status").parse_int_or(0);   // 200
+  var ms: i32 = m.group_named("ms").parse_int_or(0);           // 15
+
+  // `${name}` template substitution: swap each `k=v` pair to `v=k`.
+  var swapped: string = regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=2", "${v}=${k}");
+
+  // A whole-token scan: four fields in the log line.
+  var fields: i32 = regex.regex_count("\\S+", line);           // 4
+
+  // 200 + 15 + 4 = 219 — returned only when the named method, the group
+  // index, and the ${name} rewrite all came out right (a regression in any
+  // one of them changes the exit code).
+  var result: i32 = status + ms + fields;
+  if (m.group_named("method") == "GET"
+      && m.group_index("path") == 2
+      && swapped == "1=a 2=b") {
+    return result;
+  }
+  return 0;
+}
