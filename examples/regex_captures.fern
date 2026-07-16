@@ -18,22 +18,20 @@ function main(): i32 {
 
   // Named extraction — `.group_named` resolves the label to its span. The
   // same groups are still positional: `.group_index("status") == 3`.
-  var status: i32 = m.group_named("status").parse_int_or(0);   // 200
-  var ms: i32 = m.group_named("ms").parse_int_or(0);           // 15
+  var status: i32 = m.group_named("status").parse_int_or(0);  // 200
+  var ms: i32 = m.group_named("ms").parse_int_or(0);  // 15
 
   // `${name}` template substitution: swap each `k=v` pair to `v=k`.
   var swapped: string = regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=2", "${v}=${k}");
 
   // A whole-token scan: four fields in the log line.
-  var fields: i32 = regex.regex_count("\\S+", line);           // 4
+  var fields: i32 = regex.regex_count("\\S+", line);  // 4
 
   // 200 + 15 + 4 = 219 — returned only when the named method, the group
   // index, and the ${name} rewrite all came out right (a regression in any
   // one of them changes the exit code).
   var result: i32 = status + ms + fields;
-  if (m.group_named("method") == "GET"
-      && m.group_index("path") == 2
-      && swapped == "1=a 2=b") {
+  if (m.group_named("method") == "GET" && m.group_index("path") == 2 && swapped == "1=a 2=b") {
     return result;
   }
   return 0;
