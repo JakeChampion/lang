@@ -708,10 +708,22 @@ func (g *generator) emitDataSections() {
 			// function-value cells once FuncType locals are
 			// rc-tracked. The label still points at the fn_ptr, so
 			// OpCallIndirect's [+0]/[+8] reads are unchanged.
+			//
+			// Darwin: the label MUST be assembler-local ("L" prefix,
+			// like the .LStr_* string literals above) — a named
+			// (non-L) label starts a new ld64/ld-prime ATOM, and the
+			// anonymous 8-byte rc header preceding it belongs to the
+			// PREVIOUS atom, so the linker may separate/reorder the
+			// header away from its cell. The runtime then reads
+			// garbage at [cell-8], the static-sentinel guard misses,
+			// and the first rc op on a function value WRITES to the
+			// read-only __TEXT,__const page (SIGBUS) — every Map op
+			// crashed on arm64-darwin once #5052 made the default
+			// hash/eq adapters closure targets.
 			g.line(".align 3")
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
-			g.label(fmt.Sprintf("__closure_cell_%s", name))
+			g.label(g.closureCellSym(name))
 			g.line(fmt.Sprintf("\t.quad %s", name))
 			g.line("\t.quad 0")
 		}
@@ -8536,12 +8548,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// pair — top-level fn values (env=0) and runtime-
 		// allocated closures (env points at the captured-slot
 		// block) reach the same dispatch path.
-		cell := fmt.Sprintf("__closure_cell_%s", op.Str)
 		if g.constFuncCells == nil {
 			g.constFuncCells = map[string]bool{}
 		}
 		g.constFuncCells[op.Str] = true
-		g.adrpAdd("x0", cell)
+		g.adrpAdd("x0", g.closureCellSym(op.Str))
 		g.push()
 
 	case ir.OpConstVtable:
@@ -10184,4 +10195,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		return fmt.Errorf("arm64: unsupported IR op %s", op.Kind)
 	}
 	return nil
+}
+
+// closureCellSym names an OpConstFunc static closure-pair cell. On
+// darwin the label is assembler-local ("L" prefix) so it does NOT start
+// a linker atom — keeping the anonymous 8-byte rc header at [cell-8]
+// glued to the cell under ld64/ld-prime reordering (the same reason the
+// string literals use .LStr_* labels in __TEXT,__const). ELF keeps the
+// plain named label.
+func (g *generator) closureCellSym(name string) string {
+	if g.darwin {
+		return "L__closure_cell_" + name
+	}
+	return "__closure_cell_" + name
 }
