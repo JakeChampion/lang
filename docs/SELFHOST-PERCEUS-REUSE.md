@@ -207,8 +207,32 @@ existing test scaffolding rather than gated off:
   `__struct_drop_<T>`). Cross-*type* reuse stays scalar/array-only
   (`structs_reuse_compatible`'s per-position check rejects struct fields). Covered
   by `loop-nested-struct-field-*` (cross) and `loop-funcupdate-nested-struct-*`
-  (self-overwrite): reuse fires (box 3 not 4), 5M-iter churn balanced. REMAINING:
-  enum / Map / closure / tuple pointer fields.
+  (self-overwrite): reuse fires (box 3 not 4), 5M-iter churn balanced.
+
+  **Correction (2026-07-17, code audit):** the "REMAINING: enum / Map / closure
+  / tuple pointer fields" claim this bullet used to end with was STALE — the
+  widened `struct_fields_reusable_cross` (enum + string + Map + leak-safe
+  tuple + leak-safe Option) already gates the **cross-statement**
+  (`cross_reuse_sites`), **self-overwrite local** (`self_overwrite_reuse_sites`,
+  with `donor_enum_fields_fresh` + per-kind override gates), and — as of the
+  cross-block widening — **cross-block** (`xblock_scan_body`, sharing the
+  `cross_recipient_fields_fresh` value gate) families. What GENUINELY remains
+  vs native (which admits every field kind except string via
+  `structReuseEligible`/`arrElemIsRcTracked`, uniformly across families):
+
+  - **Closure fields — excluded everywhere.** No predicate admits them, no
+    `__struct_drop` closure arm exists; needs closure exit-reclaim first.
+  - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
+    admits only the leak-safe scalar arrays; native admits all.
+  - **Own-param families** (`own_param_reuse_sites` /
+    `own_param_self_overwrite_sites`): still on the narrow predicate. Enum /
+    string fields are BLOCKED there — the alias-free release proof
+    (`donor_enum_fields_fresh`) reads the donor's bind literal, which a
+    parameter doesn't have. Map / tuple / Option (leak-only, no release arm)
+    could be widened with just a predicate swap.
+  - **Enum-donor recipient** (`enum_donor_reuse_sites`): still narrow; needs a
+    recipient fresh-value gate plus the field-kind's exit-reclaim arm, or the
+    reused box leaks the new field at exit.
 
 These are marginal wins; whether to pursue the rest is a value call (see §7).
 Validation for either: the reuse it changes is **on by default** (matching the
