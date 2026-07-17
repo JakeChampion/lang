@@ -48,6 +48,17 @@ var genericErasureIRCases = []struct {
 	{"id-string-binding", "function idg[T](x: T): T { return x; } function main(): i32 { var s = idg(\"ab\" + \"c\"); return s.len() * 10 + 12; }", 42},
 	// Bare-T return at a SCALAR instantiation stays scalar.
 	{"id-scalar-regress", "function idg[T](x: T): T { return x; } function main(): i32 { return idg(42); }", 42},
+	// A `T[]` return (`dup[T](x: T): T[]`) instantiated at string: the
+	// "name|$arg<i>" strarr entry re-types the call from its argument, so
+	// `a[0].len()` dispatches as a string read (was 0 → exit 36).
+	{"dup-strarr", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(\"xyz\"); return a[0].len() + a[1].len() + 36; }", 42},
+	// An `Option[T]` return (`some1[T](x: T): Option[T]`) at string: the
+	// rewritten "Option[$arg<i>]" entry resolves the payload from the
+	// argument, so the Some-binder is str-tracked (was 0 → exit 37).
+	{"opt-generic-payload", "function some1[T](x: T): Option[T] { return Some(x); } function main(): i32 { var o = some1(\"hello\"); match (o) { Some(s) => { return s.len() + 37; }, None => { return 0; } } }", 42},
+	// Scalar instantiations of both shapes stay scalar.
+	{"dup-scalar-regress", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(20); return a[0] + a[1] + 2; }", 42},
+	{"opt-scalar-regress", "function some1[T](x: T): Option[T] { return Some(x); } function main(): i32 { var o = some1(40); match (o) { Some(n) => { return n + 2; }, None => { return 0; } } }", 42},
 }
 
 // TestSelfHostGenericErasureIRX86_64 — erased-generic returns through the

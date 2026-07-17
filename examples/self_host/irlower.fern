@@ -933,7 +933,7 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
                         }
                         return "";
                     }
-                    var rt: string = s.opt_ret_type(cid.name);
+                    var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);
                     if (rt.len() >= 8 && rt[0:7] == "Option[") { return rt; }
                     return "";
                 },
@@ -1019,7 +1019,7 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
             t = some_opt_type(e, s);
             if (t == "") {
                 match (c.callee) {
-                    parser.ExprIdent(cid) => { t = s.opt_ret_type(cid.name); },
+                    parser.ExprIdent(cid) => { t = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s); },
                     // `b.find()` where b's method returns Option/Result — keyed
                     // "<Type>.<method>" (struct receiver) or "Option.<m>" /
                     // "Result.<m>" (an Option/Result-receiver method, recursively).
@@ -2498,6 +2498,11 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     // `var a = args()` str-array-tracks (`a.len()` / `a[i]` dispatch
                     // as string[] ops, just like str_split's result).
                     if (cid.name == "args" && c.args.len() == 0) { return true; }
+                    // An erased-generic `T[]` return mirroring argument i
+                    // (`dup[T](x: T): T[]`): a string[] exactly when THAT
+                    // argument is a string.
+                    var gsa: i32 = strarr_ret_argref(s, cid.name);
+                    if (gsa >= 0 && gsa < c.args.len()) { return expr_is_str(c.args[gsa], s); }
                     return s.is_strarr_ret_fn(cid.name);
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -7749,7 +7754,7 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
         parser.ExprCall(scl) => {
             match (scl.callee) {
                 parser.ExprIdent(scid) => {
-                    var rt: string = s.opt_ret_type(scid.name);
+                    var rt: string = resolve_argref_opt_type(s.opt_ret_type(scid.name), scl.args, s);
                     // A direct `Some(x)` construction scrutinee — recover its
                     // Option[T] type (mirrors the main StmtMatch path's
                     // some_opt_type fallback), so `match (Some(6)) { … }` in value
@@ -11070,7 +11075,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprCall(ic) => {
             match (ic.callee) {
                 parser.ExprIdent(icid) => {
-                    opt_ty = se.opt_ret_type(icid.name);
+                    opt_ty = resolve_argref_opt_type(se.opt_ret_type(icid.name), ic.args, se);
                     // `var o = Some(7)` — a direct Option construction
                     // records o's opt_type so a later `match (o)`
                     // recovers the payload (the construction analogue of
@@ -27230,14 +27235,41 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // mirrors ("name|$arg<i>" entries from str_ret_fns_of), or -1. The caller
 // re-types the call by the ACTUAL argument at that position.
 pub function str_ret_argref(s: LowerState, name: string): i32 {
+    return argref_in(s.str_ret_fns, name);
+}
+
+// strarr_ret_argref is the string-ARRAY sibling ("name|$arg<i>" entries from
+// strarr_ret_fns_of, for a `T[]` return whose element mirrors argument i).
+pub function strarr_ret_argref(s: LowerState, name: string): i32 {
+    return argref_in(s.strarr_ret_fns, name);
+}
+
+// argref_in scans a registry for a "name|$arg<i>" positional-reference entry
+// and returns i, or -1. The '|' keeps these entries invisible to the
+// registries' exact-name membership scans.
+function argref_in(reg: string[], name: string): i32 {
     var pfx: string = name + "|$arg";
     var i: i32 = 0;
-    while (i < s.str_ret_fns.len()) {
-        var e: string = s.str_ret_fns[i];
+    while (i < reg.len()) {
+        var e: string = reg[i];
         if (e.len() > pfx.len() && e[0 : pfx.len()] == pfx) { return util.digits_to_i32(e[pfx.len() : e.len()]); }
         i = i + 1;
     }
     return 0 - 1;
+}
+
+// resolve_argref_opt_type substitutes an "Option[$arg<i>]" positional
+// reference (opt_ret_fns_of's erased-generic rewriting) with the call
+// site's argument-i inferred payload tag. Unresolvable (out-of-range /
+// no args in scope) degrades to "" — the same untyped reading the raw
+// type-var tag produced before the rewrite.
+pub function resolve_argref_opt_type(t: string, args: parser.Expr[], s: LowerState): string {
+    if (!util.contains(t, "$arg")) { return t; }
+    if (t.len() >= 13 && t[0:11] == "Option[$arg" && t[t.len() - 1] == 93) {   // 93 = ']'
+        var an: i32 = util.digits_to_i32(t[11 : t.len() - 1]);
+        if (an >= 0 && an < args.len()) { return "Option[" + elem_type_tag(args[an], s) + "]"; }
+    }
+    return "";
 }
 
 // strarr_ret_fns_of collects the names of a module's string[]-returning
@@ -27247,6 +27279,19 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var k: i32 = 0;
     while (k < funcs.len()) {
         if (funcs[k].ret_type == "string[]") { out = out.append(funcs[k].name); }
+        // An ERASED-generic free fn returning `T[]` for a bare type-var `T`
+        // bound to a param (`dup[T](x: T): T[]`): record "name|$arg<i>" so
+        // expr_is_strarr re-types the call by the ACTUAL argument — the
+        // array sibling of str_ret_fns_of's bare-`T` entries. Invisible to
+        // is_strarr_ret_fn's exact-name scan (the '|').
+        else if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type.len() == 3
+                && funcs[k].ret_type[1:3] == "[]" && irl_looks_type_var(funcs[k].ret_type[0:1])) {
+            var sgpi: i32 = 0;
+            while (sgpi < funcs[k].params.len()) {
+                if (funcs[k].params[sgpi].type_name == funcs[k].ret_type[0:1]) { out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(sgpi)); sgpi = funcs[k].params.len(); }
+                else { sgpi = sgpi + 1; }
+            }
+        }
         // A lifted `__lam_` whose branch is a string-array literal carries a
         // default i32 ret_type; register it so `(if (c) { ["a"] } else { … })[i]`
         // reads its elements as strings (8-byte) instead of i32 (#3224).
@@ -27340,6 +27385,23 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // stay keyed by bare name.
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            // An ERASED-generic free fn's `Option[T]` return (bare type-var
+            // payload bound to a param): rewrite the payload to a positional
+            // "$arg<i>" reference, resolved at the call site against the
+            // actual argument (resolve_argref_opt_type) — the Option sibling
+            // of tuple_ret_fns_of's rewriting. Without it the raw "Option[T]"
+            // tag left the Some-binder untyped and a string payload's
+            // `.len()` silently read 0.
+            if (rt[0:7] == "Option[" && funcs[k].receiver_type.len() == 0) {
+                var opay: str = rt[7 : rt.len() - 1];
+                if (irl_looks_type_var(opay)) {
+                    var ogpi: i32 = 0;
+                    while (ogpi < funcs[k].params.len()) {
+                        if (funcs[k].params[ogpi].type_name == opay) { rt = "Option[$arg" + util.i32_to_string(ogpi) + "]"; ogpi = funcs[k].params.len(); }
+                        else { ogpi = ogpi + 1; }
+                    }
+                }
+            }
             out = out.append(key + "|" + rt);
         }
         // A lifted if-/match-expression `__lam_` whose leaf branch calls an
