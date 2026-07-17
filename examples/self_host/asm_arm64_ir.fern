@@ -1407,6 +1407,24 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
         s = s.write("    add x1, x1, :lo12:__fern_argv\n");
         s = s.write("    str x0, [x1]\n");
     }
+    // Save envp for env() / subprocess — Linux SysV: envp = sp + 16 + argc*8
+    // on the entry stack. Gated on the heap need, matching asm_arm64.emit_
+    // module's _start (and the __fern_env / subprocess helpers, which live
+    // under the same has_need("heap") block, so __fern_envp is declared iff
+    // this saves it). Without this the IR-path _start left __fern_envp null
+    // and env()'s envp walk (`.Lenv_loop: ldr x1, [x19]`) dereferenced a null
+    // base — every env()-calling program that routes the IR path SIGSEGV'd
+    // (the AST path already saved it; only the two IR _start emitters missed
+    // it). sp is unchanged by the args block above, so the SysV offset holds.
+    if (s.has_need("heap")) {
+        s = s.write("    ldr x0, [sp]\n");            // argc
+        s = s.write("    lsl x0, x0, #3\n");          // argc*8
+        s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
+        s = s.write("    add x0, sp, x0\n");          // envp base
+        s = s.write("    adrp x1, __fern_envp\n");
+        s = s.write("    add x1, x1, :lo12:__fern_envp\n");
+        s = s.write("    str x0, [x1]\n");
+    }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    bl __fn_main\n");

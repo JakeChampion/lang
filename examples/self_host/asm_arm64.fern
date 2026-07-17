@@ -3996,6 +3996,19 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             s = s.write("    add x1, x1, :lo12:__fern_argv\n");
             s = s.write("    str x0, [x1]\n");
         }
+        // Save envp for env() / subprocess (Linux SysV: envp = sp + 16 +
+        // argc*8), gated on heap like the AST _start and the __fern_env
+        // helper. The multi-unit IR _start missed it just like emit_body's;
+        // without it __fern_envp stays null and env() derefs a null base.
+        if (s.has_need("heap")) {
+            s = s.write("    ldr x0, [sp]\n");            // argc
+            s = s.write("    lsl x0, x0, #3\n");          // argc*8
+            s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
+            s = s.write("    add x0, sp, x0\n");          // envp base
+            s = s.write("    adrp x1, __fern_envp\n");
+            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
+            s = s.write("    str x0, [x1]\n");
+        }
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    bl __fn_main\n");
