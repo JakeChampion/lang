@@ -260,15 +260,33 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   regex across the `test-e2e-*` workflows (the selfhost lane round-robins
   the union of both packages' `TestSelfHost*` lists), each well under its
   10-min job timeout.
-- **Self-host driver builds peak at ~16–18 GB RAM — enable swap if they
-  get OOM-killed.** Every `buildSelfHostBin` / `buildBin` of a self-host
-  driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern` /
-  `wasm_ir_run.fern` / …) assembles a multi-thousand-function `.s`, and
-  `as` alone spikes to ~8 GB; with the `go test` package compile plus a
-  second concurrent `as`, the peak crosses ~16 GB. On the ~15 GB-RAM
-  container with **no swap** this trips the kernel OOM-killer: the build
-  dies with `signal: killed` / **exit 137** (reads like a test failure but
-  is an OOM — not a real failure) and can even bounce the whole container.
+- **Self-host driver builds are memory-heavy but the harness now self-limits
+  — swap is generally NOT needed.** Every `buildSelfHostBin` / `buildBin` of
+  a self-host driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern`
+  / `wasm_ir_run.fern` / …) assembles a multi-thousand-function `.s`. Two
+  changes brought the peak comfortably under a 16 GB host:
+  - The x86-64 backend now flips the self-host compiler's one lowering
+    monster (`irlower__lower_expr`, ~9.75M IR ops) from the inline rc
+    fast-path to the `call __fern_rc_dec/inc` form (the arm64 backend's
+    long-standing `rcInlineOK` mechanism, backported — behaviour-identical).
+    That alone cut the `asm_ir_run` driver `.s` from ~1028 MB → ~470 MB, the
+    GNU `as` peak from ~11.4 GB → ~4.6 GB, and the Go emit peak from ~9.0 GB
+    → ~7.9 GB. A single cold driver build now peaks ~8 GB.
+  - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted
+    semaphore around the cold emit+link: it reserves each heavy build's
+    estimated peak (`FERN_BUILD_HEAVY_MB`, default 8000) against a budget
+    (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so two cold
+    driver builds can't stack their peaks and OOM the run. On a 16 GB host it
+    serialises the heavy builds (correct — you can't build two 8 GB things at
+    once); on a big host it parallelises up to the budget.
+
+  If a build is still OOM-killed (`signal: killed` / **exit 137** during
+  `as`/gcc/the Go emit — reads like a test failure but is an OOM), lower
+  `FERN_BUILD_HEAVY_MB` or `FERN_BUILD_MEM_BUDGET_MB`, or re-create the
+  ephemeral swap file (a container restart wipes it):
+  ```
+  fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  ```
   **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
   OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
   the fixed bump arena (x86 8 GiB, arm64 8 GiB) is exhausted — a REAL
@@ -277,21 +295,14 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   self-host-built compiler's live set grows with every compiler-source
   addition, and when it hits the arena wall the test "OOMs" on CI with no
   kernel OOM anywhere. Before writing off a 137 as infra, check WHICH
-  process died: `as`/gcc during a build = OOM (rerun/swap); a Fern binary
-  mid-run = arena exhaustion (measure with /proc RSS vs the arena size —
-  see docs/RC-PERCEUS-SELF-HOST-PORT.md, 2026-07-11 entry).
-  It is *total-RAM* pressure, not a cgroup cap (`memory.limit_in_bytes` is
-  effectively unlimited), so swap fixes it. Re-create swap each session if
-  self-host builds start OOM-ing (it's ephemeral — a container restart
-  wipes it):
-  ```
-  fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-  ```
-  Watch with `free -m` mid-build: a healthy run pushes a few GB into swap
-  at the assembler peak and completes. Also keep `/` from filling — stale
-  `/tmp/selfhost-bincache-*` dirs (~1 GB each, one per build) pile up;
-  `rm -rf /tmp/selfhost-bincache-*` reclaims them (regenerable caches), and
-  a swapfile needs the free space.
+  process died: `as`/gcc/the Go emit during a build = host-RAM OOM (lower the
+  budget knobs / add swap); a Fern binary mid-run = arena exhaustion (measure
+  with /proc RSS vs the arena size — see docs/RC-PERCEUS-SELF-HOST-PORT.md,
+  2026-07-11 entry). Host-RAM OOM is *total-RAM* pressure, not a cgroup cap
+  (`memory.limit_in_bytes` is effectively unlimited). Also keep `/` from
+  filling — stale `/tmp/selfhost-bincache-*` dirs (~1 GB each, one per build)
+  pile up; `rm -rf /tmp/selfhost-bincache-*` reclaims them (regenerable
+  caches).
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the
