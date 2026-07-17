@@ -645,6 +645,24 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// rcInlineOK gates the #4402 opt-2b inline rc fast path per function
+	// (arm64 parity — the arm64 backend carries the same field). Inlining
+	// expands each OpRcInc / OpRcDec / OpRcIsUnique from a single `call`
+	// into ~10 instructions; in the self-host compiler's largest lowering
+	// function (irlower__lower_expr, ~9.75M IR ops with ~1.66M rc ops) that
+	// bloat balloons the emitted `.s` — the inlined rc sequences alone add
+	// hundreds of MB, and GNU `as` on the resulting ~1 GB driver `.s` peaks
+	// at ~11 GB RSS, which is what forced the swap file the test harness
+	// used to need. Set false for such a function (see rcInlineMaxOps) so
+	// its rc ops fall back to the `call` form the runtime helper already
+	// provides (behaviour-identical — the inline path mirrors the helper
+	// instruction-for-instruction), shrinking the `.s` and its assembler
+	// footprint. Every normal function (all user code, and every self-host
+	// function but the one monster) stays on the inline fast path. Unlike
+	// arm64 — where the same field also dodges the ±128 MB branch-reach
+	// overflow — x86-64's rel32 jumps never overflow, so here the sole
+	// motive is `.s` size / assembler memory.
+	rcInlineOK bool
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter __fern_rc_dec bumps). Set when the IR emits the
@@ -1115,10 +1133,26 @@ func (g *generator) emitStartRuntime() {
 	g.emit("syscall")
 }
 
+// rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
+// fast path (see the rcInlineOK field). Matches the arm64 backend's threshold
+// so both backends flip exactly the same function (irlower__lower_expr,
+// ~9.75M ops) to the `call` form: 1M sits ~2× above the largest normal
+// self-host function (~0.5M ops) and ~10× below lower_expr, so every
+// user-scale function keeps the inline win. A var (not a const) only so the
+// backend's own tests can lower it to exercise the fall-back on a small
+// function; production never reassigns it.
+var rcInlineMaxOps = 1_000_000
+
 // emitFunc lowers one function to assembly. Per-function
 // scope-tracking state lives in `scope` (currently unused —
 // PR 1 has no block / loop / if ops to dispatch).
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
+	// #4402 opt 2b: inline rc ops only when the function is small enough that
+	// the ~10-instruction-per-op expansion doesn't balloon the emitted `.s`
+	// (and the assembler's peak RSS). Only the self-host compiler's largest
+	// lowering function exceeds this; see the rcInlineOK field comment.
+	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps
+
 	// Compute frame size from the highest local slot the IR
 	// referenced plus the parameter slots. Rounded up to a
 	// 16-byte multiple so `sub rsp, N` leaves rsp 16-aligned
@@ -2049,9 +2083,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// helpers stay emitted: runtime code tail-calls them and the
 		// debug build below still calls out). rc ops are pass-through —
 		// rax holds the pointer and doubles as the result.
-		if ast.RcFreeDebug {
+		if ast.RcFreeDebug || !g.rcInlineOK {
 			// Debug builds keep the call: the helpers carry the
 			// RcPoison use-after-free trap the inline path omits.
+			// !rcInlineOK falls back to the call in functions too large to
+			// absorb the inline bloat (see the rcInlineOK field) — the
+			// helper is behaviour-identical to the inline sequence.
 			g.emitCallArgsLoad(1)
 			g.emit(fmt.Sprintf("call %s", op.Str))
 			g.push()
@@ -2091,6 +2128,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// #4402 opt 2b: inline is_unique — load, sentinel test, ==1
 		// compare. Mirrors emitRcIsUniqueRuntime (note its guards
 		// differ from inc/dec: low bound 0x10000, no SSO-tag test).
+		if ast.RcFreeDebug || !g.rcInlineOK {
+			// !rcInlineOK falls back to the behaviour-identical helper in
+			// oversized functions (see the rcInlineOK field). The pre-scan
+			// recorded the "__fern_rc_is_unique" use, so the helper is
+			// emitted regardless of inline-vs-call.
+			g.emitCallArgsLoad(1)
+			g.emit(fmt.Sprintf("call %s", op.Str))
+			g.push()
+			return nil
+		}
 		uniqDone := fmt.Sprintf(".Lrcop_uniq_%d", g.labelCounter)
 		g.labelCounter++
 		g.pop()
