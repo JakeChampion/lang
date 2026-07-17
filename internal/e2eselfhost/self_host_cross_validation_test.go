@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
@@ -42,54 +40,27 @@ import (
 func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	// Stage every lang source the three drivers transitively
+	// Stage every lang source the two drivers transitively
 	// depend on. (Each driver's modload pulls in only its own
-	// imports, but using a shared dir means we can build all
-	// three side-by-side.)
-	for _, name := range []string{
+	// imports, but using a shared dir means we can build both
+	// side-by-side.)
+	copySelfHostFiles(t, dir,
 		"asmcore.fern", "lexer.fern", "parser.fern", "util.fern",
 		"interp.fern", "astwalk.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern",
-		"interp_run.fern", "asm_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+		"interp_run.fern", "asm_run.fern")
 
-	buildDriver := func(t *testing.T, srcName string) string {
-		t.Helper()
-		prog, _, err := modload.Load(filepath.Join(dir, srcName))
-		if err != nil {
-			t.Fatalf("modload %s: %v", srcName, err)
-		}
-		if err := constfold.Fold(prog); err != nil {
-			t.Fatalf("constfold %s: %v", srcName, err)
-		}
-		info, err := checker.Check(prog)
-		if err != nil {
-			t.Fatalf("check %s: %v", srcName, err)
-		}
-		asm, err := x86_64.Emit(prog, info)
-		if err != nil {
-			t.Fatalf("emit %s: %v", srcName, err)
-		}
-		asmPath := filepath.Join(dir, srcName+".s")
-		binPath := filepath.Join(dir, srcName+".bin")
-		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-			t.Fatalf("write %s asm: %v", srcName, err)
-		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			t.Fatalf("%s gcc: %v\n%s", srcName, err, out)
-		}
-		return binPath
-	}
-
-	interpBin := buildDriver(t, "interp_run.fern")
-	asmBin := buildDriver(t, "asm_run.fern")
+	// Build both drivers through the shared cached path
+	// (buildSelfHostBin), NOT a hand-rolled modload+emit+gcc: the
+	// cached path releases the emit's dead spans back to the OS
+	// (debug.FreeOSMemory) before spawning the assembler, and
+	// restores a warm job's pre-linked binary from the disk cache
+	// when one exists. The old inline build held the ~7 GB emit
+	// residue in the test process while `as` spiked to ~8 GB on
+	// asm_run's .s — over the 16 GB CI runners' RAM, so the kernel
+	// OOM-killed the runner agent ("The runner has received a
+	// shutdown signal", twice in a row on the same shard).
+	interpBin := buildSelfHostBin(t, gcc, dir, "interp_run.fern", "interp_run.bin")
+	asmBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "asm_run.bin")
 
 	runDriver := func(t *testing.T, bin string, source string, captureStdout bool) (int, string) {
 		t.Helper()
