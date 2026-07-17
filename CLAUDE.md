@@ -204,10 +204,22 @@ socket set — `poll` / `timer_fd` / `wasm_timer_pollable` /
 `wasm_pollable_drop` / `tcp_*` / `subprocess` — which need the
 component-model wasi interfaces the bare core-wasm+preview1 backend
 doesn't wire; these are actively worked in parallel, **avoid**. Net: the
-tractable goal-1 IR-widening work is essentially done; the next frontier
-is **goal 2** (the Perceus port — reuse analysis is the remaining large,
-memory-safety-critical piece; inc/dec, borrow, drop-specialisation, and
-per-type struct-drop / field-reclaim slices already landed).
+tractable goal-1 IR-widening work is essentially done. **Goal 2 (the
+Perceus port) is ALSO substantially complete** — despite what older
+notes here said, constructor reuse is implemented and enabled in the
+self-host (self-overwrite, cross-local, enum-donor, consuming-match,
+tuple reuse, nested-struct fields), exercised by the byte-identical
+self-compile; see `docs/SELFHOST-PERCEUS-REUSE.md`'s correction
+header. The remaining reuse deltas are MARGINAL (struct reuse with
+enum / Map / closure / tuple pointer fields — §3 Delta B). The real
+remaining frontier for retiring the legacy AST emitters is the
+per-module epic's step 5 (#3457), which is blocked on the wasm
+component-model sub-issues (#4315–#4320 — actively worked in
+parallel, **avoid**). When picking up "the next task", VERIFY tracker
+state against the code first: issues #4451/#4363/#4346 have repeatedly
+lagged reality (the checker-codes filter is already deleted, the
+ill_typed_hint fallback already landed, the arm64 per-module
+close_needs UAF is already fixed and regression-guarded).
 **Caveat (2026-07): runtime-correctness probing still pays.** The
 path-probe drivers only tell you WHERE a program lowers, not whether the
 lowered code is RIGHT. Differential probing (native `-interp` exit code
