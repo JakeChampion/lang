@@ -673,7 +673,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors the x86-64 emitter.
 			// The `.quad` directive + label refs are identical for Linux ELF
-			// and the Mach-O __TEXT,__const path above, so this works for
+			// and the Mach-O __DATA,__const path above, so this works for
 			// both arm64 targets.
 			if vt.Drop != "" {
 				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))

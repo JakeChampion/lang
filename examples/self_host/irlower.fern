@@ -24302,7 +24302,42 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
     // closure-returning fn / a closure-local ident — elem_type_tag's "clo"):
     // a leak-only heap box in one pointer slot, like a struct element.
     var el_clo_ok: boolean = elem_type_tag(el, s) == "clo";
-    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok) { return false; }
+    // A CALL element with a statically-known SCALAR (one-i32-slot) result:
+    // (a) a free-fn call whose callee is in NO nonscalar / wide-return
+    //     registry — its result is a plain i32-class scalar (`(add(1,2), 4)`);
+    // (b) a closure-LOCAL call (`(f(3), 1)` with f a closure local);
+    // (c) a closure tuple-element call (`(t.0(3), t.1)` — the callee is a
+    //     numeric field access whose element is tagged "clo", dispatched
+    //     env-first with an i32 result).
+    // One scalar slot, like any i32 element; elem_type_tag's fallthrough
+    // already tags these "i32". An UNKNOWN or nonscalar-returning callee
+    // stays ineligible (its result would mistype the enc) — struct-returning
+    // calls pass via the existing expr_struct_type gate instead.
+    var el_call_ok: boolean = false;
+    match (el) {
+        parser.ExprCall(scc) => {
+            match (scc.callee) {
+                parser.ExprIdent(sccid) => {
+                    if (s.is_closure_local(sccid.name)) { el_call_ok = true; }
+                    else if (s.is_user_fn(sccid.name)
+                        && !s.is_str_ret_fn(sccid.name) && !s.is_arr_ret_fn(sccid.name)
+                        && !s.is_strarr_ret_fn(sccid.name)
+                        && !s.is_f64_ret_fn(sccid.name) && !s.is_i64_ret_fn(sccid.name)
+                        && !s.is_f64arr_ret_fn(sccid.name) && !s.is_i64arr_ret_fn(sccid.name)
+                        && s.opt_ret_type(sccid.name) == "" && s.tuple_ret_type(sccid.name) == ""
+                        && s.map_ret_type(sccid.name) == ""
+                        && util.index_of_str(s.closure_fns, sccid.name) < 0
+                        && !s.is_closurearr_ret_fn(sccid.name)) { el_call_ok = true; }
+                },
+                parser.ExprFieldAccess(sccfa) => {
+                    if (util.is_all_digits(sccfa.field) && expr_tuple_elem_tag(sccfa.obj, util.digits_to_i32(sccfa.field), s) == "clo") { el_call_ok = true; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok && !el_call_ok) { return false; }
     return true;
 }
 
@@ -32564,27 +32599,95 @@ function lit_init_type(e: parser.Expr): string {
 }
 
 // cap_type resolves a captured variable's type from the enclosing function: a
-// param type, an annotated `var c: T`, or a literal-initialised `var c = <lit>`
-// (scalar, array, or struct literal — see lit_init_type). "" when it can't (the
-// caller then declines the lift). Mirrors ssa.resolve_capture_type.
+// param type, an annotated `var c: T`, or an initialised `var c = <expr>`
+// whose type is statically inferable — a literal (lit_init_type), an IDENT
+// chain resolving to one (`var k = i` where `var i = 0`), or i32 ARITHMETIC
+// over such (`var k = i % 7`). The binding is found ANYWHERE in the body
+// (while/for/if/match nesting included — a loop-body `var k = i` used to be
+// invisible, so a tuple-lifted lambda capturing it DECLINED and the module
+// bailed to the legacy AST path, which miscompiles the shape — #5051). "" when
+// it can't infer (the caller then declines the lift). Mirrors
+// ssa.resolve_capture_type.
 function cap_type(name: string, fd: parser.FuncDecl): string {
+    return cap_type_at(name, fd, 4);
+}
+
+function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32): string {
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
         if (fd.params[pi].name == name) { return fd.params[pi].type_name; }
         pi = pi + 1;
     }
-    var si: i32 = 0;
-    while (si < fd.body.len()) {
-        match (fd.body[si]) {
+    return cap_type_in_stmts(fd.body, name, fd, depth);
+}
+
+// cap_type_in_stmts finds `var name` anywhere in `body` (recursing into
+// if/while/for/match blocks) and resolves its type: the annotation when
+// present, else the inferable init. First match wins — shadowing across
+// sibling blocks is an accepted over-approximation, same as the other
+// lift-side body walkers (the fn-gates keep consequences to a declined or
+// extra lift, never a miscompile: the lifted capture param only labels the
+// hoisted function's parameter).
+function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDecl, depth: i32): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     if (v.type_name.len() > 0) { return v.type_name; }
-                    return lit_init_type(v.init);
+                    return cap_type_expr(v.init, fd, depth);
+                }
+            },
+            parser.StmtIf(f) => {
+                var tt: string = cap_type_in_stmts(f.then_body, name, fd, depth);
+                if (tt.len() > 0) { return tt; }
+                var te: string = cap_type_in_stmts(f.else_body, name, fd, depth);
+                if (te.len() > 0) { return te; }
+            },
+            parser.StmtWhile(w) => {
+                var tw: string = cap_type_in_stmts(w.body, name, fd, depth);
+                if (tw.len() > 0) { return tw; }
+            },
+            parser.StmtFor(fr) => {
+                // The for-in binder itself: element type unknown here; only
+                // its BODY is searched for `var name` bindings.
+                var tf: string = cap_type_in_stmts(fr.body, name, fd, depth);
+                if (tf.len() > 0) { return tf; }
+            },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    var tm: string = cap_type_in_stmts(m.arms[ai].body, name, fd, depth);
+                    if (tm.len() > 0) { return tm; }
+                    ai = ai + 1;
                 }
             },
             _ => { }
         }
-        si = si + 1;
+        i = i + 1;
+    }
+    return "";
+}
+
+// cap_type_expr infers an initializer expression's type for capture-param
+// labelling: literals via lit_init_type; a bare ident by resolving ITS binding
+// (depth-bounded so a cycle terminates as ""); comparisons/logic → boolean;
+// arithmetic/bitwise where BOTH sides infer i32 → i32 (`+` could be string
+// concat, so both-sides is required for every operator).
+function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32): string {
+    var lt: string = lit_init_type(e);
+    if (lt.len() > 0) { return lt; }
+    if (depth <= 0) { return ""; }
+    match (e) {
+        parser.ExprIdent(id) => { return cap_type_at(id.name, fd, depth - 1); },
+        parser.ExprBinary(b) => {
+            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") { return "boolean"; }
+            var l: string = cap_type_expr(b.left, fd, depth - 1);
+            var r: string = cap_type_expr(b.right, fd, depth - 1);
+            if (l == "i32" && r == "i32") { return "i32"; }
+            return "";
+        },
+        _ => { return ""; }
     }
     return "";
 }
