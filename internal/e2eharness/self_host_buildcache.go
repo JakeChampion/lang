@@ -221,24 +221,33 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 			}
 		}
 		// Cold: emit (held in memory — no disk `.s`), link, publish the binary.
+		// The emit + link is the only multi-GB step (Go emit ~8 GB RSS; `as`
+		// on the driver `.s` a few GB more), so reserve its estimated peak
+		// against the process-wide RAM budget: two cold driver builds hitting
+		// their peaks at once used to cross a 16 GB host's RAM and OOM-kill the
+		// run ("signal: killed" / exit 137). The reservation serialises the
+		// heavy builds on a RAM-limited host (and parallelises up to the budget
+		// on a big one) — see buildMemLimiter. Disk-cache hits above return
+		// before this and never reserve.
 		asmPath := binPath + ".s" // scratch in the process-local link dir only
-		if err := emitDriverAsm(dir, fernName, asmPath); err != nil {
+		if err := withBuildMemory(heavyBuildWeightMB(), func() error {
+			if err := emitDriverAsm(dir, fernName, asmPath); err != nil {
+				return err
+			}
+			// The emit's working set (front-end AST + checker tables + the
+			// asm string) is unreachable once emitDriverAsm returns, but the
+			// Go runtime keeps the spans resident. Hand them back to the OS
+			// before spawning the assembler so the emit residue and the `as`
+			// peak never stack within this one build.
+			debug.FreeOSMemory()
+			if out, lerr := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); lerr != nil {
+				return fmt.Errorf("gcc %s: %w\n%s", fernName, lerr, out)
+			}
+			return nil
+		}); err != nil {
 			return "", err
 		}
-		// The emit's working set (the front-end AST + checker tables + the
-		// ~680 MB asm string) is unreachable once emitDriverAsm returns, but
-		// the Go runtime keeps the spans resident. gcc's `as` pass on the
-		// driver `.s` alone spikes to ~8 GB; overlapping that with the ~7 GB
-		// emit residue crossed the 16 GB CI runners' RAM and the OOM killed
-		// the runner agent mid-link ("The runner has received a shutdown
-		// signal" / exit 143 on the x86_64 wasm + warm-driver jobs). Hand the
-		// dead spans back to the OS before spawning the assembler so the two
-		// peaks never stack.
-		debug.FreeOSMemory()
-		if out, lerr := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); lerr != nil {
-			return "", fmt.Errorf("gcc %s: %w\n%s", fernName, lerr, out)
-		}
-		_ = os.Remove(asmPath) // never keep the ~680 MB .s around
+		_ = os.Remove(asmPath) // never keep the big .s around
 		// Publish the linked binary to the disk cache (atomic), so a warm job
 		// seeds it for the test shards.
 		if d := diskCacheWriteDir(); d != "" {
@@ -280,7 +289,23 @@ func emitDriverAsm(dir, fernName, asmPath string) error {
 	if err != nil {
 		return fmt.Errorf("emit %s: %w", fernName, err)
 	}
-	return os.WriteFile(asmPath, []byte(asm), 0o644)
+	// Stream the string straight to disk instead of os.WriteFile([]byte(asm)):
+	// a driver's asm is ~700 MB–1 GB, and the []byte(asm) conversion allocates
+	// a full second copy of it — a needless ~1 GB spike stacked on the emit's
+	// already-multi-GB working set right at the peak. io.WriteString on the
+	// *os.File writes the string's backing bytes directly, no copy.
+	f, err := os.Create(asmPath)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", asmPath, err)
+	}
+	if _, err := io.WriteString(f, asm); err != nil {
+		f.Close()
+		return fmt.Errorf("write %s: %w", asmPath, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", asmPath, err)
+	}
+	return nil
 }
 
 var fastLinkOnce sync.Once
