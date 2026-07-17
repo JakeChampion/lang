@@ -2561,7 +2561,14 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
             // A call to an f64[]-returning free function OR method (f64arr_ret_fns,
             // methods keyed "<Type>.<method>").
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    // An erased-generic `T[]` return mirroring argument i
+                    // (`dup[T](x: T): T[]`, the shared "name|$arg<i>" entry in
+                    // strarr_ret_fns): an f64[] exactly when THAT argument is f64.
+                    var gf: i32 = strarr_ret_argref(s, cid.name);
+                    if (gf >= 0 && gf < c.args.len()) { return expr_is_f64(c.args[gf], s); }
+                    return s.is_f64arr_ret_fn(cid.name);
+                },
                 parser.ExprFieldAccess(cfa) => {
                     // `a.with(...)` / `a.append(...)` preserve the receiver's element
                     // kind: an f64[] receiver yields a fresh f64[].
@@ -2836,6 +2843,20 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             // slice-result var isn't a str slot, so `.len()` would mis-dispatch
             // to arr_len (offset 0) instead of str_len (offset 8).
             return expr_is_str(slc.array, s);
+        },
+        // `inner?` unwraps an Option[string]/Result[string, E] to its string
+        // payload, so `var s = f()?` str-tracks `s` (else `s.len()` mis-
+        // dispatches to arr_len, reading 0). The payload type comes from the
+        // same try_opt_type the width / lowering paths use — including the
+        // erased-generic "Option[$arg<i>]" resolution — so a generic
+        // `some1[T](x: T): Option[T]` unwrapped at a string argument tracks too.
+        parser.ExprUnary(tu) => {
+            if (tu.op == "try_") {
+                var tot: string = try_opt_type(tu.operand, s);
+                if (tot.len() >= 8 && tot[0:7] == "Option[") { return opt_payload_type(tot, "Some") == "string"; }
+                if (tot.len() >= 8 && tot[0:7] == "Result[") { return opt_payload_type(tot, "Ok") == "string"; }
+            }
+            return false;
         },
         _ => { return false; }
     }
@@ -3766,7 +3787,13 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
             // A call to an i64[]-returning free function OR method (i64arr_ret_fns,
             // methods keyed "<Type>.<method>").
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    // Erased-generic `T[]` return mirroring argument i: an i64[]
+                    // exactly when THAT argument is a (non-f64) 64-bit value.
+                    var gi: i32 = strarr_ret_argref(s, cid.name);
+                    if (gi >= 0 && gi < c.args.len()) { return !expr_is_f64(c.args[gi], s) && infer_expr_width(c.args[gi], s) == 64; }
+                    return s.is_i64arr_ret_fn(cid.name);
+                },
                 parser.ExprFieldAccess(cfa) => {
                     // `a.with(...)` / `a.append(...)` preserve the receiver's element
                     // kind: an i64[] receiver yields a fresh i64[].
