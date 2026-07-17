@@ -11332,6 +11332,30 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var atet: string = arrtup_elem_tuple_type(v.type_name, se.structs);
         if (atet != "") { arrarr_e = atet; }
     }
+    // UNANNOTATED array-of-tuples literal (`var a = [(e0, e1), …]`): infer the
+    // element tuple tag from the FIRST literal element (elem_type_tag — post-lift,
+    // so a lambda element reads "clo"), so `a[j].N` reads and the `a[j].N(args)`
+    // closure-element dispatch resolve via expr_tuple_elem_tag's Index arm instead
+    // of falling through to bogus method dispatch and bailing the module to the
+    // legacy AST path (which miscompiles the call into a nonexistent `i32.0`).
+    // Reclaim-inert: ARRTUP crediting requires an annotated decl, so this tag only
+    // feeds the read/dispatch side (the array stays leak-only).
+    if (is_arr && !is_arrarr && arrarr_e == "") {
+        match (v.init) {
+            parser.ExprArray(atl2) => {
+                if (atl2.elements.len() > 0) {
+                    match (atl2.elements[0]) {
+                        parser.ExprTuple(_) => {
+                            var att2: string = elem_type_tag(atl2.elements[0], se);
+                            if (att2.len() >= 2 && att2[0:1] == "(") { arrarr_e = att2; }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
     var sb: LowerState = se.add_local(v.name);
     var slot: i32 = sb.slot_of(v.name);
     sb = sb.mark_arr(slot, is_arr);
@@ -11502,6 +11526,24 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
                 if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
                 else if (ctet.len() >= 2 && ctet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
+            }
+        },
+        // A tuple ELEMENT of an array-of-tuples (`var t = a[0]` where a's
+        // arrarr_elem carries the "(…)" element tuple tag): transfer the
+        // element tags onto the binding, the Index sibling of the nested-
+        // tuple transfer above — so `t.N` reads and a `t.N(args)` closure
+        // element call resolve (before, the module bailed and the legacy AST
+        // path miscompiled the call into a nonexistent `i32.0` method).
+        parser.ExprIndex(ctix) => {
+            match (ctix.array) {
+                parser.ExprIdent(ctaid) => {
+                    var ctasl: i32 = sb.slot_of(ctaid.name);
+                    if (ctasl >= 0 && sb.is_arr_slot(ctasl)) {
+                        var ctaet: string = sb.arrarr_elem_of_slot(ctasl);
+                        if (ctaet.len() >= 2 && ctaet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
+                    }
+                },
+                _ => {}
             }
         },
         _ => {}
@@ -32672,8 +32714,11 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
 // cap_type_expr infers an initializer expression's type for capture-param
 // labelling: literals via lit_init_type; a bare ident by resolving ITS binding
 // (depth-bounded so a cycle terminates as ""); comparisons/logic → boolean;
-// arithmetic/bitwise where BOTH sides infer i32 → i32 (`+` could be string
-// concat, so both-sides is required for every operator).
+// arithmetic/bitwise where BOTH sides infer i32 → i32; `+` over two strings →
+// string (concat — a string capture rides the env box's pointer slot like any
+// other pointer-shaped type, so declining it only forced the module onto the
+// legacy AST path, which miscompiles the capturing-tuple shape). Every other
+// operator still requires both sides i32.
 function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32): string {
     var lt: string = lit_init_type(e);
     if (lt.len() > 0) { return lt; }
@@ -32685,6 +32730,7 @@ function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32): string 
             var l: string = cap_type_expr(b.left, fd, depth - 1);
             var r: string = cap_type_expr(b.right, fd, depth - 1);
             if (l == "i32" && r == "i32") { return "i32"; }
+            if (b.op == "+" && l == "string" && r == "string") { return "string"; }
             return "";
         },
         _ => { return ""; }

@@ -90,6 +90,32 @@ var tupleFnIRCases = []struct {
 	// the lift no longer declines and the module stays on the IR path. The
 	// legacy fallback MISCOMPILED this (229; native reference 226).
 	{"loop-tuple-clo-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 1000) { var k = i % 7; var t = (function (x: i32): i32 { return x + k; }, k); var u = (t.0(3), t.1); acc = (acc + u.0 + u.1) % 1000; i = i + 1; } return acc % 256; }", 226},
+	// The DIRECT nested chain `t.0.0(args)` (no intermediate binding): the
+	// compact nested element tag "(clo,i32)" joins with a BARE comma, and
+	// parse_type_ref's split_top_commas required ", " — so tuple_type_elem_tag
+	// read the tag as ONE element ("clo,i32" != "clo"), the dispatch missed,
+	// and the call fell to bogus method dispatch (`i32.0`) + the legacy AST
+	// path, which MISCOMPILED it (exit 255). split_top_commas now splits bare
+	// top-level commas too.
+	{"direct-chain-call", "function main(): i32 { var n = 5; var t = ((function (x: i32): i32 { return x + n; }, 1), 2); return t.0.0(37); }", 42},
+	// Loop-churn sibling of the direct chain (the differential-probe repro:
+	// legacy exited 255, native 243).
+	{"direct-chain-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 500) { var k = i % 5; var t = ((function (x: i32): i32 { return x + k; }, k), i % 3); acc = (acc + t.0.0(2) + t.1) % 1000; i = i + 1; } return acc % 256; }", 243},
+	// A closure element of an UNANNOTATED array-of-tuples, called through an
+	// element binding (`var t = a[0]; t.0(3)`): arrarr_elem now records the
+	// element tuple tag from the literal's first element, so the Index arm of
+	// expr_tuple_elem_tag resolves. Before, the module bailed and the legacy
+	// AST path emitted a call to a NONEXISTENT `__fn_i32__0` (link failure).
+	{"arrtuple-elem-binding-call", "function main(): i32 { var k = 4; var a = [(function (x: i32): i32 { return x + k; }, k)]; var t = a[0]; return t.0(3) + t.1 + 31; }", 42},
+	// The inline form `a[j].0(args)` churned in a loop (the differential-probe
+	// repro that link-failed on `__fn_i32__0` via the legacy path).
+	{"arrtuple-elem-inline-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 300) { var k = i % 6; var a = [(function (x: i32): i32 { return x + k; }, k), (function (x: i32): i32 { return x * 2 + k; }, k + 1)]; var j = 0; while (j < a.len()) { acc = (acc + a[j].0(2) + a[j].1) % 1000; j = j + 1; } i = i + 1; } return acc % 256; }", 100},
+	// A STRING-capturing lambda in a tuple (`var s = "ab" + "c"` captured for
+	// `s.len()`): cap_type_expr now infers string for string+string concat, so
+	// the lift wraps it (a string capture rides the env box's pointer slot).
+	// Before, the lift declined, the module bailed, and the legacy fallback
+	// MISCOMPILED the shape (exit 100; native reference 44).
+	{"string-capture-tuple-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 200) { var s = \"ab\" + \"c\"; var t = (function (x: i32): i32 { return x + s.len(); }, i % 4); acc = (acc + t.0(2) + t.1) % 1000; i = i + 1; } return acc % 256; }", 44},
 }
 
 // TestSelfHostTupleFnIRX86_64 — fn-typed tuple elements through the PRODUCTION

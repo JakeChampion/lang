@@ -4982,8 +4982,16 @@ function first_bracket(s: string): i32 {
 }
 
 // split_top_commas splits a generic-arg inner string (e.g. `K, V` or
-// `string, Map[a, b]`) on top-level `, `, tracking `[]`/`()` depth so a
-// comma nested inside `Map[...]` or a tuple doesn't split early.
+// `string, Map[a, b]`) on top-level commas, tracking `[]`/`()` depth so a
+// comma nested inside `Map[...]` or a tuple doesn't split early. A comma's
+// single following space (the canonical `, ` spelling) is consumed when
+// present, but a BARE `,` splits too: irlower's compact tuple element tags
+// (`(clo,i32)`, elem_type_tag's nested-tuple arm) join without the space,
+// and requiring it made parse_type_ref read `(clo,i32)` as a ONE-element
+// tuple — so tuple_type_elem_tag returned "clo,i32", the `t.K.N(args)` /
+// `arr[i].N(args)` closure-element dispatch missed its "clo" tag, and the
+// call fell through to bogus method dispatch (`i32.0`), bailing the module
+// to the legacy AST path (which miscompiles those shapes).
 function split_top_commas(s: string): string[] {
     var out: string[] = [];
     var depth: i32 = 0;
@@ -4993,9 +5001,10 @@ function split_top_commas(s: string): string[] {
         var c: str = s[i : i + 1];
         if (c == "[" || c == "(") { depth = depth + 1; }
         if (c == "]" || c == ")") { depth = depth - 1; }
-        if (depth == 0 && c == "," && i + 1 < s.len() && s[i + 1 : i + 2] == " ") {
+        if (depth == 0 && c == ",") {
             out = out.append(s[start : i]);
-            i = i + 2;
+            i = i + 1;
+            if (i < s.len() && s[i : i + 1] == " ") { i = i + 1; }
             start = i;
             continue;
         }
