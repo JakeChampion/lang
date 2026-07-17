@@ -933,7 +933,7 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
                         }
                         return "";
                     }
-                    var rt: string = s.opt_ret_type(cid.name);
+                    var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);
                     if (rt.len() >= 8 && rt[0:7] == "Option[") { return rt; }
                     return "";
                 },
@@ -1019,7 +1019,7 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
             t = some_opt_type(e, s);
             if (t == "") {
                 match (c.callee) {
-                    parser.ExprIdent(cid) => { t = s.opt_ret_type(cid.name); },
+                    parser.ExprIdent(cid) => { t = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s); },
                     // `b.find()` where b's method returns Option/Result — keyed
                     // "<Type>.<method>" (struct receiver) or "Option.<m>" /
                     // "Result.<m>" (an Option/Result-receiver method, recursively).
@@ -2498,6 +2498,11 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     // `var a = args()` str-array-tracks (`a.len()` / `a[i]` dispatch
                     // as string[] ops, just like str_split's result).
                     if (cid.name == "args" && c.args.len() == 0) { return true; }
+                    // An erased-generic `T[]` return mirroring argument i
+                    // (`dup[T](x: T): T[]`): a string[] exactly when THAT
+                    // argument is a string.
+                    var gsa: i32 = strarr_ret_argref(s, cid.name);
+                    if (gsa >= 0 && gsa < c.args.len()) { return expr_is_str(c.args[gsa], s); }
                     return s.is_strarr_ret_fn(cid.name);
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -2707,6 +2712,11 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // strbuf_take() snapshots the global string-builder into a fresh
                     // string box (so `return strbuf_take()` str-tracks the result).
                     if (cid.name == "strbuf_take" && c.args.len() == 0) { return true; }
+                    // An erased-generic fn whose return mirrors argument i
+                    // (`idg[T](x: T): T`, the "name|$arg<i>" registry entry):
+                    // the call is a string exactly when THAT argument is.
+                    var gra: i32 = str_ret_argref(s, cid.name);
+                    if (gra >= 0 && gra < c.args.len()) { return expr_is_str(c.args[gra], s); }
                     return s.is_str_ret_fn(cid.name);
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
@@ -7744,7 +7754,7 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
         parser.ExprCall(scl) => {
             match (scl.callee) {
                 parser.ExprIdent(scid) => {
-                    var rt: string = s.opt_ret_type(scid.name);
+                    var rt: string = resolve_argref_opt_type(s.opt_ret_type(scid.name), scl.args, s);
                     // A direct `Some(x)` construction scrutinee — recover its
                     // Option[T] type (mirrors the main StmtMatch path's
                     // some_opt_type fallback), so `match (Some(6)) { … }` in value
@@ -10551,10 +10561,10 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // dk's tag from the tuple-returning function's registry
                     // entry (free fn by bare name, method by "Type.method").
                     match (dcl.callee) {
-                        parser.ExprIdent(dcid) => { dtag = csv_nth(s.tuple_ret_type(dcid.name), dk); },
+                        parser.ExprIdent(dcid) => { dtag = csv_nth(resolve_argref_tuple_tags(s.tuple_ret_type(dcid.name), dcl.args, s), dk); },
                         parser.ExprFieldAccess(dfa) => {
                             var drty: string = expr_struct_type(dfa.obj, s);
-                            if (drty != "") { dtag = csv_nth(s.tuple_ret_type(drty + "." + dfa.field), dk); }
+                            if (drty != "") { dtag = csv_nth(resolve_argref_tuple_tags(s.tuple_ret_type(drty + "." + dfa.field), dcl.args, s), dk); }
                             else if (dfa.field == "without") {
                                 // `m.without(k)` yields (Map[K,V], boolean):
                                 // element 0 is the receiver's map type, 1 is
@@ -11065,7 +11075,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprCall(ic) => {
             match (ic.callee) {
                 parser.ExprIdent(icid) => {
-                    opt_ty = se.opt_ret_type(icid.name);
+                    opt_ty = resolve_argref_opt_type(se.opt_ret_type(icid.name), ic.args, se);
                     // `var o = Some(7)` — a direct Option construction
                     // records o's opt_type so a later `match (o)`
                     // recovers the payload (the construction analogue of
@@ -11560,9 +11570,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         else if (inner.len() >= 7 && inner[0:7] == "string,") { sb = sb.mark_map_type(slot, "string"); }
                     }
                     // `var t = f()` where f returns a tuple: record its
-                    // element tags so a later `t.N` recovers each type.
+                    // element tags so a later `t.N` recovers each type. An
+                    // erased-generic callee's "$arg<i>" segments resolve to
+                    // the actual arguments' inferred tags here.
                     var mctt: string = sb.tuple_ret_type(mcid.name);
-                    if (mctt.len() > 0) { sb = sb.mark_tuple_elems(slot, mctt); }
+                    if (mctt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mctt, mc.args, sb)); }
                 },
                 parser.ExprFieldAccess(mfa) => {
                     // `var t = obj.f()` where the method returns a tuple:
@@ -11570,7 +11582,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     var mrty: string = expr_struct_type(mfa.obj, sb);
                     if (mrty != "") {
                         var mmtt: string = sb.tuple_ret_type(mrty + "." + mfa.field);
-                        if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, mmtt); }
+                        if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mmtt, mc.args, sb)); }
                     }
                 },
                 // `var t = match (e) { V(p) => p, .. }` where the result is a
@@ -27197,9 +27209,67 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && funcs[k].body.len() > 0) {
             if (str_leaf_is_string(iife_first_return_expr(funcs[k].body[funcs[k].body.len() - 1]), funcs, 0)) { out = out.append(funcs[k].name); }
         }
+        // An ERASED-generic free fn whose ret type IS a bare type var bound to
+        // a param (`idg[T](x: T): T` — unbounded type params are stripped, so
+        // mono never clones it): record a positional "name|$arg<i>" entry
+        // meaning "returns whatever argument i is". expr_is_str's call arm
+        // resolves it against the actual argument, so `idg("xyz").len()`
+        // dispatches as a string read — before, the result was untyped and
+        // `.len()` silently read 0. The '|' keeps these entries invisible to
+        // is_str_ret_fn's exact-name membership scan.
+        else if (funcs[k].receiver_type.len() == 0 && irl_looks_type_var(funcs[k].ret_type)) {
+            var gpi: i32 = 0;
+            while (gpi < funcs[k].params.len()) {
+                if (funcs[k].params[gpi].type_name == funcs[k].ret_type) {
+                    out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(gpi));
+                    gpi = funcs[k].params.len();
+                } else { gpi = gpi + 1; }
+            }
+        }
         k = k + 1;
     }
     return out;
+}
+
+// str_ret_argref returns the argument index an erased-generic fn's return
+// mirrors ("name|$arg<i>" entries from str_ret_fns_of), or -1. The caller
+// re-types the call by the ACTUAL argument at that position.
+pub function str_ret_argref(s: LowerState, name: string): i32 {
+    return argref_in(s.str_ret_fns, name);
+}
+
+// strarr_ret_argref is the string-ARRAY sibling ("name|$arg<i>" entries from
+// strarr_ret_fns_of, for a `T[]` return whose element mirrors argument i).
+pub function strarr_ret_argref(s: LowerState, name: string): i32 {
+    return argref_in(s.strarr_ret_fns, name);
+}
+
+// argref_in scans a registry for a "name|$arg<i>" positional-reference entry
+// and returns i, or -1. The '|' keeps these entries invisible to the
+// registries' exact-name membership scans.
+function argref_in(reg: string[], name: string): i32 {
+    var pfx: string = name + "|$arg";
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        var e: string = reg[i];
+        if (e.len() > pfx.len() && e[0 : pfx.len()] == pfx) { return util.digits_to_i32(e[pfx.len() : e.len()]); }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// resolve_argref_opt_type substitutes an "Option[$arg<i>]" positional
+// reference (opt_ret_fns_of's erased-generic rewriting) with the call
+// site's argument-i inferred payload tag. Unresolvable (out-of-range /
+// no args in scope) degrades to "" — the same untyped reading the raw
+// type-var tag produced before the rewrite.
+pub function resolve_argref_opt_type(t: string, args: parser.Expr[], s: LowerState): string {
+    if (!util.contains(t, "$arg")) { return t; }
+    if (t.len() >= 13 && t[0:11] == "Option[$arg" && t[t.len() - 1] == 93) {   // 93 = ']'
+        var an: i32 = util.digits_to_i32(t[11 : t.len() - 1]);
+        if (an >= 0 && an < args.len()) { return "Option[" + elem_type_tag(args[an], s) + "]"; }
+    }
+    return "";
 }
 
 // strarr_ret_fns_of collects the names of a module's string[]-returning
@@ -27209,6 +27279,19 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var k: i32 = 0;
     while (k < funcs.len()) {
         if (funcs[k].ret_type == "string[]") { out = out.append(funcs[k].name); }
+        // An ERASED-generic free fn returning `T[]` for a bare type-var `T`
+        // bound to a param (`dup[T](x: T): T[]`): record "name|$arg<i>" so
+        // expr_is_strarr re-types the call by the ACTUAL argument — the
+        // array sibling of str_ret_fns_of's bare-`T` entries. Invisible to
+        // is_strarr_ret_fn's exact-name scan (the '|').
+        else if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type.len() == 3
+                && funcs[k].ret_type[1:3] == "[]" && irl_looks_type_var(funcs[k].ret_type[0:1])) {
+            var sgpi: i32 = 0;
+            while (sgpi < funcs[k].params.len()) {
+                if (funcs[k].params[sgpi].type_name == funcs[k].ret_type[0:1]) { out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(sgpi)); sgpi = funcs[k].params.len(); }
+                else { sgpi = sgpi + 1; }
+            }
+        }
         // A lifted `__lam_` whose branch is a string-array literal carries a
         // default i32 ret_type; register it so `(if (c) { ["a"] } else { … })[i]`
         // reads its elements as strings (8-byte) instead of i32 (#3224).
@@ -27302,6 +27385,23 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // stay keyed by bare name.
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            // An ERASED-generic free fn's `Option[T]` return (bare type-var
+            // payload bound to a param): rewrite the payload to a positional
+            // "$arg<i>" reference, resolved at the call site against the
+            // actual argument (resolve_argref_opt_type) — the Option sibling
+            // of tuple_ret_fns_of's rewriting. Without it the raw "Option[T]"
+            // tag left the Some-binder untyped and a string payload's
+            // `.len()` silently read 0.
+            if (rt[0:7] == "Option[" && funcs[k].receiver_type.len() == 0) {
+                var opay: str = rt[7 : rt.len() - 1];
+                if (irl_looks_type_var(opay)) {
+                    var ogpi: i32 = 0;
+                    while (ogpi < funcs[k].params.len()) {
+                        if (funcs[k].params[ogpi].type_name == opay) { rt = "Option[$arg" + util.i32_to_string(ogpi) + "]"; ogpi = funcs[k].params.len(); }
+                        else { ogpi = ogpi + 1; }
+                    }
+                }
+            }
             out = out.append(key + "|" + rt);
         }
         // A lifted if-/match-expression `__lam_` whose leaf branch calls an
@@ -27983,10 +28083,31 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
     return true;
 }
 
+// irl_looks_type_var: a bare generic type variable spelling — a single
+// uppercase letter (K / V / T / …). Mirrors parser.looks_type_var (private
+// there). The self-host ERASES unbounded type params (they never reach
+// monomorphize_module's clone worklist), so an erased-generic fn's tuple
+// return keeps its type-var spellings ("(K, V)") and the registry tag would
+// otherwise degrade the element to a scalar at every call site.
+function irl_looks_type_var(s: string): boolean {
+    if (s.len() != 1) { return false; }
+    var c: i32 = s[0];
+    return c >= 65 && c <= 90;
+}
+
 // tuple_ret_fns_of records "name|<elem tags>" for each function whose return
 // type is a tuple, so a call site can recover the element types for `.N` /
 // destructure dispatch. Free functions are keyed by bare name, methods by the
 // qualified "<BaseType>.<method>" label (no "." collision between the two).
+//
+// An ERASED-generic fn (`pair[K, V](k: K, v: V): (K, V)` — unbounded type
+// params are stripped by the parser, so mono never clones it) gets each
+// type-var ret segment rewritten to a positional "$arg<i>" reference naming
+// the first PARAM declared with that type var. The call site substitutes the
+// actual argument's inferred tag (resolve_argref_tuple_tags), so
+// `pair("xy", 3)` types element 0 "string" — before, the raw "K" tag read as
+// a scalar and `s.0.len()` on the returned string silently miscompiled to 0
+// on BOTH the IR path and the legacy AST fallback.
 pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -27997,9 +28118,69 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // (matching the call_direct dispatch label; no "." collision).
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            out = out.append(key + "|" + tuple_elem_tags(rt));
+            var tags: string = tuple_elem_tags(rt);
+            // Rewrite bare type-var segments to "$arg<i>" param references
+            // (top-level split; a nested "(…)" segment is left whole).
+            var rw: string = "";
+            var depth: i32 = 0;
+            var start: i32 = 0;
+            var ti: i32 = 0;
+            var first: boolean = true;
+            while (ti <= tags.len()) {
+                if (ti == tags.len() || (tags[ti] == 44 && depth == 0)) {   // 44 = ','
+                    var seg: str = tags[start : ti];
+                    if (!first) { rw = rw + ","; }
+                    var repl: string = seg + "";
+                    if (irl_looks_type_var(seg)) {
+                        var pi: i32 = 0;
+                        while (pi < funcs[k].params.len()) {
+                            if (funcs[k].params[pi].type_name == seg) { repl = "$arg" + util.i32_to_string(pi); pi = funcs[k].params.len(); }
+                            else { pi = pi + 1; }
+                        }
+                    }
+                    rw = rw + repl;
+                    first = false;
+                    start = ti + 1;
+                } else if (tags[ti] == 91 || tags[ti] == 40) { depth = depth + 1; }   // '[' '('
+                else if (tags[ti] == 93 || tags[ti] == 41) { depth = depth - 1; }   // ']' ')'
+                ti = ti + 1;
+            }
+            out = out.append(key + "|" + rw);
         }
         k = k + 1;
+    }
+    return out;
+}
+
+// resolve_argref_tuple_tags substitutes each "$arg<i>" segment of a
+// tuple-ret tag list with the CALL SITE's argument-i inferred tag
+// (elem_type_tag — "string" for a string arg, a struct/Option/Map/nested
+// tag where inferable, "i32" otherwise). Non-reference segments pass
+// through. Safe fallback: an out-of-range reference degrades to "i32",
+// the same scalar reading the raw type-var tag produced before.
+pub function resolve_argref_tuple_tags(tags: string, args: parser.Expr[], s: LowerState): string {
+    if (!util.contains(tags, "$arg")) { return tags; }
+    var out: string = "";
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var first: boolean = true;
+    while (i <= tags.len()) {
+        if (i == tags.len() || (tags[i] == 44 && depth == 0)) {   // 44 = ','
+            var seg: str = tags[start : i];
+            if (!first) { out = out + ","; }
+            if (seg.len() > 4 && seg[0:4] == "$arg") {
+                var an: i32 = util.digits_to_i32(seg[4 : seg.len()]);
+                if (an >= 0 && an < args.len()) { out = out + elem_type_tag(args[an], s); }
+                else { out = out + "i32"; }
+            } else {
+                out = out + seg;
+            }
+            first = false;
+            start = i + 1;
+        } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }   // '[' '('
+        else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }   // ']' ')'
+        i = i + 1;
     }
     return out;
 }
