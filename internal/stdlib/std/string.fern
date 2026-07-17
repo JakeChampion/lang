@@ -813,6 +813,41 @@ pub function (s: string) is_snake_case(): boolean {
     return true;
 }
 
+// `s.is_camel_case()` / `is_pascal_case()` — case-shape predicates
+// for the two medial-capitals conventions, the classifiers that pair
+// with the `camel_case` / `pascal_case` producers (#5070). True when s
+// is non-empty and every byte is an ASCII letter or digit (any
+// separator — `_`, `-`, space — or other punctuation makes it false),
+// and the first byte has the right case: lowercase for camelCase,
+// uppercase for PascalCase. A single all-lowercase word (`"foo"`) is
+// valid camelCase, mirroring how `is_snake_case` accepts a single word.
+pub function (s: string) is_camel_case(): boolean {
+    return __is_medial_caps(s, false);
+}
+
+pub function (s: string) is_pascal_case(): boolean {
+    return __is_medial_caps(s, true);
+}
+
+function __is_medial_caps(s: string, upper_first: boolean): boolean {
+    var n: i32 = s.len();
+    if (n == 0) { return false; }
+    var f: i32 = s[0];
+    if (upper_first) {
+        if (!(f >= 65 && f <= 90)) { return false; }    // PascalCase starts A-Z
+    } else {
+        if (!(f >= 97 && f <= 122)) { return false; }   // camelCase starts a-z
+    }
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var ok: boolean = (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57);
+        if (!ok) { return false; }   // letters and digits only — no separators
+        i = i + 1;
+    }
+    return true;
+}
+
 // `s.shift_byte(delta)` — Caesar-style byte shift: each
 // byte += delta, wrapping at 256. Negative deltas are
 // supported. Useful for simple obfuscation / toy ciphers;
