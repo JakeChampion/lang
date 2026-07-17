@@ -5712,9 +5712,21 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // (rc>1) one, skips an immortal slice/trim view or literal (rc<0). The
         // struct-lit alias-inc (irlower, gated on the per-lit ownership precompute)
         // retains non-fresh values so this dec is balanced; a fresh field is
-        // sole-owned (this drop only fires for a reclaimable, non-escaping struct
-        // local) → freed here, the #4297 A2 heap-leak win.
-        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
+        // sole-owned → freed here, the #4297 A2 heap-leak win.
+        //
+        // GATED on the whole-program read scan ("strfldok:<T>"), exactly like
+        // __field_reclaim_<T>'s string arm (#4768): the construction-side retain
+        // (slit_reclaim → struct_routes_field_reclaim) only fires for
+        // STRFLDOK-admitted types, so a NON-admitted type's string fields are
+        // uncounted aliases this free would dangle. The mismatch was fatal once
+        // the merged whole-compiler bundle routed through the IR path (#3425):
+        // ir.Op is string-fielded but not admitted (Op.str reads escape
+        // everywhere), yet the array-element walk (__struct_arr_elems_drop_ir__Op,
+        // reached via nested_field_deep_drop_ok's unconditional string credit)
+        // freed every dropped Op's shared .str — corrupting the freelist and
+        // crashing the IR-built compiler on its first lower_func. A non-admitted
+        // type keeps the sound leak here, mirroring the field-reclaim contract.
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
         // A DIRECT enum field (`e: MyEnum`, decl_is_enum, not an array): the slot
         // holds the enum's box pointer, freed SHALLOW via __fern_arr_dec (the same
         // rc-guarded generic box free the shallow k_struct / scalar-array arms use —

@@ -13296,7 +13296,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				// set (the call result may alias it), but the rc-gated buffer
 				// free is balanced anyway — __fern_arr_dec only reclaims at
 				// rc==0, and typeSelfDropSafe restricts this to arrays whose
-				// elements are inc'd at construction (no bare strings / Maps).
+				// elements are inc'd at construction (no Maps; strings joined
+				// the counted set with the #3425 admission).
 				// Without it `a = a.append(x)` in a loop leaked the OLD buffer
 				// on every grow (the copy path orphans it; the flat
 				// __fern_rc_dec the catch-all else emits never frees) — the
@@ -13830,18 +13831,40 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 		}
 	}
 	// SOUNDNESS: the deep-drop frees the old value's fields. Array / nested
-	// struct / enum fields are inc'd at construction, so the rc-gated drop
-	// (is_unique on the box, rc==0 on the buffer) is balanced even when the new
-	// value shares them. But STRINGS are not rc-tracked — never inc'd at struct
-	// construction — so a string field shared via a functional-copy reassign
-	// (`s = S{...s, ...}`) is an UNCOUNTED alias: deep-dropping the old value
-	// would free a buffer the new value still points at (the self-host
-	// EmitState/`s = s.write(..)` UAF). Map fields likewise have an incomplete
-	// (leaky) deep-drop. So restrict to structs whose deep drop is the
-	// fully-counted array/struct/enum/scalar walk — transitively string- and
-	// Map-free. (This is a sound subset; once strings are rc-tracked the
-	// restriction can lift.)
-	if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
+	// struct / enum / STRING fields are all inc'd at construction (field-init
+	// emitAliasInc — needsRcIncOnAlias admits strings, routing two-word ABIs
+	// through __fern_str_inc; the struct-update base copy incs every copied
+	// pointer field including strings), so the rc-gated drop (is_unique on
+	// the box; genStructDropFn's per-ABI freeing __fern_str_dec on string
+	// fields) is balanced even when the new value shares them. Strings were
+	// excluded here while they were still uncounted at construction — that
+	// era is over (#4174 rc-tracked native strings + the genStructDropFn
+	// string-field arms), and lifting the exclusion is what un-quadratics
+	// the self-host LowerState/EmitState `s = s.emit(op)` threading: with
+	// the old box flat-dec'd (never freed) every superseded state pinned the
+	// ops array at rc >= 2, so each statement's append cloned the whole
+	// accumulated array — the #3425 Effect-A O(ops^2) that kept the merged
+	// whole-compiler bundle over the 8 GiB arena. Map fields still have an
+	// incomplete (leaky) deep-drop and stay excluded (typeSelfDropSafe).
+	//
+	// BUT the ARRAY general form `a = f(a)` keeps the string-element
+	// exclusion (typeSelfDropSafeArrGeneral): the array branch's overwrite
+	// __fern_arr_dec has no identity guard, and a callee that flows its
+	// argument through unchanged (the recursive-collector shape —
+	// checker.e060_collect_dyn_locals's `a = e060_collect_dyn_locals(body,
+	// a)`) can return the very buffer being "superseded". The rc ledger
+	// that keeps the string-free element types balanced there does not
+	// extend to string elements (their per-site inc/dec discipline is the
+	// #4355 open arc), so admitting string[]/nested-string arrays here
+	// double-freed the flowed-through buffer under a different size class —
+	// the derive-compile freelist corruption. Struct/enum targets keep the
+	// full string admission (the deep-drop is box-level is_unique-gated and
+	// the return-transfer inc protects identity returns — probed).
+	if _, isArr := ty.(ast.ArrayType); isArr {
+		if !typeSelfDropSafeNoStrings(ty, b.info, map[string]bool{}) {
+			return false
+		}
+	} else if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
 		return false
 	}
 	mentions := false
@@ -13858,9 +13881,10 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 // `__method_Array_push(name, x)` — for a LOCAL `name` (not a param). This is the
 // rc-SAFE subset of an array self-reassign overwrite, and the one that lets the
 // array branch's buffer-only __fern_arr_dec reclaim the OLD buffer for element
-// types selfReassignOwnedLocal's typeSelfDropSafe rejects (string[] / struct[] /
-// nested arrays) — e.g. the self-host SSA builder's `vn = vn.append(..)` over
-// `string[]`, which otherwise orphans every grow's buffer.
+// types selfReassignOwnedLocal's typeSelfDropSafe rejects (Map-carrying
+// elements; historically also string[] before the #3425 string admission) —
+// e.g. the self-host SSA builder's `vn = vn.append(..)` over `string[]`,
+// which otherwise orphans every grow's buffer.
 //
 // Why append is safe where the general `x = f(x)` is NOT: __fern_arr_push_grow
 // is rc-gated. A uniquely-owned buffer (rc==1) either mutates in place (no old
@@ -13905,16 +13929,83 @@ func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
 
 // typeSelfDropSafe reports whether a value of type `t` can be deep-dropped on a
 // self-reassign overwrite without risking an uncounted-alias over-release: no
-// string anywhere (strings aren't inc'd at construction) and no Map anywhere
-// (its deep drop is incomplete). Arrays / structs / enums / tuples of safe types
-// are fine — their pointer payloads are inc'd at construction, so the rc-gated
-// drop is balanced.
+// Map anywhere (its deep drop is incomplete). Arrays / structs / enums / tuples
+// / STRINGS of safe types are fine — their pointer payloads are inc'd at
+// construction, so the rc-gated drop is balanced. Strings joined the safe set
+// once they became rc-counted at every sharing construction site (field-init
+// emitAliasInc, struct-update base copy) with genStructDropFn's matching
+// per-ABI freeing __fern_str_dec on the drop side — see the
+// selfReassignOwnedLocal soundness note (#3425: the exclusion forced every
+// string-fielded builder rebind onto the flat non-freeing dec, whose leaked
+// boxes pinned the builder's array fields at rc >= 2 and turned each append
+// into a whole-array clone).
+// typeSelfDropSafeNoStrings is typeSelfDropSafe with the pre-#3425 string
+// exclusion kept — the gate for the ARRAY general-form (`a = f(a)`) overwrite
+// dec only, whose buffer free has no identity guard and whose string-element
+// inc/dec ledger is not yet balanced for the callee-flows-argument-through
+// shape (see the selfReassignOwnedLocal soundness note). Struct/enum targets
+// use the widened typeSelfDropSafe.
+func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	if _, isStr := t.(ast.StringType); isStr {
+		return false
+	}
+	switch ty := t.(type) {
+	case ast.ArrayType:
+		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
+	case ast.SliceType:
+		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !typeSelfDropSafeNoStrings(e, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		sd, ok := info.Structs[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, f := range sd.Fields {
+			if !typeSelfDropSafeNoStrings(f.Type, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		ed, ok := info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !typeSelfDropSafeNoStrings(pl, info, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return typeSelfDropSafe(t, info, seen)
+}
+
 func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
 		return true
 	case ast.StringType:
-		return false
+		return true
 	case ast.ArrayType:
 		return typeSelfDropSafe(ty.Elem, info, seen)
 	case ast.SliceType:
