@@ -51,6 +51,19 @@ function main(): i32 { return "foo_bar".pascal_case()[0]; }`},
 function main(): i32 { return "Foo_bar".camel_case()[0]; }`},
 	{"camel_case-collapse-len", `import "std/string";
 function main(): i32 { return "__foo__bar__".camel_case().len(); }`},
+	// is_camel_case / is_pascal_case predicates, oracle-checked. Return
+	// the boolean as an exit code (true=1) so a self-host miscompile of
+	// the classifier diverges from the interpreter. "fooBar" is camel (1);
+	// "FooBar" is not camel (0); "FooBar" is pascal (1); "foo_bar" (with a
+	// separator) is neither (0).
+	{"is_camel_case-true", `import "std/string";
+function main(): i32 { if ("fooBar".is_camel_case()) { return 1; } return 0; }`},
+	{"is_camel_case-false", `import "std/string";
+function main(): i32 { if ("FooBar".is_camel_case()) { return 1; } return 0; }`},
+	{"is_pascal_case-true", `import "std/string";
+function main(): i32 { if ("FooBar".is_pascal_case()) { return 1; } return 0; }`},
+	{"is_pascal_case-sep", `import "std/string";
+function main(): i32 { if ("foo_bar".is_pascal_case()) { return 1; } return 0; }`},
 }
 
 func TestSelfHostStringModuleFnIR(t *testing.T) {
