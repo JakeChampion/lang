@@ -11492,10 +11492,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // Binding from a closure-BOX tuple element (`var f = t.0`, element tagged
     // "clo"): mark f a closure LOCAL so `f(args)` dispatches env-first against
     // the box — the closure sibling of the map-from-tuple-element bind above.
+    // A NESTED-tuple element (`var inner = t.0` where t.0's tag is itself a
+    // "(…)" tuple spelling) transfers the inner element tags onto the binding
+    // (mark_tuple_elems) so `inner.N` reads — and an `inner.N(args)` closure
+    // element call — resolve instead of bailing the module to the AST path.
     match (v.init) {
         parser.ExprFieldAccess(ctfa) => {
             if (util.is_all_digits(ctfa.field)) {
-                if (expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb) == "clo") { sb = sb.mark_closure_local(v.name); }
+                var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
+                if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
+                else if (ctet.len() >= 2 && ctet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
             }
         },
         _ => {}

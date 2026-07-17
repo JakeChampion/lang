@@ -69,6 +69,14 @@ var tupleFnIRCases = []struct {
 	// Regression guard for the bind-order move: an enum-payload closure
 	// (`Op.Apply(<lambda>)` matched and called) keeps working.
 	{"enum-fn-payload-regress", "enum Op { Apply((i32) => i32), Nop } function main(): i32 { var n = 5; var o = Op.Apply(function (x: i32): i32 { return x + n; }); match (o) { Apply(f) => { return f(37); }, Nop => { return 0; } } }", 42},
+	// A NESTED tuple's closure element via an intermediate binding
+	// (`var inner = t.0; inner.0(37)`): the binding transfers the inner
+	// element tags (mark_tuple_elems from the "(…)"-shaped element tag), so
+	// the inner "clo" element dispatches env-first. (The DIRECT chain
+	// `t.0.0(37)` remains a deferred edge — it still bails to the AST path.)
+	{"nested-tuple-clo-via-binding", "function main(): i32 { var n = 5; var t = ((function (x: i32): i32 { return x + n; }, 1), 2); var inner = t.0; return inner.0(37); }", 42},
+	// Scalar sibling of the nested transfer (pins the tag hand-off shape).
+	{"nested-tuple-scalar-via-binding", "function main(): i32 { var t = ((7, 1), 2); var inner = t.0; return inner.0 + 35; }", 42},
 }
 
 // TestSelfHostTupleFnIRX86_64 — fn-typed tuple elements through the PRODUCTION
