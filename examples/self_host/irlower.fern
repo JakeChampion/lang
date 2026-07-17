@@ -15541,16 +15541,42 @@ pub function (s: LowerState) with_xblock_pending(v: string[]): LowerState {
 // when it constructs the recipient. Donor selection excludes any donor a
 // same-block site already consumed (so the two passes never double-free a box).
 
-// xblock_struct_arrays_fresh mirrors cross_reuse_sites' rule: every leak-safe
-// array field VALUE must be a fresh array literal (the reused box then owns it).
-function xblock_struct_arrays_fresh(slit: parser.ExprStructLit, structs: parser.StructDecl[]): boolean {
+// cross_recipient_fields_fresh is the RECIPIENT field-value freshness gate the
+// cross-statement (cross_reuse_sites) and cross-block (xblock_scan_body)
+// families share: every leak-safe array field VALUE must be a fresh array
+// literal (the reused box then owns it); likewise a nested-struct field value
+// must be a fresh (no-base) struct literal, so the reused box solely owns the
+// new inner box (rc=1, no alias-inc) once the old inner is full-freeing-dropped
+// in emit_cross_struct_reuse; an ENUM field value (#4356 divergence 1) must be
+// a fresh variant-constructor call of that enum, so the reused box solely owns
+// the new payload box (a payloadless ctor yields a guard-skipped sentinel —
+// also safe); a STRING field value must be a literal or a fresh producer
+// (#4355's rule) so the reused box solely owns the new buffer. Map / tuple /
+// Option fields are ungated — leak-only boxes with no release arm (see
+// struct_fields_reusable_cross).
+function cross_recipient_fields_fresh(slit: parser.ExprStructLit, structs: parser.StructDecl[]): boolean {
     var fk: i32 = 0;
     while (fk < slit.field_names.len()) {
-        if (is_leaksafe_array_field(decl_field_type(structs, slit.type_name, slit.field_names[fk]))) {
+        var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
+        if (is_leaksafe_array_field(fkt)) {
             match (slit.field_values[fk]) {
                 parser.ExprArray(_) => {},
                 _ => { return false; }
             }
+        } else if (decl_is_struct(structs, fkt)) {
+            match (slit.field_values[fk]) {
+                parser.ExprStructLit(isl) => { if (isl.has_base) { return false; } },
+                _ => { return false; }
+            }
+        } else if (is_enum_like_name(fkt, structs)) {
+            if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { return false; }
+        } else if (fkt == "string") {
+            var csf: boolean = false;
+            match (slit.field_values[fk]) {
+                parser.ExprString(_) => { csf = true; },
+                _ => { csf = str_local_binding_is_fresh(slit.field_values[fk]); }
+            }
+            if (!csf) { return false; }
         }
         fk = fk + 1;
     }
@@ -15573,7 +15599,15 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
             parser.StmtVar(rv) => {
                 match (rv.init) {
                     parser.ExprStructLit(slit) => {
-                        if (!slit.has_base && struct_fields_reusable(structs, slit.type_name) && xblock_struct_arrays_fresh(slit, structs)) {
+                        // #4356 Delta B follow-through: the cross-block recipient now
+                        // takes the same WIDENED field-kind predicate + fresh-value
+                        // gate as the cross-statement family — enum / string / Map /
+                        // tuple / Option fields are admitted (emit_cross_struct_reuse
+                        // already carries every release arm, and the shared
+                        // cross_construction_donor carries the donor-side freshness
+                        // gates), where this scan previously required the narrow
+                        // scalar/array/nested-struct predicate.
+                        if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name) && cross_recipient_fields_fresh(slit, structs)) {
                             var donor: string = cross_construction_donor(b_stmts, structs, k, slit.type_name, rv.name, so_bases, cons, fresh_ret);
                             if (donor.len() > 0) {
                                 // "dname|dtype" — keep the pair 3-part, consume the bare name.
@@ -24261,45 +24295,9 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
                             if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)) {
-                                // every leak-safe array field VALUE must be a fresh
-                                // array literal (the reused box then owns it); likewise
-                                // a nested-struct field value must be a fresh (no-base)
-                                // struct literal, so the reused box solely owns the new
-                                // inner box (rc=1, no alias-inc) once the old inner is
-                                // full-freeing-dropped in emit_cross_struct_reuse; an
-                                // ENUM field value (#4356 divergence 1) must be a fresh
-                                // variant-constructor call of that enum, so the reused
-                                // box solely owns the new payload box (a payloadless
-                                // ctor yields a guard-skipped sentinel — also safe).
-                                var ok: boolean = true;
-                                var fk: i32 = 0;
-                                while (fk < slit.field_names.len()) {
-                                    var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
-                                    if (is_leaksafe_array_field(fkt)) {
-                                        match (slit.field_values[fk]) {
-                                            parser.ExprArray(_) => {},
-                                            _ => { ok = false; }
-                                        }
-                                    } else if (decl_is_struct(structs, fkt)) {
-                                        match (slit.field_values[fk]) {
-                                            parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
-                                            _ => { ok = false; }
-                                        }
-                                    } else if (is_enum_like_name(fkt, structs)) {
-                                        if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { ok = false; }
-                                    } else if (fkt == "string") {
-                                        // A STRING field value must be a literal or a
-                                        // fresh producer (#4355's rule) so the reused
-                                        // box solely owns the new buffer.
-                                        var csf: boolean = false;
-                                        match (slit.field_values[fk]) {
-                                            parser.ExprString(_) => { csf = true; },
-                                            _ => { csf = str_local_binding_is_fresh(slit.field_values[fk]); }
-                                        }
-                                        if (!csf) { ok = false; }
-                                    }
-                                    fk = fk + 1;
-                                }
+                                // Recipient field-value freshness — shared with the
+                                // cross-block scan (cross_recipient_fields_fresh).
+                                var ok: boolean = cross_recipient_fields_fresh(slit, structs);
                                 if (ok) {
                                     var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors, fresh_ret);
                                     if (donor.len() > 0) {
