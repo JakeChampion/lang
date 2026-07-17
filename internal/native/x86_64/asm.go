@@ -773,8 +773,20 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 	case dst.kind == opReg && src.kind == opMem:
 		return a.regMem(opBase|0x02, dst, src)
 	case dst.kind == opReg && src.kind == opImm:
+		// Byte register: <alu> r/m8, imm8 is its own opcode (80 /ext ib) —
+		// 83/81 are the 16/32/64-bit forms and would silently widen the
+		// operation (the mov-imm encoder had the same bug, #3544).
+		if dst.size == 8 {
+			if rex := rexFor(false, 0, dst.reg, needsRexByte(dst)); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0x80)
+			a.emit(modrmReg(ext, dst.reg))
+			a.emit(byte(src.imm))
+			return nil
+		}
 		w := dst.size == 64
-		if fitsInt8(src.imm) && dst.size != 8 {
+		if fitsInt8(src.imm) {
 			if rex := rexFor(w, 0, dst.reg, false); rex != 0 {
 				a.emit(rex)
 			}
@@ -791,6 +803,38 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 		a.emit32(uint32(src.imm))
 		return nil
 	case dst.kind == opMem && src.kind == opImm:
+		// Honour the operand size from a `byte ptr` prefix: <alu> r/m8,
+		// imm8 is 80 /ext ib. The 83/81 forms below are 32/64-bit — using
+		// them for a byte compare reads/writes 4 bytes (`cmp byte ptr
+		// [rdi], 61` in __fern_env's '=' scan silently became cmp dword,
+		// so env() never matched a name and always returned None on the
+		// natively-linked path).
+		if dst.memSize == 8 {
+			if rex := memRex(false, 0, dst, false); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0x80)
+			a.encodeMem(ext, dst)
+			a.emit(byte(src.imm))
+			return nil
+		}
+		if dst.memSize == 16 {
+			// 66 [REX] 83 /ext ib (sign-extended imm8) or 66 [REX] 81 /ext iw.
+			a.emit(0x66)
+			if rex := memRex(false, 0, dst, false); rex != 0 {
+				a.emit(rex)
+			}
+			if fitsInt8(src.imm) {
+				a.emit(0x83)
+				a.encodeMem(ext, dst)
+				a.emit(byte(src.imm))
+				return nil
+			}
+			a.emit(0x81)
+			a.encodeMem(ext, dst)
+			a.emit(byte(src.imm), byte(src.imm>>8))
+			return nil
+		}
 		w := dst.memSize == 64
 		if fitsInt8(src.imm) {
 			if rex := memRex(w, 0, dst, false); rex != 0 {
