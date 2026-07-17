@@ -7335,6 +7335,57 @@ func (c *checker) dynMethodConsumes(trait, field string) bool {
 //
 // No codegen changes here — owned params still lower as borrowed; this only
 // establishes the invariant the transfer + reuse slices rely on.
+// SelfReassignOwnMoveArg recognizes the #4873 step-0 move shape on a
+// self-reassignment `x = f(..., x, ...)`: the assign target is a bare
+// ident whose name occurs EXACTLY ONCE anywhere in the RHS (a second
+// read would observe the consumed value), and that one occurrence is a
+// direct bare-ident argument sitting in an `own` position of the
+// callee's flags. Returns that argument Ident, or nil when the shape
+// doesn't match. Exported because the checker's E051 admission and the
+// IR's move-on-call + overwrite-dec suppression must key on the
+// IDENTICAL recognition — if they drift, either a double free (rc
+// suppresses, checker rejects a shape that then re-lands via another
+// path) or a leak/UAF (checker admits, rc still exit-decs) follows.
+func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
+	tid, ok := asn.Target.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	flags, isOwn := ownFuncs[cid.Name]
+	if !isOwn {
+		return nil
+	}
+	// Count every occurrence of the target name in the RHS, excluding
+	// the callee ident itself (a call position, not a value read).
+	count := 0
+	ast.Walk(call, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id != cid && id.Name == tid.Name {
+			count++
+		}
+		return true
+	})
+	if count != 1 {
+		return nil
+	}
+	for i, a := range call.Args {
+		if id, ok := a.(*ast.Ident); ok && id.Name == tid.Name {
+			if i < len(flags) && flags[i] {
+				return id
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	owned := map[string]bool{}
 	for _, p := range fn.Params {
@@ -7357,6 +7408,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// cannot be transferred (the caller, or someone, still owns it), so passing
 	// it to an `own` parameter is E051. Conservative: anything not provably
 	// owned is rejected.
+	// selfMoveArgs admits specific Ident NODES as owned arguments: the
+	// exactly-once occurrence of `x` inside the RHS of a self-reassign
+	// `x = f(..., x, ...)` where that occurrence is a direct argument in
+	// an `own` position (#4873 step 0). The old binding dies at the
+	// assignment — nothing can read it after the RHS evaluates — so the
+	// caller can transfer it. Keyed by node identity so the SAME name
+	// elsewhere (a second read in the RHS, a non-self-reassign call) is
+	// still rejected. Populated by walkStmts' Assign case; the IR's
+	// move-on-call + overwrite-dec suppression key on the identical
+	// syntactic shape (SelfReassignOwnMoveArg, shared with the IR) so checker and rc
+	// agree bit-for-bit on what moved.
+	selfMoveArgs := map[ast.Expr]bool{}
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		switch x := e.(type) {
@@ -7365,7 +7428,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Binary:
 			return x.IsStringConcat
 		case *ast.Ident:
-			return owned[x.Name]
+			return owned[x.Name] || selfMoveArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
@@ -7631,6 +7694,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// concern; here the reassign just clears the move) — distinct from a
 			// plain read, which recordExprUses would treat as a consume.
 			if asn, ok := x.Expr.(*ast.Assign); ok {
+				// Self-reassign move admission (#4873 step 0): for
+				// `x = f(..., x, ...)` with x a LOCAL passed exactly once,
+				// directly, in an `own` position, admit that occurrence
+				// (see selfMoveArgs). Checked before recordExprUses so
+				// guardCallArgs sees the admission.
+				if id, ok := asn.Target.(*ast.Ident); ok && !owned[id.Name] {
+					if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+						selfMoveArgs[arg] = true
+					}
+				}
 				recordExprUses(asn.Value, moved)
 				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
 					delete(moved, id.Name)
