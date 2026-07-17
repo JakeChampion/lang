@@ -176,6 +176,10 @@ function has_prefix(s: string, p: string): boolean {
 function is_rc_noop(name: string): boolean {
     if (name == "__fern_rc_inc") { return true; }
     if (name == "__fern_rc_dec") { return true; }
+    // #4873 grow-bracket share helpers (register-backend rc aliases; wasm
+    // no-ops) — same take-the-box-return-it shape, always drop'd.
+    if (name == "__fern_arr_share_inc") { return true; }
+    if (name == "__fern_arr_share_dec") { return true; }
     if (name == "__fern_str_free") { return true; }
     if (name == "__fern_str_arr_free") { return true; }
     // Per-type reclamation helpers irlower emits at scope exit (deep-drop of a

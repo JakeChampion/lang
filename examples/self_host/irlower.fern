@@ -6534,7 +6534,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // copy path and this function's binding keeps interpreter
                     // (copy-on-shared) semantics. grow_exempt (the statement's
                     // dying self-reassign / return-position args) skips the
-                    // bracket, keeping accumulator chains O(n).
+                    // bracket, keeping accumulator chains O(n). The bracket
+                    // goes through the dedicated __fern_arr_share_inc/dec
+                    // names (NOT the plain rc pair): the register backends
+                    // alias them to __fern_rc_inc / __fern_arr_dec, while
+                    // wasm_ir intercepts them as no-ops — wasm arrays carry
+                    // no rc header, so an rc touch at base-4 would corrupt
+                    // the neighbouring allocation.
                     var gbr_slots: i32[] = [];
                     var gba: i32 = 0;
                     while (gba < c.args.len()) {
@@ -6554,7 +6560,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     var gbi: i32 = 0;
                     while (gbi < gbr_slots.len()) {
                         sc = sc.emit(ir.op_load_local(gbr_slots[gbi]));
-                        sc = sc.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        sc = sc.emit(ir.op_call_direct("__fern_arr_share_inc", 1));
                         sc = sc.emit(ir.op_drop());
                         gbi = gbi + 1;
                     }
@@ -6565,7 +6571,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     var gbj: i32 = 0;
                     while (gbj < gbr_slots.len()) {
                         scr = scr.emit(ir.op_load_local(gbr_slots[gbj]));
-                        scr = scr.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                        scr = scr.emit(ir.op_call_direct("__fern_arr_share_dec", 1));
                         scr = scr.emit(ir.op_drop());
                         gbj = gbj + 1;
                     }
@@ -32535,7 +32541,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
-        else if (o.kind_tag == 149 && o.str == "__fern_rc_inc") {  // call_direct
+        else if (o.kind_tag == 149 && (o.str == "__fern_rc_inc" || o.str == "__fern_arr_share_inc")) {  // call_direct
             // RC retain: inc the refcount header at base-4, return base.
             sp = sp - 1;
             var ib: i32 = stack[sp];
@@ -32545,7 +32551,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
-        else if (o.kind_tag == 149 && o.str == "__fern_rc_dec") {  // call_direct
+        else if (o.kind_tag == 149 && (o.str == "__fern_rc_dec" || o.str == "__fern_arr_share_dec")) {  // call_direct
             // RC release: dec the header at base-4 (no free). A dec of a value
             // already at/below 0 is an over-release -> bump the counter at
             // word 0. A null / sub-heap pointer is skipped (defensive).

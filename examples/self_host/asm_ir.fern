@@ -91,6 +91,15 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
+        // #4873 grow-bracket share helpers: the backend-selectable rc touch
+        // around a surviving ident arg at a may-grow param position. Register
+        // backends alias them to the plain rc inc / rc-guarded arr dec (their
+        // arrays carry an rc header at base-4, and __fern_arr_push's
+        // uniqueness gate reads it); wasm_ir intercepts BOTH as no-ops — wasm
+        // arrays have no rc header ([len@0, cap@4, elems@8]), so an rc touch
+        // at base-4 would corrupt the neighbouring allocation.
+        || name == "__fern_arr_share_inc"
+        || name == "__fern_arr_share_dec"
         // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
         // data buffer + 16-byte box. Default ir_helper_symbol maps it to
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
@@ -230,6 +239,12 @@ pub function c_call_arity(name: string): i32 {
 pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
+    // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
+    // pair on the register backends (zero new runtime); the distinct NAMES
+    // exist so wasm_ir can intercept them as no-ops (wasm arrays carry no rc
+    // header).
+    if (name == "__fern_arr_share_inc") { return "__fn___fern_rc_inc"; }
+    if (name == "__fern_arr_share_dec") { return "__fn___fern_arr_dec"; }
     if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
     if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
     // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
