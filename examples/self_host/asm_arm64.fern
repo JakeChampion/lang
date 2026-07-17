@@ -115,18 +115,18 @@ import "./asm_arm64_ir";
 // register never live across a frame access here) via `sub` first.
 function (s: asmcore.EmitState) frame_ldr(reg: string, off: i32): asmcore.EmitState {
     if (off >= 0 - 256) {
-        return s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+        s = s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n"); return s;
     }
     s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
-    return s.write("    ldr " + reg + ", [x16]\n");
+    s = s.write("    ldr " + reg + ", [x16]\n"); return s;
 }
 
 function (s: asmcore.EmitState) frame_str(reg: string, off: i32): asmcore.EmitState {
     if (off >= 0 - 256) {
-        return s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+        s = s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n"); return s;
     }
     s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
-    return s.write("    str " + reg + ", [x16]\n");
+    s = s.write("    str " + reg + ", [x16]\n"); return s;
 }
 
 
@@ -3297,7 +3297,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         // StmtDefer is lowered away (parser.lower_defers) before emit; this
         // arm only satisfies exhaustiveness — a survivor (e.g. a defer in a
         // lambda body, which lower_defers doesn't descend into) is flagged.
-        parser.StmtDefer(_) => { return s.write("    // unsupported: StmtDefer survived lowering\n"); },
+        parser.StmtDefer(_) => { s = s.write("    // unsupported: StmtDefer survived lowering\n"); return s; },
         parser.StmtReturn(r) => {
             var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));
             // Perceus move-on-return: returning a bare owned array local
@@ -3687,15 +3687,15 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         },
         parser.StmtBreak(_) => {
             var lbl: string = s.top_loop_exit();
-            if (lbl.len() == 0) { return s.write("    // break outside loop\n"); }
-            return s.write("    b " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    // break outside loop\n"); return s; }
+            s = s.write("    b " + lbl + "\n"); return s;
         },
         parser.StmtContinue(_) => {
             var lbl: string = s.top_loop_cont();
-            if (lbl.len() == 0) { return s.write("    // continue outside loop\n"); }
-            return s.write("    b " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    // continue outside loop\n"); return s; }
+            s = s.write("    b " + lbl + "\n"); return s;
         },
-        parser.StmtUnknown(_) => { return s.write("    // unsupported: StmtUnknown\n"); }
+        parser.StmtUnknown(_) => { s = s.write("    // unsupported: StmtUnknown\n"); return s; }
     }
     return s;
 }

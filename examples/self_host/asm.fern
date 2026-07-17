@@ -3563,7 +3563,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
         // StmtDefer is lowered away (lower_defers) before emit; this arm only
         // satisfies exhaustiveness.
-        parser.StmtDefer(_) => { return s.write("    # unsupported: StmtDefer survived lowering\n"); },
+        parser.StmtDefer(_) => { s = s.write("    # unsupported: StmtDefer survived lowering\n"); return s; },
         parser.StmtReturn(r) => {
             // Capture whether we're returning an rc-tracked array BEFORE
             // emitting (the type oracle reads the current locals).
@@ -4008,15 +4008,15 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         },
         parser.StmtBreak(_) => {
             var lbl: string = s.top_loop_exit();
-            if (lbl.len() == 0) { return s.write("    # break outside loop\n"); }
-            return s.write("    jmp " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    # break outside loop\n"); return s; }
+            s = s.write("    jmp " + lbl + "\n"); return s;
         },
         parser.StmtContinue(_) => {
             var lbl: string = s.top_loop_cont();
-            if (lbl.len() == 0) { return s.write("    # continue outside loop\n"); }
-            return s.write("    jmp " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    # continue outside loop\n"); return s; }
+            s = s.write("    jmp " + lbl + "\n"); return s;
         },
-        parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
+        parser.StmtUnknown(_) => { s = s.write("    # unsupported: StmtUnknown\n"); return s; }
     }
     return s;
 }
