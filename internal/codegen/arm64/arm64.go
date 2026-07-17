@@ -628,7 +628,13 @@ func (g *generator) emitDataSections() {
 	// backend's emission.
 	if len(g.dynVtableCells) > 0 {
 		if g.darwin {
-			g.line(`.section __TEXT,__const`)
+			// `__DATA,__const`, NOT `__TEXT,__const`: these cells hold
+			// absolute `.quad <function>` pointers, and ld64 rejects
+			// absolute relocations anywhere in the __TEXT segment
+			// ("Found illegal text-relocations"). __DATA,__const is
+			// Mach-O's read-only-after-relocation section — the same
+			// place clang puts C++ vtables.
+			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)
 		}
@@ -665,7 +671,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors the x86-64 emitter.
 			// The `.quad` directive + label refs are identical for Linux ELF
-			// and the Mach-O __TEXT,__const path above, so this works for
+			// and the Mach-O __DATA,__const path above, so this works for
 			// both arm64 targets.
 			if vt.Drop != "" {
 				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
@@ -678,7 +684,12 @@ func (g *generator) emitDataSections() {
 	// functions. Each cell holds {fn_ptr (8B), env=0 (8B)}.
 	if len(g.constFuncCells) > 0 {
 		if g.darwin {
-			g.line(`.section __TEXT,__const`)
+			// `__DATA,__const` for the same reason as the vtable cells
+			// above: each cell's `.quad <function>` is an absolute
+			// relocation, illegal in the Mach-O __TEXT segment. ELF
+			// .rodata has no such restriction, which is why the Linux
+			// dialect keeps these cells there.
+			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)
 		}
