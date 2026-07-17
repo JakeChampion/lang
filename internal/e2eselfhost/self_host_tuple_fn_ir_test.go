@@ -77,6 +77,19 @@ var tupleFnIRCases = []struct {
 	{"nested-tuple-clo-via-binding", "function main(): i32 { var n = 5; var t = ((function (x: i32): i32 { return x + n; }, 1), 2); var inner = t.0; return inner.0(37); }", 42},
 	// Scalar sibling of the nested transfer (pins the tag hand-off shape).
 	{"nested-tuple-scalar-via-binding", "function main(): i32 { var t = ((7, 1), 2); var inner = t.0; return inner.0 + 35; }", 42},
+	// A scalar-returning CALL as a tuple element (`(add(1,2), 4)`): admitted
+	// by the el_call_ok gate (callee in no nonscalar/wide registry); before,
+	// ANY call element made the construction bail to the AST path (#5051).
+	{"scalar-call-elem", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { var u = (add(1, 2), 4); return u.0 + u.1 + 35; }", 42},
+	// A closure tuple-element CALL as an element of ANOTHER tuple literal
+	// (`(t.0(3), t.1)`): the el_call_ok FieldAccess-digits arm.
+	{"clo-elem-call-in-tuple", "function main(): i32 { var k = 4; var t = (function (x: i32): i32 { return x + k; }, k); var u = (t.0(3), t.1); return u.0 + u.1 + 31; }", 42},
+	// The #5051 loop-churn differential: a while body rebinding a tuple whose
+	// lambda captures a var with an IDENT/ARITHMETIC init (`var k = i % 7`) —
+	// cap_type now resolves nested bindings and i32 ident/arith chains, so
+	// the lift no longer declines and the module stays on the IR path. The
+	// legacy fallback MISCOMPILED this (229; native reference 226).
+	{"loop-tuple-clo-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 1000) { var k = i % 7; var t = (function (x: i32): i32 { return x + k; }, k); var u = (t.0(3), t.1); acc = (acc + u.0 + u.1) % 1000; i = i + 1; } return acc % 256; }", 226},
 }
 
 // TestSelfHostTupleFnIRX86_64 — fn-typed tuple elements through the PRODUCTION
