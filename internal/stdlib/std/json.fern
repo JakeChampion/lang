@@ -44,7 +44,18 @@ function __json_hex_lower(d: i32): i32 {
     return d + 87;                    // 'a' - 10 + d
 }
 
-function __json_escape(s: string): string {
+// `json.json_escape(s)` — escape a raw string for embedding inside a
+// JSON string literal (the caller supplies the surrounding quotes).
+// Backslash and double-quote are backslash-escaped, newline / carriage-
+// return / tab take their short escapes (\n \r \t), and every other C0
+// control byte (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F) — forbidden bare in a
+// JSON string — is emitted as lowercase `\u00XX`. Everything else
+// passes through byte-for-byte (UTF-8 sequences are >= 0x80, so
+// multi-byte characters are untouched). This is the ONE shared JSON
+// string escaper: the `JsonValue` encoder, `@derive(json.Json)`'s
+// string leaf, and `std/log`'s JSON-lines mode all route through it
+// (#4388 item 4 — it was previously copy-pasted per consumer).
+pub function json_escape(s: string): string {
     var n: i32 = s.len();
     // Two-pass exact-size buffer (#4379): the five named escapes (" \ \n \r \t)
     // expand to 2 bytes, any other control byte (<32) to a 6-byte \u00XX, and
@@ -103,7 +114,7 @@ pub function json_encode(v: JsonValue): string {
         },
         JNumber(s) => { return s; },
         JString(s) => {
-            return "\"" + __json_escape(s) + "\"";
+            return "\"" + json_escape(s) + "\"";
         },
         JArray(arr) => {
             // Accumulate this level into a LOCAL u8[] (#4379) rather than
@@ -147,7 +158,7 @@ pub function json_encode(v: JsonValue): string {
                 if (!first) { buf = buf.append(44 as u8); }   // ','
                 first = false;
                 buf = buf.append(34 as u8);   // '"'
-                var ek: string = __json_escape(iter.key());
+                var ek: string = json_escape(iter.key());
                 var ekl: i32 = ek.len();
                 var kk: i32 = 0;
                 while (kk < ekl) {
@@ -212,7 +223,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
             return "false";
         },
         JNumber(s) => { return s; },
-        JString(s) => { return "\"" + __json_escape(s) + "\""; },
+        JString(s) => { return "\"" + json_escape(s) + "\""; },
         JArray(arr) => {
             var n: i32 = arr.len();
             if (n == 0) { return "[]"; }
@@ -247,7 +258,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
                 first = false;
                 buf = __json_append_str(buf, inner);
                 buf = buf.append(34 as u8);       // '"'
-                buf = __json_append_str(buf, __json_escape(iter.key()));
+                buf = __json_append_str(buf, json_escape(iter.key()));
                 buf = buf.append(34 as u8);       // '"'
                 buf = __json_append_str(buf, ": ");
                 buf = __json_append_str(buf, __json_pretty(iter.value(), indent, depth + 1));
@@ -1072,7 +1083,7 @@ pub function json_is_null(v: JsonValue): boolean {
 // variant is its name as a JSON string; a payload variant is a single-
 // key object, multiple payloads a JSON array). The primitive impls below
 // are the leaves of that composition; string values are escaped through
-// the same `__json_escape` the `JsonValue` encoder uses.
+// the same `json_escape` the `JsonValue` encoder uses.
 //
 //   @derive(json.Json)
 //   struct User { id: i32, name: string, admin: boolean }
@@ -1117,7 +1128,7 @@ impl Json for f32 {
 }
 impl Json for string {
     function to_json(self: Self): string {
-        return "\"" + __json_escape(self) + "\"";
+        return "\"" + json_escape(self) + "\"";
     }
 }
 
