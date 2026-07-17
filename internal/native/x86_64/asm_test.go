@@ -2,6 +2,7 @@ package x86_64
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/elf"
@@ -176,6 +177,36 @@ func TestEncodeMovImmToMemSize(t *testing.T) {
 	for _, c := range cases {
 		if got := asm(t, c.src); got != c.want {
 			t.Errorf("asm(%q) = %s, want %s", c.src, got, c.want)
+		}
+	}
+}
+
+// ALU-family (cmp/add/sub/and/or/xor) immediate forms honour the operand
+// size: a `byte ptr` memory operand (or an 8-bit register) selects the
+// 80 /ext ib byte opcode, not the 32-bit 83/81 forms. The regression this
+// pins: `cmp byte ptr [rdi], 61` — __fern_env's '=' scan — was encoded as
+// `cmp dword ptr [rdi], 61` (83 3f 3d), so the compare read 3 extra bytes
+// and env() always returned None in natively-linked binaries. Encodings
+// cross-checked against GNU as / objdump (for `cmp al, imm8` GNU as picks
+// the equivalent short 3C ib form; 80 /7 ib is the same comparison).
+func TestEncodeAluImmSize(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"cmp byte ptr [rdi], 61", "803f3d"},
+		{"cmp byte ptr [r8], 61", "4180383d"},
+		{"cmp byte ptr [rbp-24], 0", "807de800"},
+		{"add byte ptr [rdi], 1", "800701"},
+		{"cmp word ptr [rdi], 61", "6683 3f3d"},
+		{"cmp dword ptr [rdi], 61", "833f3d"},
+		{"cmp qword ptr [rdi], 61", "48833f3d"},
+		{"cmp al, 61", "80f83d"},
+		{"cmp cl, 5", "80f905"},
+		{"cmp sil, 5", "4080fe05"},
+		{"cmp r9b, 5", "4180f905"},
+	}
+	for _, c := range cases {
+		want := strings.ReplaceAll(c.want, " ", "")
+		if got := asm(t, c.src); got != want {
+			t.Errorf("asm(%q) = %s, want %s", c.src, got, want)
 		}
 	}
 }

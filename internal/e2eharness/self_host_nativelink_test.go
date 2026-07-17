@@ -23,6 +23,12 @@ import (
 // to the gcc half.)
 func TestNativeLinkX86MatchesGccLink(t *testing.T) {
 	t.Parallel()
+	// env() is load-bearing here: the natively-linked drivers read
+	// FERN_CACHE_DIR / FERN_SELFHOST_NO_REUSE via env(), and the native
+	// assembler once mis-encoded __fern_env's `cmp byte ptr [rdi], 61`
+	// ('=' scan) as a dword compare, so env() always returned None on the
+	// native path only (TestEncodeAluImmSize pins the encoding; this pins
+	// the behaviour end-to-end).
 	src := `function main(): i32 {
     var parts: string[] = ["fern", "native", "link"];
     var joined: string = "";
@@ -37,7 +43,11 @@ func TestNativeLinkX86MatchesGccLink(t *testing.T) {
     if (joined.len() > 0) {
         total = total + 3;
     }
-    return total; // 45 + 3
+    match (env("FERN_NATIVELINK_PROBE")) {
+        Some(v) => { if (v == "on") { total = total + 7; } },
+        None => { }
+    }
+    return total; // 45 + 3 + 7
 }
 `
 	dir := t.TempDir()
@@ -77,6 +87,7 @@ func TestNativeLinkX86MatchesGccLink(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
 		}
+		cmd.Env = append(os.Environ(), "FERN_NATIVELINK_PROBE=on")
 		out, _ := cmd.CombinedOutput()
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			t.Fatalf("%s did not exit normally (output: %q)", bin, out)
@@ -99,7 +110,7 @@ func TestNativeLinkX86MatchesGccLink(t *testing.T) {
 		t.Fatalf("native-linked binary diverged from gcc-linked:\n gcc: exit=%d out=%q\n native: exit=%d out=%q",
 			gccCode, gccOut, natCode, natOut)
 	}
-	if gccCode != 48 || !strings.Contains(gccOut, "fern.native.link.") {
+	if gccCode != 55 || !strings.Contains(gccOut, "fern.native.link.") {
 		t.Fatalf("unexpected program behaviour: exit=%d out=%q", gccCode, gccOut)
 	}
 }
