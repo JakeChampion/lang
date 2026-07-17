@@ -1055,8 +1055,31 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
 // recover the payload.
 pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
+    // A closure-BOX element: a `__mkclo$…` env-box constructor (what the lift
+    // pass rewrites every lambda / bare-fn tuple element to), a call to a
+    // closure-returning fn, or an ident bound to a closure local. Tagged
+    // "clo" — one pointer slot holding the box — so `t.N(args)` dispatches
+    // env-first (push the box as __env, the args, then box[0] as the target),
+    // NOT the bare call_indirect the plain "fn" pointer tag gets. Matches the
+    // DECLARED-type tag (tuple_elem_tags maps an "fn" segment to "clo"), so a
+    // factory-returned tuple and a local literal agree.
+    match (e) {
+        parser.ExprCall(cloc) => {
+            match (cloc.callee) {
+                parser.ExprIdent(clocid) => {
+                    if (clocid.name.len() > 8 && clocid.name[0:8] == "__mkclo$") { return "clo"; }
+                    if (util.index_of_str(s.closure_fns, clocid.name) >= 0) { return "clo"; }
+                },
+                _ => {}
+            }
+        },
+        parser.ExprIdent(cloid) => { if (s.is_closure_local(cloid.name)) { return "clo"; } },
+        _ => {}
+    }
     // A bare fn-name element (`(inc, 5)`): a function VALUE (a plain fn pointer,
     // one slot), tagged "fn" so `t.N(args)` lowers to tuple_get + call_indirect.
+    // (Rare post-lift: the lift pass wraps unshadowed module-fn idents in tuple
+    // literals into `__mkclo$` boxes, which the "clo" arm above catches.)
     match (e) {
         parser.ExprIdent(fid) => { if (ident_is_fn_value(fid.name, s)) { return "fn"; } },
         _ => {}
@@ -1630,7 +1653,13 @@ pub function tuple_type_elem_tag(t: string, n: i32): string {
     var r: parser.TypeRef = parser.parse_type_ref(t);
     if (r.array_depth != 0 || !r.is_tuple) { return ""; }
     if (n < 0 || n >= r.args.len()) { return ""; }
-    return parser.render_type_ref(r.args[n]);
+    var rt: string = parser.render_type_ref(r.args[n]);
+    // A declared fn-typed element holds a closure BOX at runtime (the lift
+    // pass wraps every fn-valued tuple element into a `__mkclo$…` env box),
+    // so tag it "clo" for the env-first `t.N(args)` dispatch — mirroring
+    // tuple_elem_tags' declared-side mapping.
+    if (rt == "fn") { return "clo"; }
+    return rt;
 }
 
 // is_leaksafe_tuple_field: a tuple field "(t0, …)" whose elements are each a
@@ -6611,6 +6640,33 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             tfs = tfs.emit(ir.op_tuple_get(tfn));
                             return tfs.emit(ir.op_call_indirect(c.args.len()));
                         }
+                        // A closure-BOX tuple element call ("clo" — a lambda /
+                        // wrapped fn the lift boxed, or a declared fn-typed
+                        // element of a factory-returned tuple): env-first, the
+                        // same shape as a closure-array element call. Stash the
+                        // box (tuple_get) in a temp, push it as the hidden
+                        // __env first arg, the declared args, then box[0] as
+                        // the target, call_indirect(arity+1).
+                        if (expr_tuple_elem_tag(fa.obj, tfn, s) == "clo") {
+                            var tcs: LowerState = lower_expr(fa.obj, s);
+                            if (!tcs.ok) { return tcs; }
+                            tcs = tcs.emit(ir.op_tuple_get(tfn));
+                            var tctmp: string = "$tupclo" + util.i32_to_string(tcs.locals.len());
+                            tcs = tcs.add_local(tctmp);
+                            var tcslot: i32 = tcs.slot_of(tctmp);
+                            tcs = tcs.emit(ir.op_store_local(tcslot));
+                            tcs = tcs.emit(ir.op_load_local(tcslot));   // __env (the box)
+                            var tca: i32 = 0;
+                            while (tca < c.args.len()) {
+                                tcs = lower_expr(c.args[tca], tcs);
+                                if (!tcs.ok) { return tcs; }
+                                tca = tca + 1;
+                            }
+                            tcs = tcs.emit(ir.op_load_local(tcslot));
+                            tcs = tcs.emit(ir.op_const_i32(0));
+                            tcs = tcs.emit(ir.op_arr_get(32));
+                            return tcs.emit(ir.op_call_indirect(c.args.len() + 1));
+                        }
                     }
                     // A MapIter[K, V] receiver (`it.has_next()` / `.key()` /
                     // `.value()` / `.advance()` on a `var it: MapIter[..]` local):
@@ -10518,6 +10574,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             else { dt = dt.emit(ir.op_tuple_get(dk)); }
             dt = dt.emit(ir.op_store_local(dkslot));
             if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
+            // A closure-BOX element ("clo") binds a closure local so
+            // `f(args)` on the binding dispatches env-first against the box.
+            else if (dtag == "clo") { dt = dt.mark_closure_local(dnames[dk]); }
             else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
             else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
             else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
@@ -11417,6 +11476,17 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             },
             _ => {}
         }
+    }
+    // Binding from a closure-BOX tuple element (`var f = t.0`, element tagged
+    // "clo"): mark f a closure LOCAL so `f(args)` dispatches env-first against
+    // the box — the closure sibling of the map-from-tuple-element bind above.
+    match (v.init) {
+        parser.ExprFieldAccess(ctfa) => {
+            if (util.is_all_digits(ctfa.field)) {
+                if (expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb) == "clo") { sb = sb.mark_closure_local(v.name); }
+            }
+        },
+        _ => {}
     }
     // Record tuple element type tags for `var t = (e0, e1, ...)` so a
     // later `t.N` recovers each element's type.
@@ -24202,7 +24272,11 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
     var el_result_ok: boolean = expr_is_result(el, s);            // Result (leak-only box)
     var el_map_ok: boolean = expr_map_type_tag(el, s) != "";       // Map (leak-only heap box)
     var el_enum_ok: boolean = expr_enum_type(el, s) != "";        // nominal enum (leak-only box)
-    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok) { return false; }
+    // A closure-box element (a `__mkclo$…` env-box constructor / a call to a
+    // closure-returning fn / a closure-local ident — elem_type_tag's "clo"):
+    // a leak-only heap box in one pointer slot, like a struct element.
+    var el_clo_ok: boolean = elem_type_tag(el, s) == "clo";
+    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok) { return false; }
     return true;
 }
 
@@ -27681,7 +27755,14 @@ pub function tuple_elem_tags(rt: string): string {
             if (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()]; }   // 32 = ' '
             if (seg.len() > 0 && seg[seg.len() - 1] == 32) { seg = seg[0 : seg.len() - 1]; }
             if (!first) { out = out + ","; }
-            out = out + seg;
+            // A declared fn-typed element (the parser coarsens `(T) => R`
+            // segments to "fn") holds a closure BOX at runtime — the lift
+            // pass wraps every fn-valued tuple element (lambda or bare fn
+            // name) into a `__mkclo$…` env box — so tag it "clo" for the
+            // env-first `t.N(args)` dispatch, matching elem_type_tag's
+            // literal-side classification.
+            if (seg == "fn") { out = out + "clo"; }
+            else { out = out + seg; }
             first = false;
             start = i + 1;
         } else if (inner[i] == 91 || inner[i] == 40) { depth = depth + 1; }   // '[' '('
@@ -27718,6 +27799,12 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
             // f32 / usize are NOT here: they need float / pointer-width handling.
             var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
+            // A closure-box element ("clo" — a declared fn-typed element,
+            // mapped by tuple_elem_tags) is a leak-only heap box in one
+            // pointer slot, like a struct element: construction stores the
+            // box pointer (the lift pass built it), `t.N(args)` dispatches
+            // env-first off the tag, and a `.N` bind marks a closure local.
+            if (!ok_elem && t == "clo") { ok_elem = true; }
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // A nominal-enum element (Color, Expr, …) is a leak-only box — one
             // pointer slot, like a string / struct / Option element — so a tuple
@@ -33088,6 +33175,61 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 i = i + 1;
             }
             return InlineCloRes { expr: parser.ExprArray { elements: nelems }, funcs: fs, counter: ct };
+        },
+        parser.ExprTuple(tl) => {
+            // Every fn-VALUED tuple element is lifted to a `__mkclo$…` env-box
+            // marker, mirroring the struct-field slice below: a capturing lambda
+            // → `[funcval, caps…]` (try_inline_closure via try_fn_field_value),
+            // a no-capture lambda or a bare fn-name → a `$wrapN` env-taking
+            // trampoline → `[funcval]`. This makes `t.N(args)` dispatch
+            // uniformly env-first (the "clo" element tag) for every fn-element
+            // shape — matching the DECLARED-type tag a factory-returned tuple
+            // carries (tuple_elem_tags maps an "fn" segment to "clo"). A bare
+            // ident element is wrapped only when it is an UNSHADOWED module
+            // function with params (a zero-arg receiver-less fn is a `const`
+            // desugar whose VALUE must flow, and a body/param binding wins over
+            // the module fn) — anything else recurses / passes through.
+            var tfs: parser.FuncDecl[] = funcs;
+            var tct: i32 = counter;
+            var tnelems: parser.Expr[] = [];
+            var tbound: string[] = [];
+            var tbp: i32 = 0;
+            while (tbp < fd.params.len()) { tbound = tbound.append(fd.params[tbp].name); tbp = tbp + 1; }
+            var tbs: i32 = 0;
+            while (tbs < fd.body.len()) { tbound = astwalk.collect_bound_stmt(fd.body[tbs], tbound); tbs = tbs + 1; }
+            var tei: i32 = 0;
+            while (tei < tl.elements.len()) {
+                var twrapped: boolean = false;
+                match (tl.elements[tei]) {
+                    parser.ExprLambda(_) => {
+                        var ttr: InlineCloRes = try_fn_field_value(tl.elements[tei], fd, tfs, tct, gfns, mfuncs);
+                        tfs = ttr.funcs; tct = ttr.counter; tnelems = tnelems.append(ttr.expr);
+                        twrapped = true;
+                    },
+                    parser.ExprIdent(ttid) => {
+                        if (util.index_of_str(tbound, ttid.name) < 0) {
+                            var tfnok: boolean = false;
+                            var tmi: i32 = 0;
+                            while (tmi < mfuncs.len()) {
+                                if (mfuncs[tmi].name == ttid.name && mfuncs[tmi].receiver_type.len() == 0 && mfuncs[tmi].params.len() > 0) { tfnok = true; }
+                                tmi = tmi + 1;
+                            }
+                            if (tfnok) {
+                                var ttw: InlineCloRes = try_fn_field_value(tl.elements[tei], fd, tfs, tct, gfns, mfuncs);
+                                tfs = ttw.funcs; tct = ttw.counter; tnelems = tnelems.append(ttw.expr);
+                                twrapped = true;
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                if (!twrapped) {
+                    var ter: InlineCloRes = lift_inline_closures_expr(tl.elements[tei], fd, tfs, tct, gfns, structs, mfuncs);
+                    tfs = ter.funcs; tct = ter.counter; tnelems = tnelems.append(ter.expr);
+                }
+                tei = tei + 1;
+            }
+            return InlineCloRes { expr: parser.ExprTuple { elements: tnelems, line: tl.line, col: tl.col }, funcs: tfs, counter: tct };
         },
         parser.ExprStructLit(sl) => {
             // Every fn-typed struct FIELD value is lifted to a `__mkclo$…` env-box
