@@ -23,7 +23,9 @@ import (
 
 // sectionOfLabel walks asm tracking the active `.section` directive and
 // returns the section in force where `label:` is defined ("" if the label
-// never appears). A bare `.text` line also switches sections.
+// never appears). A bare `.text` line also switches sections. The darwin
+// dialect may spell an internal label with the Mach-O private-label `L`
+// prefix (`L__closure_cell_dbl:`), so that variant matches too.
 func sectionOfLabel(asm, label string) string {
 	section := ""
 	for _, raw := range strings.Split(asm, "\n") {
@@ -32,7 +34,7 @@ func sectionOfLabel(asm, label string) string {
 			section = strings.TrimSpace(strings.TrimPrefix(line, ".section "))
 		} else if line == ".text" {
 			section = ".text"
-		} else if line == label+":" {
+		} else if line == label+":" || line == "L"+label+":" {
 			return section
 		}
 	}
