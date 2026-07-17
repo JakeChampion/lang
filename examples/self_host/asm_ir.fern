@@ -2954,6 +2954,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, %r13\n");        // value
     s = s.write("    movq (%r12), %r14\n");      // len
     s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
+    // #4873 containment gate: an rc >= 2 receiver is SHARED (the caller-side
+    // grow bracket inc'd it, or a counted alias exists) — never mutate it in
+    // place even when capacity fits; take the grow path's fresh-box copy,
+    // which leaves the old buffer untouched (and, per the load-bearing-leak
+    // note below, never freed). rc == 1 (sole owner) and the bit-31
+    // static/immortal sentinel keep today's in-place fast path.
+    s = s.write("    movq -8(%r12), %rcx\n");    // rc word
+    s = s.write("    cmpq $1, %rcx\n");
+    s = s.write("    je .Larr_push_rc_ok\n");
+    s = s.write("    btq $31, %rcx\n");
+    s = s.write("    jc .Larr_push_rc_ok\n");
+    s = s.write("    jmp .Larr_push_grow\n");    // shared → copy (#4873)
+    s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmpq %r15, %r14\n");
     s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
     s = s.write("    movq %r14, %rcx\n");
