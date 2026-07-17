@@ -4733,7 +4733,22 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var tgt: Type = type_from_name(u.op[3:u.op.len()]);
                 var cot: Type = check_expr(u.operand, s);
                 if (is_primitive_type(tgt) && is_primitive_type(cot)) {
-                    if (!as_cast_allowed(cot, tgt)) {
+                    // E069 (#5053): reinterpreting a 32-bit-only value (i32 /
+                    // u32) as `string` via `as` truncates a pointer — the high
+                    // 32 bits were lost when the value became i32, so this
+                    // recovers a corrupt pointer once the heap exceeds 4 GiB
+                    // (arm64-darwin). A `usize` source is pointer-width and
+                    // stays allowed — but `usize` types to `unknown` here (not
+                    // a primitive), so it never reaches this arm: the guard is
+                    // zero-false-positive over the primitives the self-host
+                    // knows. Only the `string` target is modelled (an array /
+                    // struct target is not is_primitive_type here), matching the
+                    // sound-subset conservatism of E033/E042 above; the Go
+                    // checker carries the full array/struct-target rule.
+                    if (type_eq(tgt, t_string()) && (type_eq(cot, t_i32()) || type_eq(cot, t_u32()))) {
+                        out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
+                    }
+                    else if (!as_cast_allowed(cot, tgt)) {
                         out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
                     }
                 }

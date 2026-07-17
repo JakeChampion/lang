@@ -4672,3 +4672,43 @@ function f(v: str): i32 { return consume(v) + borrow(v); }`
 		t.Errorf("want exactly 1 str-arg mismatch (own position only), got %d in %v", n, err)
 	}
 }
+
+// TestPointerReinterpretFromI32Rejected (E069, #5053) locks the rule that a
+// 32-bit-only value (`i32` / `u32`) reinterpreted as a pointer-shaped type
+// (`string`, an array, or a struct) via `as` is a truncation footgun — the
+// high 32 bits of the address were lost when the value became i32, so the
+// recovered pointer is corrupt once the heap exceeds 4 GiB. A `usize` source
+// carries the full width and stays allowed (the stdlib's raw-block-to-handle
+// promotion), and a genuine numeric conversion (`i32 as usize`) is unaffected.
+func TestPointerReinterpretFromI32Rejected(t *testing.T) {
+	mustCode := func(src, code string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected %s for %q, got none", code, src)
+			return
+		}
+		if !hasCode(err, code) {
+			t.Errorf("%q: want %s, got %v", src, code, err)
+		}
+	}
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	// i32 / u32 reinterpreted as a pointer-shaped type — rejected.
+	mustCode(`function f(k: i32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
+	mustCode(`function f(k: i32): i32[] { return k as i32[]; } function main(): i32 { return 0; }`, "E069")
+	mustCode(`struct P { x: i32 } function f(k: i32): P { return k as P; } function main(): i32 { return 0; }`, "E069")
+	mustCode(`function f(k: u32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
+	// usize source is pointer-width — the honest promotion, still allowed.
+	mustOK(`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`)
+	mustOK(`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`)
+	// A plain numeric conversion (not a pointer reinterpret) is unaffected.
+	mustOK(`function main(): i32 { var a: i32 = 5; var b: usize = a as usize; return b as i32; }`)
+	// The forward pointer->i32 narrowing (the __memcpy escape hatch) is not
+	// this rule's target and stays allowed.
+	mustOK(`function main(): i32 { var s: string = "x"; return s as i32; }`)
+}

@@ -658,7 +658,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cast-string-to-bool", "function main(): i32 { var s: string = \"x\"; var b: boolean = s as boolean; return 0; }\n", []string{"E033"}},
 		{"cast-numeric-ok", "function main(): i32 { var x: i32 = 1; var y: f64 = x as f64; return 0; }\n", nil},
 		{"cast-string-to-i32-ok", "function main(): i32 { var s: string = \"x\"; return s as i32; }\n", nil},
-		{"cast-i32-to-string-ok", "function main(): i32 { var x: i32 = 1; var s: string = x as string; return 0; }\n", nil},
+		{"cast-i32-to-string-e069", "function main(): i32 { var x: i32 = 1; var s: string = x as string; return 0; }\n", []string{"E069"}},
 		{"cast-bool-to-bool-ok", "function main(): i32 { var b: boolean = true; var c: boolean = b as boolean; return 0; }\n", nil},
 		{"cast-f64-to-string", "function main(): i32 { var f: f64 = 1.0; var s: string = f as string; return 0; }\n", []string{"E033"}},
 		{"cast-string-to-f64", "function main(): i32 { var s: string = \"x\"; var f: f64 = s as f64; return 0; }\n", []string{"E033"}},
