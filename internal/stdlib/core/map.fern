@@ -346,26 +346,28 @@ function __map_retain_val(buf: usize, v: usize): usize {
     return v;
 }
 
-pub function __map_get_impl(m: usize, k: usize): Option[usize] {
-    var idx: i32 = __map_lookup(m, k);
-    if (idx == 0 - 1) { return None; }
+// __map_val_at loads the VALUE slot of entry `idx` — no retain, no
+// bounds check (callers pass a __map_lookup* hit). The shared tail of
+// get / get_or / lookup_val in BOTH key families (#4388 item 1's safe
+// piece — the probe-loop collapse itself is blocked on #5042).
+function __map_val_at(m: usize, idx: i32): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    return Some(__map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW)));
+    return __load_ptr(entriesBase + idx * (2 * ptrW) + ptrW);
+}
+
+pub function __map_get_impl(m: usize, k: usize): Option[usize] {
+    var idx: i32 = __map_lookup(m, k);
+    if (idx == 0 - 1) { return None; }
+    return Some(__map_retain_val(__load_ptr(m), __map_val_at(m, idx)));
 }
 
 pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
     var idx: i32 = __map_lookup(m, k);
     if (idx == 0 - 1) { return fallback; }
-    var buf: usize = __load_ptr(m);
-    var cap: i32 = __load_i32(buf);
-    var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    return __map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
+    return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
 }
 
 // __map_lookup_val returns the stored VALUE pointer for key k, or 0 if
@@ -378,12 +380,7 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
 pub function __map_lookup_val(m: usize, k: usize): usize {
     var idx: i32 = __map_lookup(m, k);
     if (idx == 0 - 1) { return 0; }
-    var buf: usize = __load_ptr(m);
-    var cap: i32 = __load_i32(buf);
-    var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    return __load_ptr(entriesBase + idx * entryStride + ptrW);
+    return __map_val_at(m, idx);
 }
 
 // __map_grow doubles the kv buffer's capacity and re-hashes
@@ -806,34 +803,19 @@ pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, e
 pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[usize] {
     var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
     if (idx == 0 - 1) { return None; }
-    var buf: usize = __load_ptr(m);
-    var cap: i32 = __load_i32(buf);
-    var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    return Some(__map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW)));
+    return Some(__map_retain_val(__load_ptr(m), __map_val_at(m, idx)));
 }
 
 pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
     var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
     if (idx == 0 - 1) { return fallback; }
-    var buf: usize = __load_ptr(m);
-    var cap: i32 = __load_i32(buf);
-    var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    return __map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
+    return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
 }
 
 pub function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
     var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
     if (idx == 0 - 1) { return 0; }
-    var buf: usize = __load_ptr(m);
-    var cap: i32 = __load_i32(buf);
-    var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    return __load_ptr(entriesBase + idx * entryStride + ptrW);
+    return __map_val_at(m, idx);
 }
 
 function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
