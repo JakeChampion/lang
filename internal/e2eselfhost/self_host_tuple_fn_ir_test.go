@@ -51,6 +51,24 @@ var tupleFnIRCases = []struct {
 	// Regression: a plain scalar/string tuple keeps its precise spelling and
 	// behaviour under the new fn-segment coarsening.
 	{"scalar-tuple-regress", "function mk(): (string, i32) { return (\"hello\", 37); } function main(): i32 { var t = mk(); return t.0.len() + t.1; }", 42},
+	// A tuple-with-fn PARAMETER (`callit(t: ((i32) => i32, i32))`): the param
+	// slot records its element tags (tuple_elem_tags, fn segment → "clo") so
+	// `t.0(args)` inside the callee dispatches env-first; before the fix a
+	// tuple param carried NO element tags and the callee bailed to the legacy
+	// AST path (exit 255).
+	{"tuple-fn-param", "function callit(t: ((i32) => i32, i32)): i32 { return t.0(37); } function main(): i32 { var n = 5; var t = (function (x: i32): i32 { return x + n; }, 1); return callit(t); }", 42},
+	// A closure in an OPTION payload, UNANNOTATED (`var o = Some(<lambda>)`):
+	// the lift wraps the payload into a `__mkclo$` box, expr_opt_elem_tag /
+	// some_opt_type record "Option[clo]", and the match bind marks f a closure
+	// local — checked BEFORE the struct/enum branch (is_enum_like_name must
+	// not claim "clo"). Before the fix `f(37)` bare-called the box → SIGSEGV.
+	{"option-clo-payload-local", "function main(): i32 { var n = 5; var o = Some(function (x: i32): i32 { return x + n; }); match (o) { Some(f) => { return f(37); }, None => { return 0; } } }", 42},
+	// The ANNOTATED sibling: the coarse "fn" payload tag reads as enum-like,
+	// so the closure-local mark must run before the struct/enum bind branch.
+	{"option-fn-payload-annotated", "function main(): i32 { var n = 5; var o: Option[(i32) => i32] = Some(function (x: i32): i32 { return x + n; }); match (o) { Some(f) => { return f(37); }, None => { return 0; } } }", 42},
+	// Regression guard for the bind-order move: an enum-payload closure
+	// (`Op.Apply(<lambda>)` matched and called) keeps working.
+	{"enum-fn-payload-regress", "enum Op { Apply((i32) => i32), Nop } function main(): i32 { var n = 5; var o = Op.Apply(function (x: i32): i32 { return x + n; }); match (o) { Apply(f) => { return f(37); }, Nop => { return 0; } } }", 42},
 }
 
 // TestSelfHostTupleFnIRX86_64 — fn-typed tuple elements through the PRODUCTION

@@ -924,7 +924,11 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "Some" && c.args.len() == 1) {
                         var pt: string = elem_type_tag(c.args[0], s);
-                        if (pt == "i32" || pt == "string" || pt == "i64" || pt == "f64" || pt == "boolean") {
+                        // "clo": a closure-BOX payload (`Some(<lambda>)` — the
+                        // lift wrapped it into a `__mkclo$…` env box). One
+                        // pointer slot; the match arm marks the binding a
+                        // closure local so `f(args)` dispatches env-first.
+                        if (pt == "i32" || pt == "string" || pt == "i64" || pt == "f64" || pt == "boolean" || pt == "clo") {
                             return "Option[" + pt + "]";
                         }
                         return "";
@@ -1943,6 +1947,14 @@ pub function is_enum_like_name(t: string, structs: parser.StructDecl[]): boolean
     if (t.len() == 0) { return false; }
     if (t == "i32" || t == "boolean" || t == "bool" || t == "string"
         || t == "i64" || t == "f64" || t == "f32" || t == "float" || t == "void") { return false; }
+    // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
+    // tuple element / Option payload) — never a user enum name. Without this
+    // exclusion an Option[clo] payload's match bind was claimed by the enum
+    // branch (mark_struct_type("clo")) before the closure-local mark could
+    // fire, so `f(args)` bare-called the box pointer → SIGSEGV. ("fn" is NOT
+    // excluded: existing struct-field / enum-payload machinery relies on the
+    // coarse "fn" spelling reading as enum-like in its dispatch gates.)
+    if (t == "clo") { return false; }
     if (decl_is_struct(structs, t)) { return false; }
     if (is_array_type_name(t)) { return false; }
     // A bracketed generic (Option[..]/Result[..]/Map[..]/Box[..]) or a tuple
@@ -12821,7 +12833,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // function, NOT a tuple. Detect it first so the
                         // tuple path doesn't claim it (the marks below
                         // mirror this order).
-                        var ptag_is_fn: boolean = is_fn_payload_spelling(ptag);
+                        var ptag_is_fn: boolean = is_fn_payload_spelling(ptag) || ptag == "clo" || ptag == "fn";
                         var ptag_is_tuple: boolean = !ptag_is_fn && tuple_elems_lowerable(ptag, ms.structs);
                         // An ARRAY payload (`Some(xs)` where the Option's T is
                         // an array — `m.get(k)` on a Map[K, V[]], the url query
@@ -12846,7 +12858,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // the bound slot is marked a closure local below so
                         // `f(args)` dispatches env-first. ptag_is_fn is
                         // computed above (before ptag_is_tuple, which it
-                        // pre-empts).
+                        // pre-empts). The "clo" spelling is the
+                        // construction-derived sibling: an UNANNOTATED
+                        // `var o = Some(<lambda>)` records "Option[clo]"
+                        // (the lift wrapped the payload into a `__mkclo$`
+                        // box, elem_type_tag tags it "clo") — same box,
+                        // same env-first dispatch.
                         if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn) { return s.fail(); }
                     }
                     var want: i32 = 0;
@@ -12886,6 +12903,19 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // the binding site). Sub-word payloads stay on AST (see
                         // is_leaksafe_payload).
                         else if (ptag == "u32") { ms = ms.mark_u32(pbslot, true); }
+                        // A fn-typed payload (`Some(f)` / `Ok(g)` where T is
+                        // `() => i32` / `(i32) => i32`, slice #3445 match-fn):
+                        // the payload read above is the env box the constructor
+                        // side wrapped, BORROWED from the Option/Result box.
+                        // Mark the bound NAME a closure local so `f(args)` /
+                        // passing `f` dispatch env-first against the box.
+                        // Checked BEFORE the struct/enum branch (the coarse
+                        // "fn" spelling reads as enum-like) AND before the
+                        // tuple branch (a fn spelling also starts with `(` and
+                        // tuple_elems_lowerable would otherwise claim it as a
+                        // tuple). "clo" is the construction-derived
+                        // unannotated sibling.
+                        else if (is_fn_payload_spelling(ptag) || ptag == "clo" || ptag == "fn") { ms = ms.mark_closure_local(pv.binding); }
                         // A struct payload: tag the bound slot's struct type so
                         // `p.field` resolves. It is BORROWED from the enum box
                         // (not a fresh `var p = P{...}`), so it is never in
@@ -12895,16 +12925,6 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // slot's Option/Result type so the inner match (or a
                         // `?`) recovers its payload.
                         else if (ptag.len() >= 8 && (ptag[0:7] == "Option[" || ptag[0:7] == "Result[")) { ms = ms.mark_opt_type(pbslot, ptag); }
-                        // A fn-typed payload (`Some(f)` / `Ok(g)` where T is
-                        // `() => i32` / `(i32) => i32`, slice #3445 match-fn):
-                        // the payload read above is the env box the constructor
-                        // side wrapped, BORROWED from the Option/Result box.
-                        // Mark the bound NAME a closure local so `f(args)` /
-                        // passing `f` dispatch env-first against the box.
-                        // Checked BEFORE the tuple branch — a fn spelling
-                        // also starts with `(` and tuple_elems_lowerable
-                        // would otherwise claim it as a tuple.
-                        else if (is_fn_payload_spelling(ptag)) { ms = ms.mark_closure_local(pv.binding); }
                         // A tuple payload: tag the bound slot's element types
                         // so `p.0` / `p.1` read the right element width / type.
                         else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)); }
@@ -26188,7 +26208,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         var ptn: string = fn.params[i].type_name;
         if (ptn.len() >= 8 && (ptn[0:7] == "Option[" || ptn[0:7] == "Result[")) { poty = ptn; }
         optty = optty.append(poty);
-        tupty = tupty.append("");
+        // A TUPLE-typed param records its element tags (the same
+        // tuple_elem_tags split the declared-return registry uses, with fn
+        // segments mapped "clo") so `t.N` reads / `t.N(args)` dispatch on the
+        // parameter resolve — without this a tuple param's element reads had
+        // no tag and the function bailed to the AST path.
+        var ptup: string = "";
+        if (ptn.len() >= 2 && ptn[0:1] == "(" && !is_array_type_name(ptn)) { ptup = tuple_elem_tags(ptn); }
+        tupty = tupty.append(ptup);
         // A Map[K,V] param records the slot's map type so `m.get_or(...)` / etc.
         // on the parameter dispatch as map ops (the local-var annotation path
         // already does this; params lacked it). #map-param.
