@@ -11662,9 +11662,22 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // unwrapped value not in scope here, so type the slot from the
         // tuple TYPE annotation (authoritative — it names each element,
         // including a Result[T,E] element's E) so a later `t.N` resolves.
-        parser.ExprUnary(_) => {
+        parser.ExprUnary(tuv) => {
             if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
                 sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+            } else if (tuv.op == "try_") {
+                // UNANNOTATED `var t = f()?` whose success payload is a tuple
+                // (`f(): Option[(T, i32)]` / `Result[(T, i32), E]`): recover the
+                // payload via try_opt_type (which resolves the erased-generic
+                // "$arg<i>" refs from the call args) and tag the slot's element
+                // types, so `t.0` / `t.1` read the right width / kind. Without
+                // it an unannotated try-of-tuple left t untyped and a string
+                // element's `.len()` read 0.
+                var tuot: string = try_opt_type(tuv.operand, sb);
+                var tupay: string = "";
+                if (tuot.len() >= 8 && tuot[0:7] == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
+                else if (tuot.len() >= 8 && tuot[0:7] == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
+                if (tupay.len() >= 2 && tupay[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
             }
         },
         _ => {}
@@ -12766,7 +12779,14 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             parser.ExprCall(scl) => {
                                 match (scl.callee) {
                                     parser.ExprIdent(scid) => {
-                                        srt = ms.opt_ret_type(scid.name);
+                                        // resolve_argref_opt_type substitutes an
+                                        // erased-generic "$arg<i>" payload (incl.
+                                        // a tuple payload `Option[($arg0, i32)]`)
+                                        // from the call arguments, so `match
+                                        // (mk("x")) { Some(t) => t.0.len() }`
+                                        // types t.0 from the string argument
+                                        // instead of the raw type-var tag.
+                                        srt = resolve_argref_opt_type(ms.opt_ret_type(scid.name), scl.args, ms);
                                         // `match (Some(7))` — a direct Option
                                         // construction recovers the payload from
                                         // the scrutinee (no local needed).
@@ -27285,29 +27305,70 @@ function argref_in(reg: string[], name: string): i32 {
     return 0 - 1;
 }
 
-// resolve_argref_opt_type substitutes an "Option[$arg<i>]" positional
-// reference (opt_ret_fns_of's erased-generic rewriting) with the call
-// site's argument-i inferred payload tag. Unresolvable (out-of-range /
-// no args in scope) degrades to "" — the same untyped reading the raw
-// type-var tag produced before the rewrite.
+// irl_is_alnum_byte: an identifier byte — [0-9A-Za-z_]. Used to detect a
+// STANDALONE single-uppercase-letter type variable (T / K / V …) so a longer
+// name like "JsonValue" is never mistaken for one.
+function irl_is_alnum_byte(b: i32): boolean {
+    return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}
+
+// rewrite_typevars_to_argrefs replaces every STANDALONE single-uppercase-letter
+// type variable in a type spelling with a positional "$arg<i>" reference to the
+// first param declared with that variable. It works token-wise over the whole
+// string, so it rewrites a bare payload (`Option[T]` → `Option[$arg0]`), a
+// tuple payload (`Option[(T, i32)]` → `Option[($arg0, i32)]`), or a Result Ok
+// arm (`Result[T, i32]` → `Result[$arg0, i32]`) uniformly. An unbound type var
+// (no param of that type — e.g. an erased Err type) is left as-is.
+pub function rewrite_typevars_to_argrefs(t: string, params: parser.ParamDecl[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        var c: i32 = t[i];
+        var is_upper: boolean = c >= 65 && c <= 90;
+        var prev_alnum: boolean = i > 0 && irl_is_alnum_byte(t[i - 1]);
+        var next_alnum: boolean = i + 1 < t.len() && irl_is_alnum_byte(t[i + 1]);
+        if (is_upper && !prev_alnum && !next_alnum) {
+            var tv: str = t[i : i + 1];
+            var repl: string = tv + "";
+            var pi: i32 = 0;
+            while (pi < params.len()) {
+                if (params[pi].type_name == tv) { repl = "$arg" + util.i32_to_string(pi); pi = params.len(); }
+                else { pi = pi + 1; }
+            }
+            out = out + repl;
+        } else {
+            out = out + t[i : i + 1];
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// resolve_argref_opt_type substitutes every "$arg<i>" positional reference in an
+// erased-generic Option/Result type spelling (rewrite_typevars_to_argrefs's
+// output) with the call site's argument-i inferred tag — token-wise, so a bare
+// payload (`Option[$arg0]`), a tuple payload (`Option[($arg0, i32)]`), and a
+// Result Ok arm (`Result[$arg0, i32]`) all resolve. An out-of-range reference
+// degrades to "i32" (the same scalar reading the raw type-var tag produced
+// before the rewrite). A spelling with no "$arg" passes through unchanged.
 pub function resolve_argref_opt_type(t: string, args: parser.Expr[], s: LowerState): string {
     if (!util.contains(t, "$arg")) { return t; }
-    if (t.len() >= 13 && t[0:11] == "Option[$arg" && t[t.len() - 1] == 93) {   // 93 = ']'
-        var an: i32 = util.digits_to_i32(t[11 : t.len() - 1]);
-        if (an >= 0 && an < args.len()) { return "Option[" + elem_type_tag(args[an], s) + "]"; }
-    }
-    // "Result[$arg<i>, E]": substitute the Ok payload from argument i, keeping
-    // the E arm (`rt[rc:]` = ", E]") verbatim. The digits run from index 11 to
-    // the first top-level comma.
-    if (t.len() >= 13 && t[0:11] == "Result[$arg") {
-        var rc: i32 = 11;
-        while (rc < t.len() && t[rc] != 44) { rc = rc + 1; }   // 44 = ','
-        if (rc < t.len()) {
-            var ran: i32 = util.digits_to_i32(t[11 : rc]);
-            if (ran >= 0 && ran < args.len()) { return "Result[" + elem_type_tag(args[ran], s) + t[rc : t.len()]; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (i + 4 <= t.len() && t[i : i + 4] == "$arg") {
+            var j: i32 = i + 4;
+            while (j < t.len() && t[j] >= 48 && t[j] <= 57) { j = j + 1; }   // digits
+            var an: i32 = util.digits_to_i32(t[i + 4 : j]);
+            if (an >= 0 && an < args.len()) { out = out + elem_type_tag(args[an], s); }
+            else { out = out + "i32"; }
+            i = j;
+        } else {
+            out = out + t[i : i + 1];
+            i = i + 1;
         }
     }
-    return "";
+    return out;
 }
 
 // strarr_ret_fns_of collects the names of a module's string[]-returning
@@ -27423,47 +27484,16 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // stay keyed by bare name.
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            // An ERASED-generic free fn's `Option[T]` return (bare type-var
-            // payload bound to a param): rewrite the payload to a positional
-            // "$arg<i>" reference, resolved at the call site against the
-            // actual argument (resolve_argref_opt_type) — the Option sibling
-            // of tuple_ret_fns_of's rewriting. Without it the raw "Option[T]"
-            // tag left the Some-binder untyped and a string payload's
-            // `.len()` silently read 0.
-            if (rt[0:7] == "Option[" && funcs[k].receiver_type.len() == 0) {
-                var opay: str = rt[7 : rt.len() - 1];
-                if (irl_looks_type_var(opay)) {
-                    var ogpi: i32 = 0;
-                    while (ogpi < funcs[k].params.len()) {
-                        if (funcs[k].params[ogpi].type_name == opay) { rt = "Option[$arg" + util.i32_to_string(ogpi) + "]"; ogpi = funcs[k].params.len(); }
-                        else { ogpi = ogpi + 1; }
-                    }
-                }
-            }
-            // The Result sibling: rewrite a bare type-var Ok payload (the FIRST
-            // type arg, `Result[T, E]`) to "$arg<i>", leaving the E arm intact.
-            // The Ok payload is the substring up to the first top-level comma.
-            else if (rt[0:7] == "Result[" && funcs[k].receiver_type.len() == 0) {
-                var rdepth: i32 = 0;
-                var rcomma: i32 = 0 - 1;
-                var rp: i32 = 7;
-                while (rp < rt.len() && rcomma < 0) {
-                    if (rt[rp] == 91 || rt[rp] == 40) { rdepth = rdepth + 1; }        // '[' '('
-                    else if (rt[rp] == 93 || rt[rp] == 41) { rdepth = rdepth - 1; }   // ']' ')'
-                    else if (rt[rp] == 44 && rdepth == 0) { rcomma = rp; }            // ','
-                    rp = rp + 1;
-                }
-                if (rcomma > 7) {
-                    var rpay: str = rt[7 : rcomma];
-                    if (irl_looks_type_var(rpay)) {
-                        var rgpi: i32 = 0;
-                        while (rgpi < funcs[k].params.len()) {
-                            if (funcs[k].params[rgpi].type_name == rpay) { rt = "Result[$arg" + util.i32_to_string(rgpi) + rt[rcomma : rt.len()]; rgpi = funcs[k].params.len(); }
-                            else { rgpi = rgpi + 1; }
-                        }
-                    }
-                }
-            }
+            // An ERASED-generic free fn's Option/Result return whose payload
+            // mentions a bare type-var bound to a param: rewrite every such var
+            // to a positional "$arg<i>" reference (resolved at the call site by
+            // resolve_argref_opt_type). Handles the bare payload (`Option[T]`),
+            // a TUPLE payload (`Option[(T, i32)]`), and the Result Ok arm
+            // (`Result[T, i32]`) uniformly — without it the raw type-var tag
+            // left the Some/Ok binder untyped and a string payload's `.len()`
+            // silently read 0. Methods can't be erased generics here (only free
+            // fns lose their type params), so gate on a free function.
+            if (funcs[k].receiver_type.len() == 0) { rt = rewrite_typevars_to_argrefs(rt, funcs[k].params); }
             out = out.append(key + "|" + rt);
         }
         // A lifted if-/match-expression `__lam_` whose leaf branch calls an
