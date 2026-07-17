@@ -1,0 +1,105 @@
+package e2eharness
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
+)
+
+// nativeLinkX86 is the default assemble+link for driver builds and huge
+// CachedLink inputs. This gate proves it is behaviour-equivalent to the
+// gcc toolchain path it replaced: the same emitted asm, linked both ways,
+// runs with identical stdout and exit code. (The driver-scale input is
+// exercised end-to-end by every TestSelfHost* build; this covers the
+// contract with a fast case that also runs on toolchain-less shards up
+// to the gcc half.)
+func TestNativeLinkX86MatchesGccLink(t *testing.T) {
+	t.Parallel()
+	src := `function main(): i32 {
+    var parts: string[] = ["fern", "native", "link"];
+    var joined: string = "";
+    for p in parts {
+        joined = joined + p + ".";
+    }
+    print(joined);
+    var total: i32 = 0;
+    for i in 0..10 {
+        total = total + i;
+    }
+    if (joined.len() > 0) {
+        total = total + 3;
+    }
+    return total; // 45 + 3
+}
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	nativeBin := filepath.Join(dir, "prog_native")
+	if err := nativeLinkX86(asm, nativeBin); err != nil {
+		t.Fatalf("nativeLinkX86: %v", err)
+	}
+
+	gcc, runner := X86_64Tooling(t) // skips when no gcc / runner for this host
+	run := func(bin string) (string, int) {
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(bin)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+		}
+		out, _ := cmd.CombinedOutput()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Fatalf("%s did not exit normally (output: %q)", bin, out)
+		}
+		return string(out), cmd.ProcessState.ExitCode()
+	}
+
+	asmPath := filepath.Join(dir, "prog.s")
+	gccBin := filepath.Join(dir, "prog_gcc")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", gccBin).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+
+	gccOut, gccCode := run(gccBin)
+	natOut, natCode := run(nativeBin)
+	if natCode != gccCode || natOut != gccOut {
+		t.Fatalf("native-linked binary diverged from gcc-linked:\n gcc: exit=%d out=%q\n native: exit=%d out=%q",
+			gccCode, gccOut, natCode, natOut)
+	}
+	if gccCode != 48 || !strings.Contains(gccOut, "fern.native.link.") {
+		t.Fatalf("unexpected program behaviour: exit=%d out=%q", gccCode, gccOut)
+	}
+}

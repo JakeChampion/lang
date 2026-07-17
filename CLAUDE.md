@@ -263,27 +263,40 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
 - **Self-host driver builds are memory-heavy but the harness now self-limits
   — swap is generally NOT needed.** Every `buildSelfHostBin` / `buildBin` of
   a self-host driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern`
-  / `wasm_ir_run.fern` / …) assembles a multi-thousand-function `.s`. Two
-  changes brought the peak comfortably under a 16 GB host:
-  - The x86-64 backend now flips the self-host compiler's one lowering
+  / `wasm_ir_run.fern` / …) emits a multi-thousand-function asm text. The
+  peak is comfortably under a 16 GB host:
+  - The x86-64 backend flips the self-host compiler's one lowering
     monster (`irlower__lower_expr`, ~9.75M IR ops) from the inline rc
     fast-path to the `call __fern_rc_dec/inc` form (the arm64 backend's
     long-standing `rcInlineOK` mechanism, backported — behaviour-identical).
-    That alone cut the `asm_ir_run` driver `.s` from ~1028 MB → ~470 MB, the
-    GNU `as` peak from ~11.4 GB → ~4.6 GB, and the Go emit peak from ~9.0 GB
-    → ~7.9 GB. A single cold driver build now peaks ~8 GB.
+    That cut the `asm_ir_run` driver asm from ~1028 MB → ~470 MB.
+  - The cold driver emit runs under a **refcounted soft heap cap**
+    (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 5120; `<= 0`
+    disables): at default GOGC the emit's ~4 GB live heap ballooned to
+    ~9 GB RSS of mostly-garbage; the cap holds it to ~6.3 GB **and** is
+    ~20% faster (fewer huge-heap GC pauses). Output is byte-identical.
+  - Driver binaries are **assembled + linked in-process** by the pure-Go
+    native assembler (`internal/native/x86_64` + `internal/native/elf` —
+    the same pipeline `cmd/fern -target x86-64` uses by default): ~25 s /
+    ~2.6 GB where GNU `as` took ~36 s at ~4.7 GB plus a link, and the
+    ~470 MB `.s` never touches disk. Any assembler error falls back to
+    the old gcc(+lld) path automatically. `CachedLink` does the same for
+    HUGE self-host-emitted asm (the stage-2 self-compile, ≥ 8 MB) —
+    which previously ran GNU `as`+bfd with no memory reservation at all
+    — while small program links stay on gcc/bfd unchanged.
   - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted
     semaphore around the cold emit+link: it reserves each heavy build's
-    estimated peak (`FERN_BUILD_HEAVY_MB`, default 8000) against a budget
+    estimated peak (`FERN_BUILD_HEAVY_MB`, default 6500) against a budget
     (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so two cold
     driver builds can't stack their peaks and OOM the run. On a 16 GB host it
-    serialises the heavy builds (correct — you can't build two 8 GB things at
-    once); on a big host it parallelises up to the budget.
+    serialises the heavy builds; on a big host it parallelises up to the
+    budget.
 
   If a build is still OOM-killed (`signal: killed` / **exit 137** during
-  `as`/gcc/the Go emit — reads like a test failure but is an OOM), lower
-  `FERN_BUILD_HEAVY_MB` or `FERN_BUILD_MEM_BUDGET_MB`, or re-create the
-  ephemeral swap file (a container restart wipes it):
+  the Go emit, or `as`/gcc on the fallback path — reads like a test failure
+  but is an OOM), lower `FERN_BUILD_HEAVY_MB` / `FERN_BUILD_MEM_BUDGET_MB`
+  / `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral swap file (a
+  container restart wipes it):
   ```
   fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   ```
