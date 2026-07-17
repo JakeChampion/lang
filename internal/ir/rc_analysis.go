@@ -3017,3 +3017,252 @@ func (b *builder) computeBorrowedAliases() {
 		return true
 	})
 }
+
+// -------- #4873: cross-function in-place array growth containment ---------
+//
+// The rc==1 in-place fast paths on array mutation (`__method_Array_push`'s
+// grow, `__method_Array_set`'s cow_inplace, and the `arr[i] = v` desugar)
+// are sound intra-function: the #4827 forced copy protects reused idents,
+// and the #4838 exemptions (return-position / self-reassign appends) only
+// skip it where no LATER INTRA-FUNCTION read can observe the mutation. But
+// function parameters are borrowed (no inc at the call site), so the
+// caller's binding aliases the same buffer at the same rc — and a callee
+// mutation that is unobservable *inside* the callee is fully observable to
+// a caller that keeps its argument live (`var c = grow(a, 3); a.len()`),
+// silently diverging from the interpreter's copy-on-shared semantics
+// (issue #4873; the struct form `b.xs.append(x)` reaches the same hole
+// through the functional-update exemption).
+//
+// Containment is CALLER-side: computeGrowParams summarises, per function,
+// which parameters' buffers the callee may grow in place (directly or
+// transitively), and callBody brackets each call site whose corresponding
+// argument SURVIVES the call with an rc-inc before / rc-dec after — the
+// callee's uniqueness gate then sees rc >= 2 and takes the copy path, so
+// the caller's buffer is never touched. An argument that dies at the call
+// (the strict `x = f(.., x, ..)` self-reassign shape, callArgDeaths) skips
+// the bracket, which keeps the #4838 O(n) accumulator chains
+// (`acc = walk(acc, …)`) on the in-place fast path. The bracket is
+// rc-balanced by construction: the grow/cow copy paths leave the operand's
+// rc untouched (the same invariant the #4827 forced-copy inc/dec pair
+// relies on), so inc→call→dec restores the incoming count and never frees.
+//
+// Residual (documented, out of scope here): an argument that aliases a
+// LOCAL container field (`s.f = a; g(a)`) is an intra-function aliasing
+// question the #4827 machinery also approximates; and `own`-param
+// positions are already safe (an aliased arg is inc'd by the
+// owned-by-default transfer, and explicit `own` requires the binding to
+// die — E051).
+
+// growParamKind bits for computeGrowParams entries.
+const (
+	growArgBuffer uint8 = 1 // the param IS an array whose buffer may grow in place
+	growFieldBufs uint8 = 2 // the param is a struct whose array-field buffers may grow in place
+)
+
+// callArgDeaths marks, per call node, the ident arguments whose value can
+// no longer be observed through that binding in this function after the
+// call, so the #4873 bracket may skip them. Two shapes qualify:
+//
+//   - the strict self-reassign `x = f(.., x, ..)`: the RHS is exactly the
+//     call and x occurs in it exactly once, directly as an argument — the
+//     old binding is overwritten by the result (the #5056 move-and-rebind
+//     shape, sans the `own` requirement);
+//   - the return-position `return f(.., x, ..)` under the same
+//     exactly-once rule: a return exits the function (loop or not), so no
+//     later read exists. This is what keeps recursive accumulator tails
+//     (`return walk(acc, …)`) on the in-place fast path — bracketing them
+//     would force one copy per recursion level, the #4838 O(n²) class.
+//
+// A textually-last occurrence is deliberately NOT sufficient: inside a
+// loop the "last" occurrence re-executes, and an unbracketed in-place
+// growth would be observed by the next iteration (interp copies).
+func callArgDeaths(body ast.Node) map[*ast.Call]map[string]bool {
+	out := map[*ast.Call]map[string]bool{}
+	markOnce := func(c *ast.Call, name string) {
+		direct := 0
+		for _, a := range c.Args {
+			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
+				direct++
+			}
+		}
+		total := 0
+		ast.Walk(c, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == name {
+				total++
+			}
+			return true
+		})
+		if direct == 1 && total == 1 {
+			if out[c] == nil {
+				out[c] = map[string]bool{}
+			}
+			out[c][name] = true
+		}
+	}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch st := n.(type) {
+		case *ast.Assign:
+			t, ok := st.Target.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			c, ok := st.Value.(*ast.Call)
+			if !ok {
+				return true
+			}
+			markOnce(c, t.Name)
+		case *ast.Return:
+			c, ok := st.Value.(*ast.Call)
+			if !ok {
+				return true
+			}
+			for _, a := range c.Args {
+				if aid, ok := a.(*ast.Ident); ok {
+					markOnce(c, aid.Name)
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+
+// fieldChainRoot chases a field-access chain (`s.cur.insts`) to its root
+// ident, or reports false for a non-ident-rooted chain.
+func fieldChainRoot(fa *ast.FieldAccess) (*ast.Ident, bool) {
+	e := fa.Target
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return x, true
+		case *ast.FieldAccess:
+			e = x.Target
+		default:
+			return nil, false
+		}
+	}
+}
+
+// computeGrowParams returns, per function name, a per-parameter bitmask of
+// growArgBuffer / growFieldBufs: the parameter positions whose argument
+// buffer(s) the callee may grow or mutate in place through the rc==1 fast
+// paths. Seeded from direct mutations (an array push/set whose receiver is
+// a param ident or a field of a param ident, and an `arr[i] = v`
+// index-assign on a param ident), then closed transitively over calls that
+// pass a param onward in a position the CALLER-side bracket would not
+// protect (the callArgDeaths self-reassign shape for ident args, and any
+// param-field argument).
+func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8 {
+	grow := map[string][]uint8{}
+	decls := map[string]*ast.FuncDecl{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		decls[fn.Name] = fn
+		grow[fn.Name] = make([]uint8, len(fn.Params))
+	}
+	paramIdx := func(fn *ast.FuncDecl, name string) int {
+		for i, p := range fn.Params {
+			if p.Name == name {
+				return i
+			}
+		}
+		return -1
+	}
+	isArrayMutator := func(name string) bool {
+		return name == "__method_Array_push" || name == "__method_Array_set"
+	}
+	// Seed: direct in-place-capable mutations on params.
+	for name, fn := range decls {
+		g := grow[name]
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Call:
+				id, ok := x.Callee.(*ast.Ident)
+				if !ok || !isArrayMutator(id.Name) || len(x.Args) == 0 {
+					return true
+				}
+				switch r := x.Args[0].(type) {
+				case *ast.Ident:
+					if pi := paramIdx(fn, r.Name); pi >= 0 {
+						g[pi] |= growArgBuffer
+					}
+				case *ast.FieldAccess:
+					// Chase a field CHAIN to its root ident so a nested
+					// receiver (`s.cur.insts.append(x)`, the EmitState
+					// functional-update shape) seeds too.
+					if rid, ok := fieldChainRoot(r); ok {
+						if pi := paramIdx(fn, rid.Name); pi >= 0 {
+							g[pi] |= growFieldBufs
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	// (`arr[i] = v` index-assign needs no seeding: the checker rejects
+	// subscript assignment — `.with` is the API — and both `.with` and
+	// `.set` carry their own receiver-live containment, #2832.)
+	// Transitive closure over unbracketed pass-throughs.
+	changed := true
+	for changed {
+		changed = false
+		for name, fn := range decls {
+			g := grow[name]
+			deaths := callArgDeaths(fn.Body)
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				c, ok := n.(*ast.Call)
+				if !ok {
+					return true
+				}
+				cid, ok := c.Callee.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				cg, ok := grow[cid.Name]
+				if !ok {
+					return true
+				}
+				for ai, a := range c.Args {
+					if ai >= len(cg) || cg[ai] == 0 {
+						continue
+					}
+					switch arg := a.(type) {
+					case *ast.Ident:
+						pi := paramIdx(fn, arg.Name)
+						if pi < 0 {
+							continue
+						}
+						// A surviving ident arg gets the caller-side bracket
+						// (contained); only the dying self-reassign shape
+						// passes the buffer through unprotected.
+						if deaths[c][arg.Name] {
+							if g[pi]|cg[ai] != g[pi] {
+								g[pi] |= cg[ai]
+								changed = true
+							}
+						}
+					case *ast.FieldAccess:
+						// `g(p.f)` — a param-field argument aliases the
+						// param's field buffer and is never bracketed, so a
+						// growable position propagates as a field growth of
+						// the param (chain root for nested fields).
+						if rid, ok := fieldChainRoot(arg); ok && cg[ai] != 0 {
+							if pi := paramIdx(fn, rid.Name); pi >= 0 {
+								if g[pi]|growFieldBufs != g[pi] {
+									g[pi] |= growFieldBufs
+									changed = true
+								}
+							}
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	return grow
+}
