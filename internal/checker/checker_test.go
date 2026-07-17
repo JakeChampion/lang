@@ -2211,6 +2211,74 @@ func TestSignednessMismatchStillErrorsAtOtherWidths(t *testing.T) {
 	}
 }
 
+// checkStdlibSource type-checks `src` as if it were a stdlib module — every
+// top-level FuncDecl gets a `stdlib://` SourceModule, so inStdlibContext() is
+// true and the low-level usize escape-hatch conversions in assignable are in
+// force. Mirrors the checker's runtime state when it walks a std/ or core/
+// module body (modload stamps the same prefix).
+func checkStdlibSource(t *testing.T, src string) error {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, fn := range prog.Funcs {
+		fn.SourceModule = "stdlib://test.fern"
+	}
+	_, err = Check(prog)
+	return err
+}
+
+// #5053: a `usize` argument (or initializer / return) flowing into an i32-or-
+// narrower integer is a SILENT pointer-narrowing wormhole — on native the arg
+// keeps its full 64-bit register, so a `k as string` / `k as usize` in the
+// callee recovers the address by accident, then breaks the moment the same
+// value routes through an explicit `as i32` (the #5042 divergence). Even in
+// stdlib context (where the usize<->pointer escape hatch is otherwise open),
+// usize -> i32 must be rejected: it needs an explicit `as i32` for a genuine
+// truncation, or an honest `usize` param. usize -> a >=64-bit int (i64/u64)
+// or another usize keeps the full word and stays allowed.
+func TestUsizeNarrowingToI32RejectedInStdlib(t *testing.T) {
+	// Rejected: usize narrowing into a sub-word integer, in stdlib context.
+	for _, src := range []string{
+		// usize argument into an i32 parameter
+		`function sink(v: i32): i32 { return v; }
+function f(p: usize): i32 { return sink(p); }`,
+		// usize initializer into an i32 var
+		`function f(p: usize): i32 { var x: i32 = p; return x; }`,
+		// usize into a u32 param (also sub-word)
+		`function sink(v: u32): i32 { return 0; }
+function f(p: usize): i32 { return sink(p); }`,
+	} {
+		if err := checkStdlibSource(t, src); err == nil {
+			t.Errorf("usize -> i32 narrowing should be rejected even in stdlib: %q", src)
+		}
+	}
+	// Still allowed in stdlib: usize into a >=64-bit int or usize (no bits
+	// lost), and the widening i32 -> usize direction. These are the legitimate
+	// raw-pointer-helper conversions the escape hatch exists for.
+	for _, src := range []string{
+		// usize -> i64 (8 bytes, holds the full machine word)
+		`function sink(v: i64): i32 { return 0; }
+function f(p: usize): i32 { return sink(p); }`,
+		// usize -> usize
+		`function sink(v: usize): i32 { return 0; }
+function f(p: usize): i32 { return sink(p); }`,
+		// i32 -> usize widening
+		`function sink(v: usize): i32 { return 0; }
+function f(n: i32): i32 { return sink(n); }`,
+	} {
+		if err := checkStdlibSource(t, src); err != nil {
+			t.Errorf("legitimate stdlib usize conversion should type-check: %q\ngot: %v", src, err)
+		}
+	}
+	// And the narrowing an explicit cast makes honest still checks.
+	if err := checkStdlibSource(t, `function sink(v: i32): i32 { return v; }
+function f(p: usize): i32 { return sink(p as i32); }`); err != nil {
+		t.Errorf("explicit `as i32` truncation should type-check in stdlib: got %v", err)
+	}
+}
+
 func TestGenericEnumArityChecked(t *testing.T) {
 	src := `enum Pair[A, B] { Both(A, B) }
 		function main(): i32 {

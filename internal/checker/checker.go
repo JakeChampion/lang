@@ -6531,8 +6531,24 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 			}
 		}
 		if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
-			if _, dok := dst.(ast.NumberType); dok {
-				return true
+			if dn, dok := dst.(ast.NumberType); dok {
+				// usize flows freely into a destination that can HOLD the full
+				// machine word — another usize, or a >=64-bit integer (i64/u64,
+				// which is 8 bytes on every target, so no bits are lost). But
+				// usize -> a sub-word integer (i32/u32/i16/…) is a SILENT
+				// pointer-narrowing: on native the arg keeps its full 64-bit
+				// register (no truncation is emitted at the call boundary), so
+				// code can cast the i32 param back to a pointer and "recover"
+				// the address by accident — the #5042 / #5053 wormhole that
+				// broke the moment the same value routed through an explicit
+				// `as i32`. Reject it even in stdlib context: a genuine
+				// truncation must say so with an explicit `as i32`, and an
+				// honest pointer param must be typed `usize`. (There are no
+				// live stdlib sites relying on the old behaviour — core/map's
+				// __map_hash dependency was retired in #5052.)
+				if dn.IsPointerWidth() || dn.NormalWidth() >= 64 {
+					return true
+				}
 			}
 		}
 	}
