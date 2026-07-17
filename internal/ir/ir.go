@@ -13143,11 +13143,22 @@ func (b *builder) constructionMovesIdent(e ast.Expr, name string) bool {
 // overwrite-drop the old `name`: the callee already owns and frees it, so a
 // second deep-drop here frees the box twice (the own-struct-param
 // move-and-rebind double-free). The mirror of constructionMovesIdent for plain
-// function calls. (Method calls are conservatively excluded — receiver-consume
-// shape differs; revisit when an own-self method threads a struct.)
+// function calls.
+//
+// Method calls are INCLUDED: `s = s.emit(x)` on an `own`-receiver method
+// reaches here as a plain Call on the mangled method name with the receiver
+// in Args[0] and flags[0] the receiver's own flag, so the loop below covers
+// it unchanged. The receiver position MUST get the same suppression as a
+// plain own arg — the checker's E051 admission (SelfReassignOwnMoveArg) has
+// no method exclusion, and without the matching skip here the callee-side
+// receiver drop plus this overwrite-dec net -1 per call: a threaded borrowed
+// param (consumedParams entry-inc) loses the CALLER's reference (UAF one
+// frame up), and a local receiver's box is freed by the callee and then this
+// dec writes through the freed header (freelist corruption — the source of
+// the arm64 rc-underflow counts the own-receiver probes surfaced).
 func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
 	call, ok := e.(*ast.Call)
-	if !ok || call.Method != nil {
+	if !ok {
 		return false
 	}
 	id, ok := call.Callee.(*ast.Ident)
