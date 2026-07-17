@@ -91,6 +91,15 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
+        // #4873 grow-bracket share helpers: the backend-selectable rc touch
+        // around a surviving ident arg at a may-grow param position. Register
+        // backends alias them to the plain rc inc / rc-guarded arr dec (their
+        // arrays carry an rc header at base-4, and __fern_arr_push's
+        // uniqueness gate reads it); wasm_ir intercepts BOTH as no-ops — wasm
+        // arrays have no rc header ([len@0, cap@4, elems@8]), so an rc touch
+        // at base-4 would corrupt the neighbouring allocation.
+        || name == "__fern_arr_share_inc"
+        || name == "__fern_arr_share_dec"
         // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
         // data buffer + 16-byte box. Default ir_helper_symbol maps it to
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
@@ -230,6 +239,12 @@ pub function c_call_arity(name: string): i32 {
 pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
+    // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
+    // pair on the register backends (zero new runtime); the distinct NAMES
+    // exist so wasm_ir can intercept them as no-ops (wasm arrays carry no rc
+    // header).
+    if (name == "__fern_arr_share_inc") { return "__fn___fern_rc_inc"; }
+    if (name == "__fern_arr_share_dec") { return "__fn___fern_arr_dec"; }
     if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
     if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
     // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
@@ -2954,6 +2969,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, %r13\n");        // value
     s = s.write("    movq (%r12), %r14\n");      // len
     s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
+    // #4873 containment gate: an rc >= 2 receiver is SHARED (the caller-side
+    // grow bracket inc'd it, or a counted alias exists) — never mutate it in
+    // place even when capacity fits; take the grow path's fresh-box copy,
+    // which leaves the old buffer untouched (and, per the load-bearing-leak
+    // note below, never freed). rc == 1 (sole owner) and the bit-31
+    // static/immortal sentinel keep today's in-place fast path.
+    s = s.write("    movq -8(%r12), %rcx\n");    // rc word
+    s = s.write("    cmpq $1, %rcx\n");
+    s = s.write("    je .Larr_push_rc_ok\n");
+    s = s.write("    btq $31, %rcx\n");
+    s = s.write("    jc .Larr_push_rc_ok\n");
+    s = s.write("    jmp .Larr_push_grow\n");    // shared → copy (#4873)
+    s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmpq %r15, %r14\n");
     s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
     s = s.write("    movq %r14, %rcx\n");
@@ -2979,6 +3007,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (`a = a.append(v)`) reassign-dec — the reuse-analysis slice of goal #2.
     s = s.write(".Larr_push_grow:\n");
     s = s.write("    movq %r15, %rcx\n");
+    // #4873: a SHARED receiver with spare capacity (len < cap) lands here for
+    // an UN-SHARE copy, not a growth — keep the same cap instead of doubling,
+    // halving the copy's arena footprint (the leak-mode self-compile is
+    // arena-bound, #3425). True growth (len >= cap) still doubles.
+    s = s.write("    cmpq %r15, %r14\n");
+    s = s.write("    jl .Larr_push_cap\n");
     s = s.write("    cmpq $0, %rcx\n");
     s = s.write("    jne .Larr_push_dbl\n");
     s = s.write("    movq $4, %rcx\n");

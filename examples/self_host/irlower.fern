@@ -430,6 +430,12 @@ pub struct LowerState {
     // Empty for functions without defers, making lower_try byte-identical
     // to the pre-#4334 lowering there.
     try_cleanup: parser.Stmt[],
+    // grow_exempt (#4873 port): the ident args of the CURRENT statement's
+    // direct call whose old value dies at the statement (the strict
+    // self-reassign / return-position occurs-once shapes) — the call-site
+    // grow bracket skips them so the in-place accumulator fast paths stay
+    // O(n). Set/cleared around each statement by lower_stmt's wrapper.
+    grow_exempt: string[],
     n_params: i32,
     ok: boolean,
 }
@@ -441,7 +447,7 @@ pub function (s: LowerState) emit(op: ir.Op): LowerState {
     var nctrl: i32 = s.ctrl;
     if (op.kind_tag == 152 || op.kind_tag == 153 || op.kind_tag == 154) { nctrl = s.ctrl + 1; }  // block, loop, if
     if (op.kind_tag == 156) { nctrl = s.ctrl - 1; }  // end
-    return LowerState { ops: s.ops.append(op), locals: s.locals, ctrl: nctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), locals: s.locals, ctrl: nctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // enter_loop / exit_loop push and pop the loop_blk stack. enter_loop is called
@@ -449,13 +455,13 @@ pub function (s: LowerState) emit(op: ir.Op): LowerState {
 // level); exit_loop after both of the loop's `end`s. cur_loop_blk returns the
 // innermost loop's recorded block level, or -1 outside any loop.
 pub function (s: LowerState) enter_loop(): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk.append(s.ctrl), ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk.append(s.ctrl), ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) exit_loop(): LowerState {
     var trimmed: i32[] = [];
     var k: i32 = 0;
     while (k + 1 < s.loop_blk.len()) { trimmed = trimmed.append(s.loop_blk[k]); k = k + 1; }
-    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: trimmed, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: trimmed, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) cur_loop_blk(): i32 {
     if (s.loop_blk.len() == 0) { return 0 - 1; }
@@ -480,7 +486,7 @@ pub function (s: LowerState) ret_i64arr(): boolean { return s.ret_arrdyn % 2 == 
 pub function (s: LowerState) ret_dyn(): boolean { return (s.ret_arrdyn / 2) % 2 == 1; }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -530,7 +536,7 @@ pub function (s: LowerState) is_aliased_name(name: string): boolean {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.append(li_new(name)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.append(li_new(name)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -573,11 +579,11 @@ pub function (s: LowerState) retire_locals(from: i32): LowerState {
 // exactly — a single `.with` on local_names, every other field carried through —
 // so it compiles on the legacy AST backend the self-compile still uses.
 pub function (s: LowerState) set_local_name(i: i32, name: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_names(s.locals[i], name)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_names(s.locals[i], name)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_arr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_arr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // is_u32_slot / mark_u32 query and set the u32-ness of slot i (a u32 scalar or
@@ -588,7 +594,7 @@ pub function (s: LowerState) is_u32_slot(i: i32): boolean {
     return s.locals[i].is_u32;
 }
 pub function (s: LowerState) mark_u32(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_u32(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_u32(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 // is_u64_slot / mark_u64 query and set the u64-ness of slot i — drives UNSIGNED
 // compare / shift-right / div-rem in the i64 domain (#2904).
@@ -598,7 +604,7 @@ pub function (s: LowerState) is_u64_slot(i: i32): boolean {
     return s.locals[i].is_u64;
 }
 pub function (s: LowerState) mark_u64(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_u64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_u64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 // subword_kind_of_slot returns slot i's sub-word int kind ("u8")
 // or "". mark_subword sets it. For an array slot the kind is the ELEMENT
@@ -609,7 +615,7 @@ pub function (s: LowerState) subword_kind_of_slot(i: i32): string {
     return s.locals[i].subword;
 }
 pub function (s: LowerState) mark_subword(i: i32, k: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_subword(s.locals[i], k)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_subword(s.locals[i], k)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // is_const_fn reports whether `name` is a zero-arg, receiver-less module
@@ -625,13 +631,13 @@ pub function (s: LowerState) is_closure_local(name: string): boolean {
     return util.index_of_str(s.closure_locals, name) >= 0;
 }
 pub function (s: LowerState) mark_closure_local(name: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals.append(name), f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals.append(name), f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // add_clo_cap_kinds (#4354): record a closure local's per-capture kinds
 // ("<name>|<kinds>") in the capture-RC registry — see the field doc.
 pub function (s: LowerState) add_clo_cap_kinds(entry: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names.append("CLO:" + entry), aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names.append("CLO:" + entry), aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // clo_cap_kinds_of returns the registered capture-kinds string for closure
@@ -665,7 +671,7 @@ pub function (s: LowerState) is_str_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_str(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_str(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
@@ -675,7 +681,7 @@ pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_strarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_strarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // str_own_slot / mark_str_own query and set the slot-carried string
@@ -689,7 +695,7 @@ pub function (s: LowerState) str_own_slot(i: i32): i32 {
 }
 
 pub function (s: LowerState) mark_str_own(i: i32, v: i32): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_str_own(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_str_own(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -701,13 +707,13 @@ pub function (s: LowerState) struct_type_of_slot(i: i32): string {
 }
 
 pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_struct_type(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_struct_type(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // mark_opt_type records slot i's Option[T]/Result[T,E] type string, so a later
 // `match` on that local can recover the bound payload type.
 pub function (s: LowerState) mark_opt_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_opt_type(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_opt_type(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // opt_type_of_slot returns slot i's recorded Option/Result type, or "".
@@ -718,7 +724,7 @@ pub function (s: LowerState) opt_type_of_slot(i: i32): string {
 
 // mark_tuple_elems records slot i's comma-joined tuple element-type tags.
 pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_tuple_elems(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_tuple_elems(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // tuple_elem_tag returns slot i's Nth tuple element-type tag, or "". The split is
@@ -1155,7 +1161,7 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
 }
 
 pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_map_type(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_map_type(s.locals[i], t)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) map_type_of(i: i32): string {
     if (i < 0 || i >= s.locals.len()) { return ""; }
@@ -1251,7 +1257,7 @@ function insert_value_is_ptr(e: parser.Expr, s: LowerState): boolean {
 }
 
 pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_i64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_i64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) is_i64_slot(i: i32): boolean {
     if (i < 0) { return false; }
@@ -1306,7 +1312,7 @@ pub function (s: LowerState) is_i32_scalar_slot(i: i32): boolean {
     return true;
 }
 pub function (s: LowerState) mark_f64(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_f64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_f64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) is_f64_slot(i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
@@ -1316,7 +1322,7 @@ pub function (s: LowerState) is_f64_slot(i: i32): boolean {
 // strict overlay on is_f64: an f32 slot is ALSO is_f64 for storage/arith, but
 // carries the f32 type tag for "f32.<method>" dispatch). Mirrors mark_f64.
 pub function (s: LowerState) mark_f32(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_f32(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_f32(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) is_f32_slot(i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
@@ -1329,7 +1335,7 @@ pub function (s: LowerState) is_f64arr_slot(i: i32): boolean {
     return s.locals[i].is_f64arr;
 }
 pub function (s: LowerState) mark_f64arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_f64arr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_f64arr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 // is_i64arr_slot / mark_i64arr query and set whether slot i holds an i64[]
 // array (8-byte i64 elements). The driver for a[i] -> arr_get_i64.
@@ -1338,7 +1344,7 @@ pub function (s: LowerState) is_i64arr_slot(i: i32): boolean {
     return s.locals[i].is_i64arr;
 }
 pub function (s: LowerState) mark_i64arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_i64arr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_i64arr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // is_closurearr_slot / mark_closurearr query and set whether slot i holds a
@@ -1349,7 +1355,7 @@ pub function (s: LowerState) is_closurearr_slot(i: i32): boolean {
     return s.locals[i].is_closurearr;
 }
 pub function (s: LowerState) mark_closurearr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_closurearr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_closurearr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 // is_fnarr_slot / mark_fnarr query and set whether slot i holds a PLAIN-fn-pointer
 // array (`(() => T)[]` of bare named-fn values). Parallels is_closurearr_slot but
@@ -1361,7 +1367,7 @@ pub function (s: LowerState) is_fnarr_slot(i: i32): boolean {
     return s.locals[i].is_fnarr;
 }
 pub function (s: LowerState) mark_fnarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_fnarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_fnarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 // is_arrarr_slot / mark_arrarr query and set whether slot i holds an array-of-
 // arrays (`T[][]`), so a local bound from its element a[i] is typed is_arr.
@@ -1370,7 +1376,7 @@ pub function (s: LowerState) is_arrarr_slot(i: i32): boolean {
     return s.locals[i].is_arrarr;
 }
 pub function (s: LowerState) mark_arrarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_arrarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_arrarr(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 // arrarr_elem_of_slot / mark_arrarr_elem query and set the INNER element kind of a
 // T[][] slot ("i64"/"f64"/""), so a nested read a[i][j] can pick the 8-byte load
@@ -1380,7 +1386,7 @@ pub function (s: LowerState) arrarr_elem_of_slot(i: i32): string {
     return s.locals[i].arrarr_elem;
 }
 pub function (s: LowerState) mark_arrarr_elem(i: i32, kind: string): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_arrarr_elem(s.locals[i], kind)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_arrarr_elem(s.locals[i], kind)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // variant_enum_owner returns the enum a variant struct belongs to
@@ -6522,7 +6528,53 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sc.ok) { return sc; }
                         ai = ai + 1;
                     }
+                    // #4873 containment: bracket each SURVIVING ident arg at a
+                    // may-grow ('4') param position with rc-inc before / rc-dec
+                    // after, so the callee's in-place uniqueness gate takes the
+                    // copy path and this function's binding keeps interpreter
+                    // (copy-on-shared) semantics. grow_exempt (the statement's
+                    // dying self-reassign / return-position args) skips the
+                    // bracket, keeping accumulator chains O(n). The bracket
+                    // goes through the dedicated __fern_arr_share_inc/dec
+                    // names (NOT the plain rc pair): the register backends
+                    // alias them to __fern_rc_inc / __fern_arr_dec, while
+                    // wasm_ir intercepts them as no-ops — wasm arrays carry
+                    // no rc header, so an rc touch at base-4 would corrupt
+                    // the neighbouring allocation.
+                    var gbr_slots: i32[] = [];
+                    var gba: i32 = 0;
+                    while (gba < c.args.len()) {
+                        if (sc.callee_param_may_grow(cid.name, gba)) {
+                            match (c.args[gba]) {
+                                parser.ExprIdent(gbid) => {
+                                    var gbs: i32 = sc.slot_of(gbid.name);
+                                    if (gbs >= 0 && util.index_of_str(sc.grow_exempt, gbid.name) < 0) {
+                                        gbr_slots = gbr_slots.append(gbs);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                        gba = gba + 1;
+                    }
+                    var gbi: i32 = 0;
+                    while (gbi < gbr_slots.len()) {
+                        sc = sc.emit(ir.op_load_local(gbr_slots[gbi]));
+                        sc = sc.emit(ir.op_call_direct("__fern_arr_share_inc", 1));
+                        sc = sc.emit(ir.op_drop());
+                        gbi = gbi + 1;
+                    }
                     var scr: LowerState = sc.emit(ir.op_call_direct(cid.name, c.args.len()));
+                    // #4873: restore the bracketed args' rc — the callee's copy
+                    // path left each buffer untouched (never frees; the inc
+                    // preceded it).
+                    var gbj: i32 = 0;
+                    while (gbj < gbr_slots.len()) {
+                        scr = scr.emit(ir.op_load_local(gbr_slots[gbj]));
+                        scr = scr.emit(ir.op_call_direct("__fern_arr_share_dec", 1));
+                        scr = scr.emit(ir.op_drop());
+                        gbj = gbj + 1;
+                    }
                     // Free the stashed literal-arg boxes. Net-zero on the operand
                     // stack (load → free → drop), so the call's result — live
                     // beneath — is untouched; __fern_str_free is rc-aware and
@@ -9666,7 +9718,18 @@ function struct_lit_all_scalar(structs: parser.StructDecl[], name: string): bool
 }
 
 // lower_stmt lowers one top-level statement of the i32 subset.
+// lower_stmt wraps lower_stmt_inner with the #4873 grow-exempt window: the
+// statement's dying call args (grow_exempt_names_of_stmt) are visible to the
+// call-site bracket only while THIS statement lowers.
 pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
+    var gex: string[] = grow_exempt_names_of_stmt(st);
+    if (gex.len() == 0) { return lower_stmt_inner(st, s); }
+    var gr: LowerState = lower_stmt_inner(st, s.with_grow_exempt(gex));
+    var gnone: string[] = [];
+    return gr.with_grow_exempt(gnone);
+}
+
+function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
         parser.StmtVar(v) =>{ return lower_stmt_var(v, s); },
@@ -15460,7 +15523,7 @@ function stmt_scopes_bindings(st: parser.Stmt): boolean {
 // LowerState field). Threaded like set_local_name — a single field swap, every
 // other column carried through, so it compiles on the legacy AST backend too.
 pub function (s: LowerState) with_xblock_pending(v: string[]): LowerState {
-    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: v, try_cleanup: s.try_cleanup, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: v, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
 
 // --- cross-block reuse (FBIP): a block-top donor reused by a construction nested
@@ -26849,7 +26912,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var ret_arrdyn0: i32 = 0;
     if (ret_i64arr) { ret_arrdyn0 = ret_arrdyn0 + 1; }
     if (ret_dyn) { ret_arrdyn0 = ret_arrdyn0 + 2; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], try_cleanup: tclean, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], try_cleanup: tclean, grow_exempt: [], n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -29166,9 +29229,22 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
         closureset = closure_ret_fns_of(funcs);
         caset = closurearr_ret_fns_of(funcs);
     }
+    // #4873 port: the may-grow array-param masks, merged below as flag '4'.
+    var growset: string[] = grow_param_flags_of(funcs);
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
+        var gmask: string = "";
+        var gkey: string = funcs[k].name;
+        if (funcs[k].receiver_type.len() > 0) { gkey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+        var gi: i32 = 0;
+        while (gi < growset.len()) {
+            var ge: string = growset[gi];
+            var gb: i32 = 0;
+            while (gb < ge.len() && ge[gb] != 124) { gb = gb + 1; }
+            if (gb < ge.len() && ge[0:gb] == gkey) { gmask = ge[gb + 1 : ge.len()] + ""; gi = growset.len(); }
+            else { gi = gi + 1; }
+        }
         var flags: string = "";
         var any: boolean = false;
         var pj: i32 = 0;
@@ -29192,6 +29268,11 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
             // method's call sites aren't scanned.
             else if (have_fnarr && funcs[k].params[pj].type_name == "fn[]" && funcs[k].receiver_type.len() == 0
                      && fnarr_param_all_closurearr(funcs, funcs[k].name, pj, closureset, caset)) { flags = flags + "3"; any = true; }
+            // #4873: an array param the callee may grow in place — flag '4'
+            // so the call site brackets a surviving argument. Distinct from
+            // '1'/'2'/'3' (an array param is never fn/dyn), so the existing
+            // consumers are unaffected.
+            else if (pj < gmask.len() && gmask[pj] == 49) { flags = flags + "4"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -31479,7 +31560,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, closurearr_ret_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, try_cleanup: no_stmts, n_params: fn.params.len(), ok: true };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, closurearr_ret_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, try_cleanup: no_stmts, grow_exempt: [], n_params: fn.params.len(), ok: true };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -32460,7 +32541,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
-        else if (o.kind_tag == 149 && o.str == "__fern_rc_inc") {  // call_direct
+        else if (o.kind_tag == 149 && (o.str == "__fern_rc_inc" || o.str == "__fern_arr_share_inc")) {  // call_direct
             // RC retain: inc the refcount header at base-4, return base.
             sp = sp - 1;
             var ib: i32 = stack[sp];
@@ -32470,7 +32551,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
-        else if (o.kind_tag == 149 && o.str == "__fern_rc_dec") {  // call_direct
+        else if (o.kind_tag == 149 && (o.str == "__fern_rc_dec" || o.str == "__fern_arr_share_dec")) {  // call_direct
             // RC release: dec the header at base-4 (no free). A dec of a value
             // already at/below 0 is an over-release -> bump the counter at
             // word 0. A null / sub-heap pointer is skipped (defensive).
@@ -34502,4 +34583,425 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
     }
     return parser.lower_defers_module(result);
+}
+
+// ============== #4873 port: cross-function in-place growth containment ==============
+//
+// The consume-form array append (op_arr_push) mutates its receiver buffer in
+// place when the backend's grow helper sees rc==1. A function PARAM is
+// borrowed (no call-site inc), so the caller's binding aliases the buffer at
+// the same rc — a callee append on a param that is unobservable inside the
+// callee silently mutates a caller that keeps its argument live
+// (`var c = grow(a, 3)` grew `a`; interp copies — issue #4873). Containment
+// is CALLER-side, mirroring the native fix: fn_param_sigs gains flag '4' for
+// array params the callee may grow in place (directly or transitively), and
+// the user-call lowering brackets each SURVIVING ident arg at such a
+// position with __fern_rc_inc before / __fern_rc_dec after — the callee's
+// uniqueness gate then takes the copy path. Args that DIE at the statement
+// (the strict occurs-once self-reassign `x = f(.., x, ..)` and
+// return-position `return f(.., x, ..)` shapes — grow_exempt, set around
+// each statement by lower_stmt) skip the bracket, keeping the accumulator
+// chains and recursive tails on the O(n) in-place fast path. The struct- and
+// field-read append forms already route through the CLONE lowering
+// (lower_arr_append_value), so bare-ident params are the only seeding shape.
+
+// grow_ident_count: occurrences of `name` among the idents of `e`.
+function grow_ident_count(e: parser.Expr, name: string): i32 {
+    var ids: string[] = astwalk.collect_idents_expr(e, []);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < ids.len()) {
+        if (ids[i] == name) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+// collect_append_recvs_expr appends the receiver NAME of every
+// `<ident>.append(v)` / `<ident>.set(i, v)` call in `e` (recursing all
+// expression containers; a nested lambda recurses plainly — an inner
+// param shadowing an outer name only over-collects, which at worst adds a
+// harmless extra bracket).
+function collect_append_recvs_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprBinary(b) => {
+            acc = collect_append_recvs_expr(b.left, acc);
+            return collect_append_recvs_expr(b.right, acc);
+        },
+        parser.ExprUnary(u) => { return collect_append_recvs_expr(u.operand, acc); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if ((cfa.field == "append" && c.args.len() == 1) || (cfa.field == "set" && c.args.len() == 2)) {
+                        match (cfa.obj) {
+                            parser.ExprIdent(rid) => { acc = acc.append(rid.name); },
+                            _ => {}
+                        }
+                    }
+                    acc = collect_append_recvs_expr(cfa.obj, acc);
+                },
+                _ => { acc = collect_append_recvs_expr(c.callee, acc); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                acc = collect_append_recvs_expr(c.args[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                acc = collect_append_recvs_expr(a.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                acc = collect_append_recvs_expr(t.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_append_recvs_expr(x.array, acc);
+            return collect_append_recvs_expr(x.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_append_recvs_expr(sl.array, acc);
+            acc = collect_append_recvs_expr(sl.start, acc);
+            return collect_append_recvs_expr(sl.end, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_append_recvs_expr(sl.base, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                acc = collect_append_recvs_expr(sl.field_values[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_append_recvs_expr(fa.obj, acc); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                acc = collect_append_recvs_stmt(lm.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function collect_append_recvs_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtDefer(d) => { return collect_append_recvs_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return collect_append_recvs_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return collect_append_recvs_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return collect_append_recvs_expr(e.value, acc); },
+        parser.StmtAssign(a) => { return collect_append_recvs_expr(a.value, acc); },
+        parser.StmtIf(f) => {
+            acc = collect_append_recvs_expr(f.cond, acc);
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { acc = collect_append_recvs_stmt(f.then_body[ti], acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { acc = collect_append_recvs_stmt(f.else_body[ei], acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_append_recvs_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = collect_append_recvs_stmt(w.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtFor(f2) => {
+            acc = collect_append_recvs_expr(f2.iter, acc);
+            var i: i32 = 0;
+            while (i < f2.body.len()) { acc = collect_append_recvs_stmt(f2.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtMatch(m) => {
+            acc = collect_append_recvs_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = collect_append_recvs_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// grow_dying_passes collects, per function, the DYING pass-through sites:
+// "callee|argindex|paramname" for each direct ident arg that is one of the
+// fn's params passed in a shape the caller-side bracket exempts (the
+// occurs-once self-reassign / return-position rules). Used by the fixpoint
+// to propagate may-grow flags through unbracketed pass-throughs.
+function grow_dying_passes_stmt(st: parser.Stmt, params: string[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtAssign(a) => {
+            match (a.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(cid) => {
+                            var ai: i32 = 0;
+                            while (ai < c.args.len()) {
+                                match (c.args[ai]) {
+                                    parser.ExprIdent(aid) => {
+                                        if (aid.name == a.target && util.index_of_str(params, aid.name) >= 0
+                                            && grow_ident_count(a.value, aid.name) == 1) {
+                                            acc = acc.append(cid.name + "|" + util.i32_to_string(ai) + "|" + aid.name);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                                ai = ai + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            return acc;
+        },
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(cid) => {
+                            var ai: i32 = 0;
+                            while (ai < c.args.len()) {
+                                match (c.args[ai]) {
+                                    parser.ExprIdent(aid) => {
+                                        if (util.index_of_str(params, aid.name) >= 0
+                                            && grow_ident_count(r.value, aid.name) == 1) {
+                                            acc = acc.append(cid.name + "|" + util.i32_to_string(ai) + "|" + aid.name);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                                ai = ai + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            return acc;
+        },
+        parser.StmtIf(f) => {
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { acc = grow_dying_passes_stmt(f.then_body[ti], params, acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { acc = grow_dying_passes_stmt(f.else_body[ei], params, acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = grow_dying_passes_stmt(w.body[i], params, acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtFor(f2) => {
+            var i: i32 = 0;
+            while (i < f2.body.len()) { acc = grow_dying_passes_stmt(f2.body[i], params, acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = grow_dying_passes_stmt(m.arms[ai].body[bi], params, acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// grow_param_flags_of computes, per FREE function, a '0'/'1'-per-param mask
+// of the array params the function may grow in place: seeded from a direct
+// `<param>.append(v)` / `.set` anywhere in the body, then closed
+// transitively over dying pass-throughs (grow_dying_passes). Only
+// array-typed params are eligible. Returned as "name|mask" entries for
+// functions with at least one '1'.
+pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
+    // masks[i] parallels funcs[i]: the working per-param mask.
+    var masks: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var fnk: parser.FuncDecl = funcs[k];
+        var recvs: string[] = [];
+        var si: i32 = 0;
+        while (si < fnk.body.len()) { recvs = collect_append_recvs_stmt(fnk.body[si], recvs); si = si + 1; }
+        var mask: string = "";
+        var pj: i32 = 0;
+        while (pj < fnk.params.len()) {
+            if (is_array_type_name(fnk.params[pj].type_name) && util.index_of_str(recvs, fnk.params[pj].name) >= 0) {
+                mask = mask + "1";
+            } else { mask = mask + "0"; }
+            pj = pj + 1;
+        }
+        masks = masks.append(mask);
+        k = k + 1;
+    }
+    // Resolve the dying pass-through EDGES once — they are static across
+    // fixpoint rounds (only masks change). Each edge says: caller e_fk's
+    // param e_ppi flows to free-function callee e_ck's position e_argi in a
+    // dying shape. The fixpoint below is then pure index arithmetic over
+    // these parallel arrays — the earlier shape re-walked every function's
+    // statements (grow_dying_passes_stmt + registry allocations) on EVERY
+    // round, which is pure garbage under the leak-mode self-compile arena
+    // (#3425) and helped push the per-module-built compiler over the wall.
+    var e_fk: i32[] = [];
+    var e_ck: i32[] = [];
+    var e_argi: i32[] = [];
+    var e_ppi: i32[] = [];
+    var fk0: i32 = 0;
+    while (fk0 < funcs.len()) {
+        var fd0: parser.FuncDecl = funcs[fk0];
+        var pnames0: string[] = [];
+        var pn0: i32 = 0;
+        while (pn0 < fd0.params.len()) { pnames0 = pnames0.append(fd0.params[pn0].name); pn0 = pn0 + 1; }
+        var passes0: string[] = [];
+        var sj0: i32 = 0;
+        while (sj0 < fd0.body.len()) { passes0 = grow_dying_passes_stmt(fd0.body[sj0], pnames0, passes0); sj0 = sj0 + 1; }
+        var q0: i32 = 0;
+        while (q0 < passes0.len()) {
+            var entry: string = passes0[q0];
+            var b1: i32 = 0;
+            while (b1 < entry.len() && entry[b1] != 124) { b1 = b1 + 1; }
+            var b2: i32 = b1 + 1;
+            while (b2 < entry.len() && entry[b2] != 124) { b2 = b2 + 1; }
+            var cname: str = entry[0:b1];
+            var argi: i32 = util.digits_to_i32(entry[b1 + 1 : b2]);
+            var pname: str = entry[b2 + 1 : entry.len()];
+            var ppi0: i32 = util.index_of_str(pnames0, pname + "");
+            var ck0: i32 = 0;
+            while (ck0 < funcs.len()) {
+                if (funcs[ck0].name == cname && funcs[ck0].receiver_type.len() == 0) {
+                    if (ppi0 >= 0) {
+                        e_fk = e_fk.append(fk0);
+                        e_ck = e_ck.append(ck0);
+                        e_argi = e_argi.append(argi);
+                        e_ppi = e_ppi.append(ppi0);
+                    }
+                    ck0 = funcs.len();
+                } else { ck0 = ck0 + 1; }
+            }
+            q0 = q0 + 1;
+        }
+        fk0 = fk0 + 1;
+    }
+    // Fixpoint over the resolved edges (monotone: only 0->1 flips, so the
+    // converged mask set is identical to the per-round re-walk's).
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var ei: i32 = 0;
+        while (ei < e_fk.len()) {
+            var cmask: string = masks[e_ck[ei]];
+            var eargi: i32 = e_argi[ei];
+            if (eargi < cmask.len() && cmask[eargi] == 49) {   // '1'
+                var fmask: string = masks[e_fk[ei]];
+                var ppi: i32 = e_ppi[ei];
+                if (ppi < fmask.len() && fmask[ppi] != 49) {
+                    masks = masks.with(e_fk[ei], fmask[0:ppi] + "1" + fmask[ppi + 1 : fmask.len()]);
+                    changed = true;
+                }
+            }
+            ei = ei + 1;
+        }
+    }
+    var out: string[] = [];
+    var ok2: i32 = 0;
+    while (ok2 < funcs.len()) {
+        if (util.contains(masks[ok2], "1")) {
+            var key: string = funcs[ok2].name;
+            if (funcs[ok2].receiver_type.len() > 0) { key = util.base_type_name(funcs[ok2].receiver_type) + "." + funcs[ok2].name; }
+            out = out.append(key + "|" + masks[ok2]);
+        }
+        ok2 = ok2 + 1;
+    }
+    return out;
+}
+
+// callee_param_may_grow reads flag '4' — the may-grow array param positions
+// merged into fn_param_sigs by fn_param_sigs_of.
+pub function (s: LowerState) callee_param_may_grow(name: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.fn_param_sigs.len()) {
+        var e: string = s.fn_param_sigs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // '|'
+        if (bar < e.len() && e[0:bar] == name) {
+            var fi: i32 = bar + 1 + idx;
+            return fi < e.len() && e[fi] == 52;   // '4'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// grow_exempt_names_of_stmt returns the ident args exempt from the grow
+// bracket for this statement — the occurs-once self-reassign and
+// return-position shapes (see the grow_exempt field doc). Empty otherwise.
+pub function grow_exempt_names_of_stmt(st: parser.Stmt): string[] {
+    var out: string[] = [];
+    match (st) {
+        parser.StmtAssign(a) => {
+            match (a.value) {
+                parser.ExprCall(c) => {
+                    var ai: i32 = 0;
+                    while (ai < c.args.len()) {
+                        match (c.args[ai]) {
+                            parser.ExprIdent(aid) => {
+                                if (aid.name == a.target && grow_ident_count(a.value, aid.name) == 1) {
+                                    out = out.append(aid.name);
+                                }
+                            },
+                            _ => {}
+                        }
+                        ai = ai + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(c2) => {
+                    var ai2: i32 = 0;
+                    while (ai2 < c2.args.len()) {
+                        match (c2.args[ai2]) {
+                            parser.ExprIdent(aid2) => {
+                                if (grow_ident_count(r.value, aid2.name) == 1) {
+                                    out = out.append(aid2.name);
+                                }
+                            },
+                            _ => {}
+                        }
+                        ai2 = ai2 + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return out;
+}
+
+pub function (s: LowerState) with_grow_exempt(names: string[]): LowerState {
+    return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: names, n_params: s.n_params, ok: s.ok };
 }

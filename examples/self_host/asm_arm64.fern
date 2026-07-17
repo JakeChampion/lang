@@ -8892,6 +8892,16 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x20, x1\n");           // value
         s = s.write("    ldr x21, [x19]\n");        // len
         s = s.write("    ldur x22, [x19, #-16]\n"); // cap (hidden at -16; rc at -8)
+        // #4873 containment gate — the arm64 twin of the x86 gate: an
+        // rc >= 2 receiver is shared, so take the fresh-box copy path even
+        // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
+        // the in-place fast path.
+        s = s.write("    ldur x2, [x19, #-8]\n");   // rc word
+        s = s.write("    cmp x2, #1\n");
+        s = s.write("    b.eq .Larr_push_rc_ok\n");
+        s = s.write("    tbnz x2, #31, .Larr_push_rc_ok\n");
+        s = s.write("    b .Larr_push_grow\n");     // shared → copy (#4873)
+        s = s.write(".Larr_push_rc_ok:\n");
         s = s.write("    cmp x21, x22\n");
         s = s.write("    b.ge .Larr_push_grow\n");  // len >= cap → grow
         // In place: store value at slot (len+1), bump len.
@@ -8902,7 +8912,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, x19\n");
         s = s.write("    b .Larr_push_ret\n");
         s = s.write(".Larr_push_grow:\n");
-        // newcap = cap == 0 ? 4 : cap * 2.
+        // newcap = cap == 0 ? 4 : cap * 2 — except a SHARED receiver with
+        // spare capacity (len < cap, #4873 un-share copy) keeps the same cap
+        // instead of doubling, halving the copy's arena footprint (the
+        // leak-mode self-compile is arena-bound, #3425). The x86 gate has
+        // the same len < cap keep-cap branch.
+        s = s.write("    mov x2, x22\n");
+        s = s.write("    cmp x21, x22\n");
+        s = s.write("    b.lt .Larr_push_cap\n");
         s = s.write("    cmp x22, #0\n");
         s = s.write("    b.ne .Larr_push_dbl\n");
         s = s.write("    mov x2, #4\n");
