@@ -5942,7 +5942,13 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
 pub struct OwnFunc { name: string, flags: boolean[] }
 struct MovedEntry { mname: string, mline: i32 }
 struct OwnWalk { moved: MovedEntry[], diags: Diag[] }
-struct OwnCtx { owned: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[] }
+// `admit` names the ONE local admitted as an owned argument while
+// walking the RHS of a self-reassign `x = f(..., x, ...)` (#4873 step 0
+// — the old binding dies at the assignment, so its exactly-once
+// own-position occurrence is a transfer). "" outside that walk. The
+// exactly-once check (ow_self_move_admits) makes name-keying equivalent
+// to the native checker's node-keying within the RHS subtree.
+struct OwnCtx { owned: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
     var i: i32 = 0;
@@ -6002,7 +6008,10 @@ function ow_is_owned_expr(e: parser.Expr, ctx: OwnCtx): boolean {
         parser.ExprArray(_) => { return true; },
         parser.ExprTuple(_) => { return true; },
         parser.ExprBinary(b) => { return b.op == "+"; },
-        parser.ExprIdent(id) => { return ow_is_owned(ctx, id.name); },
+        parser.ExprIdent(id) => {
+            if (ctx.admit.len() > 0 && ctx.admit == id.name) { return true; }
+            return ow_is_owned(ctx, id.name);
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => { return ow_struct_known(ctx.structs, cid.name); },
@@ -6011,6 +6020,73 @@ function ow_is_owned_expr(e: parser.Expr, ctx: OwnCtx): boolean {
         },
         _ => { return false; }
     }
+}
+
+// ow_count_ident counts occurrences of `name` as a bare ident anywhere
+// in `e` — the exactly-once probe for the self-reassign move admission.
+// Mirrors mc_mentions_expr's variant coverage; an unhandled variant
+// counts 0, which under-counts and therefore REJECTS (fails safe: the
+// admission needs exactly 1 and a direct-arg hit).
+function ow_count_ident_list(list: parser.Expr[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < list.len()) { n = n + ow_count_ident(list[i], name); i = i + 1; }
+    return n;
+}
+
+function ow_count_ident(e: parser.Expr, name: string): i32 {
+    match (e) {
+        parser.ExprIdent(id) => { if (id.name == name) { return 1; } return 0; },
+        parser.ExprBinary(b) => { return ow_count_ident(b.left, name) + ow_count_ident(b.right, name); },
+        parser.ExprUnary(u) => { return ow_count_ident(u.operand, name); },
+        parser.ExprCall(c) => { return ow_count_ident(c.callee, name) + ow_count_ident_list(c.args, name); },
+        parser.ExprArray(ar) => { return ow_count_ident_list(ar.elements, name); },
+        parser.ExprTuple(tp) => { return ow_count_ident_list(tp.elements, name); },
+        parser.ExprIndex(ix) => { return ow_count_ident(ix.array, name) + ow_count_ident(ix.index, name); },
+        parser.ExprSlice(sl) => { return ow_count_ident(sl.array, name) + ow_count_ident(sl.start, name) + ow_count_ident(sl.end, name); },
+        parser.ExprStructLit(st) => {
+            var n: i32 = 0;
+            if (st.has_base) { n = ow_count_ident(st.base, name); }
+            return n + ow_count_ident_list(st.field_values, name);
+        },
+        parser.ExprFieldAccess(fa) => { return ow_count_ident(fa.obj, name); },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+// ow_self_move_admits recognizes the #4873 step-0 shape for
+// `target = <value>`: value is a plain-ident-callee call to an own-func,
+// target occurs EXACTLY ONCE in the whole RHS (excluding the top-level
+// callee ident), and that occurrence is a direct bare-ident argument in
+// an `own` position. Byte-matches the native SelfReassignOwnMoveArg so
+// the two checkers admit identical programs.
+function ow_self_move_admits(target: string, value: parser.Expr, ctx: OwnCtx): boolean {
+    match (value) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (!ow_is_own_func(ctx.ofuncs, cid.name)) { return false; }
+                    if (ow_count_ident_list(c.args, target) != 1) { return false; }
+                    var flags: boolean[] = ow_func_flags(ctx.ofuncs, cid.name);
+                    var i: i32 = 0;
+                    while (i < c.args.len() && i < flags.len()) {
+                        match (c.args[i]) {
+                            parser.ExprIdent(aid) => {
+                                if (aid.name == target) { return flags[i]; }
+                            },
+                            _ => { }
+                        }
+                        i = i + 1;
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // ow_guard_call: E051 — each argument passed to an `own` parameter of a
@@ -6186,7 +6262,14 @@ function ow_stmt(st: parser.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         parser.StmtAssign(a) => {
             // Reassigning the bare owned param rebinds it to a fresh value, so
             // its consumed state resets; otherwise the rhs is a consume.
-            var rv: OwnWalk = ru_expr(a.value, moved, ctx);
+            // Self-reassign move admission (#4873 step 0): `x = f(..., x, ...)`
+            // with local x passed exactly once, directly, in an `own`
+            // position — admit that occurrence for the RHS walk only.
+            var actx: OwnCtx = ctx;
+            if (!ow_is_owned(ctx, a.target) && ow_self_move_admits(a.target, a.value, ctx)) {
+                actx = OwnCtx { owned: ctx.owned, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: a.target };
+            }
+            var rv: OwnWalk = ru_expr(a.value, moved, actx);
             if (ow_is_owned(ctx, a.target)) {
                 return OwnWalk { moved: ow_moved_del(rv.moved, a.target), diags: rv.diags };
             }
@@ -6289,7 +6372,7 @@ pub function own_diags(mod: parser.Module): Diag[] {
         var p: i32 = 0;
         while (p < fn.params.len()) { if (fn.params[p].own) { owned = owned.append(fn.params[p].name); } p = p + 1; }
         if (owned.len() > 0 || ofuncs.len() > 0) {
-            var ctx: OwnCtx = OwnCtx { owned: owned, ofuncs: ofuncs, structs: mod.structs };
+            var ctx: OwnCtx = OwnCtx { owned: owned, ofuncs: ofuncs, structs: mod.structs, admit: "" };
             var nomoved: MovedEntry[] = [];
             var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
             out = append_diags(out, r.diags);
