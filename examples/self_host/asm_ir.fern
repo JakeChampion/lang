@@ -3007,6 +3007,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (`a = a.append(v)`) reassign-dec — the reuse-analysis slice of goal #2.
     s = s.write(".Larr_push_grow:\n");
     s = s.write("    movq %r15, %rcx\n");
+    // #4873: a SHARED receiver with spare capacity (len < cap) lands here for
+    // an UN-SHARE copy, not a growth — keep the same cap instead of doubling,
+    // halving the copy's arena footprint (the leak-mode self-compile is
+    // arena-bound, #3425). True growth (len >= cap) still doubles.
+    s = s.write("    cmpq %r15, %r14\n");
+    s = s.write("    jl .Larr_push_cap\n");
     s = s.write("    cmpq $0, %rcx\n");
     s = s.write("    jne .Larr_push_dbl\n");
     s = s.write("    movq $4, %rcx\n");

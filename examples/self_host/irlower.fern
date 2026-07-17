@@ -34855,49 +34855,72 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
         masks = masks.append(mask);
         k = k + 1;
     }
-    // Fixpoint over dying pass-throughs.
+    // Resolve the dying pass-through EDGES once — they are static across
+    // fixpoint rounds (only masks change). Each edge says: caller e_fk's
+    // param e_ppi flows to free-function callee e_ck's position e_argi in a
+    // dying shape. The fixpoint below is then pure index arithmetic over
+    // these parallel arrays — the earlier shape re-walked every function's
+    // statements (grow_dying_passes_stmt + registry allocations) on EVERY
+    // round, which is pure garbage under the leak-mode self-compile arena
+    // (#3425) and helped push the per-module-built compiler over the wall.
+    var e_fk: i32[] = [];
+    var e_ck: i32[] = [];
+    var e_argi: i32[] = [];
+    var e_ppi: i32[] = [];
+    var fk0: i32 = 0;
+    while (fk0 < funcs.len()) {
+        var fd0: parser.FuncDecl = funcs[fk0];
+        var pnames0: string[] = [];
+        var pn0: i32 = 0;
+        while (pn0 < fd0.params.len()) { pnames0 = pnames0.append(fd0.params[pn0].name); pn0 = pn0 + 1; }
+        var passes0: string[] = [];
+        var sj0: i32 = 0;
+        while (sj0 < fd0.body.len()) { passes0 = grow_dying_passes_stmt(fd0.body[sj0], pnames0, passes0); sj0 = sj0 + 1; }
+        var q0: i32 = 0;
+        while (q0 < passes0.len()) {
+            var entry: string = passes0[q0];
+            var b1: i32 = 0;
+            while (b1 < entry.len() && entry[b1] != 124) { b1 = b1 + 1; }
+            var b2: i32 = b1 + 1;
+            while (b2 < entry.len() && entry[b2] != 124) { b2 = b2 + 1; }
+            var cname: str = entry[0:b1];
+            var argi: i32 = util.digits_to_i32(entry[b1 + 1 : b2]);
+            var pname: str = entry[b2 + 1 : entry.len()];
+            var ppi0: i32 = util.index_of_str(pnames0, pname + "");
+            var ck0: i32 = 0;
+            while (ck0 < funcs.len()) {
+                if (funcs[ck0].name == cname && funcs[ck0].receiver_type.len() == 0) {
+                    if (ppi0 >= 0) {
+                        e_fk = e_fk.append(fk0);
+                        e_ck = e_ck.append(ck0);
+                        e_argi = e_argi.append(argi);
+                        e_ppi = e_ppi.append(ppi0);
+                    }
+                    ck0 = funcs.len();
+                } else { ck0 = ck0 + 1; }
+            }
+            q0 = q0 + 1;
+        }
+        fk0 = fk0 + 1;
+    }
+    // Fixpoint over the resolved edges (monotone: only 0->1 flips, so the
+    // converged mask set is identical to the per-round re-walk's).
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        var fk: i32 = 0;
-        while (fk < funcs.len()) {
-            var fd: parser.FuncDecl = funcs[fk];
-            var pnames: string[] = [];
-            var pn: i32 = 0;
-            while (pn < fd.params.len()) { pnames = pnames.append(fd.params[pn].name); pn = pn + 1; }
-            var passes: string[] = [];
-            var sj: i32 = 0;
-            while (sj < fd.body.len()) { passes = grow_dying_passes_stmt(fd.body[sj], pnames, passes); sj = sj + 1; }
-            var pi2: i32 = 0;
-            while (pi2 < passes.len()) {
-                var entry: string = passes[pi2];
-                var b1: i32 = 0;
-                while (b1 < entry.len() && entry[b1] != 124) { b1 = b1 + 1; }
-                var b2: i32 = b1 + 1;
-                while (b2 < entry.len() && entry[b2] != 124) { b2 = b2 + 1; }
-                var cname: str = entry[0:b1];
-                var argi: i32 = util.digits_to_i32(entry[b1 + 1 : b2]);
-                var pname: str = entry[b2 + 1 : entry.len()];
-                // callee's mask at argi
-                var ck: i32 = 0;
-                while (ck < funcs.len()) {
-                    if (funcs[ck].name == cname && funcs[ck].receiver_type.len() == 0) {
-                        var cmask: string = masks[ck];
-                        if (argi < cmask.len() && cmask[argi] == 49) {   // '1'
-                            // set fd's param pname
-                            var ppi: i32 = util.index_of_str(pnames, pname);
-                            var fmask: string = masks[fk];
-                            if (ppi >= 0 && ppi < fmask.len() && fmask[ppi] != 49) {
-                                masks = masks.with(fk, fmask[0:ppi] + "1" + fmask[ppi + 1 : fmask.len()]);
-                                changed = true;
-                            }
-                        }
-                        ck = funcs.len();
-                    } else { ck = ck + 1; }
+        var ei: i32 = 0;
+        while (ei < e_fk.len()) {
+            var cmask: string = masks[e_ck[ei]];
+            var eargi: i32 = e_argi[ei];
+            if (eargi < cmask.len() && cmask[eargi] == 49) {   // '1'
+                var fmask: string = masks[e_fk[ei]];
+                var ppi: i32 = e_ppi[ei];
+                if (ppi < fmask.len() && fmask[ppi] != 49) {
+                    masks = masks.with(e_fk[ei], fmask[0:ppi] + "1" + fmask[ppi + 1 : fmask.len()]);
+                    changed = true;
                 }
-                pi2 = pi2 + 1;
             }
-            fk = fk + 1;
+            ei = ei + 1;
         }
     }
     var out: string[] = [];

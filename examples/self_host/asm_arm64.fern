@@ -8857,7 +8857,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, x19\n");
         s = s.write("    b .Larr_push_ret\n");
         s = s.write(".Larr_push_grow:\n");
-        // newcap = cap == 0 ? 4 : cap * 2.
+        // newcap = cap == 0 ? 4 : cap * 2 — except a SHARED receiver with
+        // spare capacity (len < cap, #4873 un-share copy) keeps the same cap
+        // instead of doubling, halving the copy's arena footprint (the
+        // leak-mode self-compile is arena-bound, #3425). The x86 gate has
+        // the same len < cap keep-cap branch.
+        s = s.write("    mov x2, x22\n");
+        s = s.write("    cmp x21, x22\n");
+        s = s.write("    b.lt .Larr_push_cap\n");
         s = s.write("    cmp x22, #0\n");
         s = s.write("    b.ne .Larr_push_dbl\n");
         s = s.write("    mov x2, #4\n");
