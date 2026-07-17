@@ -152,3 +152,20 @@ pub function (o: Option[T]) xor(other: Option[T]): Option[T] {
 pub function (o: Option[Option[T]]) flatten(): Option[T] {
     match (o) { Some(inner) => { return inner; }, None => { return None; } }
 }
+
+// transpose swaps an `Option` of a `Result` into a `Result` of an
+// `Option`: `None` -> `Ok(None)`, `Some(Ok(v))` -> `Ok(Some(v))`,
+// `Some(Err(e))` -> `Err(e)`. The `Result` sibling `Result.transpose`
+// is the exact inverse. Callback-free (a nested `match`), so it lowers
+// on every backend without touching the indirect-call seam.
+pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
+    match (o) {
+        Some(r) => {
+            match (r) {
+                Ok(x) => { return Ok(Some(x)); },
+                Err(e) => { return Err(e); }
+            }
+        },
+        None => { return Ok(None); }
+    }
+}
