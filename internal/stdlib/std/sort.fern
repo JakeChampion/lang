@@ -57,12 +57,12 @@
 // dispatch and re-spell these as `arr.sort_asc()`.
 //
 // Functional shape (returns a new array) matches the rest
-// of the prelude's array conventions (`arr.push` returns a
+// of std/array's conventions (`arr.push` returns a
 // new array); the input is not mutated — each merge pass
 // materializes `dst` as a FRESH copy of `src` (append loop)
 // before overwriting it slot by slot. Do not "optimize" this
 // back to `var dst = src;` + copy-on-write: the self-hosted
-// compiler has no Perceus yet, so on its non-IR paths `.with`
+// compiler has Perceus only on its IR paths, so on the AST paths `.with`
 // writes through an alias in place, and an aliased merge
 // corrupts (reads see this pass's writes — caught by
 // TestSelfHostSortX86_64 / TestSelfHostAuditStdArray in CI).

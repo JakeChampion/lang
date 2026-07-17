@@ -316,7 +316,7 @@ pub function __method_Array_median(arr: i32[]): Option[i32] {
 // element. Ties resolve to the first occurrence in the
 // original array order. Option[i32] None on empty. O(n^2)
 // naive count; fine for the small-n use cases this
-// prelude targets.
+// module targets.
 pub function __method_Array_mode(arr: i32[]): Option[i32] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
