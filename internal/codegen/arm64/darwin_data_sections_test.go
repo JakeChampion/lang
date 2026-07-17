@@ -56,7 +56,11 @@ function main(): i32 {
 
 func TestArm64DarwinClosureCellSection(t *testing.T) {
 	asm := compile(t, constFuncSrc, Options{Darwin: true})
-	got := sectionOfLabel(asm, "__closure_cell_dbl")
+	// The darwin dialect L-prefixes closure-cell labels (closureCellSym):
+	// an assembler-local label doesn't start a new ld64/ld-prime ATOM, so
+	// the cell stays glued to the anonymous rc header emitted just before
+	// it (the #5056 atom-split fix). The section guard below is unchanged.
+	got := sectionOfLabel(asm, "L__closure_cell_dbl")
 	if got == "" {
 		t.Fatal("__closure_cell_dbl not emitted; test can't guard its section")
 	}
