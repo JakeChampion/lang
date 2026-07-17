@@ -4506,15 +4506,26 @@ func irCaptureSlotSize(t ast.Type, ptrW int) int32 {
 
 // tupleEnumMangler is the shared escape table for tuple + enum
 // instantiation mangling. `[`/`]` carry enum type args, `(`/`)` carry
-// tuple-element lists, and `,` separates either; all four collapse to
-// `[A-Za-z0-9_]` tokens so the result is a valid wasm/asm symbol and
-// no two distinct types compress to the same mangled name.
+// tuple-element lists, and `,` separates either; a fn-typed element
+// (`(i32) => i32`) carries `=>`, a dyn-trait element can carry `+`
+// (trait composition), `=` (pinned associated types), and `:` (a
+// ProjType base); all collapse to `[A-Za-z0-9_]` tokens so the result
+// is a valid wasm/asm symbol and no two distinct types compress to the
+// same mangled name. (`=>` is listed before `=`/`>` so the arrow wins
+// at a position where both would match — strings.Replacer matches in
+// argument order.)
 var tupleEnumMangler = strings.NewReplacer(
 	"[", "_LB_",
 	"]", "_RB_",
 	"(", "_LP_",
 	")", "_RP_",
 	",", "_C_",
+	"=>", "_ARROW_",
+	"=", "_EQ_",
+	"+", "_PLUS_",
+	":", "_CO_",
+	"<", "_LT_",
+	">", "_GT_",
 	" ", "",
 )
 
@@ -8833,12 +8844,31 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if ename, _, _, ok := b.lookupVariantOn(x.Name, x.EnumName); ok {
 			return ast.EnumType{Name: ename}
 		}
+		// A top-level function name in value position (`(dbl, 1)`) is a
+		// function reference — pointer-shaped, same slot-sizing rationale
+		// as the variant case above (and the MakeClosure case below).
+		// Locals/params were already checked, so this cannot shadow one.
+		if ft, ok := b.info.FuncSigs[x.Name]; ok {
+			return ft
+		}
 	case *ast.CaptureRef:
 		// Captured variable references carry their resolved
 		// outer-scope type on the AST node — needed when the
 		// closure body asks "what struct/tuple is this?" for
 		// field-access offset resolution.
 		return x.Type
+	case *ast.MakeClosure:
+		// A closureconv-rewritten lambda produces a closure value — a
+		// heap pointer to the closure pair — so it is pointer-shaped.
+		// Without this case an enclosing TupleLit / StructLit sized the
+		// element slot at the payloadSlotSize(nil) 4-byte default while
+		// the read/drop side used the DECLARED (fn, …) layout's 8-byte
+		// slot: the store packed the neighbouring element 4 bytes below
+		// where the load expects it, and the tuple drop rc_dec'd the two
+		// misaligned halves as one garbage pointer → segfault. The
+		// params/result don't matter for slot sizing; an empty FuncType
+		// classifies as IsPointerType.
+		return &ast.FuncType{}
 	case *ast.FString:
 		// f-strings always produce a string. The arms of a
 		// MatchExpr returning f-strings need to mark the
