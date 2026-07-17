@@ -2485,12 +2485,33 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             } else if (b.op == "*") {
                 s = s.write("    mul x0, x0, x1\n");
             } else if (b.op == "/") {
-                s = s.write("    sdiv x0, x0, x1\n");
+                // UNSIGNED operands (u32/u64/usize) divide with udiv, not the
+                // signed sdiv — else a u64 value with bit 63 set (e.g. umax()
+                // = (0 as u64) - (1 as u64)) divides as a negative i64 and
+                // 18446744073709551615 / 10 yields 0 instead of the unsigned
+                // quotient (the `# std/u64 to_string umax` printed "/" =
+                // '0' + (-1 % 10)). Mirrors x86 asm.fern's emit_divmod and the
+                // arm64 IR path's ir_bin_asm (div_u tag 25). The signed path is
+                // unchanged. This only fires when a program routes the AST
+                // backend (over the IR budget) — the IR path already did udiv.
+                if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.left, s))
+                        || asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.right, s))) {
+                    s = s.write("    udiv x0, x0, x1\n");
+                } else {
+                    s = s.write("    sdiv x0, x0, x1\n");
+                }
             } else if (b.op == "%") {
                 // ARM64 has no native modulo. Compute via
                 // remainder = lhs - (lhs/rhs)*rhs.
                 // msub x_d, x_n, x_m, x_a → x_d = x_a - x_n*x_m
-                s = s.write("    sdiv x2, x0, x1\n");
+                // Unsigned operands take udiv (see `/` above); the msub is
+                // sign-agnostic (it recomputes lhs - q*rhs).
+                if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.left, s))
+                        || asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.right, s))) {
+                    s = s.write("    udiv x2, x0, x1\n");
+                } else {
+                    s = s.write("    sdiv x2, x0, x1\n");
+                }
                 s = s.write("    msub x0, x2, x1, x0\n");
             } else if (b.op == "&") {
                 s = s.write("    and x0, x0, x1\n");
