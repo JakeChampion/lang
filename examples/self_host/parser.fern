@@ -4167,6 +4167,23 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     if (p.peek_punct() == "(") {
         p = p.advance();
         receiver_name = p.peek_ident();
+        // `function (own s: T) name(…)` — the affine-ownership receiver
+        // modifier (mirrors parse_param's `own NAME: TYPE` probe: `own`
+        // only counts as the modifier when another ident follows, so a
+        // receiver literally named `own` still parses). The flag itself is
+        // NOT yet recorded on FuncDecl: the self-host backends lower every
+        // param — receiver included — as a borrow (leak-safe), so parsing
+        // past the keyword is all compilation needs. Threading a
+        // receiver_own flag through FuncDecl (for checker.fern's ow_
+        // method-call guard, mirroring the native checker's hoisted
+        // flags[0]) is the follow-up checker-parity slice.
+        if (receiver_name == "own") {
+            var rprobe: Par = p.advance();
+            if (rprobe.peek_ident().len() > 0) {
+                p = rprobe;
+                receiver_name = p.peek_ident();
+            }
+        }
         if (receiver_name.len() > 0) {
             p = p.advance();
             if (p.peek_punct() == ":") {
