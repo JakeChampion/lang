@@ -8,11 +8,11 @@
 // members; and fern.lock `[[package]]` entries with a `path` source. All
 // of these resolve from disk with no network or cache lookup.
 //
-// NOT covered: url+hash deps, and versioned deps whose lock source is a
-// `url` — those live in the per-machine content-addressed store, and the
-// self-host runtime has no getenv/home access to compute the store path
-// (a separate runtime-builtin item). A self-host program using those
-// forms falls back to plain on-disk resolution.
+// Covered since #4949: url+hash deps, and versioned deps whose lock
+// source is a `url` — both parse to their `sha256:<hex>` hash here, and
+// the loader (modloader.load_from_store) resolves them from the
+// per-machine content-addressed store via the `env` runtime builtin
+// (read-only; population + verification stay `fern -fetch`).
 //
 // Uses only the self-host emitter's subset (string index/slice/len/
 // append, ==, match, Option, while, structs), so it compiles with either
@@ -22,12 +22,17 @@
 
 // Dep is one declared dependency. `kind` tags the form the loader must
 // resolve: "path" (dir given by `path`), "workspace" (a sibling
-// workspace member, located by name), or "version" (an MVS dependency
-// resolved through fern.lock — `path` unused, the lock pins the source).
+// workspace member, located by name), "version" (an MVS dependency
+// resolved through fern.lock — `path` unused, the lock pins the source),
+// or "url" (a url+hash dep resolved from the per-machine content-
+// addressed store by `hash` — the loader never touches the network;
+// #4949). `hash` is the manifest's `sha256:<hex>` for a url dep, ""
+// otherwise.
 pub struct Dep {
     name: string,
     kind: string,
     path: string,
+    hash: string,
 }
 
 // Manifest is the subset the loader reads: the [package] name + lib
@@ -151,26 +156,46 @@ pub function parse(src: string): Manifest {
 function parse_dep(name: string, val: string): Dep {
     // Bare quoted string ⇒ version dep.
     if (val.len() > 0 && val[0] == 34) {   // '"'
-        return Dep { name: name, kind: "version", path: "" };
+        return Dep { name: name, kind: "version", path: "", hash: "" };
     }
     if (index_of_str(val, "workspace") >= 0 && index_of_str(val, "true") >= 0) {
-        return Dep { name: name, kind: "workspace", path: "" };
+        return Dep { name: name, kind: "workspace", path: "", hash: "" };
+    }
+    // url+hash dep: `{ url = "https://…", hash = "sha256:…" }` (#4949).
+    // Checked before the `version`/`path` substring probes because a URL
+    // VALUE can contain either word (".../versions/x.tar.gz"); requiring
+    // the `hash` key + a sha256-prefixed value keeps a stray "url" inside
+    // a path value from misclassifying (that value has no hash key).
+    var up: i32 = index_of_str(val, "url");
+    var hp: i32 = index_of_str(val, "hash");
+    if (up >= 0 && hp >= 0) {
+        var heq: i32 = index_of(val, 61, hp);   // '=' after hash
+        if (heq >= 0) {
+            match (quoted_value(val, heq)) {
+                Some(hv) => {
+                    if (hv.len() >= 8 && hv[0:7] == "sha256:") {
+                        return Dep { name: name, kind: "url", path: "", hash: hv };
+                    }
+                },
+                None => { },
+            }
+        }
     }
     var vp: i32 = index_of_str(val, "version");
     if (vp >= 0) {
-        return Dep { name: name, kind: "version", path: "" };
+        return Dep { name: name, kind: "version", path: "", hash: "" };
     }
     var p: i32 = index_of_str(val, "path");
     if (p >= 0) {
         var eq2: i32 = index_of(val, 61, p);   // '=' after path
         if (eq2 >= 0) {
             match (quoted_value(val, eq2)) {
-                Some(pv) => { return Dep { name: name, kind: "path", path: pv }; },
+                Some(pv) => { return Dep { name: name, kind: "path", path: pv, hash: "" }; },
                 None => { },
             }
         }
     }
-    return Dep { name: name, kind: "", path: "" };   // url/hash — native-only
+    return Dep { name: name, kind: "", path: "", hash: "" };   // unrecognised form
 }
 
 // parse_str_array parses a single-line inline array of quoted strings:
@@ -219,23 +244,37 @@ pub function dep_kind(m: Manifest, name: string): string {
     return "";
 }
 
+// dep_hash returns the `sha256:<hex>` hash of a url dependency `name`,
+// or None (undeclared, or not a url dep). Same primitive-Option shape as
+// dep_path.
+pub function dep_hash(m: Manifest, name: string): Option[string] {
+    var i: i32 = 0;
+    while (i < m.deps.len()) {
+        if (m.deps[i].name == name && m.deps[i].kind == "url" && m.deps[i].hash.len() > 0) {
+            return Some(m.deps[i].hash + "");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
 // LockEntry is one resolved dependency from fern.lock: the package name
-// and, for a `path`-sourced version, its directory. A `url`-sourced
-// version has an empty path — the self-host loader cannot reach the
-// content-addressed store (no getenv/cache-dir builtin), so those stay
-// native-only.
+// plus, for a `path`-sourced version, its directory, and for a
+// `url`-sourced version, its `sha256:<hex>` hash — resolved from the
+// per-machine content-addressed store (#4949).
 pub struct LockEntry {
     name: string,
     path: string,
+    hash: string,
 }
 
 // parse_lock reads a fern.lock's `[[package]]` entries, keeping the name
-// and (when the source is `path = "..."`) the directory. url-sourced
-// entries get an empty path.
+// plus the `path` directory (path-sourced) or the `hash` (url-sourced).
 pub function parse_lock(src: string): LockEntry[] {
     var out: LockEntry[] = [];
     var name: string = "";
     var path: string = "";
+    var hash: string = "";
     var have: boolean = false;
     var lines: string[] = split_lines(src);
     var li: i32 = 0;
@@ -245,9 +284,10 @@ pub function parse_lock(src: string): LockEntry[] {
         if (line.len() == 0) { continue; }
         if (line[0] == 35) { continue; }              // '#'
         if (line == "[[package]]") {
-            if (have) { out = out.append(LockEntry { name: name, path: path }); }
+            if (have) { out = out.append(LockEntry { name: name, path: path, hash: hash }); }
             name = "";
             path = "";
+            hash = "";
             have = true;
             continue;
         }
@@ -261,8 +301,11 @@ pub function parse_lock(src: string): LockEntry[] {
         if (key == "path") {
             match (quoted_value(val, 0)) { Some(v) => { path = v; }, None => { } }
         }
+        if (key == "hash") {
+            match (quoted_value(val, 0)) { Some(v) => { hash = v; }, None => { } }
+        }
     }
-    if (have) { out = out.append(LockEntry { name: name, path: path }); }
+    if (have) { out = out.append(LockEntry { name: name, path: path, hash: hash }); }
     return out;
 }
 
@@ -274,6 +317,20 @@ pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
     while (i < entries.len()) {
         if (entries[i].name == name && entries[i].path.len() > 0) {
             return Some(entries[i].path + "");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// lock_hash_of returns the `sha256:<hex>` hash of a url-sourced locked
+// dependency `name`, or None — the store-resolution counterpart of
+// lock_path_of (#4949).
+pub function lock_hash_of(entries: LockEntry[], name: string): Option[string] {
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        if (entries[i].name == name && entries[i].hash.len() > 0) {
+            return Some(entries[i].hash + "");
         }
         i = i + 1;
     }
