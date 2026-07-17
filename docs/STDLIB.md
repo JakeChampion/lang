@@ -582,6 +582,12 @@ Percent-encoding, URL parsing, query parsing.
   stay on one line). Same value tokens as `json_encode` — only
   whitespace differs.
 - `json_parse(s: string): Option[JsonValue]`
+- `json_escape(s: string): string` — escape a raw string for embedding
+  inside a JSON string literal (caller supplies the quotes): `\` `"`
+  backslash-escaped, `\n` `\r` `\t` short escapes, other C0 controls as
+  lowercase `\u00XX`, everything else byte-for-byte. The one shared
+  escaper — the `JsonValue` encoder, `@derive(json.Json)`, and
+  `std/log`'s JSON-lines mode all route through it.
 
 ### `std/http`
 
