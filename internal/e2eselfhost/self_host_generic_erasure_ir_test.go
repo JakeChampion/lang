@@ -76,6 +76,16 @@ var genericErasureIRCases = []struct {
 	// unchanged (regression guards).
 	{"dup-i32arr-regress", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(20); return a[0] + a[1] + 2; }", 42},
 	{"opt-try-scalar-regress", "function some1[T](x: T): Option[T] { return Some(x); } function unwrap(): Option[i32] { var n = some1(40)?; return Some(n + 2); } function main(): i32 { match (unwrap()) { Some(v) => { return v; }, None => { return 0; } } }", 42},
+	// A TUPLE payload inside an erased-generic Option (`Option[(T, i32)]`): the
+	// type-var element is rewritten to $arg<i> anywhere in the spelling (not
+	// just a bare payload), so the match-bound `t.0` str-tracks. Before, the
+	// raw "(T, i32)" tag mis-typed t.0 and `.len()` read 0 (exit 39).
+	{"opt-tuple-payload", "function mk[T](x: T): Option[(T, i32)] { return Some((x, 1)); } function main(): i32 { match (mk(\"abc\")) { Some(t) => { return t.0.len() + t.1 + 38; }, None => { return 0; } } }", 42},
+	// The Result[(T, i32), E] sibling via `?`.
+	{"result-tuple-payload", "function mk[T](x: T): Result[(T, i32), i32] { return Ok((x, 1)); } function helper(): Result[i32, i32] { var t = mk(\"abc\")?; return Ok(t.0.len() + t.1); } function main(): i32 { match (helper()) { Ok(n) => { return n + 38; }, Err(e) => { return 0; } } }", 42},
+	// A TWO-type-var tuple payload (`Option[(K, V)]`) at (string, string): both
+	// element vars resolve from their respective arguments.
+	{"opt-tuple-two-var", "function mk[K, V](k: K, v: V): Option[(K, V)] { return Some((k, v)); } function main(): i32 { match (mk(\"ab\", \"cde\")) { Some(t) => { return t.0.len() * 10 + t.1.len(); }, None => { return 0; } } }", 23},
 }
 
 // TestSelfHostGenericErasureIRX86_64 — erased-generic returns through the
