@@ -6478,6 +6478,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             is_clo_arr = s.is_closurearr_slot(caslot);
                             idx_is_arr = s.is_arr_slot(caslot);
                         },
+                        // `mk()[i](args)` — indexing a CALL's result directly,
+                        // no binding. A closurearr-returning callee makes the
+                        // element an env box (env-first dispatch below), same
+                        // as an is_closurearr LOCAL. Before this arm the shape
+                        // fell to s.fail() and the module took the legacy AST
+                        // path, which miscompiles it.
+                        parser.ExprCall(cacall) => {
+                            match (cacall.callee) {
+                                parser.ExprIdent(cacid) => {
+                                    if (s.is_closurearr_ret_fn(cacid.name)) {
+                                        is_clo_arr = true;
+                                        idx_is_arr = true;
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
                         _ => {}
                     }
                     if (is_clo_arr) {
@@ -26106,11 +26123,37 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         subword = subword.append(subword_kind_of_name(fn.params[i].type_name));
         i = i + 1;
     }
-    // Closure-arrays are detected at local binding time, not from params, so
-    // every slot starts false (a fresh boolean[] of the parameter count).
+    // Closure-arrays are detected at local binding time — and from an fn-ARRAY
+    // param whose fn_param_sigs flag is '3': fn_param_sigs_of proved every call
+    // site in the module passes a definite closure ARRAY (boxed elements), so
+    // `fns[i](args)` inside the body must dispatch env-first — without the mark
+    // the call bare-calls the element box pointer as code (SIGSEGV). A '3' is
+    // NEVER set when any caller passes a bare fn-POINTER array (`[inc, dbl]`),
+    // which keeps the plain call_indirect dispatch those need. The self-host
+    // compiler's own source has no fn-array params, so this never fires there —
+    // the byte-identical fixpoint is undisturbed. The receiver slot (names[0]
+    // when nrecv0 == 1) can never be an fn-array.
+    var nrecv0: i32 = 0;
+    if (fn.receiver_name.len() > 0) { nrecv0 = 1; }
+    var own_pflags: string = "";
+    if (fn.receiver_type.len() == 0) {
+        var opfi: i32 = 0;
+        while (opfi < fn_param_sigs.len()) {
+            var opfe: string = fn_param_sigs[opfi];
+            var opfb: i32 = 0;
+            while (opfb < opfe.len() && opfe[opfb] != 124) { opfb = opfb + 1; }   // 124 = '|'
+            if (opfb < opfe.len() && opfe[0:opfb] == fn.name) { own_pflags = opfe[opfb + 1 : opfe.len()] + ""; }
+            opfi = opfi + 1;
+        }
+    }
     var isclosurearr: boolean[] = [];
     var ci: i32 = 0;
-    while (ci < names.len()) { isclosurearr = isclosurearr.append(false); ci = ci + 1; }
+    while (ci < names.len()) {
+        var cloarr: boolean = false;
+        if (ci >= nrecv0 && ci - nrecv0 < own_pflags.len() && own_pflags[ci - nrecv0] == 51) { cloarr = true; }   // 51 = '3'
+        isclosurearr = isclosurearr.append(cloarr);
+        ci = ci + 1;
+    }
     var isfnarr: boolean[] = [];
     var cif: i32 = 0;
     while (cif < names.len()) { isfnarr = isfnarr.append(false); cif = cif + 1; }
@@ -28039,11 +28082,65 @@ function body_binds_closure_local(body: parser.Stmt[], name: string, closureset:
                     }
                 }
             },
+            // A binding inside a nested block (`if (…) { var f = <lambda>;
+            // return f; }`) is in scope for the return in that same block, so
+            // recurse. Over-approximates scoping (a shadowing same-name var in
+            // a sibling branch also matches) but the fn-return-type gate on
+            // every consumer keeps this to genuine closure factories.
+            parser.StmtIf(bif) => {
+                if (body_binds_closure_local(bif.then_body, name, closureset)) { return true; }
+                if (body_binds_closure_local(bif.else_body, name, closureset)) { return true; }
+            },
+            parser.StmtWhile(bwh) => {
+                if (body_binds_closure_local(bwh.body, name, closureset)) { return true; }
+            },
+            parser.StmtFor(bfr) => {
+                if (body_binds_closure_local(bfr.body, name, closureset)) { return true; }
+            },
+            parser.StmtMatch(bmt) => {
+                var bmi: i32 = 0;
+                while (bmi < bmt.arms.len()) {
+                    if (body_binds_closure_local(bmt.arms[bmi].body, name, closureset)) { return true; }
+                    bmi = bmi + 1;
+                }
+            },
             _ => {}
         }
         i = i + 1;
     }
     return false;
+}
+
+// collect_returns appends the value expression of EVERY `return` in `body` —
+// including returns nested inside if/else branches, while/for loop bodies, and
+// match arms — to `acc`. closure_ret_fns_of / closurearr_ret_fns_of use it so
+// a factory that returns its closure from a BRANCH (`if (flag) { var f = …;
+// return f; } else { … }`) is detected, not just one whose LAST statement is
+// the return. Before this, a branch-returning factory left the caller's slot
+// unmarked and `g(args)` bare-called the box pointer as code — SIGSEGV.
+function collect_returns(body: parser.Stmt[], acc: parser.Expr[]): parser.Expr[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtReturn(r) => { acc = acc.append(r.value); },
+            parser.StmtIf(cif) => {
+                acc = collect_returns(cif.then_body, acc);
+                acc = collect_returns(cif.else_body, acc);
+            },
+            parser.StmtWhile(cwh) => { acc = collect_returns(cwh.body, acc); },
+            parser.StmtFor(cfr) => { acc = collect_returns(cfr.body, acc); },
+            parser.StmtMatch(cmt) => {
+                var cmi: i32 = 0;
+                while (cmi < cmt.arms.len()) {
+                    acc = collect_returns(cmt.arms[cmi].body, acc);
+                    cmi = cmi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return acc;
 }
 
 pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
@@ -28071,37 +28168,48 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         while (fi < funcs.len()) {
             if (util.index_of_str(out, funcs[fi].name) < 0) {
                 var b: parser.Stmt[] = funcs[fi].body;
-                if (b.len() > 0) {
+                // With a declared fn return type, check EVERY return in the
+                // body (branch / loop / match-arm returns included — see
+                // collect_returns); without one, only the last-statement
+                // `return <capturing lambda>` form applies (below), keeping
+                // the no-annotation behaviour untouched.
+                if (funcs[fi].ret_type == "fn") {
+                    var rets: parser.Expr[] = collect_returns(b, []);
+                    var hit: boolean = false;
+                    var ri: i32 = 0;
+                    while (ri < rets.len()) {
+                        match (rets[ri]) {
+                            parser.ExprLambda(nlam) => {
+                                if (!lambda_has_no_captures(nlam, gfns)) { hit = true; }
+                            },
+                            parser.ExprIdent(nrid) => {
+                                if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
+                            },
+                            // (c) `return <closure-returning call>` — a factory
+                            // that forwards another factory's box, e.g.
+                            // `return makeAdder();`. The callee is a top-level
+                            // fn already known to return a closure box (`out`,
+                            // resolved by the fixpoint) or an inline `__mkclo$`
+                            // env-box constructor.
+                            parser.ExprCall(nrcc) => {
+                                match (nrcc.callee) {
+                                    parser.ExprIdent(nrccid) => {
+                                        if ((nrccid.name.len() > 8 && nrccid.name[0:8] == "__mkclo$") || util.index_of_str(out, nrccid.name) >= 0) { hit = true; }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                        ri = ri + 1;
+                    }
+                    if (hit) { out = out.append(funcs[fi].name); changed = true; }
+                } else if (b.len() > 0) {
                     match (b[b.len() - 1]) {
                         parser.StmtReturn(r) => {
                             match (r.value) {
                                 parser.ExprLambda(lam) => {
                                     if (!lambda_has_no_captures(lam, gfns)) { out = out.append(funcs[fi].name); changed = true; }
-                                },
-                                parser.ExprIdent(rid) => {
-                                    if (funcs[fi].ret_type == "fn" && body_binds_closure_local(b, rid.name, out)) {
-                                        out = out.append(funcs[fi].name);
-                                        changed = true;
-                                    }
-                                },
-                                // (c) `return <closure-returning call>` — a factory
-                                // that forwards another factory's box, e.g.
-                                // `return makeAdder();`. The callee is a top-level
-                                // fn already known to return a closure box (`out`,
-                                // resolved by the fixpoint) or an inline `__mkclo$`
-                                // env-box constructor. Same fn-return gate.
-                                parser.ExprCall(rcc) => {
-                                    if (funcs[fi].ret_type == "fn") {
-                                        match (rcc.callee) {
-                                            parser.ExprIdent(rccid) => {
-                                                if ((rccid.name.len() > 8 && rccid.name[0:8] == "__mkclo$") || util.index_of_str(out, rccid.name) >= 0) {
-                                                    out = out.append(funcs[fi].name);
-                                                    changed = true;
-                                                }
-                                            },
-                                            _ => {}
-                                        }
-                                    }
                                 },
                                 _ => { }
                             }
@@ -28145,46 +28253,102 @@ function array_lit_is_closurearr(init: parser.Expr, closureset: string[]): boole
     return false;
 }
 
+// body_binds_closurearr_local reports whether `body` (recursing into nested
+// blocks, mirroring body_binds_closure_local) binds local `name` to a closure
+// ARRAY: a closure-array literal, or a call to a function already known to
+// return one (`caset`, resolved by closurearr_ret_fns_of's fixpoint).
+function body_binds_closurearr_local(body: parser.Stmt[], name: string, closureset: string[], caset: string[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(sv) => {
+                if (sv.name == name) {
+                    if (array_lit_is_closurearr(sv.init, closureset)) { return true; }
+                    match (sv.init) {
+                        parser.ExprCall(bcc) => {
+                            match (bcc.callee) {
+                                parser.ExprIdent(bcid) => {
+                                    if (util.index_of_str(caset, bcid.name) >= 0) { return true; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(bif) => {
+                if (body_binds_closurearr_local(bif.then_body, name, closureset, caset)) { return true; }
+                if (body_binds_closurearr_local(bif.else_body, name, closureset, caset)) { return true; }
+            },
+            parser.StmtWhile(bwh) => {
+                if (body_binds_closurearr_local(bwh.body, name, closureset, caset)) { return true; }
+            },
+            parser.StmtFor(bfr) => {
+                if (body_binds_closurearr_local(bfr.body, name, closureset, caset)) { return true; }
+            },
+            parser.StmtMatch(bmt) => {
+                var bmi: i32 = 0;
+                while (bmi < bmt.arms.len()) {
+                    if (body_binds_closurearr_local(bmt.arms[bmi].body, name, closureset, caset)) { return true; }
+                    bmi = bmi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     // The single-closure registry, reused so a `[mk(), …]` element (mk a
     // closure factory) counts as a closure-array element.
     var closureset: string[] = closure_ret_fns_of(funcs);
     var out: string[] = [];
-    var fi: i32 = 0;
-    while (fi < funcs.len()) {
-        // Only functions declared to return a fn-ARRAY (`((T) => R)[]`,
-        // coarsed to "fn[]") — never the compiler's own sources, keeping the
-        // self-compile fixpoint byte-identical.
-        if (funcs[fi].ret_type == "fn[]") {
-            var b: parser.Stmt[] = funcs[fi].body;
-            if (b.len() > 0) {
-                match (b[b.len() - 1]) {
-                    parser.StmtReturn(r) => {
-                        match (r.value) {
-                            parser.ExprArray(_) => {
-                                if (array_lit_is_closurearr(r.value, closureset)) { out = out.append(funcs[fi].name); }
-                            },
-                            parser.ExprIdent(rid) => {
-                                // `var a = [<closures>]; return a;` — find a's binding.
-                                var si: i32 = 0;
-                                while (si < b.len()) {
-                                    match (b[si]) {
-                                        parser.StmtVar(sv) => {
-                                            if (sv.name == rid.name && array_lit_is_closurearr(sv.init, closureset)) { out = out.append(funcs[fi].name); }
-                                        },
-                                        _ => {}
-                                    }
-                                    si = si + 1;
-                                }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
+    // Only functions declared to return a fn-ARRAY (`((T) => R)[]`, coarsed
+    // to "fn[]") — never the compiler's own sources, keeping the self-compile
+    // fixpoint byte-identical. EVERY return in the body counts (branch /
+    // loop / match-arm returns via collect_returns), in three forms:
+    //   (a) `return [<closure>, …]` — a closure-array literal;
+    //   (b) `return <ident>` bound (anywhere in the body) to such a literal
+    //       or to a closurearr-returning call;
+    //   (c) `return <closurearr-returning call>` — a factory that FORWARDS
+    //       another factory's array, e.g. `return mk();` (fixpoint-ordered,
+    //       like closure_ret_fns_of's transitive form).
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var fi: i32 = 0;
+        while (fi < funcs.len()) {
+            if (funcs[fi].ret_type == "fn[]" && util.index_of_str(out, funcs[fi].name) < 0) {
+                var rets: parser.Expr[] = collect_returns(funcs[fi].body, []);
+                var hit: boolean = false;
+                var ri: i32 = 0;
+                while (ri < rets.len()) {
+                    match (rets[ri]) {
+                        parser.ExprArray(_) => {
+                            if (array_lit_is_closurearr(rets[ri], closureset)) { hit = true; }
+                        },
+                        parser.ExprIdent(rid) => {
+                            if (body_binds_closurearr_local(funcs[fi].body, rid.name, closureset, out)) { hit = true; }
+                        },
+                        parser.ExprCall(rcc) => {
+                            match (rcc.callee) {
+                                parser.ExprIdent(rccid) => {
+                                    if (util.index_of_str(out, rccid.name) >= 0) { hit = true; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    ri = ri + 1;
                 }
+                if (hit) { out = out.append(funcs[fi].name); changed = true; }
             }
+            fi = fi + 1;
         }
-        fi = fi + 1;
     }
     return out;
 }
@@ -28193,7 +28357,136 @@ pub function (s: LowerState) is_closurearr_ret_fn(name: string): boolean {
     return util.index_of_str(s.closurearr_ret_fns, name) >= 0;
 }
 
+// arg_is_closurearr classifies a call ARGUMENT at an fn-array param position:
+// true only when the arg is PROVABLY an array of closure boxes — a closure-
+// array literal, a call to a closurearr-returning fn, or an ident bound
+// (anywhere in the calling body) to either. Anything else — a bare-fn array
+// (`[inc, dbl]`), an unresolvable ident — reads false, keeping the callee on
+// the plain fn-pointer dispatch those need.
+function arg_is_closurearr(arg: parser.Expr, caller_body: parser.Stmt[], closureset: string[], caset: string[]): boolean {
+    match (arg) {
+        parser.ExprArray(_) => { return array_lit_is_closurearr(arg, closureset); },
+        parser.ExprCall(ac) => {
+            match (ac.callee) {
+                parser.ExprIdent(acid) => { return util.index_of_str(caset, acid.name) >= 0; },
+                _ => {}
+            }
+        },
+        parser.ExprIdent(aid) => { return body_binds_closurearr_local(caller_body, aid.name, closureset, caset); },
+        _ => {}
+    }
+    return false;
+}
+
+// ca_classify_top classifies expression `e` when it is a DIRECT call to
+// `fname` (the whole init / return value / assign value / expression
+// statement): returns (seen, ok) — seen=1 when it IS such a call, ok=1 when
+// additionally the arg at `pidx` is a provable closure array.
+function ca_classify_top(e: parser.Expr, fname: string, pidx: i32, caller_body: parser.Stmt[], closureset: string[], caset: string[]): (i32, i32) {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == fname) {
+                        if (pidx < c.args.len() && arg_is_closurearr(c.args[pidx], caller_body, closureset, caset)) { return (1, 1); }
+                        return (1, 0);
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return (0, 0);
+}
+
+// ca_scan_stmts walks `body` (recursing into if/while/for/match blocks)
+// counting the statement-top-level direct calls to `fname` — (seen, ok)
+// summed via ca_classify_top. Calls buried at NESTED expression positions
+// (`1 + f(a)`) are deliberately not classified; fnarr_param_all_closurearr's
+// ident-occurrence cross-check catches them as unknown.
+function ca_scan_stmts(body: parser.Stmt[], fname: string, pidx: i32, caller_body: parser.Stmt[], closureset: string[], caset: string[]): (i32, i32) {
+    var seen: i32 = 0;
+    var okc: i32 = 0;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(sv) => { var (va, vb) = ca_classify_top(sv.init, fname, pidx, caller_body, closureset, caset); seen = seen + va; okc = okc + vb; },
+            parser.StmtReturn(sr) => { var (ra, rb) = ca_classify_top(sr.value, fname, pidx, caller_body, closureset, caset); seen = seen + ra; okc = okc + rb; },
+            parser.StmtExpr(sx) => { var (xa, xb) = ca_classify_top(sx.value, fname, pidx, caller_body, closureset, caset); seen = seen + xa; okc = okc + xb; },
+            parser.StmtAssign(sa) => { var (aa, ab) = ca_classify_top(sa.value, fname, pidx, caller_body, closureset, caset); seen = seen + aa; okc = okc + ab; },
+            parser.StmtIf(sif) => {
+                var (ia, ib) = ca_scan_stmts(sif.then_body, fname, pidx, caller_body, closureset, caset);
+                seen = seen + ia; okc = okc + ib;
+                var (ea, eb) = ca_scan_stmts(sif.else_body, fname, pidx, caller_body, closureset, caset);
+                seen = seen + ea; okc = okc + eb;
+            },
+            parser.StmtWhile(swh) => { var (wa, wb) = ca_scan_stmts(swh.body, fname, pidx, caller_body, closureset, caset); seen = seen + wa; okc = okc + wb; },
+            parser.StmtFor(sfr) => { var (fa2, fb2) = ca_scan_stmts(sfr.body, fname, pidx, caller_body, closureset, caset); seen = seen + fa2; okc = okc + fb2; },
+            parser.StmtMatch(smt) => {
+                var mi: i32 = 0;
+                while (mi < smt.arms.len()) {
+                    var (ma, mb) = ca_scan_stmts(smt.arms[mi].body, fname, pidx, caller_body, closureset, caset);
+                    seen = seen + ma; okc = okc + mb;
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return (seen, okc);
+}
+
+// fnarr_param_all_closurearr proves that EVERY use of free function `fname`
+// in the module passes a definite closure array at param `pidx`: every
+// statement-top-level call classifies ok, and the total ident-occurrence
+// count of `fname` equals the classified-call count (so a call at a nested
+// expression position or a bare fn-value reference — either of which the
+// classifier can't see — reads as unknown and blocks the proof). At least
+// one call must exist.
+function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pidx: i32, closureset: string[], caset: string[]): boolean {
+    var nseen: i32 = 0;
+    var nok: i32 = 0;
+    var nident: i32 = 0;
+    var fi: i32 = 0;
+    while (fi < funcs.len()) {
+        var (cs, co) = ca_scan_stmts(funcs[fi].body, fname, pidx, funcs[fi].body, closureset, caset);
+        nseen = nseen + cs;
+        nok = nok + co;
+        var ids: string[] = [];
+        var sj: i32 = 0;
+        while (sj < funcs[fi].body.len()) { ids = astwalk.collect_idents_stmt(funcs[fi].body[sj], ids); sj = sj + 1; }
+        var ii: i32 = 0;
+        while (ii < ids.len()) { if (ids[ii] == fname) { nident = nident + 1; } ii = ii + 1; }
+        fi = fi + 1;
+    }
+    return nseen > 0 && nok == nseen && nident == nseen;
+}
+
 pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
+    // The closure registries feed the '3' (closure-array param) proof below.
+    // Computed LAZILY — only when some receiver-less function actually has an
+    // "fn[]" param — so the bootstrap self-compile (which has none) pays
+    // nothing and its registry stays byte-identical.
+    var have_fnarr: boolean = false;
+    var hk: i32 = 0;
+    while (hk < funcs.len()) {
+        if (funcs[hk].receiver_type.len() == 0) {
+            var hpj: i32 = 0;
+            while (hpj < funcs[hk].params.len()) {
+                if (funcs[hk].params[hpj].type_name == "fn[]") { have_fnarr = true; }
+                hpj = hpj + 1;
+            }
+        }
+        hk = hk + 1;
+    }
+    var closureset: string[] = [];
+    var caset: string[] = [];
+    if (have_fnarr) {
+        closureset = closure_ret_fns_of(funcs);
+        caset = closurearr_ret_fns_of(funcs);
+    }
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
@@ -28212,6 +28505,14 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
             // pointer flows in one word unchanged (no per-call box).
             else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
                      && !is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "2"; any = true; }
+            // An fn-ARRAY param (`((T) => R)[]`, coarsed "fn[]") whose every
+            // call site provably passes a closure ARRAY: flag '3'. lower_func
+            // marks the param slot is_closurearr so `fns[i](args)` dispatches
+            // env-first (the elements are boxes). Distinct from '1'/'2' so the
+            // existing consumers are unaffected. Free functions only — a
+            // method's call sites aren't scanned.
+            else if (have_fnarr && funcs[k].params[pj].type_name == "fn[]" && funcs[k].receiver_type.len() == 0
+                     && fnarr_param_all_closurearr(funcs, funcs[k].name, pj, closureset, caset)) { flags = flags + "3"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }

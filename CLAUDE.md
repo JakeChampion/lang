@@ -208,6 +208,22 @@ tractable goal-1 IR-widening work is essentially done; the next frontier
 is **goal 2** (the Perceus port — reuse analysis is the remaining large,
 memory-safety-critical piece; inc/dec, borrow, drop-specialisation, and
 per-type struct-drop / field-reclaim slices already landed).
+**Caveat (2026-07): runtime-correctness probing still pays.** The
+path-probe drivers only tell you WHERE a program lowers, not whether the
+lowered code is RIGHT. Differential probing (native `-interp` exit code
+vs the self-host-IR-compiled binary's) found a whole closure-dispatch
+bug cluster the probe methodology above misses — escaping-closure /
+closure-array shapes that lowered on the IR path but SIGSEGV'd or
+silently miscompiled at runtime (#5001/#5007/#5009/#5026 + the
+param/branch/transitive/direct-index fixes). One genuine goal-1 gap
+remains known: **fn-typed tuple elements** — parser.fern's
+`parse_type_name` coarsens ANY parenthesized type containing `=>` to
+"fn", so `((i32) => i32, i32)` isn't even a tuple type to the self-host
+compiler and factories returning one bail to the legacy AST path (which
+miscompiles the element call). The fix needs a depth-1-comma check in
+the parser plus a "clo" element tag with env-first `t.N(args)` dispatch
+(design notes: the tuple-fn cases in `internal/e2e/tuple_fn_elem_test.go`
+pin the NATIVE side, which is fixed).
 
 ## Engineering bar (non-negotiable)
 
