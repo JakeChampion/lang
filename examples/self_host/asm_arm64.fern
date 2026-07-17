@@ -3659,6 +3659,16 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // method call on it dispatches by runtime shape, not the
             // primitive path. See the x86-64 backend for the rationale.
             if (asmcore.ty_is_array(iter_ty)) { elem_ty = asmcore.ty_unknown(); }
+            // `for b in STR` (iterate a string's BYTES): a string box is
+            // { data_ptr @0, len @8 } with byte elements, NOT the array layout
+            // (len @0, 8-byte elements @ base + (idx+1)*8) the loop below
+            // assumes — reading it as an array walks the header as data (#2822).
+            // The IR path desugars this in lower_string_foreach; the AST path
+            // (which emits the runtime helpers via emit_runtime_fern_fn, e.g.
+            // __fern_str_to_i32's `for b in s`) needs the same string-shaped
+            // length load + byte element load. Bytes bind as i32.
+            var is_str_iter: boolean = asmcore.ty_is_string(iter_ty);
+            if (is_str_iter) { elem_ty = asmcore.ty_i32(); }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + util.i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -3677,17 +3687,28 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             var end_lbl: i32 = s.label_n + 2;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 3 };
             s = s.write(".Lfor_top_" + util.i32_to_string(top_lbl) + ":\n");
-            // Condition.
+            // Condition: idx < len. String len is @8; array len is @0.
             s = s.frame_ldr("x0", arr_off);
-            s = s.write("    ldr x1, [x0]\n");
+            if (is_str_iter) {
+                s = s.write("    ldr x1, [x0, #8]\n");
+            } else {
+                s = s.write("    ldr x1, [x0]\n");
+            }
             s = s.frame_ldr("x2", idx_off);
             s = s.write("    cmp x2, x1\n");
             s = s.write("    b.ge .Lfor_end_" + util.i32_to_string(end_lbl) + "\n");
-            // Bind element.
+            // Bind element. String: byte-load data_ptr[idx] (data_ptr @0);
+            // array: 8-byte element at base + (idx+1)*8 (header offset).
             s = s.frame_ldr("x0", arr_off);
-            s = s.frame_ldr("x1", idx_off);
-            s = s.write("    add x1, x1, #1\n");
-            s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            if (is_str_iter) {
+                s = s.write("    ldr x3, [x0]\n");           // data_ptr @0
+                s = s.frame_ldr("x1", idx_off);
+                s = s.write("    ldrb w0, [x3, x1]\n");      // byte at data[idx] (zero-extends)
+            } else {
+                s = s.frame_ldr("x1", idx_off);
+                s = s.write("    add x1, x1, #1\n");
+                s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            }
             s = s.frame_str("x0", elem_off);
             // Body — break → .Lfor_end; continue → .Lfor_cont.
             s = s.push_loop_labels(".Lfor_end_" + util.i32_to_string(end_lbl), ".Lfor_cont_" + util.i32_to_string(cont_lbl));
