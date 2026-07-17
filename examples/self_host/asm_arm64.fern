@@ -4137,8 +4137,12 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         // A `string` field is rc-headered (#4294); reclaimed via the rc-aware
         // __fern_str_free (free rc==1, dec rc>1, skip view/literal rc<0), balanced
         // by the shared-irlower construction alias-inc. Mirrors the x86 k_str arm
-        // (#4297 A2). Fires only for reclaimable, non-escaping struct locals.
-        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
+        // (#4297 A2). GATED on the whole-program read scan ("strfldok:<T>"),
+        // exactly like __field_reclaim_<T>'s string arm above: the construction
+        // retain only fires for STRFLDOK-admitted types, so a non-admitted
+        // type's string fields are uncounted aliases this free would dangle —
+        // the merged-bundle IR self-compile corruption (#3425, x86 twin note).
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
         // A DIRECT enum field (`e: MyEnum`, decl_is_enum): freed SHALLOW via the same
         // __fern_arr_dec as the scalar-array / nested-struct box (arr_dec frees enum
         // boxes too) — one level, the variant payload leaks (deferred deep-drop).
