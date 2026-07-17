@@ -893,12 +893,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E057: `cell_new(v)` constructs a Cell[T]; T must be cycle-free —
 		// a scalar (i32/i64/f64/bool) or string. A composite / reference
 		// argument (struct, array, tuple, another cell) is E057, reported
-		// at the argument. The Go checker's type-annotation form
-		// (`Cell[T]` in a field/param) reports E057 at the synthesised Cell
-		// builtin decl (position 0:0), which diag.Format renders without a
-		// code, so the differential keys off the value form (cell_new),
-		// whose diagnostic carries the argument position. Cross-checked
-		// against the Go checker.
+		// at the argument. Cross-checked against the Go checker.
 		{"cellnew-i32-ok", "function main(): i32 { var c = cell_new(5); return 0; }\n", nil},
 		{"cellnew-string-ok", "function main(): i32 { var c = cell_new(\"x\"); return 0; }\n", nil},
 		{"cellnew-bool-ok", "function main(): i32 { var c = cell_new(1 < 2); return 0; }\n", nil},
@@ -906,6 +901,31 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cellnew-array-bad", "function main(): i32 { var a: i32[] = [1]; var c = cell_new(a); return 0; }\n", []string{"E057"}},
 		{"cellnew-tuple-bad", "function main(): i32 { var t = (1, 2); var c = cell_new(t); return 0; }\n", []string{"E057"}},
 		{"cellnew-nested-bad", "function main(): i32 { var c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
+		// E057 ANNOTATION form (#4363 item 2): `Cell[<composite>]` in a
+		// param / field / body-var / return annotation — including a Cell
+		// nested inside a generic argument, tuple element, or array element
+		// spelling — draws E057, anchored at the annotation (the native
+		// checker now reports the use site instead of the synthesised Cell
+		// decl at 0:0, so the code is visible to this differential). A
+		// generic's `Cell[T]` over an in-scope type parameter stays clean
+		// (natively a ParamType element; the self-host scopes the walk to
+		// non-generic decls). Cross-checked against the Go checker.
+		{"cell-annot-param-bad", "struct P { x: i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-field-bad", "struct P { x: i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-var-bad", "struct P { x: i32 }\nfunction main(): i32 { var c: Cell[P] = cell_new(P { x: 1 }); return 0; }\n", []string{"E057"}},
+		{"cell-annot-array-bad", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-tuple-elem-bad", "struct P { x: i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-generic-arg-bad", "struct P { x: i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-cell-array-bad", "struct P { x: i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-str-bad", "function f(c: Cell[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// `str` inside a generic ARGUMENT keeps its verbatim spelling in the
+		// self-host (a bare `str` is erased to string at the parse
+		// boundary) — a real native type, so no E064 (regression pin for
+		// the generic-arg-widening false positive fixed alongside item 2).
+		{"generic-arg-str-ok", "function f(o: Option[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E063: returning a `[T]` slice that views function-local storage is a
 		// use-after-free (the backing array dies with the frame). The check is
 		// conservative — only slices provably viewing local storage fire.

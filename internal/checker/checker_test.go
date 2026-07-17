@@ -4045,6 +4045,64 @@ function main(): i32 { var c: Cell[Point] = cell_new(Point { x: 1 }); return 0; 
 	}
 }
 
+// The annotation form of E057 (`Cell[T]` in a field / param / var / return
+// position) must anchor at the annotation's use site, not the synthesized
+// builtin `Cell` decl (whose position is 0:0 — which diag.Format renders
+// without the `error[E057]` prefix, hiding the code from consumers like the
+// self-host checker differential). Pins the position and the code prefix
+// for each annotation position.
+func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
+	cases := []struct {
+		name, src string
+		line, col int
+	}{
+		{"field", "struct Point { x: i32 }\nstruct Holder {\n    c: Cell[Point],\n}\nfunction main(): i32 { return 0; }", 3, 5},
+		{"param", "struct Point { x: i32 }\nfunction f(c: Cell[Point]): i32 { return 0; }\nfunction main(): i32 { return 0; }", 2, 12},
+		{"var", "struct Point { x: i32 }\nfunction main(): i32 {\n    var c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if err == nil {
+				t.Fatalf("%s-position Cell[Point] should be E057, got no error", tc.name)
+			}
+			var found *Error
+			var errs diag.Errors
+			if errors.As(err, &errs) {
+				for _, e := range errs {
+					var ce *Error
+					if errors.As(e, &ce) && ce.ErrCode == "E057" {
+						found = ce
+						break
+					}
+				}
+			} else {
+				var ce *Error
+				if errors.As(err, &ce) && ce.ErrCode == "E057" {
+					found = ce
+				}
+			}
+			if found == nil {
+				t.Fatalf("no E057-coded error in: %v", err)
+			}
+			if found.Pos.Line != tc.line || found.Pos.Col != tc.col {
+				t.Errorf("E057 anchored at %d:%d, want %d:%d (the annotation site)",
+					found.Pos.Line, found.Pos.Col, tc.line, tc.col)
+			}
+			// The rendered form must carry the code prefix — a zero
+			// position drops it (that was the original bug).
+			rendered := diag.Format("", tc.src, found)
+			if !strings.Contains(rendered, "error[E057]") {
+				t.Errorf("rendered diagnostic missing error[E057] prefix:\n%s", rendered)
+			}
+		})
+	}
+}
+
 // An extern @import call with a type-mismatched argument is rejected.
 func TestExternImportArgTypeMismatch(t *testing.T) {
 	src := `@import("wasi:foo/bar@0.1.0", "do-thing")
