@@ -13816,7 +13816,25 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 	// accumulated array — the #3425 Effect-A O(ops^2) that kept the merged
 	// whole-compiler bundle over the 8 GiB arena. Map fields still have an
 	// incomplete (leaky) deep-drop and stay excluded (typeSelfDropSafe).
-	if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
+	//
+	// BUT the ARRAY general form `a = f(a)` keeps the string-element
+	// exclusion (typeSelfDropSafeArrGeneral): the array branch's overwrite
+	// __fern_arr_dec has no identity guard, and a callee that flows its
+	// argument through unchanged (the recursive-collector shape —
+	// checker.e060_collect_dyn_locals's `a = e060_collect_dyn_locals(body,
+	// a)`) can return the very buffer being "superseded". The rc ledger
+	// that keeps the string-free element types balanced there does not
+	// extend to string elements (their per-site inc/dec discipline is the
+	// #4355 open arc), so admitting string[]/nested-string arrays here
+	// double-freed the flowed-through buffer under a different size class —
+	// the derive-compile freelist corruption. Struct/enum targets keep the
+	// full string admission (the deep-drop is box-level is_unique-gated and
+	// the return-transfer inc protects identity returns — probed).
+	if _, isArr := ty.(ast.ArrayType); isArr {
+		if !typeSelfDropSafeNoStrings(ty, b.info, map[string]bool{}) {
+			return false
+		}
+	} else if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
 		return false
 	}
 	mentions := false
@@ -13891,6 +13909,67 @@ func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
 // string-fielded builder rebind onto the flat non-freeing dec, whose leaked
 // boxes pinned the builder's array fields at rc >= 2 and turned each append
 // into a whole-array clone).
+// typeSelfDropSafeNoStrings is typeSelfDropSafe with the pre-#3425 string
+// exclusion kept — the gate for the ARRAY general-form (`a = f(a)`) overwrite
+// dec only, whose buffer free has no identity guard and whose string-element
+// inc/dec ledger is not yet balanced for the callee-flows-argument-through
+// shape (see the selfReassignOwnedLocal soundness note). Struct/enum targets
+// use the widened typeSelfDropSafe.
+func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	if _, isStr := t.(ast.StringType); isStr {
+		return false
+	}
+	switch ty := t.(type) {
+	case ast.ArrayType:
+		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
+	case ast.SliceType:
+		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !typeSelfDropSafeNoStrings(e, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		sd, ok := info.Structs[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, f := range sd.Fields {
+			if !typeSelfDropSafeNoStrings(f.Type, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		ed, ok := info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !typeSelfDropSafeNoStrings(pl, info, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return typeSelfDropSafe(t, info, seen)
+}
+
 func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
