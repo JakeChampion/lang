@@ -11768,7 +11768,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // rides its existing balanced path; only this per-iteration reclaim is added.
     match (v.init) {
         parser.ExprStructLit(dsl) => {
-            if (!dsl.has_base && slot_is_reclaimable_struct(sb, slot)
+            if (!dsl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
                 && struct_has_string_field(sb.structs, struct_ty)
                 && struct_lit_all_string_fields_fresh(sb.structs, dsl, sb)) {
                 return emit_struct_deep_reinit_store(sb, slot, struct_ty);
@@ -11792,7 +11792,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // is added, so the once-off final-box payload leak stays bounded.
     match (v.init) {
         parser.ExprStructLit(desl) => {
-            if (!desl.has_base && slot_is_reclaimable_struct(sb, slot)
+            if (!desl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
                 && struct_enum_deep_reinit_eligible(sb.structs, struct_ty)
                 && struct_lit_all_enum_fields_fresh(sb.structs, desl)) {
                 return emit_struct_enum_deep_reinit_store(sb, slot, struct_ty);
@@ -11811,7 +11811,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // (which is a plain store of `new` — no prior box to free). A once-bound
     // (non-loop) local is unaffected: old is null, so only the store happens, and
     // the exit sweep still frees the final value.
-    if (slot_is_reclaimable_struct(sb, slot) && sb.struct_routes_field_reclaim(struct_ty)) {
+    if (slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot) && sb.struct_routes_field_reclaim(struct_ty)) {
         return emit_field_reclaim_store(sb, slot, struct_ty, 0 - 1);
     }
     // Reclaimable arr-of-arr LOOP-LOCAL (#4355 slice 9): the re-declaration
@@ -12206,7 +12206,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // before the box. A scalar-only reclaimable struct keeps the plain box
     // free via emit_arr_store's do_dec.
     var asty: string = s.struct_type_of_slot(slot);
-    if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && s.struct_routes_field_reclaim(asty)) {
+    if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !slot_nodeep(s, slot) && s.struct_routes_field_reclaim(asty)) {
         return emit_field_reclaim_store(se, slot, asty, 0 - 1);
     }
     return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
@@ -14194,6 +14194,18 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // rc-array fields plus acyclic nested-struct fields (nested_field_deep_drop_ok).
 // Guarded on a non-null box inside the helper. Emits nothing when the struct has no
 // rc-array field.
+// slot_nodeep: local `i` carries a "NODEEP:" marker (reclaimable_names_of) — a
+// method-receiver / bare call-arg / struct-base use may have MOVED its rc
+// fields into another live value with no counted reference, so every reclaim
+// of the slot's OLD value must stay BOX-ONLY (the #3456 shallow contract):
+// the sweeps withhold __struct_drop_<T> and the reinit/rebind stores fall
+// back to emit_arr_store's shallow dec. See the marker computation in
+// reclaimable_names_of for the full soundness argument (#3425 residual).
+function slot_nodeep(s: LowerState, i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return util.index_of_str(s.reclaimable_names, "NODEEP:" + s.locals[i].slot_name) >= 0;
+}
+
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var sty: string = s.struct_type_of_slot(slot);
     if (sty.len() == 0) { return s; }
@@ -14207,6 +14219,16 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     // exact predicate (so the k_str dec is balanced by construction). Native
     // reclaims this shape; the sweep was the last unwidened consumer.
     if (!s.struct_routes_field_reclaim(sty)) { return s; }
+    // "NODEEP:"-marked local (#3425 residual): a method-receiver / call-arg /
+    // struct-base use may have MOVED this box's rc fields into another live
+    // value (an in-place `self.ops.append(op)` hands the same rc==1 buffer to
+    // the callee's result), so the deep walk would free buffers and element
+    // boxes that other value still holds — the exact corruption the IR-built
+    // compiler hit on its own Op streams. Withhold the deep drop; the caller's
+    // box-only dec still runs (the #3456 shallow contract). Scratch slots
+    // ($tsx/$optst/...) never carry the marker, so the tuple-child / option-
+    // payload / array-element walks are unaffected.
+    if (slot_nodeep(s, slot)) { return s; }
     var st: LowerState = s.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
@@ -18376,6 +18398,152 @@ function stmt_darr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[
     return false;
 }
 
+// moves_fields_expr: does `name` appear in `e` as a method RECEIVER —
+// `name.m(...)` — anywhere in the expression tree? That is the ONE position
+// where a use can carry `name`'s rc FIELD values into a surviving value with
+// no counted reference: the method body can return a struct built from
+// `self`'s fields (`ops: self.ops.append(op)`, the builder shape), and when
+// the `.append` is in place it hands the receiver's rc==1 buffer straight to
+// its result. The escape analysis that credits a reclaimable struct treats a
+// method receiver as a BORROW (so the builder chain stays reclaimable), which
+// is exactly why the sweep would otherwise deep-drop a receiver whose field
+// has escaped — the #3425 residual.
+//
+// Deliberately NOT flagged (they are borrows / balanced for any CREDITED
+// struct, so flagging them only strands the field — the string-only-struct
+// reclaim leak):
+//   - a bare call ARGUMENT `f(name)` — a credited struct only ever reaches a
+//     BORROWABLE param (a non-borrowable/own arg escapes, so body_unsafe_for
+//     would not credit it), and a borrowable param is read-only;
+//   - a struct-update BASE `T { ...name, .. }` — the base copy alias-incs each
+//     carried field (the #4355 construction discipline), so the deep drop is
+//     balanced (dec, not free);
+//   - a closure CAPTURE that merely READS `name`'s fields — a borrow;
+//   - a field / index READ (`name.f`, `name[i]`).
+// So a read-only / borrow-only local keeps its deep drop and its string field
+// reclaims. The recursion is exhaustive over every Expr variant (leaves return
+// false), so a receiver buried in a nested sub-expression / lambda body is
+// still found.
+function moves_fields_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprBinary(b) => { return moves_fields_expr(b.left, name) || moves_fields_expr(b.right, name); },
+        parser.ExprUnary(u) => { return moves_fields_expr(u.operand, name); },
+        parser.ExprIndex(ix) => { return moves_fields_expr(ix.array, name) || moves_fields_expr(ix.index, name); },
+        parser.ExprSlice(sl) => { return moves_fields_expr(sl.array, name) || moves_fields_expr(sl.start, name) || moves_fields_expr(sl.end, name); },
+        parser.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => { if (rid.name == name) { return true; } },   // method receiver — the hazard
+                        _ => { if (moves_fields_expr(fa.obj, name)) { return true; } }
+                    }
+                },
+                _ => { if (moves_fields_expr(c.callee, name)) { return true; } }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (moves_fields_expr(c.args[ai], name)) { return true; }   // a receiver nested inside an arg
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (moves_fields_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && moves_fields_expr(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name); },   // a receiver used inside the closure body
+        _ => { return false; }   // ExprIdent / ExprNumber / ExprString / ExprBool / ExprUnknown — leaves, no move
+    }
+    return false;
+}
+
+function moves_fields_stmts(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (moves_fields_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function moves_fields_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return moves_fields_expr(v.init, name); },
+        parser.StmtReturn(r) => { return moves_fields_expr(r.value, name); },
+        parser.StmtExpr(e) => { return moves_fields_expr(e.value, name); },
+        parser.StmtAssign(a) => {
+            // SELF-rebind exemption: `name = name.emit(op)` / `name = f(name)`
+            // (the #3456 builder chain) keeps its per-rebind reclaim — the cow
+            // guard is sound for a self-derived result: a field carried into
+            // the new value compares EQUAL (skip), a field it dropped is the
+            // dead old box's sole reference (free OK). Only the TOP-LEVEL
+            // receiver/arg position is exempt; `name` moved anywhere deeper in
+            // the RHS still marks.
+            if (a.target == name) {
+                match (a.value) {
+                    parser.ExprCall(sc) => {
+                        var deep_move: boolean = false;
+                        match (sc.callee) {
+                            parser.ExprFieldAccess(sfa) => {
+                                match (sfa.obj) {
+                                    parser.ExprIdent(_) => {},
+                                    _ => { if (moves_fields_expr(sfa.obj, name)) { deep_move = true; } }
+                                }
+                            },
+                            _ => { if (moves_fields_expr(sc.callee, name)) { deep_move = true; } }
+                        }
+                        var sai: i32 = 0;
+                        while (sai < sc.args.len()) {
+                            match (sc.args[sai]) {
+                                parser.ExprIdent(_) => {},
+                                _ => { if (moves_fields_expr(sc.args[sai], name)) { deep_move = true; } }
+                            }
+                            sai = sai + 1;
+                        }
+                        return deep_move;
+                    },
+                    _ => { return moves_fields_expr(a.value, name); }
+                }
+            }
+            return moves_fields_expr(a.value, name);
+        },
+        parser.StmtIf(f) => {
+            if (moves_fields_expr(f.cond, name)) { return true; }
+            return moves_fields_stmts(f.then_body, name) || moves_fields_stmts(f.else_body, name);
+        },
+        parser.StmtWhile(w) => {
+            if (moves_fields_expr(w.cond, name)) { return true; }
+            return moves_fields_stmts(w.body, name);
+        },
+        parser.StmtFor(fo) => {
+            if (moves_fields_expr(fo.iter, name)) { return true; }
+            return moves_fields_stmts(fo.body, name);
+        },
+        parser.StmtMatch(m) => {
+            if (moves_fields_expr(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && moves_fields_expr(m.arms[ai].guard, name)) { return true; }
+                if (moves_fields_stmts(m.arms[ai].body, name)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return moves_fields_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -18403,6 +18571,26 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // returned builder is never reclaimed. (#3456 — escaping-struct reclaim.)
         if (!body_unsafe_for(body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
         i = i + 1;
+    }
+    // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
+    // sweeps' DEEP field drop (emit_struct_field_drops → __struct_drop_<T>) is
+    // sound only while the dead box still OWNS its rc fields. A method-RECEIVER
+    // use (`ms.emit(op)`) or a bare call-ARG use (`f(ms)`) can MOVE a field into
+    // the callee's result with no counted reference (`ops: self.ops.append(op)`
+    // — an in-place append hands the SAME rc==1 buffer to the result), so
+    // deep-dropping the dead receiver would walk-free buffers/elements the
+    // result still holds. That is exactly how the IR-built compiler corrupted
+    // its own Op streams once the merged bundle first compiled irlower through
+    // the IR path. Such locals KEEP the #3456 credit (the rebind's cow-guarded
+    // reclaim and the sweep's box-only dec are both still sound) but are marked
+    // "NODEEP:" so emit_struct_field_drops withholds the deep drop — restoring
+    // the box-only contract the #3456 comment above states. Struct-lit BASES
+    // (`T { ...ms, .. }`) are flagged for the same reason (fields copied out).
+    var mvn: i32 = out.len();
+    var mvi: i32 = 0;
+    while (mvi < mvn) {
+        if (moves_fields_stmts(body, out[mvi])) { out = out.append("NODEEP:" + out[mvi]); }
+        mvi = mvi + 1;
     }
     // Fresh scalar-tuple locals (`var t = (3, 4)`): credited under a "TUP:" prefix
     // so the struct/snapshot consumers of reclaimable_names (which look up a bare
@@ -26534,7 +26722,19 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var snap_locals: string[] = snapshot_local_names_of(fn, structs, borrowable_params, fresh_struct_ret_fns, consume_safe_params);
     var sli: i32 = 0;
     while (sli < snap_locals.len()) {
-        if (util.index_of_str(reclaim, snap_locals[sli]) < 0) { reclaim = reclaim.append(snap_locals[sli]); }
+        if (util.index_of_str(reclaim, snap_locals[sli]) < 0) {
+            reclaim = reclaim.append(snap_locals[sli]);
+            // Same "NODEEP:" marking reclaimable_names_of applies to its own
+            // bare credits (#3425 residual): a snapshot-LOCAL used as a method
+            // receiver / bare call arg with the result bound ELSEWHERE (e.g.
+            // `return vsb.emit(op)` — receiver moved into the RETURN value, not
+            // rebound to vsb) may have its rc fields shared with that other
+            // live value, so the sweeps must keep its free BOX-ONLY. The classic
+            // chain (`var st = se.emit(op); st = st.emit(..); return st`) stays
+            // unmarked — self-rebinds are exempt and a bare `return st` is a
+            // read — so its rebind field-reclaim and deep sweep both survive.
+            if (moves_fields_stmts(fn.body, snap_locals[sli])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
+        }
         sli = sli + 1;
     }
     // Array/map locals that acquire a lasting local alias — the in-place
