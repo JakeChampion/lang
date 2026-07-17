@@ -6530,31 +6530,23 @@ pub function e049_diags(mod: parser.Module): Diag[] {
 function e064_unknown_bare(type_name: string, struct_names: string[], union_names: string[]): boolean {
     if (type_name.len() == 0) { return false; }
     if (type_name == "void" || type_name == "Self") { return false; }
-    // Sub-word / pointer-width integer builtins the type resolver below
-    // doesn't enumerate (it only knows i32/i64/u32/u64). These are the
-    // remaining integer keywords the parser accepts (parser.go parseType:
-    // u8/usize); the Go checker treats them as real types, and
-    // stdlib byte/pointer code uses `var b: u8` and `var p: usize`
-    // pervasively, so the E064 rule must not flag them — otherwise every
-    // program importing std/string (a dozen `u8` body vars) or anything
-    // pulling in core/int (`usize` scratch pointers) diverges from the
-    // oracle. byte/char/isize/i8/i16/u16 are intentionally absent: not
-    // valid types, so the Go checker rejects them and the self-host must
-    // keep flagging them.
-    if (type_name == "u8" || type_name == "usize") { return false; }
+    // Builtin type keywords the simple name resolver
+    // (`type_from_name_with_names_and_unions`) doesn't enumerate — it only
+    // knows i32/i64/u32/u64 among integers. u8/usize: the parser accepts
+    // them (parser.go parseType), the Go checker treats them as real types,
+    // and the stdlib uses them pervasively (`var b: u8` in std/string,
+    // `var p: usize` scratch pointers in core/int), so flagging them would
+    // diverge from the oracle on every program importing those modules.
+    // `str` (the borrowed-string view, #4813): the self-host parser erases
+    // a BARE `str` to "string" at the parse boundary, but a `str` inside a
+    // generic argument (`Option[str]`) keeps its verbatim spelling — a real
+    // native type, so the generic-arg widening must not flag it.
+    // byte/char/isize/i8/i16/u16 are intentionally absent: not valid types,
+    // so the Go checker rejects them and the self-host must keep flagging.
+    if (type_name == "u8" || type_name == "usize" || type_name == "str") { return false; }
     // The parser coarses a function type (`() => R`) to the tag "fn" and some
     // shapes to "tuple"; neither is a user nominal, so don't flag them.
     if (type_name == "fn" || type_name == "tuple") { return false; }
-    // Sub-word integer keywords the parser accepts but the simple name resolver
-    // (`type_from_name_with_names_and_unions`) doesn't model — it only knows
-    // i32/i64/u32/u64 among integers. The stdlib uses these as body-var
-    // annotations (`var b: u8` in std/string, `var p: usize` scratch pointers in
-    // core/int), so without this allowlist the E064 body-var walk false-positives
-    // on every program importing them, diverging from the Go oracle (which
-    // accepts both) and bailing the module off the IR path. `byte`/`char`/
-    // `isize`/`i8`/`i16`/`u16` are NOT valid types, so the Go checker rejects
-    // them too — keep flagging those.
-    if (type_name == "u8" || type_name == "usize") { return false; }
     var i: i32 = 0;
     while (i < type_name.len()) {
         var ch: i32 = type_name[i];
@@ -6661,6 +6653,90 @@ function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_name
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
                 out = append_diags(out, e064_var_diags(one, struct_names, union_names, extra_known));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e057_cell_elem_ok reports whether a TypeRef is a permitted `Cell[T]`
+// element — the self-host analog of the native isCellElemType
+// (checker.go): a cycle-free scalar (i32/i64/u32/u64/f64/boolean) or
+// string. Everything else — struct / enum / array / tuple / another Cell /
+// generic instantiation / `str` view — could reconstruct a reference
+// cycle, which the immutable-data model forbids (docs/CELL-TYPE-PLAN.md).
+function e057_cell_elem_ok(a: parser.TypeRef): boolean {
+    if (a.array_depth > 0 || a.is_tuple || a.args.len() > 0) { return false; }
+    if (a.base == "i32" || a.base == "i64" || a.base == "u32" || a.base == "u64") { return true; }
+    return a.base == "f64" || a.base == "boolean" || a.base == "string";
+}
+
+// e057_annot_labels_tref walks a parsed annotation and collects the
+// rendered element spelling of every `Cell[X]` whose element is not a
+// permitted cell element — the ANNOTATION form of E057 (#4363 item 2).
+// Mirrors native resolveType's recursion into generic arguments and tuple
+// elements, so a Cell nested anywhere in the spelling (`Option[Cell[P]]`,
+// `(i32, Cell[P])`, `Cell[P][]`) fires. The caller restricts this to
+// contexts with no type parameter in scope (the E064 scoping), so a
+// generic's `Cell[T]` — which native admits as a ParamType element — is
+// never flagged.
+function e057_annot_labels_tref(tr: parser.TypeRef): string[] {
+    var out: string[] = [];
+    if (!tr.is_tuple && tr.base == "Cell" && tr.args.len() == 1 && !e057_cell_elem_ok(tr.args[0])) {
+        out = out.append(parser.render_type_ref(tr.args[0]));
+    }
+    var i: i32 = 0;
+    while (i < tr.args.len()) {
+        var inner: string[] = e057_annot_labels_tref(tr.args[i]);
+        var k: i32 = 0;
+        while (k < inner.len()) { out = out.append(inner[k]); k = k + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e057_annot_diags parses one annotation spelling and emits E057 (at the
+// caller-supplied anchor) for each offending `Cell[X]` in it, byte-matching
+// the native message. An empty / un-annotated spelling emits nothing.
+function e057_annot_diags(type_name: string, line: i32, col: i32): Diag[] {
+    var out: Diag[] = [];
+    if (type_name.len() == 0) { return out; }
+    var labels: string[] = e057_annot_labels_tref(parser.parse_type_ref(type_name));
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        out = out.append(dg_at("E057", "Cell[" + labels[i] + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid", line, col));
+        i = i + 1;
+    }
+    return out;
+}
+
+// e057_var_diags walks a (non-generic, non-method) function body and
+// reports the annotation-form E057 for any `var x: T` annotation embedding
+// a `Cell[<composite>]`. Recurses into control-flow blocks exactly like
+// e064_var_diags (not into nested function / lambda bodies).
+function e057_var_diags(stmts: parser.Stmt[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                out = append_diags(out, e057_annot_diags(v.type_name, v.line, v.col));
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e057_var_diags(f.then_body));
+                out = append_diags(out, e057_var_diags(f.else_body));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, e057_var_diags(w.body)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e057_var_diags(fr.body)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, e057_var_diags(m.arms[a].body)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e057_var_diags(one));
             },
             _ => { }
         }
@@ -7971,14 +8047,20 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 if (pu.len() > 0) {
                     body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"", efn.line, efn.col));
                 }
+                // E057 annotation form: a `Cell[<composite>]` anywhere in a
+                // parameter annotation (same conservative non-generic scope,
+                // so a generic's `Cell[T]` is never flagged).
+                body_diags = append_diags(body_diags, e057_annot_diags(efn.params[epi].type_name, efn.line, efn.col));
                 epi = epi + 1;
             }
             var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names, e064_extra);
             if (ru.len() > 0) {
                 body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"", efn.line, efn.col));
             }
+            body_diags = append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
             // Body `var x: T` annotations (same non-generic scope).
             body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names, e064_extra));
+            body_diags = append_diags(body_diags, e057_var_diags(efn.body));
         }
         efi = efi + 1;
     }
@@ -8046,6 +8128,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 if (fu.len() > 0) {
                     body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"", esd.line, esd.col));
                 }
+                // E057 annotation form for a struct FIELD (`c: Cell[P]`),
+                // same non-generic, non-enum-variant scope as E064.
+                body_diags = append_diags(body_diags, e057_annot_diags(esd.fields[efj].type_name, esd.line, esd.col));
                 efj = efj + 1;
             }
         }

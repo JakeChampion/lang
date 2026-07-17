@@ -4661,12 +4661,12 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			}
 		}
 		if fn.Receiver != nil {
-			c.resolveType(&fn.Receiver.Type, params)
+			c.resolveType(&fn.Receiver.Type, params, orPos(fn.Receiver.NamePos, fn.P))
 		}
 		for i := range fn.Params {
-			c.resolveType(&fn.Params[i].Type, params)
+			c.resolveType(&fn.Params[i].Type, params, orPos(fn.Params[i].NamePos, fn.P))
 		}
-		c.resolveType(&fn.ReturnType, params)
+		c.resolveType(&fn.ReturnType, params, fn.P)
 		if fn.Body != nil {
 			c.resolveTypesInBlock(fn.Body, params)
 		}
@@ -4683,7 +4683,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			}
 		}
 		for i := range sd.Fields {
-			c.resolveType(&sd.Fields[i].Type, params)
+			c.resolveType(&sd.Fields[i].Type, params, orPos(sd.Fields[i].NamePos, sd.P))
 		}
 	}
 	for _, ed := range prog.Enums {
@@ -4696,7 +4696,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		}
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
-				c.resolveType(&ed.Variants[i].Payloads[j], params)
+				c.resolveType(&ed.Variants[i].Payloads[j], params, orPos(ed.Variants[i].P, ed.P))
 			}
 		}
 	}
@@ -4713,7 +4713,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		for _, n := range impl.TypeParams {
 			params[n] = true
 		}
-		c.resolveType(&impl.Type, params)
+		c.resolveType(&impl.Type, params, impl.P)
 	}
 }
 
@@ -4740,7 +4740,7 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 		case *ast.For:
 			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.Var:
-			c.resolveType(&x.Type, params)
+			c.resolveType(&x.Type, params, x.P)
 		case *ast.Match:
 			for _, arm := range x.Arms {
 				c.resolveTypesInBlock(arm.Body, params)
@@ -4753,9 +4753,9 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 			// outer params, so passing the surrounding `params`
 			// set is the conservative right answer here.
 			for i := range x.Params {
-				c.resolveType(&x.Params[i].Type, params)
+				c.resolveType(&x.Params[i].Type, params, orPos(x.Params[i].NamePos, x.P))
 			}
-			c.resolveType(&x.ReturnType, params)
+			c.resolveType(&x.ReturnType, params, x.P)
 			c.resolveTypesInBlock(x.Body, params)
 		}
 	}
@@ -4903,6 +4903,15 @@ func isVoidReturn(t ast.Type) bool {
 // type position. It's nil outside of enum-body contexts. When
 // the name is in `params`, we always rewrite to ParamType —
 // the parameter wins over a same-named enum or struct.
+// orPos returns p unless it is unset (synthetic nodes leave positions
+// zero), in which case it falls back to `fallback`.
+func orPos(p, fallback ast.Position) ast.Position {
+	if p.Line == 0 {
+		return fallback
+	}
+	return p
+}
+
 // isCellElemType reports whether T is permitted as Cell[T] (E057). The
 // element must be cycle-free: a cell over a value that can transitively
 // hold another cell could reconstruct a reference cycle, which the
@@ -4925,7 +4934,13 @@ func isCellElemType(t ast.Type) bool {
 	return false
 }
 
-func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
+// resolveType canonicalises a parsed type annotation in place. `pos` is
+// the closest source anchor for the annotation (the declaring name's
+// position — field / param / var / decl); annotation-position
+// diagnostics (E057) report there. Type nodes carry no positions of
+// their own, so a zero `pos` (synthetic decls) falls back to the
+// offending decl's own position at the report site.
+func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Position) {
 	if slot == nil || *slot == nil {
 		return
 	}
@@ -4936,7 +4951,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		// itself is resolved to its binding later (resolveProjections),
 		// once impl conformance has recorded the bindings.
 		base := t.Base
-		c.resolveType(&base, params)
+		c.resolveType(&base, params, pos)
 		*slot = ast.ProjType{Base: base, Name: t.Name}
 		return
 	case ast.StructType:
@@ -4964,7 +4979,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			args := make([]ast.Type, len(t.Args))
 			copy(args, t.Args)
 			for i := range args {
-				c.resolveType(&args[i], params)
+				c.resolveType(&args[i], params, pos)
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
 		}
@@ -4983,7 +4998,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		args := make([]ast.Type, len(t.Args))
 		copy(args, t.Args)
 		for i := range args {
-			c.resolveType(&args[i], params)
+			c.resolveType(&args[i], params, pos)
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) {
@@ -4997,7 +5012,16 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			// §1-2). v1 allows scalars only; string and richer cycle-free
 			// types wait on the owning-slot RC integration.
 			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
-				c.errfCode(sd.P, "E057",
+				// Anchor at the annotation's use site. Cell's decl is
+				// synthesized (sd.P is 0:0, which diag.Format renders
+				// without the error[E057] prefix), so the fallback only
+				// fires for annotations with no source anchor of their
+				// own (synthetic decls).
+				at := pos
+				if at.Line == 0 {
+					at = sd.P
+				}
+				c.errfCode(at, "E057",
 					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid",
 					args[0])
 			}
@@ -5013,11 +5037,11 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		*slot = ast.EnumType{Name: t.Name, Args: args}
 	case ast.ArrayType:
 		elem := t.Elem
-		c.resolveType(&elem, params)
+		c.resolveType(&elem, params, pos)
 		*slot = ast.ArrayType{Elem: elem}
 	case ast.SliceType:
 		elem := t.Elem
-		c.resolveType(&elem, params)
+		c.resolveType(&elem, params, pos)
 		*slot = ast.SliceType{Elem: elem}
 	case ast.TupleType:
 		// Recurse into each element. Without this, a
@@ -5032,14 +5056,14 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		elems := make([]ast.Type, len(t.Elems))
 		copy(elems, t.Elems)
 		for i := range elems {
-			c.resolveType(&elems[i], params)
+			c.resolveType(&elems[i], params, pos)
 		}
 		*slot = ast.TupleType{Elems: elems}
 	case *ast.FuncType:
 		for i := range t.Params {
-			c.resolveType(&t.Params[i], params)
+			c.resolveType(&t.Params[i], params, pos)
 		}
-		c.resolveType(&t.Result, params)
+		c.resolveType(&t.Result, params, pos)
 	}
 }
 
@@ -10951,9 +10975,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				lambdaParams[tp] = true
 			}
 			for i := range n.Params {
-				c.resolveType(&n.Params[i].Type, lambdaParams)
+				c.resolveType(&n.Params[i].Type, lambdaParams, orPos(n.Params[i].NamePos, n.P))
 			}
-			c.resolveType(&n.ReturnType, lambdaParams)
+			c.resolveType(&n.ReturnType, lambdaParams, n.P)
 		}
 		root := newScope(nil)
 		for _, p := range n.Params {
