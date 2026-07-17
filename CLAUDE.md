@@ -340,6 +340,31 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   fix it in the same PR with its own test rather than leaving it
   for later.
 
+## Erasure — deletion is half the job
+
+Coding agents add by reflex and rarely subtract. Counteract this constantly:
+a diff that removes lines is at least as valuable as one that adds them.
+
+- **Swap rule.** When a task replaces X with Y, fully deleting X is part of
+  the task. No "keep the old path for compatibility" unless explicitly
+  requested. "Lambda is `\x.f` now, not `λx.f`" — bad: parser accepts both;
+  good: `λx.f` is gone from parser, tests, and docs. Bug fix — bad: a
+  special-case `if` shields the symptom; good: the cause dies. Behavior
+  change — bad: old-behavior tests linger or get dodged; good: deleted.
+- **Comments.** No narration comments inside function bodies. A refactor
+  that makes a comment stale deletes or rewrites it in the same diff. A
+  done TODO leaves with the fix. Same for stale notes in docs/ and this file.
+- **New code.** Scan for an existing concept to reuse before introducing a
+  new one; find the simplest shape. If something confused you while reading,
+  that's a bad abstraction — untangle it if it's in your blast radius.
+- **Scope.** Full force on everything the current task touches. Deleting
+  beyond that (retiring a backend, unifying parallel emit layers) is a
+  roadmap decision — propose it, don't drive-by it. The asm backends'
+  emit layers are deliberately parallel; the legacy AST emitters retire
+  via #3457, not opportunistically.
+- Before finishing any task: what did this change make obsolete, and did
+  I delete it?
+
 ## Literate programming
 
 Fern supports Knuth-style literate programming via `.fern.md`
