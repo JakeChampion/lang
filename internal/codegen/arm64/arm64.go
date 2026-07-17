@@ -7503,8 +7503,10 @@ func (g *generator) emitStartRuntime() {
 // fast path (see the rcInlineOK field). 1M sits ~2× above the largest normal
 // self-host function (~0.5M ops) and ~10× below irlower__lower_expr (~9.75M
 // ops), the only function whose inlined body overflows aarch64's ±128MB
-// branch reach.
-const rcInlineMaxOps = 1_000_000
+// branch reach. A var (not a const) only so the backend's own tests can lower
+// it to exercise the fall-back on a small function; production never
+// reassigns it. (Mirrors the x86-64 backend's rcInlineMaxOps.)
+var rcInlineMaxOps = 1_000_000
 
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.current = fn
