@@ -229,10 +229,10 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
 // so handler-shaped programs can be tuned via `PORT=N ./bin`
 // without writing a manual main().
 //
-// Inline i32-only digit accumulation — the prelude's
-// `s.parse_int()` uses i64 for overflow safety, which arm64
-// can't lower yet. Since the result is bounded to a valid
-// TCP port (0..65535), the i32 max is unreachable.
+// Inline i32-only digit accumulation rather than std/string's
+// `s.parse_int()` (which uses i64 for overflow safety and would
+// pull that module in just for a port number). The result is
+// bounded to a valid TCP port (0..65535), so i32 suffices.
 function __port_from_env(name: string, fallback: i32): i32 {
     match (env(name)) {
         Some(s) => {

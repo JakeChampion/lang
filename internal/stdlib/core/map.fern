@@ -110,7 +110,7 @@ function __map_hdr(buf: usize): i32 {
 // path. For native scalar K (i32 / u32) the value fits
 // trivially. The string path casts back via `k as string`,
 // which on natives is a no-op pointer reinterpret —
-// truncation isn't an issue when the prelude itself ALSO
+// truncation isn't an issue when the map runtime itself ALSO
 // runs with i32-sized pointer locals on the call chain
 // (see the rest of the Map runtime above for the usize
 // migration that started with map_new_impl).
