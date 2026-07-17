@@ -59,6 +59,23 @@ var genericErasureIRCases = []struct {
 	// Scalar instantiations of both shapes stay scalar.
 	{"dup-scalar-regress", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(20); return a[0] + a[1] + 2; }", 42},
 	{"opt-scalar-regress", "function some1[T](x: T): Option[T] { return Some(x); } function main(): i32 { var o = some1(40); match (o) { Some(n) => { return n + 2; }, None => { return 0; } } }", 42},
+	// A `T[]` return at an f64 element: the shared "$arg<i>" strarr entry is
+	// now consulted by expr_is_f64arr too, so `a[0]` reads 8-byte f64 (was
+	// read as 4-byte i32 → exit 7).
+	{"dup-f64arr", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(2.5); if (a[0] + a[1] > 4.0) { return 42; } return 7; }", 42},
+	// A `T[]` return at an i64 element (expr_is_i64arr consults the entry).
+	{"dup-i64arr", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(5000000000 as i64); if (a[0] + a[1] == 10000000000 as i64) { return 42; } return 7; }", 42},
+	// `var s = f()?` where f returns `Option[T]` at string: expr_is_str's
+	// try-unary arm str-tracks the ?-bound s (was untyped → s.len() read 0,
+	// exit 37).
+	{"opt-try-string", "function some1[T](x: T): Option[T] { return Some(x); } function unwrap_len(): Option[i32] { var s = some1(\"hello\")?; return Some(s.len()); } function main(): i32 { match (unwrap_len()) { Some(n) => { return n + 37; }, None => { return 0; } } }", 42},
+	// The `Result[T, E]` sibling: the Ok payload is rewritten to $arg<i>
+	// leaving E intact, so `f()?` on a string Ok str-tracks.
+	{"result-try-string", "function okg[T](x: T): Result[T, i32] { return Ok(x); } function helper(): Result[i32, i32] { var s = okg(\"hello\")?; return Ok(s.len()); } function main(): i32 { match (helper()) { Ok(n) => { return n + 37; }, Err(e) => { return 0; } } }", 42},
+	// The T[]-element and try-string shapes at SCALAR instantiations are
+	// unchanged (regression guards).
+	{"dup-i32arr-regress", "function dup[T](x: T): T[] { return [x, x]; } function main(): i32 { var a = dup(20); return a[0] + a[1] + 2; }", 42},
+	{"opt-try-scalar-regress", "function some1[T](x: T): Option[T] { return Some(x); } function unwrap(): Option[i32] { var n = some1(40)?; return Some(n + 2); } function main(): i32 { match (unwrap()) { Some(v) => { return v; }, None => { return 0; } } }", 42},
 }
 
 // TestSelfHostGenericErasureIRX86_64 — erased-generic returns through the
