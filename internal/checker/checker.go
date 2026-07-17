@@ -9548,6 +9548,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if nt, ok := inner.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 			switch n.Target.(type) {
 			case ast.ArrayType, ast.StringType, ast.StructType:
+				// A 32-bit-only source (i32 / u32 — NOT usize) reinterpreted as
+				// a pointer-shaped handle is the #5042 truncation footgun: the
+				// high 32 bits of the address were already lost when the value
+				// became i32, so `k as string` / `k as T[]` / `k as Struct`
+				// recovers a corrupt pointer once the heap crosses 4 GiB
+				// (arm64-darwin). A `usize` source carries the full width, so
+				// only the narrow case is flagged. Carry pointer-shaped values
+				// in a `usize` local/param instead.
+				if nt.NormalWidth() == 32 && !nt.IsPointerWidth() {
+					c.errfCode(n.P, "E069", "reinterpreting a 32-bit `%s` value as the pointer-shaped type `%s` via `as` truncates the address: the high 32 bits were lost when the value became `%s`, so this recovers a corrupt pointer once the heap exceeds 4 GiB — carry pointer-shaped values in a `usize` local/param instead", inner, n.Target, inner)
+				}
 				return n.Target
 			}
 		}

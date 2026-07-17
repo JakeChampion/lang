@@ -103,24 +103,20 @@ function __map_hdr(buf: usize): i32 {
 // `cap - 1` (cap is power-of-2). The unsigned shifts go
 // through `as u32` because the lang's `>>` defaults to
 // `i32.shr_s` on i32 operands.
-// __map_hash hashes a Map key. The param stays `i32` (not
-// `usize`) deliberately: the IR uses cell-pointer boxing
-// for wide-scalar K (i64 / u64 / f64) so the pointer that
-// arrives here always fits in 32 bits on the cell-pointer
-// path. For native scalar K (i32 / u32) the value fits
-// trivially. The string path casts back via `k as string`,
-// which on natives is a no-op pointer reinterpret —
-// truncation isn't an issue when the map runtime itself ALSO
-// runs with i32-sized pointer locals on the call chain
-// (see the rest of the Map runtime above for the usize
-// migration that started with map_new_impl).
-//
-// Keeping the param as i32 lets the wide-scalar Map tests
-// continue to pass (the i32-narrow at the call boundary
-// gives kBits the right bits whether k arrived through a
-// usize-typed __map_lookup call or via the older i32 path).
-// A future PR can flip this when the wide-scalar K path
-// gets its own dedicated hash entrypoint.
+// __map_hash hashes a Map key. It is now SCALAR-ONLY: `k` is a
+// native i32 / u32 key value, hashed directly. The former
+// string (`k as string`) and wide-scalar (`k as usize` +
+// __load_i64) branches were the #5042 "i32-param footgun" — a
+// 32-bit param reinterpreted as a pointer, which truncated the
+// high 32 bits once the heap crossed 4 GiB (arm64-darwin). They
+// are dead since #5052 moved every non-scalar key onto its own
+// honest `usize`-param adapter (__map_hash_str / __map_hash_wide,
+// below), so no caller passes keyKind 1 / 2 here anymore. Removing
+// them is the "future PR can flip this" the old doc anticipated,
+// and it clears the last `i32 as string` reinterpret in the
+// stdlib (unblocking the E064 checker rule — #5053). keyKind is
+// kept in the signature for pub-ABI stability (treeshake keep-alive
+// roots name __map_hash) even though only the scalar path remains.
 // __map_wang_mix runs Wang's 32-bit integer mix (the bucket-choice
 // hash for scalar and wide-scalar-folded keys). Shared by __map_hash
 // and the default keyed-path adapters (#4388 item 1).
@@ -149,17 +145,7 @@ function __map_fnv_str(s: string): i32 {
 }
 
 pub function __map_hash(k: i32, keyKind: i32): i32 {
-    if (keyKind == 0) { return __map_wang_mix(k); }
-    if (keyKind == 2) {
-        // Wide-scalar key: `k` is a heap cell pointer, the actual
-        // 8-byte value lives at *k. Fold the two 32-bit halves with
-        // XOR so each contributes to bucket choice.
-        var w: i64 = __load_i64(k as usize);
-        var lo: i32 = w as i32;
-        var hi: i32 = (w >> (32 as i64)) as i32;
-        return __map_wang_mix(lo ^ hi);
-    }
-    return __map_fnv_str(k as string);
+    return __map_wang_mix(k);
 }
 
 pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
