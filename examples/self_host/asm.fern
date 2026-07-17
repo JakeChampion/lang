@@ -3957,6 +3957,16 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // (`for x in shapes { x.area() }`) routes through the
             // runtime-shape dispatch instead of the primitive path.
             if (asmcore.ty_is_array(iter_ty)) { elem_ty = asmcore.ty_unknown(); }
+            // `for b in STR` (iterate a string's BYTES): a string box is
+            // { data_ptr @0, len @8 } with byte elements, NOT the array layout
+            // (len @0, 8-byte elements) below. Reading it as an array walks the
+            // header as data (#2822). The IR path desugars in lower_string_
+            // foreach; the AST path needs the string-shaped length + byte loads
+            // (latent here — str_to_i32's `for b in s` routes IR on x86 — but
+            // kept in parity with the arm64 AST fix so an AST-routed string
+            // foreach is correct on both backends). Bytes bind as i32.
+            var is_str_iter: boolean = asmcore.ty_is_string(iter_ty);
+            if (is_str_iter) { elem_ty = asmcore.ty_i32(); }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + util.i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -3975,17 +3985,27 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             var end_lbl: i32 = s.label_n + 2;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 3 };
             s = s.write(".Lfor_top_" + util.i32_to_string(top_lbl) + ":\n");
-            // Condition: __for_i_N < len(__for_arr_N).
+            // Condition: __for_i_N < len(__for_arr_N). String len @8; array @0.
             s = s.write("    movq " + util.i32_to_string(arr_off) + "(%rbp), %rax\n");
-            s = s.write("    movq (%rax), %rcx\n");        // length
+            if (is_str_iter) {
+                s = s.write("    movq 8(%rax), %rcx\n");    // string length @8
+            } else {
+                s = s.write("    movq (%rax), %rcx\n");     // array length @0
+            }
             s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rdx\n");
             s = s.write("    cmpq %rcx, %rdx\n");
             s = s.write("    jge .Lfor_end_" + util.i32_to_string(end_lbl) + "\n");
-            // Bind element: x = arr[i].
+            // Bind element. String: byte-load data_ptr[idx] (data_ptr @0);
+            // array: 8-byte element at (idx+1)*8 (header offset).
             s = s.write("    movq " + util.i32_to_string(arr_off) + "(%rbp), %rax\n");
             s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rcx\n");
-            s = s.write("    incq %rcx\n");
-            s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            if (is_str_iter) {
+                s = s.write("    movq (%rax), %rax\n");      // data_ptr @0
+                s = s.write("    movzbl (%rax,%rcx), %eax\n"); // byte at data[idx] (zero-extends)
+            } else {
+                s = s.write("    incq %rcx\n");
+                s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            }
             s = s.write("    movq %rax, " + util.i32_to_string(elem_off) + "(%rbp)\n");
             // Body — break jumps to .Lfor_end; continue jumps
             // to .Lfor_cont (the i++ block) so the loop still
