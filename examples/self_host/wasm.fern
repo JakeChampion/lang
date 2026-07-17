@@ -1163,7 +1163,7 @@ pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[])
     var sdt: string[] = wasm_ir.struct_drop_types(cache, mod.structs);
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
-        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx);
+        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx, util.index_of_str(sfok, sdt[sdti]) >= 0);
         sdti = sdti + 1;
     }
     // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
@@ -1205,7 +1205,7 @@ function emit_wasm_struct_arr_elems_drop_body(e: string, cx: Ctx): string {
     return o;
 }
 
-function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
+function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean): string {
     var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
     var si: i32 = 0;
     while (si < cx.structs.len()) {
@@ -1260,13 +1260,18 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                         // "S") stay leak-only — is_struct_type is false for them.
                         o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
                     }
-                } else if (ft == "string") {
+                } else if (ft == "string" && str_ok) {
                     // A `string` field is an rc-headered INLINE block on wasm
                     // ([rc][bsz][len][bytes]); reclaim it with $__fern_arr_dec — frees
                     // at rc==1 by size class, guards a data-section literal (below
                     // heap_base), decs a shared box, and the rc-underflow detector
                     // catches a double free. Balanced by the shared-irlower
-                    // construction alias-inc. Mirrors the x86 / arm64 k_str arm (#4297 A2).
+                    // construction alias-inc. Mirrors the x86 / arm64 k_str arm
+                    // (#4297 A2). GATED on the STRFLDOK admission (str_ok, from the
+                    // whole-program read scan — the same verdict the field-reclaim
+                    // string arm and the construction retain use): a non-admitted
+                    // type's string fields are uncounted aliases this dec would
+                    // over-release (#3425, x86 twin note in emit_ir_struct_drop_one).
                     var strload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
                     o = o + "    (drop (call $__fern_arr_dec " + strload + "))\n";
                 }

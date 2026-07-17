@@ -628,12 +628,14 @@ func (g *generator) emitDataSections() {
 	// backend's emission.
 	if len(g.dynVtableCells) > 0 {
 		if g.darwin {
-			// `__DATA,__const`, NOT `__TEXT,__const`: these cells hold
-			// absolute `.quad <function>` pointers, and ld64 rejects
-			// absolute relocations anywhere in the __TEXT segment
-			// ("Found illegal text-relocations"). __DATA,__const is
-			// Mach-O's read-only-after-relocation section — the same
-			// place clang puts C++ vtables.
+			// __DATA,__const, NOT __TEXT,__const: the vtable slots are
+			// absolute `.quad __method_*` pointers, and pointers in a
+			// __TEXT section are TEXT RELOCATIONS — current ld64 rejects
+			// them outright ("text-relocation in 'anon-N' ... to
+			// '__method_...'", surfaced when the macos-latest runner's
+			// Xcode rolled forward, #5055). __DATA,__const keeps them
+			// read-only after load while giving the linker a legal
+			// place for the fixups.
 			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)
@@ -684,11 +686,13 @@ func (g *generator) emitDataSections() {
 	// functions. Each cell holds {fn_ptr (8B), env=0 (8B)}.
 	if len(g.constFuncCells) > 0 {
 		if g.darwin {
-			// `__DATA,__const` for the same reason as the vtable cells
-			// above: each cell's `.quad <function>` is an absolute
-			// relocation, illegal in the Mach-O __TEXT segment. ELF
-			// .rodata has no such restriction, which is why the Linux
-			// dialect keeps these cells there.
+			// __DATA,__const like the vtables above: each cell's
+			// `.quad <fn>` is an absolute code pointer, which in a
+			// __TEXT section is a text relocation current ld64
+			// rejects (#5055 — the `__map_*_keyed` fn-value adapters
+			// from the core/map collapse were the first const_func
+			// cells a darwin map program emitted, turning every
+			// TestArm64DarwinBuilds/map_* case into a link failure).
 			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)

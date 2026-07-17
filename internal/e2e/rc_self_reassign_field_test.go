@@ -13,14 +13,21 @@ import (
 // through method calls that rebuild the builder each step): the flat dec leaked
 // the old block's instruction buffer every emit → O(N^2) peak memory and OOM.
 //
-// SOUNDNESS BOUND: only structs that are transitively string- and Map-free
-// qualify (typeSelfDropSafe). Strings aren't rc-tracked — never inc'd at struct
-// construction — so a string field shared via a functional-copy reassign is an
-// UNCOUNTED alias the deep-drop would over-release (the self-host EmitState UAF
-// that an earlier, unrestricted attempt hit). Array / nested-struct / enum
-// fields ARE inc'd at construction, so their rc-gated drop is balanced. These
-// pin (1) the bounded-heap win for the string-free accumulator and (2) that a
-// string-FIELD accumulator stays correct (kept on the safe-leak flat dec).
+// SOUNDNESS BOUND: only structs that are transitively Map-free qualify
+// (typeSelfDropSafe — Map's deep drop is incomplete). STRING fields joined the
+// safe set (#3425): they are now inc'd at every sharing construction site
+// (field-init emitAliasInc, struct-update base copy) and genStructDropFn's
+// per-ABI freeing __fern_str_dec balances the drop side, so a string field
+// shared via a functional-copy reassign is a COUNTED alias the rc-gated drop
+// releases correctly. (The original exclusion dated from the era before
+// strings were rc-tracked, when the same deep-drop was a UAF.) Array /
+// nested-struct / enum fields were always inc'd at construction. These pin
+// (1) the bounded-heap win for the string-free accumulator, (2) that a
+// string-FIELD accumulator is value-correct + over-release-free now that it
+// reclaims, and (3) the bounded-heap win for the string-FIELD accumulator —
+// the self-host LowerState/EmitState `s = s.emit(op)` shape whose flat-dec'd
+// old boxes previously pinned the ops array at rc >= 2 and turned every
+// append into a whole-array clone (the #3425 Effect-A quadratic).
 
 func selfReassignFieldBumpSrc(n string) string {
 	return `struct Blk { insts: i32[] }
@@ -50,9 +57,11 @@ function main(): i32 {
 }`
 
 // A struct with a HEAP STRING field, functional-copy self-reassigned in a loop
-// (the EmitState/`s = s.write(..)` shape). The deep-drop is correctly WITHHELD
-// here (strings are uncounted), so this must stay value-correct + over-release
-// free — the regression guard for the earlier UAF.
+// (the EmitState/`s = s.write(..)` shape). The deep-drop now FIRES here
+// (strings are rc-counted at construction, so the old box's freeing
+// __fern_str_dec is balanced); this must stay value-correct + over-release
+// free — the guard that the lifted exclusion doesn't re-introduce the
+// pre-rc-tracking UAF.
 const selfReassignStringFieldSoundSrc = `struct Acc { tag: string, xs: i32[] }
 function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
 function tagfor(i: i32): string { if (i % 2 == 0) { return "even-ish-longer"; } return "odd-ish-longer"; }
@@ -64,6 +73,27 @@ function main(): i32 {
     if (a.tag.len() < 5) { return 101; }
     return __rc_underflow_count();
 }`
+
+// selfReassignStringFieldBumpSrc is the bump-scaling twin of the soundness
+// case above: a string-fielded struct LOCAL threaded through `s = s.step(v)`
+// with a growing i32[] field. Before the typeSelfDropSafe string admission
+// (#3425) the old box was flat-dec'd (never freed) each rebind, so every
+// superseded box kept a live reference to the CURRENT xs buffer — each append
+// then cloned the whole accumulated array (rc >= 2), O(N^2) bytes. With the
+// deep-drop firing the shape is O(N); this pins the sub-quadratic scaling.
+func selfReassignStringFieldBumpSrc(n string) string {
+	return `struct Acc { tag: string, xs: i32[] }
+function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var a: Acc = Acc { tag: "seed-" + "tag", xs: [] };
+    var i: i32 = 0;
+    while (i < ` + n + `) { a = a.step(i); i = i + 1; }
+    if (a.xs.len() != ` + n + `) { return 999; }
+    if (a.tag.len() != 8) { return 998; }
+    return (__heap_bump_bytes() - before) / 64;
+}`
+}
 
 // ssaAccumBumpSrc is the SSA-builder / emitter accumulator shape the self-host
 // actually uses: a struct with a STRING field AND a growing i32[], threaded
@@ -126,6 +156,15 @@ func TestX86_64SelfReassignFieldSound(t *testing.T) {
 	}
 }
 
+// The string-fielded LOCAL accumulator (`s = s.step(v)` on a struct with a
+// string field + growing i32[]) reclaims O(N) now that typeSelfDropSafe admits
+// strings (#3425) — the LowerState/EmitState threading shape.
+func TestX86_64SelfReassignStringFieldBounded(t *testing.T) {
+	_, n1 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
+	_, n2 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("400"))
+	assertSubQuadratic(t, "x86-64", n1, n2)
+}
+
 // The SSA-builder-shaped accumulator (string field + growing i32[], threaded
 // through a self-reassigned parameter) is O(N) and over-release-free — the
 // borrow-inference fix for the `-ssa` OOM.
@@ -147,6 +186,14 @@ func TestArm64SelfReassignFieldSound(t *testing.T) {
 	}
 }
 
+// arm64 twin of TestX86_64SelfReassignStringFieldBounded (two-word strings:
+// the construction __fern_str_inc + genStructDropFn's WidthString str_dec arm).
+func TestArm64SelfReassignStringFieldBounded(t *testing.T) {
+	_, n1 := compileAndRunArm64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
+	_, n2 := compileAndRunArm64FreeOn(t, selfReassignStringFieldBumpSrc("400"))
+	assertSubQuadratic(t, "arm64", n1, n2)
+}
+
 func TestWASMSelfReassignFieldBounded(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -160,6 +207,12 @@ func TestWASMSelfReassignFieldBounded(t *testing.T) {
 	if got := runWasm(t, selfReassignStringFieldSoundSrc); got != 0 {
 		t.Errorf("string-field accumulator: got %d, want 0 (UAF regression guard)", got)
 	}
+	// String-fielded LOCAL accumulator reclaims O(N) (typeSelfDropSafe string
+	// admission, #3425) — two-word strings ride __fern_str_inc / the
+	// WidthString str_dec arm of __drop_struct_.
+	sn1 := runWasm(t, selfReassignStringFieldBumpSrc("200"))
+	sn2 := runWasm(t, selfReassignStringFieldBumpSrc("400"))
+	assertSubQuadratic(t, "wasm string-field", sn1, sn2)
 	// The threaded-param accumulator (the self-host's actual shape) is
 	// over-release-free on wasm. Its O(N) reclamation is verified on the native
 	// `-ssa` backends (TestX86_64SSAAccumThreadedParam); wasm keeps a separate,
