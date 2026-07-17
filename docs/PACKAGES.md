@@ -247,8 +247,8 @@ subset.
 | `[workspace]` + `workspace = true` deps | ✅ | ✅ |
 | vendored mode (`vendor/`) | ✅ | ✅ |
 | versioned deps via `fern.lock` (`path` source) | ✅ | ✅ |
-| `url`+hash deps + content-addressed store | ✅ | ❌ blocked (see below) |
-| versioned deps whose lock source is a `url` | ✅ | ❌ blocked (see below) |
+| `url`+hash deps + content-addressed store | ✅ | ✅ read-only (see below) |
+| versioned deps whose lock source is a `url` | ✅ | ✅ read-only (see below) |
 | CLI commands `-fetch` / `-vendor` / `-add` / `-check` / `-resolve` | ✅ | n/a — the self-host build is a *compiler driver*, not the `fern` CLI |
 
 The self-hosted loader (`examples/self_host/modloader.fern` +
@@ -259,12 +259,15 @@ takes precedence), and versioned deps pinned in `fern.lock` to a `path`
 source. All need no network or cache lookup.
 
 The **store-backed** forms — `url` deps, and versioned deps whose lock
-source is a `url` — are *blocked*: they live in the per-machine
-content-addressed store (`$FERN_CACHE_DIR|<user-cache>/fern/pkgs/<hex>/`),
-and the self-host runtime has `read_file`/`read_dir`/`stat`/`args()` but
-**no `getenv`/home-dir access**, so it cannot compute the store path.
-Closing that gap needs a new runtime builtin (a `getenv`/cache-dir
-intrinsic), not a loader change (tracked in #4907).
+source is a `url` — resolve since #4949: the loader computes the store
+path (`$FERN_CACHE_DIR/pkgs/<hex>/`, else `<user-cache>/fern/pkgs/<hex>/`
+via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
+`env` runtime builtin and reads the unpacked package from it —
+`modloader.load_from_store`, mirroring native `pkgcache.Root()`/`Dir()`.
+**Read-only**: populating and sha256-verifying the store stays a native
+`fern -fetch` responsibility (the no-build-time-network constraint), so
+the self-host loader trusts an already-populated store exactly as the
+native loader does at build time.
 
 The self-host wiring is **additive** throughout — consulted only when a
 `fern.toml` is actually present — so the compiler's own manifest-less
