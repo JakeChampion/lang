@@ -10,14 +10,15 @@ import (
 // string[] / struct[].
 //
 // The owned-array self-reassign fix (selfReassignOwnedLocal) is gated by
-// typeSelfDropSafe, which excludes strings and Maps — correctly, because the
-// struct/enum *deep* drop would over-release an uncounted shared string. But the
-// ARRAY reassignment-overwrite frees the old buffer with a buffer-only
+// typeSelfDropSafe, which historically excluded strings (uncounted at
+// construction back then; the exclusion is lifted now that strings are
+// rc-tracked, #3425) and still excludes Maps. Either way the ARRAY
+// reassignment-overwrite frees the old buffer with a buffer-only
 // __fern_arr_dec (it never walks elements), so for the `a = a.append(x)` form
-// the string/struct exclusion is unnecessary: isSelfArrayPushLocal recognises
+// no element-type gate is needed at all: isSelfArrayPushLocal recognises
 // the rc-safe push pattern (push_grow's rc-gating frees only a uniquely-owned
-// orphan; a borrowed-derived buffer at rc≥2 is never freed) and lets these
-// element types reclaim their per-grow buffers too.
+// orphan; a borrowed-derived buffer at rc≥2 is never freed) and lets every
+// element type reclaim its per-grow buffers.
 //
 // build(300) over string[] / struct[] grows past 2048 B and drops every
 // iteration; a leak would scale the bump pointer with the iteration count.
