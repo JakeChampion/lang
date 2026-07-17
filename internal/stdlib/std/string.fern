@@ -429,6 +429,73 @@ function __case_separator(s: string, sep_byte: i32): string {
     return string_from_bytes(buf);
 }
 
+// `(s: string) camel_case()` / `pascal_case()` — the inverse of
+// `snake_case` / `kebab_case`: fold a separator-delimited name into a
+// medial-capitals identifier. Word boundaries are runs of `_`, `-`, or
+// space (dropped; leading / trailing / consecutive separators collapse);
+// each word is lower-cased and the first letter of every word after the
+// first is upper-cased. `pascal_case` upper-cases the first word's
+// initial too, `camel_case` lower-cases it.
+//
+//   "foo_bar_baz".camel_case()   // "fooBarBaz"
+//   "http-server".pascal_case()  // "HttpServer"
+//   "hello world".camel_case()   // "helloWorld"
+//
+// ASCII-only, and the intended input is separator-delimited (the
+// round-trip partner of `snake_case`): an already-camelCase string has
+// no separators, so its interior case is normalised to lower
+// (`"fooBar".camel_case()` -> `"foobar"`) — pass such names through
+// `snake_case` first if you need to re-fold them.
+pub function (s: string) camel_case(): string {
+    return __case_join(s, false);
+}
+
+pub function (s: string) pascal_case(): string {
+    return __case_join(s, true);
+}
+
+function __case_join(s: string, upper_first: boolean): string {
+    var n: i32 = s.len();
+    // Two-pass exact-size buffer (#4379): separators (`_` `-` space) are
+    // dropped and every other byte emits exactly one byte, so the output
+    // length is just the count of non-separator bytes.
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b != 95 && b != 45 && b != 32) { total = total + 1; }
+        i = i + 1;
+    }
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    var at_word_start: boolean = true;   // start of string begins a word
+    var emitted_any: boolean = false;    // has any non-separator byte been written
+    i = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 95 || b == 45 || b == 32) {
+            at_word_start = true;
+            i = i + 1;
+        } else {
+            var out_b: i32 = b.to_lower();
+            if (at_word_start) {
+                if (!emitted_any) {
+                    // First word's initial: PascalCase upper, camelCase lower.
+                    if (upper_first) { out_b = b.to_upper(); }
+                } else {
+                    out_b = b.to_upper();
+                }
+            }
+            buf = buf.with(pos, out_b as u8);
+            pos = pos + 1;
+            at_word_start = false;
+            emitted_any = true;
+            i = i + 1;
+        }
+    }
+    return string_from_bytes(buf);
+}
+
 // `(s: string) slugify()` — turn arbitrary text into a URL slug: lower-
 // case, with every run of non-`[a-z0-9]` bytes collapsed to a single
 // `-` and no leading/trailing hyphen. `"Hello, World! 2024"` →
