@@ -6899,6 +6899,30 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	c.errors = append(c.errors, e)
 }
 
+// errUnknownField reports an E043 unknown-field error (struct literal
+// or field access), attaching a machine-applicable respelling fix when
+// a declared field is a near miss — the same sound family as errIdent
+// (replacing one identifier with another always re-parses). namePos is
+// the field NAME token's own position (FieldInit.NamePos /
+// FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
+func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
+	e := &Error{
+		Pos:     pos,
+		Msg:     fmt.Sprintf("struct %s has no field %q", structName, field),
+		Path:    c.currentFile(),
+		ErrCode: "E043",
+	}
+	if s := diag.Suggest(field, declared); s != "" && namePos.Line > 0 {
+		e.Fix = &diag.Suggestion{
+			Pos:         namePos,
+			Length:      len(field),
+			Replacement: s,
+			Title:       fmt.Sprintf("replace `%s` with `%s`", field, s),
+		}
+	}
+	c.errors = append(c.errors, e)
+}
+
 // currentFile returns the SourceModule path of the FuncDecl the
 // checker is currently inside, or "" when no decl is active (the
 // top-level pre-checking phase that registers structs / enums).
@@ -11324,7 +11348,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
 			if !present {
-				c.errfCode(n.P, "E043", "struct %s has no field %q", sd.Name, f.Name)
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(n.P, f.NamePos, sd.Name, f.Name, declared)
 				continue
 			}
 			if seen[f.Name] {
@@ -11555,7 +11583,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return f.Type
 			}
 		}
-		c.errfCode(n.P, "E043", "struct %s has no field %q", st.Name, n.Field)
+		declared := make([]string, 0, len(sd.Fields))
+		for _, df := range sd.Fields {
+			declared = append(declared, df.Name)
+		}
+		c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
 		return nil
 	}
 	return nil

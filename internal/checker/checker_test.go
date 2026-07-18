@@ -1053,6 +1053,59 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 	}
 }
 
+// E043 unknown-field joins the sound fix family (#4413 Rec §3): both
+// the field-ACCESS and struct-LITERAL sites attach a respelling fix
+// anchored at the field NAME token, and applying it fixes the program.
+func TestUnknownFieldFixApplies(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"access", "struct P { count: i32 }\nfunction main(): i32 {\n\tvar p = P { count: 1 };\n\treturn p.countr;\n}"},
+		{"literal", "struct P { count: i32 }\nfunction main(): i32 {\n\tvar p = P { countr: 1 };\n\treturn 0;\n}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Check(prog)
+			es, ok := err.(diag.Errors)
+			if !ok || len(es) == 0 {
+				t.Fatalf("expected diag.Errors, got %v", err)
+			}
+			var fix *diag.Suggestion
+			for _, e := range es {
+				if ce, ok := e.(*Error); ok && ce.Fix != nil {
+					fix = ce.Fix
+				}
+			}
+			if fix == nil {
+				t.Fatalf("no error carried a fix: %v", es)
+			}
+			if fix.Replacement != "count" {
+				t.Errorf("replacement = %q, want count", fix.Replacement)
+			}
+			lines := strings.Split(tc.src, "\n")
+			ln := lines[fix.Pos.Line-1]
+			col := fix.Pos.Col - 1
+			if got := ln[col : col+fix.Length]; got != "countr" {
+				t.Fatalf("fix span covers %q, want the misspelt field name", got)
+			}
+			lines[fix.Pos.Line-1] = ln[:col] + fix.Replacement + ln[col+fix.Length:]
+			applied := strings.Join(lines, "\n")
+			prog2, err := parser.Parse(applied)
+			if err != nil {
+				t.Fatalf("applied fix does not re-parse: %v\n%s", err, applied)
+			}
+			if _, err := Check(prog2); err != nil {
+				t.Fatalf("applied fix does not check: %v\n%s", err, applied)
+			}
+		})
+	}
+}
+
 // The E001 near-miss fix is MACHINE-APPLICABLE (#4413 Rec §3): applying
 // the suggested replacement over its span must yield a program that
 // parses AND checks cleanly — the soundness bar for attaching one.
