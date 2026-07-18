@@ -105,6 +105,18 @@ Backend support:
   var x: i32 = if (b) { var k = 1; } else { 0 };
   ```
 
+  The one context that *wants* a value-less block is a block-shaped
+  `defer { … }` / `errdefer { … }` action (`#5153`): the deferred action
+  runs for its side effects and its value is discarded, so the checker
+  checks its statements directly rather than requiring a trailing value —
+  no E061. The action is stored as a value-less `BlockExpr`, so it lowers
+  through the ordinary defer machinery on every backend (a value-less
+  block leaves nothing on the stack, so no drop follows it).
+
+  ```
+  defer { acc = acc + 1; }   // OK: side-effecting, value-less action
+  ```
+
 ## Implementation map
 
 | Layer | Where |
