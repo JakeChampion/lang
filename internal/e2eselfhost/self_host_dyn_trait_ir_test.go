@@ -174,6 +174,22 @@ var dynTraitIRCases = []struct {
 	// IR-subset gap, not a miscompile — so those shapes aren't pinned here.)
 	{"dyn-array-len-chained",
 		`trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { var s: S = S { n: 1 }; var d: dyn Arr = s; return d.make().len(); }`, 3},
+	// string[]-returning dyn method, chained through an ELEMENT read: without a
+	// "dyn <Trait>.<method>" entry in strarr_ret_fns the dispatch result isn't
+	// tracked as a string[], so `d.names()[1]` isn't a string and `.len()`
+	// mis-dispatches to arr_len (offset 0). append_dyn_strarr_ret_fns fixes it.
+	// d.names()[1].len() = len("worlds!") = 7. (#5142 array sibling.)
+	{"dyn-strarr-elem-chained",
+		`trait N { function names(self: Self): string[]; } struct P { a: string, b: string } impl N for P { function names(self: Self): string[] { return [self.a, self.b]; } } function main(): i32 { var p: P = P { a: "hi", b: "worlds!" }; var d: dyn N = p; return d.names()[1].len(); }`, 7},
+	// f64[]-returning dyn method, chained through an element read into float
+	// arithmetic: without a "dyn <Trait>.<method>" entry in f64arr_ret_fns the
+	// element mis-lowers as integer arithmetic on the float bits.
+	// append_dyn_f64arr_ret_fns fixes it. (d.rats()[0] * 2.0) as i32 =
+	// (2.5 * 2.0) = 5. (The i64[] sibling routes to the AST fallback — a sound
+	// IR-subset gap, not a miscompile — so it needs no registrar and isn't
+	// pinned here.)
+	{"dyn-f64arr-elem-chained",
+		`trait F { function rats(self: Self): f64[]; } struct Q { n: i32 } impl F for Q { function rats(self: Self): f64[] { return [(self.n as f64) / 4.0, 1.0]; } } function main(): i32 { var q: Q = Q { n: 10 }; var d: dyn F = q; return (d.rats()[0] * 2.0) as i32; }`, 5},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64

@@ -28675,6 +28675,52 @@ pub function append_dyn_f64_ret_fns(base: string[], trait_reqs: parser.TraitReq[
     return out;
 }
 
+// append_dyn_strarr_ret_fns is the string[]-return sibling of
+// append_dyn_str_ret_fns: a `string[]`-returning method chained through an
+// element read on a `dyn Trait` dispatch result (`d.names()[1].len()`)
+// mis-lowers without a "dyn <Trait>.<method>" entry in strarr_ret_fns —
+// expr_is_strarr's method arm looks up "dyn <Trait>.<method>" (the dyn
+// receiver's coarse tracked type), misses, so `d.names()` isn't tracked as a
+// string[]; `d.names()[1]` then isn't a string and its `.len()` mis-dispatches
+// to arr_len (#5142 array sibling). Plain membership like strarr_ret_fns_of.
+pub function append_dyn_strarr_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
+    var out: string[] = base;
+    var t: i32 = 0;
+    while (t < trait_reqs.len()) {
+        var tr: parser.TraitReq = trait_reqs[t];
+        var m: i32 = 0;
+        while (m < tr.req_sigs.len()) {
+            if (tr.req_sigs[m].ret_type == "string[]") { out = out.append("dyn " + tr.trait_name + "." + tr.req_sigs[m].name); }
+            m = m + 1;
+        }
+        t = t + 1;
+    }
+    return out;
+}
+
+// append_dyn_f64arr_ret_fns is the f64[]-return sibling: an f64[]-returning
+// method chained through an element read on a `dyn Trait` dispatch result
+// (`d.rats()[0] * 2.0`) mis-lowers the element as integer arithmetic on the
+// float bits without a "dyn <Trait>.<method>" entry in f64arr_ret_fns
+// (expr_is_f64arr's method arm misses the key). Plain membership like
+// f64arr_ret_fns_of. (The i64[] sibling needs no registrar: a chained-i64[]
+// dispatch result routes to the AST fallback, a sound IR-subset gap, not a
+// miscompile — verified by differential probing.)
+pub function append_dyn_f64arr_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
+    var out: string[] = base;
+    var t: i32 = 0;
+    while (t < trait_reqs.len()) {
+        var tr: parser.TraitReq = trait_reqs[t];
+        var m: i32 = 0;
+        while (m < tr.req_sigs.len()) {
+            if (tr.req_sigs[m].ret_type == "f64[]") { out = out.append("dyn " + tr.trait_name + "." + tr.req_sigs[m].name); }
+            m = m + 1;
+        }
+        t = t + 1;
+    }
+    return out;
+}
+
 // str_ret_argref returns the argument index an erased-generic fn's return
 // mirrors ("name|$arg<i>" entries from str_ret_fns_of), or -1. The caller
 // re-types the call by the ACTUAL argument at that position.

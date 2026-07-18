@@ -6086,7 +6086,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // module (parser, ~300 funcs). This mirrors bparams above and the wasm
     // backend's emit_module, which already hoists them.
     var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
+    var sarf: string[] = irlower.append_dyn_strarr_ret_fns(irlower.strarr_ret_fns_of(all_funcs), mod.trait_reqs);
     var amf: string[] = irlower.arr_method_fns_of(all_funcs);
     var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
     var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(all_funcs), mod.trait_reqs);
@@ -6094,7 +6094,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
     var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
+    var farf: string[] = irlower.append_dyn_f64arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
     var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
@@ -6240,7 +6240,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var bparams: string[] = irlower.borrowable_params_interproc(im.funcs);
     var csparams: string[] = irlower.consume_safe_params_interproc(im.funcs, bparams);
     var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(im.funcs), im.trait_reqs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(im.funcs);
+    var sarf: string[] = irlower.append_dyn_strarr_ret_fns(irlower.strarr_ret_fns_of(im.funcs), im.trait_reqs);
     var amf: string[] = irlower.arr_method_fns_of(im.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(im.funcs);
     var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(im.funcs), im.trait_reqs);
@@ -6248,7 +6248,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var srtf: string[] = irlower.struct_ret_fns_of(im.funcs, im.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(im.funcs);
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(im.funcs), im.trait_reqs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(im.funcs);
+    var farf: string[] = irlower.append_dyn_f64arr_ret_fns(irlower.f64arr_ret_fns_of(im.funcs), im.trait_reqs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(im.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(im.funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(im.funcs);
