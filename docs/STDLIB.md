@@ -597,7 +597,19 @@ serializer.
 - **Response builders:** `http_response_ok`,
   `http_response_text`, `http_response_not_found`,
   `http_response_bad_request`, `http_response_internal_error`,
-  `http_response_redirect`, `http_response_no_content`
+  `http_response_redirect`, `http_response_no_content`; typed-body
+  variants that set `Content-Type` up front:
+  `http_response_json` / `http_response_json_status` /
+  `http_response_html` / `http_response_plain`
+- **Header methods:** `(resp).with_header(name, value)` (set) /
+  `(resp).with_appended_header(name, value)` (append) /
+  `(resp).with_content_type(ct)`
+- **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
+  `SetCookie` built via `cookie_new(name, value)` (hardened
+  defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
+  `cookie_delete(name)`, serialized with `(c).serialize()` and
+  attached with `(resp).with_set_cookie(c)` (append semantics —
+  one `Set-Cookie` header per cookie)
 - **Status / classifiers:** `http_status_text`,
   `is_valid_http_status`, and the RFC 9110 status-class predicates
   `http_is_informational` / `http_is_success` / `http_is_redirect` /
