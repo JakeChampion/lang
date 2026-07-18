@@ -225,11 +225,16 @@ existing test scaffolding rather than gated off:
   - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
     admits only the leak-safe scalar arrays; native admits all.
   - **Own-param families** (`own_param_reuse_sites` /
-    `own_param_self_overwrite_sites`): still on the narrow predicate. Enum /
-    string fields are BLOCKED there — the alias-free release proof
+    `own_param_self_overwrite_sites`): now on `struct_fields_reusable_param`
+    (narrow ∪ Map / leak-safe tuple / leak-safe Option — the leak-only kinds,
+    which need no release arm or freshness gate; pinned by the
+    `own-param-donor-{map,tuple,opt}-field*` differential cases). Enum /
+    string fields remain BLOCKED there — the alias-free release proof
     (`donor_enum_fields_fresh`) reads the donor's bind literal, which a
-    parameter doesn't have. Map / tuple / Option (leak-only, no release arm)
-    could be widened with just a predicate swap.
+    parameter doesn't have. (Aside found while testing: a map-returning CALL
+    as a struct-lit field value crashes on the self-host x86 path with reuse
+    on OR off — a separate pre-existing bug; the reuse cases use ident-valued
+    Map fields.)
   - **Enum-donor recipient** (`enum_donor_reuse_sites`): still narrow; needs a
     recipient fresh-value gate plus the field-kind's exit-reclaim arm, or the
     reused box leaks the new field at exit.

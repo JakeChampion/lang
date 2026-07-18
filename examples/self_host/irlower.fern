@@ -23413,6 +23413,37 @@ function struct_fields_reusable(structs: parser.StructDecl[], struct_name: strin
     return false;
 }
 
+// struct_fields_reusable_param widens struct_fields_reusable for the OWN-PARAM
+// reuse families only (own_param_reuse_sites / own_param_self_overwrite_sites):
+// Map / leak-safe tuple / leak-safe Option fields are additionally admitted.
+// All three are leak-only boxes on the IR path (never released anywhere), so
+// overwriting or carrying one in a reused param box leaks it exactly like the
+// normal drop path would have, and a copied pointer can never dangle — the
+// emitters' release / carried-copy walks are per-type allowlists that already
+// skip them (same reasoning as the _cross widening below). ENUM and STRING
+// fields stay EXCLUDED here, unlike _cross: their old-value release at the
+// reuse arm needs the donor's values proven fresh (donor_enum_fields_fresh /
+// the #4355 string rule), and that proof reads the donor's BIND LITERAL —
+// which a parameter does not have.
+function struct_fields_reusable_param(structs: parser.StructDecl[], struct_name: string): boolean {
+    if (struct_fields_reusable(structs, struct_name)) { return true; }
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            if (structs[i].fields.len() == 0) { return false; }
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                var t: string = structs[i].fields[fi].type_name;
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
+                fi = fi + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // struct_fields_reusable_cross widens struct_fields_reusable for the
 // CROSS-STATEMENT reuse family only (#4356 divergence 1): ENUM-typed fields
 // are additionally admitted. Sound there because the donor is DEAD and every
@@ -24090,16 +24121,19 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
                             // Recipient must be a scalar / leak-safe-array / nested-
-                            // struct box (struct_fields_reusable — NO enum/string/map/
-                            // tuple/option, whose old-value release needs a DONOR-side
-                            // freshness gate a param has no bind literal to satisfy).
-                            // For those admitted kinds the reuse arm's old-field release
-                            // is rc-GUARDED (__fern_rc_dec / __struct_drop free only at
-                            // rc==1), so a sole-owned `own` param's fields release
-                            // soundly with no donor-freshness gate — symmetric with the
-                            // cross-LOCAL donor path (cross_construction_donor adds a
-                            // freshness gate only when struct_has_enum_field).
-                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
+                            // struct / Map / tuple / Option box
+                            // (struct_fields_reusable_param — NO enum/string, whose
+                            // old-value release needs a DONOR-side freshness gate a
+                            // param has no bind literal to satisfy; Map / tuple /
+                            // Option are leak-only, released nowhere, so they need
+                            // neither release nor gate). For the released kinds the
+                            // reuse arm's old-field release is rc-GUARDED
+                            // (__fern_rc_dec / __struct_drop free only at rc==1), so a
+                            // sole-owned `own` param's fields release soundly with no
+                            // donor-freshness gate — symmetric with the cross-LOCAL
+                            // donor path (cross_construction_donor adds a freshness
+                            // gate only when struct_has_enum_field).
+                            if (!slit.has_base && struct_fields_reusable_param(structs, slit.type_name)) {
                                 // RECIPIENT freshness (mirrors cross_reuse_sites' `ok`):
                                 // an array field VALUE must be a fresh array literal and
                                 // a nested-struct value a fresh no-base struct literal,
@@ -24133,7 +24167,7 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
                                     var p: parser.ParamDecl = fn.params[pi];
                                     if (p.own
                                         && p.name != v.name
-                                        && struct_fields_reusable(structs, p.type_name)
+                                        && struct_fields_reusable_param(structs, p.type_name)
                                         && structs_reuse_compatible(structs, p.type_name, slit.type_name)
                                         && util.index_of_str(consumed, p.name) < 0
                                         && util.index_of_str(reassigned, p.name) < 0
@@ -24167,9 +24201,10 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // where own_d is a dead-after `own` param reuses own_d's box in place. Same
 // soundness basis as the cross own-param donor: an `own` param is moved in / sole-
 // owned and never exit-swept, and emit_self_overwrite_reuse's __fern_rc_is_unique
-// guard backstops. Restricted to struct_fields_reusable (scalar / leak-safe array
-// / nested struct — NO enum/string, whose old-value release needs a donor bind
-// literal a param has none of), so no donor-side freshness gate is required. The
+// guard backstops. Restricted to struct_fields_reusable_param (scalar /
+// leak-safe array / nested struct / leak-only Map / tuple / Option — NO
+// enum/string, whose old-value release needs a donor bind literal a param has
+// none of), so no donor-side freshness gate is required. The
 // override / carried gates mirror self_overwrite_reuse_sites exactly: same-type
 // base, override values fresh (array literals / nested no-base struct lits), no
 // override value references d, d dead after the statement, never reassigned, and
@@ -24209,7 +24244,7 @@ function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: parser.Str
                                             pi = pi + 1;
                                         }
                                         var ok: boolean = is_own_p
-                                            && struct_fields_reusable(structs, slit.type_name)
+                                            && struct_fields_reusable_param(structs, slit.type_name)
                                             && v.name != bid.name
                                             && util.index_of_str(reassigned, bid.name) < 0
                                             && !name_escapes_outside_stmt(fn.body, bid.name, i);
