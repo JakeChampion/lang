@@ -30645,6 +30645,23 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                                     _ => {}
                                 }
                             },
+                            // (d) `return hs[0]` — an ELEMENT of a closure ARRAY
+                            // (a closure box). Register this fn closure-returning
+                            // so the caller's `var g = pick()` binds g a closure
+                            // local (env-first `g()`); without it g() bare-calls
+                            // the box pointer and SIGSEGVs. Local closure-array
+                            // case only (the array is a local bound to a closure-
+                            // array literal); the struct-field element
+                            // `return r.hs[0]` needs `structs` threaded here
+                            // (#5202 follow-up).
+                            parser.ExprIndex(nix) => {
+                                match (nix.array) {
+                                    parser.ExprIdent(naid) => {
+                                        if (body_binds_closurearr_local(b, naid.name, out, [])) { hit = true; }
+                                    },
+                                    _ => {}
+                                }
+                            },
                             _ => {}
                         }
                         ri = ri + 1;
