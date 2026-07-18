@@ -593,13 +593,33 @@ type Op struct {
 	// Str carries OpConstStr's string value and OpCallDirect's callee
 	// name. For OpConstVtable it carries the Trait name. Empty otherwise.
 	Str string
-	// Str2 carries OpConstVtable's Concrete type name (Str holds the
-	// Trait); together they key the (Trait, Concrete) vtable. Empty
-	// for every other op.
+	// Pos points back at the source position the lowering pass was
+	// processing when this op was emitted. Backends use it to drive
+	// DWARF .loc / WASM debug-line info; the field is zero for ops
+	// the lowering pass synthesised without an obvious source span
+	// (e.g. trailing implicit returns).
+	Pos ast.Position
+	// Ext holds the RARELY-populated payload fields (Str2 / Sig /
+	// ArgTypes / CaptureSlots — see OpExt). On a driver-scale program
+	// under 1% of ops carry any of them, but as inline fields they cost
+	// every op 64 bytes: at ~12.5M ops for a self-host driver that was
+	// ~800 MB of live heap right at the emit's memory peak. Nil for the
+	// overwhelming majority of ops; read through the accessor methods
+	// (Str2() / Sig() / ArgTypes() / CaptureSlots()), which are
+	// nil-safe. The Ext block is written once at construction and never
+	// mutated afterwards, so sharing a pointer across op copies is safe.
+	Ext *OpExt
+}
+
+// OpExt is Op's side-table for rarely-populated fields — see Op.Ext.
+type OpExt struct {
+	// Str2 carries OpConstVtable's Concrete type name (Op.Str holds the
+	// Trait); together they key the (Trait, Concrete) vtable.
 	Str2 string
-	// Sig is set on OpCallIndirect to the static signature of the
-	// function-typed local being dispatched through. Codegen uses it
-	// to resolve the right `(type $tN)` clause in the WAT output.
+	// Sig is set on OpCallIndirect / OpCallDyn to the static signature
+	// of the function-typed local being dispatched through. Codegen uses
+	// it to resolve the right `(type $tN)` clause in the WAT output and
+	// the register classes on the natives.
 	Sig *ast.FuncType
 	// ArgTypes is set on OpCallDirect / OpCallDirectPair to the
 	// static parameter types of the callee, in the same order the
@@ -612,12 +632,6 @@ type Op struct {
 	// Nil is allowed for callees that take no string args — the
 	// backend then treats every arg as 1 slot.
 	ArgTypes []ast.Type
-	// Pos points back at the source position the lowering pass was
-	// processing when this op was emitted. Backends use it to drive
-	// DWARF .loc / WASM debug-line info; the field is zero for ops
-	// the lowering pass synthesised without an obvious source span
-	// (e.g. trailing implicit returns).
-	Pos ast.Position
 	// CaptureSlots is set on OpMakeClosure / OpMakeEnv to the per-capture
 	// env-block slot size in bytes (irCaptureSlotSize of each capture's
 	// type, in capture order) — the packed layout the CaptureRef loads
@@ -627,6 +641,39 @@ type Op struct {
 	// means "one 8-byte slot per capture" (the legacy uniform layout that
 	// hand-built SSA closures assume).
 	CaptureSlots []int32
+}
+
+// Str2 returns Ext.Str2, or "" when the op carries no Ext block.
+func (o *Op) Str2() string {
+	if o.Ext == nil {
+		return ""
+	}
+	return o.Ext.Str2
+}
+
+// Sig returns Ext.Sig, or nil when the op carries no Ext block.
+func (o *Op) Sig() *ast.FuncType {
+	if o.Ext == nil {
+		return nil
+	}
+	return o.Ext.Sig
+}
+
+// ArgTypes returns Ext.ArgTypes, or nil when the op carries no Ext block.
+func (o *Op) ArgTypes() []ast.Type {
+	if o.Ext == nil {
+		return nil
+	}
+	return o.Ext.ArgTypes
+}
+
+// CaptureSlots returns Ext.CaptureSlots, or nil when the op carries no
+// Ext block.
+func (o *Op) CaptureSlots() []int32 {
+	if o.Ext == nil {
+		return nil
+	}
+	return o.Ext.CaptureSlots
 }
 
 // Func is a single lowered function: parameter / local list, ops, and
@@ -1601,7 +1648,7 @@ func formatOp(op Op) string {
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
 	case OpConstVtable:
-		return fmt.Sprintf("%s %s/%s", op.Kind, op.Str, op.Str2)
+		return fmt.Sprintf("%s %s/%s", op.Kind, op.Str, op.Str2())
 	case OpCallDyn:
 		return fmt.Sprintf("%s slot=%d", op.Kind, op.I32)
 	case OpMakeClosure, OpMakeEnv:
@@ -2257,10 +2304,10 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 			callArgTypes = append(callArgTypes, concreteType)
 			callArgTypes = append(callArgTypes, argTypes...)
 			emit(Op{
-				Kind:     OpCallDirect,
-				Str:      realImplMethodName(info, vt.Concrete, vm.Method),
-				I32:      int32(1 + len(argTypes)),
-				ArgTypes: callArgTypes,
+				Kind: OpCallDirect,
+				Str:  realImplMethodName(info, vt.Concrete, vm.Method),
+				I32:  int32(1 + len(argTypes)),
+				Ext:  &OpExt{ArgTypes: callArgTypes},
 			})
 			if tm.Result == nil {
 				emit(Op{Kind: OpReturnVoid})
@@ -2409,7 +2456,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			emit(Op{Kind: OpLoadLocal, I32: 1}) // data
 			emit(Op{Kind: OpLoadLocal, I32: 2}) // vtable
-			emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+			emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Ext: &OpExt{Sig: dropSig}})
 			emit(Op{Kind: OpDrop}) // discard the ptr the dtor returns
 			emit(Op{Kind: OpEnd})
 			// __free(cell, 2*ptrW) — reclaim the box cell itself. __free is
@@ -2438,7 +2485,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 		emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 		emit(Op{Kind: OpLoadLocal, I32: 0}) // data
 		emit(Op{Kind: OpLoadLocal, I32: 1}) // vtable
-		emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+		emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Ext: &OpExt{Sig: dropSig}})
 		emit(Op{Kind: OpDrop}) // discard the box ptr the dtor returns
 		emit(Op{Kind: OpEnd})
 		emit(Op{Kind: OpReturnVoid})
@@ -5419,7 +5466,7 @@ func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
 		setKey = dynVtableSetKey(n.Traits)
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
-	b.emit(Op{Kind: OpConstVtable, Str: setKey, Str2: concrete})
+	b.emit(Op{Kind: OpConstVtable, Str: setKey, Ext: &OpExt{Str2: concrete}})
 	b.emit(Op{Kind: OpEq})
 	// Result Option[T] heap-box pointer, built in either arm into a
 	// shared scratch slot (a void if-block keeps the operand-stack model
@@ -7237,7 +7284,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// byte-identical to before; for a multi-trait `dyn A + B`
 			// coercion it selects the MERGED (concatenated) vtable
 			// collectVtables emitted for the set (docs/DYN-TRAITS.md §10).
-			b.emit(Op{Kind: OpConstVtable, Str: dynVtableSetKey(dc.Traits), Str2: dc.Concrete})
+			b.emit(Op{Kind: OpConstVtable, Str: dynVtableSetKey(dc.Traits), Ext: &OpExt{Str2: dc.Concrete}})
 			if b.dynBoxed() {
 				b.emit(Op{Kind: OpBoxDyn})
 			}
@@ -8219,7 +8266,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// a user-callable name) — the arm64 two-word ABI
 			// needs `(string, i32, i32)` to count the string
 			// arg as 2 operand-stack slots.
-			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3, ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}})
+			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 			break
 		}
 		// Lower `arr[low:high]` to:
@@ -8767,7 +8814,7 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures)),
-			CaptureSlots: captureSlotSizes(b.closureCaps[n.FuncName], b.ptrW)})
+			Ext: extCaptureSlots(captureSlotSizes(b.closureCaps[n.FuncName], b.ptrW))})
 	case *ast.FieldAccess:
 		// Qualified payload-less variant reference: `Color.Red`
 		// in value position. The checker accepted it as an
@@ -10420,7 +10467,7 @@ func (b *builder) call(n *ast.Call) error {
 			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
 			b.emit(Op{Kind: OpAdd})
 			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
 			return nil
 		}
 		// Inline two-word (wasm, §4.2.1): lower the receiver →
@@ -10440,7 +10487,7 @@ func (b *builder) call(n *ast.Call) error {
 		}
 		// Push the vtable back → [data, args..., vtable], then dispatch.
 		b.emit(Op{Kind: OpLoadLocal, I32: vtmp})
-		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
 		return nil
 	}
 	// Captured-closure callee: closureconv rewrote a captured
@@ -10463,7 +10510,7 @@ func (b *builder) call(n *ast.Call) error {
 		if err := b.expr(cr); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 		return nil
 	}
 	// `(b.f)(args...)` / `(t.N)(args...)` where the field access
@@ -10509,7 +10556,7 @@ func (b *builder) call(n *ast.Call) error {
 			if err := b.expr(fa); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 			return nil
 		}
 	}
@@ -10530,7 +10577,7 @@ func (b *builder) call(n *ast.Call) error {
 				if err := b.expr(innerCall); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+				b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 				return nil
 			}
 		}
@@ -10563,7 +10610,7 @@ func (b *builder) call(n *ast.Call) error {
 			if err := b.expr(idx); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 			return nil
 		}
 	}
@@ -10589,7 +10636,7 @@ func (b *builder) call(n *ast.Call) error {
 		if err := b.expr(lam); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 		return nil
 	}
 	if mc, ok := n.Callee.(*ast.MakeClosure); ok {
@@ -10618,7 +10665,7 @@ func (b *builder) call(n *ast.Call) error {
 			if err := b.expr(mc); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 			return nil
 		}
 	}
@@ -11651,7 +11698,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// bindings keep interpreter (copy-on-shared) semantics.
 			growBracket := b.growBracketArgs(n, id.Name)
 			b.emitGrowBracket(growBracket, OpRcInc, "__fern_rc_inc")
-			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width, ArgTypes: argTypes})
+			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width, Ext: extArgTypes(argTypes)})
 			if kind == OpCallDirectPair && !b.suppressPairRebox {
 				// Re-pack the (tag, payload) pair into a heap
 				// box so existing callers (var assignment,
@@ -11693,7 +11740,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		return err
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: sig})
+	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: sig}})
 	return nil
 }
 
@@ -16402,4 +16449,22 @@ func fieldType(fields []ast.Param, name string) ast.Type {
 		}
 	}
 	return nil
+}
+
+// extArgTypes wraps a non-nil ArgTypes slice in an OpExt block (nil in →
+// nil out, so ops without string-typed args stay Ext-free).
+func extArgTypes(ts []ast.Type) *OpExt {
+	if ts == nil {
+		return nil
+	}
+	return &OpExt{ArgTypes: ts}
+}
+
+// extCaptureSlots wraps a non-nil CaptureSlots slice in an OpExt block
+// (nil in → nil out).
+func extCaptureSlots(slots []int32) *OpExt {
+	if slots == nil {
+		return nil
+	}
+	return &OpExt{CaptureSlots: slots}
 }

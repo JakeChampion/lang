@@ -2296,13 +2296,13 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return inst.InstCall(body, idx), nil
 	case ir.OpCallIndirect:
-		if op.Sig == nil {
-			return nil, fmt.Errorf("OpCallIndirect: missing op.Sig")
+		if op.Sig() == nil {
+			return nil, fmt.Errorf("OpCallIndirect: missing op.Sig()")
 		}
 		// Closure-target ABI: callee signature has env_ptr (i32)
 		// appended. The typeidx we dispatch through must match —
-		// derive it from op.Sig + env_ptr.
-		tIdx, err := ctx.addClosureSigType(op.Sig)
+		// derive it from op.Sig() + env_ptr.
+		tIdx, err := ctx.addClosureSigType(op.Sig())
 		if err != nil {
 			return nil, fmt.Errorf("OpCallIndirect: resolving signature: %w", err)
 		}
@@ -2323,18 +2323,18 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	case ir.OpConstVtable:
 		// Push the static address of the (trait, concrete) vtable —
 		// an array of i32 function-table indices in the data segment.
-		off, err := ctx.internVtable(op.Str, op.Str2)
+		off, err := ctx.internVtable(op.Str, op.Str2())
 		if err != nil {
 			return nil, err
 		}
 		return inst.InstI32Const(body, int32(off)), nil
 	case ir.OpCallDyn:
-		if op.Sig == nil {
-			return nil, fmt.Errorf("OpCallDyn: missing op.Sig")
+		if op.Sig() == nil {
+			return nil, fmt.Errorf("OpCallDyn: missing op.Sig()")
 		}
 		// The dyn receiver ABI is a plain i32 pointer (no env append),
 		// so dispatch through the no-env signature.
-		tIdx, err := ctx.addSigType(op.Sig)
+		tIdx, err := ctx.addSigType(op.Sig())
 		if err != nil {
 			return nil, fmt.Errorf("OpCallDyn: resolving signature: %w", err)
 		}

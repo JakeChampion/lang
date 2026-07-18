@@ -1806,7 +1806,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 		{Kind: OpLoadLocal, I32: 3},
 		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
 		{Kind: OpAdd},
-		{Kind: OpCallIndirect, I32: 0, Sig: dropSig},
+		{Kind: OpCallIndirect, I32: 0, Ext: &OpExt{Sig: dropSig}},
 		{Kind: OpDrop},
 		{Kind: OpEnd}, // if drop_fn != 0
 		{Kind: OpEnd}, // if is_unique(p)

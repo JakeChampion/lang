@@ -7851,7 +7851,7 @@ var twoWordStrHelperArgSlots = map[string]int{
 }
 
 // callArgTypes returns the parameter types of an OpCallDirect /
-// OpCallDirectPair, preferring the IR-stamped `op.ArgTypes`
+// OpCallDirectPair, preferring the IR-stamped `op.ArgTypes()`
 // (populated by the lowering pass from FuncSigs at the central
 // emit point and explicitly at synthesised emit sites like
 // `__str_slice`). Falls back to looking up the user FuncDecl
@@ -7864,8 +7864,8 @@ var twoWordStrHelperArgSlots = map[string]int{
 // path treats every arg as 1 operand-stack slot, which is
 // correct for callees with no string args.
 func callArgTypes(g *generator, op ir.Op, argc int) []ast.Type {
-	if len(op.ArgTypes) > 0 {
-		return op.ArgTypes
+	if len(op.ArgTypes()) > 0 {
+		return op.ArgTypes()
 	}
 	if callee, ok := g.funcs[op.Str]; ok && callee != nil {
 		out := make([]ast.Type, 0, argc)
@@ -8572,12 +8572,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// (docs/DYN-TRAITS.md §4.2.2). On natives the vtable holds
 		// POINTERS, not table indices (the wasm form): OpCallDyn loads
 		// slot k and `blr`s it directly.
-		key := op.Str + "/" + op.Str2
+		key := op.Str + "/" + op.Str2()
 		if g.dynVtableCells == nil {
 			g.dynVtableCells = map[string]bool{}
 		}
 		g.dynVtableCells[key] = true
-		g.adrpAdd("x0", dynVtableLabel(op.Str, op.Str2))
+		g.adrpAdd("x0", dynVtableLabel(op.Str, op.Str2()))
 		g.push()
 
 	case ir.OpBoxDyn:
@@ -8616,11 +8616,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
 		// function pointer (`vtable + slot*8`), then do an indirect call
 		// with [data, args...] as the AAPCS64 args (receiver-first,
-		// plain — no closure env). op.Sig is the receiver-first method
+		// plain — no closure env). op.Sig() is the receiver-first method
 		// signature; argc = len(params) (= 1 receiver + method args),
 		// void iff Result == nil.
-		if op.Sig == nil {
-			return fmt.Errorf("arm64: OpCallDyn missing op.Sig")
+		if op.Sig() == nil {
+			return fmt.Errorf("arm64: OpCallDyn missing op.Sig()")
 		}
 		g.pop()               // x0 = vtable (top)
 		g.emit("mov x17, x0") // x17 = vtable base
@@ -8637,12 +8637,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// operand-stack slots → 2 arg registers. The receiver (param[0],
 		// a StructType pointer) is always 1 slot; method params follow.
 		// Translate the user-visible param count into the effective slot
-		// count via op.Sig — same fan-out OpCallIndirect / OpCallDirect
+		// count via op.Sig() — same fan-out OpCallIndirect / OpCallDirect
 		// apply.
-		slotCount := len(op.Sig.Params)
+		slotCount := len(op.Sig().Params)
 		if ast.UseTwoWordStrings(8) {
 			slotCount = 0
-			for _, t := range op.Sig.Params {
+			for _, t := range op.Sig().Params {
 				if _, isStr := t.(ast.StringType); isStr {
 					slotCount += 2
 				} else {
@@ -8653,13 +8653,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsLoad(slotCount)
 		g.emit("blr x16")
 		g.emitCallArgsCleanup(slotCount)
-		if op.Sig.Result == nil {
+		if op.Sig().Result == nil {
 			break
 		}
 		// String result arrives as (data, len) in (x0, x1) under the
 		// two-word ABI — push both halves; other results push x0 only.
 		if ast.UseTwoWordStrings(8) {
-			if _, isStr := op.Sig.Result.(ast.StringType); isStr {
+			if _, isStr := op.Sig().Result.(ast.StringType); isStr {
 				g.push() // data (x0)
 				g.emit("mov x0, x1")
 				g.push() // len
@@ -9434,9 +9434,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// argc (user-visible param count) into the effective
 		// slot count. The trailing env_ptr is always 1 slot.
 		slotCount := argc + 1
-		if ast.UseTwoWordStrings(8) && op.Sig != nil {
+		if ast.UseTwoWordStrings(8) && op.Sig() != nil {
 			slotCount = 1 // env_ptr
-			for _, t := range op.Sig.Params {
+			for _, t := range op.Sig().Params {
 				if _, isStr := t.(ast.StringType); isStr {
 					slotCount += 2
 				} else {
@@ -9453,8 +9453,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// values don't materialise as values today (the IR
 		// emits OpCallIndirect through a non-void expression
 		// position), so we always push at least one slot.
-		if ast.UseTwoWordStrings(8) && op.Sig != nil {
-			if _, isStr := op.Sig.Result.(ast.StringType); isStr {
+		if ast.UseTwoWordStrings(8) && op.Sig() != nil {
+			if _, isStr := op.Sig().Result.(ast.StringType); isStr {
 				g.push()
 				g.emit("mov x0, x1")
 				g.push()

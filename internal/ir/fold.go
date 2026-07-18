@@ -496,8 +496,8 @@ func opEqual(a, b Op) bool {
 	if a.Kind != b.Kind || a.I32 != b.I32 || a.I64 != b.I64 ||
 		a.F32 != b.F32 || a.F64 != b.F64 || a.Width != b.Width ||
 		a.Unsigned != b.Unsigned || a.Str != b.Str ||
-		a.Sig != b.Sig || a.Pos != b.Pos {
+		a.Sig() != b.Sig() || a.Str2() != b.Str2() || a.Pos != b.Pos {
 		return false
 	}
-	return len(a.ArgTypes) == len(b.ArgTypes)
+	return len(a.ArgTypes()) == len(b.ArgTypes())
 }

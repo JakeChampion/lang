@@ -948,7 +948,7 @@ func TestEmitCallIndirect(t *testing.T) {
 			Ops: []ir.Op{
 				{Kind: ir.OpConstI32, I32: 21},
 				{Kind: ir.OpConstFunc, Str: "double"},
-				{Kind: ir.OpCallIndirect, Sig: sigI32I32},
+				{Kind: ir.OpCallIndirect, Ext: &ir.OpExt{Sig: sigI32I32}},
 			},
 		},
 		{
@@ -957,7 +957,7 @@ func TestEmitCallIndirect(t *testing.T) {
 			Ops: []ir.Op{
 				{Kind: ir.OpConstI32, I32: 100},
 				{Kind: ir.OpConstFunc, Str: "negate"},
-				{Kind: ir.OpCallIndirect, Sig: sigI32I32},
+				{Kind: ir.OpCallIndirect, Ext: &ir.OpExt{Sig: sigI32I32}},
 			},
 		},
 	}}
