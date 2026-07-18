@@ -492,6 +492,35 @@ function main(): i32 {
     if (i32_crem(10, 3) == (1 as i64)) { r = r + 9; }
     return r;
 }`},
+	// overflowing_div / overflowing_rem (the std/i32 · i64 · u32 · u64
+	// additions): the (wrapped, did_overflow) quotient / remainder pair,
+	// completing the overflowing_ family for / and %. The one overflowing pair
+	// is MIN / -1 (quotient wraps to MIN, remainder is 0). Exercises i32 / +
+	// % + a tuple return + destructure + the MIN branch on the IR path.
+	// Oracle-checked. Four hits → 42.
+	{"int-overflowing-div", `function i32_odiv(n: i32, other: i32): (i32, boolean) {
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return (min32, true); }
+    return (n / other, false);
+}
+function i32_orem(n: i32, other: i32): (i32, boolean) {
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return (0, true); }
+    return (n % other, false);
+}
+function main(): i32 {
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    var (q1, o1) = i32_odiv(17, 5);
+    if (q1 == 3 && !o1) { r = r + 10; }
+    var (q2, o2) = i32_odiv(min32, 0 - 1);
+    if (q2 == min32 && o2) { r = r + 11; }                          // MIN / -1 wraps to MIN
+    var (m1, p1) = i32_orem(min32, 0 - 1);
+    if (m1 == 0 && p1) { r = r + 10; }                              // MIN % -1 is 0, flag set
+    var (m2, p2) = i32_orem(0 - 17, 5);
+    if (m2 == (0 - 2) && !p2) { r = r + 11; }                       // sign of dividend
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

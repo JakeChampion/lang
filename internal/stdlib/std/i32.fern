@@ -561,6 +561,24 @@ pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
     return (p as i32, p < lo || p > hi);
 }
 
+// `(n: i32) overflowing_div(other)` / `overflowing_rem(other)` — the wrapped
+// quotient / remainder paired with a did-overflow boolean, completing the
+// overflowing_ family for `/` and `%`. The one overflowing pair is `MIN / -1`
+// (true result 2^31 has no i32 form, wraps to MIN) and `MIN % -1` (true result
+// 0, reported with the flag set to match `/`). Every other pair is exact, so
+// the flag is false. Divide-by-zero is the caller's responsibility, exactly as
+// for the bare `/` and `%` operators.
+pub function (n: i32) overflowing_div(other: i32): (i32, boolean) {
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return (min32, true); }
+    return (n / other, false);
+}
+pub function (n: i32) overflowing_rem(other: i32): (i32, boolean) {
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return (0, true); }
+    return (n % other, false);
+}
+
 // Unary overflow: negation and magnitude. i32::MIN (-2147483648) is the one
 // value where `-n` and `|n|` overflow — the result 2^31 has no i32
 // representation — so `abs()` / unary `-` wrap MIN to itself. These give the

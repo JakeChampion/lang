@@ -415,6 +415,23 @@ pub function (n: i64) overflowing_mul(other: i64): (i64, boolean) {
     return (p, p / n != other);
 }
 
+// `(n: i64) overflowing_div(other)` / `overflowing_rem(other)` — the wrapped
+// quotient / remainder paired with a did-overflow boolean, the i64 siblings of
+// std/i32's, completing the overflowing_ family for `/` and `%`. Only `MIN / -1`
+// (true result 2^63 wraps to MIN) and `MIN % -1` (true result 0, flag set to
+// match `/`) overflow; every other pair is exact. Divide-by-zero is the
+// caller's responsibility, as for the bare `/` and `%` operators.
+pub function (n: i64) overflowing_div(other: i64): (i64, boolean) {
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (n == min64 && other == ((0 as i64) - (1 as i64))) { return (min64, true); }
+    return (n / other, false);
+}
+pub function (n: i64) overflowing_rem(other: i64): (i64, boolean) {
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (n == min64 && other == ((0 as i64) - (1 as i64))) { return (0 as i64, true); }
+    return (n % other, false);
+}
+
 // Unary overflow: negation and magnitude, the i64 siblings of std/i32's. i64::MIN
 // is the one value where `-n` and `|n|` overflow (the result 2^63 has no i64
 // representation), so `abs()` / unary `-` wrap MIN to itself; these give the
