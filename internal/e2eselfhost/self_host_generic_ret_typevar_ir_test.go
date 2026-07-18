@@ -37,6 +37,35 @@ function main(): i32 {
     var s = gfold(0, function(a: i32, x: i32): i32 { return a + x; });
     return showeq(s, 7);
 }`},
+
+	// A generic identity `id[T](x: T): T` whose return mirrors argument 0 records
+	// a "name|$arg0" entry in str_ret_fns; infer_expr_width and str-tracking
+	// already consult it, but the FLOAT / UNSIGNED value predicates did not — so
+	// a numeric result chained directly on the call (`id(2.5) + 0.5`) mis-lowered:
+	// f64/f32 as an integer op on the double's bits, u64 as a signed shift. The
+	// argref arms added to expr_is_f64 / expr_is_f32 / expr_is_u64 recover it.
+	// f64: id(2.5) + 0.5 == 3.0 (float add, not an integer op on the bits).
+	{"typevar-f64-arith", `pub function id[T](x: T): T { return x; }
+function main(): i32 {
+    var r: f64 = id(2.5) + 0.5;
+    if (r == 3.0) { return 1; }
+    return 0;
+}`},
+	// f32 (rides the f64 twin): id(2.5 as f32) + 1.0 as f32 == 3.5.
+	{"typevar-f32-arith", `pub function id[T](x: T): T { return x; }
+function main(): i32 {
+    var r: f32 = id(2.5 as f32) + 1.0 as f32;
+    if (r == 3.5) { return 1; }
+    return 0;
+}`},
+	// u64 (bit 63 set): id(big) >> 1 needs the UNSIGNED shift, else it diverges.
+	{"typevar-u64-shift", `pub function id[T](x: T): T { return x; }
+function main(): i32 {
+    var a: u64 = 18000000000000000000;
+    var r: u64 = id(a) >> 1;
+    if (r == 9000000000000000000) { return 1; }
+    return 0;
+}`},
 }
 
 // TestSelfHostGenericRetTypeVarIR — a generic call returning an (erased)

@@ -3915,7 +3915,16 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                     // f64_from_bits / f32_from_bits reinterpret an integer bit
                     // pattern back into an f64 value.
                     if (cid.name == "f64_from_bits" || cid.name == "f32_from_bits") { return true; }
-                    return s.is_f64_ret_fn(cid.name);
+                    if (s.is_f64_ret_fn(cid.name)) { return true; }
+                    // An erased-generic fn whose return mirrors argument i
+                    // (`id[T](x: T): T`, the "name|$arg<i>" registry entry — kind-
+                    // agnostic, recorded in str_ret_fns): the call is f64 exactly
+                    // when THAT argument is. Mirrors infer_expr_width's width use of
+                    // the same registry, so `id(2.5) + 0.5` lowers as float add
+                    // instead of an integer op on the double's bits.
+                    var gfi: i32 = str_ret_argref(s, cid.name);
+                    if (gfi >= 0 && gfi < c.args.len() && expr_is_f64(c.args[gfi], s)) { return true; }
+                    return false;
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
@@ -3981,6 +3990,19 @@ pub function expr_is_f32(e: parser.Expr, s: LowerState): boolean {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "f32";
+        },
+        // An erased-generic fn whose return mirrors argument i (`id[T](x: T): T`)
+        // is f32 exactly when that argument is — the f32 sibling of expr_is_f64's
+        // argref arm, so `id(x as f32) + y` keeps the f32-twin dispatch.
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var gfi: i32 = str_ret_argref(s, cid.name);
+                    if (gfi >= 0 && gfi < c.args.len() && expr_is_f32(c.args[gfi], s)) { return true; }
+                    return false;
+                },
+                _ => { return false; }
+            }
         },
         _ => { return false; }
     }
@@ -4051,6 +4073,22 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return false; }
             if (b.op == "<<" || b.op == ">>") { return expr_is_u64(b.left, s); }
             return expr_is_u64(b.left, s) || expr_is_u64(b.right, s);
+        },
+        // An erased-generic fn whose return mirrors argument i (`id[T](x: T): T`)
+        // is u64 exactly when that argument is. infer_expr_width already tracks
+        // its 64-bit WIDTH via the same "name|$arg<i>" registry, so the result
+        // routes through lower_i64; this recovers its UNSIGNED-ness so a shift /
+        // compare on it selects shr_u / lt_u — without it `id(big_u64) >> 1`
+        // used a signed (arithmetic) shift and diverged once bit 63 was set.
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var gui: i32 = str_ret_argref(s, cid.name);
+                    if (gui >= 0 && gui < c.args.len() && expr_is_u64(c.args[gui], s)) { return true; }
+                    return false;
+                },
+                _ => { return false; }
+            }
         },
         _ => { return false; }
     }
