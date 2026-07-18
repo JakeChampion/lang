@@ -5334,6 +5334,23 @@ function func_ret_of(funcs: FuncDecl[], name: string): string {
     return "";
 }
 
+// func_param_type_at returns the declared type spelling of parameter `idx`
+// of the receiver-less function named `name`, or "" (name not found, or idx
+// out of range). The generic-enum monomorphiser uses it to pin a bare
+// unit-variant call argument (`get(Non)`) from the callee's parameter type —
+// the call-site analogue of the `var o: Opt[i32] = Non` annotation.
+function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
+            if (idx >= 0 && idx < funcs[i].params.len()) { return funcs[i].params[idx].type_name; }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 function call_ret_type(funcs: FuncDecl[], name: string, args: Expr[], env: MEnv): string {
     var fi: i32 = 0 - 1;
     var i: i32 = 0;
@@ -7231,11 +7248,23 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                     argexp = genum_single_arg(expected);
                 }
             }
+            // A plain function call `f(args)` — a callee ident that is NOT a
+            // generic-enum variant construction — pins each bare unit-variant
+            // argument from the callee's declared PARAMETER type (`get(Non)` with
+            // `get(o: Opt[i32])` flows `Opt[i32]` into `Non`). This is the
+            // call-site analogue of `var o: Opt[i32] = Non`; without it the bare
+            // `Non` stayed un-rewritten, then monomorphize_enums dropped the
+            // generic `Non` struct and the dangling reference dragged the module
+            // to the AST emitter (#5247).
+            var calleeFn: string = "";
+            if (vname.len() > 0 && genum_owner_of_variant(enums, funcs, vname) < 0) { calleeFn = vname; }
             var nargs: Expr[] = [];
             var cur: Insts = ins;
             var i: i32 = 0;
             while (i < c.args.len()) {
-                var ra: RExpr = me_expr(c.args[i], argexp, env, enums, structs, funcs, cur);
+                var ae: string = argexp;
+                if (ae.len() == 0 && calleeFn.len() > 0) { ae = func_param_type_at(funcs, calleeFn, i); }
+                var ra: RExpr = me_expr(c.args[i], ae, env, enums, structs, funcs, cur);
                 cur = ra.rins;
                 nargs = nargs.append(ra.rexpr);
                 i = i + 1;
