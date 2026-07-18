@@ -473,6 +473,17 @@ pub function (n: i32) checked_div(other: i32): Option[i32] {
     return Some(n / other);
 }
 
+// `(n: i32) checked_rem(other)` — `Some(n % other)`, or `None` on divide-by-zero
+// or on i32::MIN % -1 (the single remainder that overflows — its division
+// counterpart does, and the operation traps on some targets). The remainder
+// sibling of `checked_div`, completing the `checked_` family for `%`.
+pub function (n: i32) checked_rem(other: i32): Option[i32] {
+    if (other == 0) { return None; }
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return None; }
+    return Some(n % other);
+}
+
 // `(n: i32) checked_mul(other)` — `Some(n * other)`, or `None` when the
 // product overflows i32. Completes the `checked_` family (add/sub/div) with
 // the most overflow-prone op. Exact: the full i32×i32 product always fits an
