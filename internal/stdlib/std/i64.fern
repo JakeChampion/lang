@@ -301,6 +301,17 @@ pub function (n: i64) checked_sub(other: i64): Option[i64] {
     return Some(r);
 }
 
+// `(n: i64) checked_div(other)` — None on divide-by-zero and on the single
+// signed-overflow case `i64::MIN / -1` (whose true quotient is 2^63, one past
+// i64::MAX); otherwise Some(n / other). The i64 sibling of std/i32's
+// `checked_div`.
+pub function (n: i64) checked_div(other: i64): Option[i64] {
+    if (other == (0 as i64)) { return None; }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (n == min64 && other == ((0 as i64) - (1 as i64))) { return None; }
+    return Some(n / other);
+}
+
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
 // of std/i32's `sqrt_floor`. Newton's method on the wider type, so it stays
 // exact for magnitudes past the i32 range (e.g. `sqrt_floor(10000000000)` is

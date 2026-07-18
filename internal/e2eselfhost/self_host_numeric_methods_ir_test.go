@@ -175,6 +175,28 @@ function main(): i32 {
     if (i64_clear(15 as i64, 1) == (13 as i64)) { r = r + 12; }
     return r;
 }`},
+	// checked_div (the std/i64 · u32 · u64 additions): guarded division with
+	// the divide-by-zero and i64::MIN / -1 overflow cases. Inlined with a -1
+	// sentinel standing in for None; oracle-checked. Four hits → 42.
+	{"int-checked-div", `function i64_cdiv(n: i64, other: i64): i64 {
+    if (other == (0 as i64)) { return (0 as i64) - (1 as i64); }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (n == min64 && other == ((0 as i64) - (1 as i64))) { return (0 as i64) - (1 as i64); }
+    return n / other;
+}
+function u32_cdiv(n: u32, other: u32): i32 {
+    if (other == (0 as u32)) { return -1; }
+    return (n / other) as i32;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i64_cdiv(10 as i64, 2 as i64) == (5 as i64)) { r = r + 10; }
+    if (i64_cdiv(10 as i64, 0 as i64) == ((0 as i64) - (1 as i64))) { r = r + 10; }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (i64_cdiv(min64, (0 as i64) - (1 as i64)) == ((0 as i64) - (1 as i64))) { r = r + 10; }
+    if (u32_cdiv(9 as u32, 3 as u32) == 3) { r = r + 12; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
