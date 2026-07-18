@@ -946,7 +946,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r10\n");
     s = s.write("    pushq %r11\n");
     s = s.write("    movl $0x10000000, %edi\n");          // addr hint
-    s = s.write("    movabs $8589934592, %rsi\n");        // length = 0x200000000, 8 GiB (64-bit imm; lockstep with asm.fern + native x86-64 — see heap_size there)
+    s = s.write("    movabs $17179869184, %rsi\n");        // length = 0x400000000, 16 GiB (64-bit imm; raised 8→16 GiB, lockstep with asm.fern + native x86-64 — see heap_size there)
     s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
     s = s.write("    movl $0x4022, %r10d\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; lockstep with asm.fern + the native x86-64 backend)
     s = s.write("    movq $-1, %r8\n");                   // fd
@@ -957,7 +957,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jl .Lalloc_oom\n");
     s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
     s = s.write("    movq %rax, __fern_heap_base(%rip)\n"); // record arena base (freeable-range lower bound)
-    s = s.write("    movabs $8589934592, %rcx\n");        // heap_size (64-bit imm)
+    s = s.write("    movabs $17179869184, %rcx\n");        // heap_size (64-bit imm, 16 GiB)
     s = s.write("    addq %rax, %rcx\n");                 // %rcx = base + heap_size (END)
     s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
     s = s.write("    popq %r11\n");
@@ -4808,7 +4808,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // that case to report 0 (matching native's __fern_heap_bump_bytes).
             s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");   // cursor (0 if uninit)
             s = s.write("    movq __fern_heap_end(%rip), %rcx\n");   // arena end = base + heap_size (0 if uninit)
-            s = s.write("    movabs $8589934592, %rdx\n");           // heap_size (0x200000000)
+            s = s.write("    movabs $17179869184, %rdx\n");           // heap_size (0x400000000, 16 GiB)
             s = s.write("    subq %rdx, %rcx\n");                    // %rcx = base = end − heap_size
             s = s.write("    movq %rax, %rdx\n");
             s = s.write("    subq %rcx, %rdx\n");                    // ptr − base
