@@ -3127,7 +3127,6 @@ func callArgDeaths(body ast.Node) map[*ast.Call]map[string]bool {
 	return out
 }
 
-
 // fieldChainRoot chases a field-access chain (`s.cur.insts`) to its root
 // ident, or reports false for a non-ident-rooted chain.
 func fieldChainRoot(fa *ast.FieldAccess) (*ast.Ident, bool) {
