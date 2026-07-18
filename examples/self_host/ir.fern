@@ -397,6 +397,10 @@ pub function op_syscall3(): Op { return op0("syscall3"); }
 // Non-reentrant: a leaf helper must finish reading it before another runs.
 // (The i64 read-back of tv_sec/tv_nsec reuses the existing __load_i64/op_load_i64.)
 pub function op_raw_scratch(): Op { return op0("raw_scratch"); }
+// syscall4 (#2649 syscall sub-floor): the 4-arg sibling of syscall3, for the
+// syscalls whose 4th arg is meaningful (openat's mode with O_CREAT, newfstatat's
+// flags). pops [nr, a1, a2, a3, a4] → the syscall return value; a4 → %r10.
+pub function op_syscall4(): Op { return op0("syscall4"); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -1224,6 +1228,7 @@ function kind_id_4(name: string): i32 {
     if (name == "open_file") { return 203; }
     if (name == "syscall3") { return 204; }
     if (name == "raw_scratch") { return 205; }
+    if (name == "syscall4") { return 206; }
     return 0;
 }
 
@@ -1458,6 +1463,7 @@ function kind_name_4(id: i32): string {
     if (id == 203) { return "open_file"; }
     if (id == 204) { return "syscall3"; }
     if (id == 205) { return "raw_scratch"; }
+    if (id == 206) { return "syscall4"; }
     return "invalid";
 }
 

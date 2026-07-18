@@ -6663,6 +6663,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sc3.ok) { return sc3; }
                         return sc3.emit(ir.op_syscall3());
                     }
+                    // __syscall4(nr, a1, a2, a3, a4) — the 4-arg sub-floor sibling.
+                    if (cid.name == "__syscall4" && c.args.len() == 5) {
+                        var s40: LowerState = lower_expr(c.args[0], s);
+                        if (!s40.ok) { return s40; }
+                        var s41: LowerState = lower_expr(c.args[1], s40);
+                        if (!s41.ok) { return s41; }
+                        var s42: LowerState = lower_expr(c.args[2], s41);
+                        if (!s42.ok) { return s42; }
+                        var s43: LowerState = lower_expr(c.args[3], s42);
+                        if (!s43.ok) { return s43; }
+                        var s44: LowerState = lower_expr(c.args[4], s43);
+                        if (!s44.ok) { return s44; }
+                        return s44.emit(ir.op_syscall4());
+                    }
                     // __raw_scratch(n) — fixed static scratch buffer ptr (#2649).
                     if (cid.name == "__raw_scratch" && c.args.len() == 1) {
                         var rsc: LowerState = lower_expr(c.args[0], s);
