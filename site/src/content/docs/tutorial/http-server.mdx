@@ -7,10 +7,12 @@ sidebar:
 
 import FernPlayground from "../../../components/FernPlayground.astro";
 
-Fern's second headline use case is **edge-function-style HTTP servers** —
-short-lived handlers that take a request, do a little work, and return a
-response. You write one function; Fern gives you both a standalone native
-server *and* a WASI HTTP component from the same source.
+The other workload Fern is tuned hardest for is **edge-function-style
+HTTP servers** — short-lived handlers that take a request, do a little
+work, and return a response. (Fern is general-purpose, but this shape and
+fast-startup CLI tools are its two sweet spots.) You write one function;
+Fern gives you both a standalone native server *and* a WASI HTTP
+component from the same source.
 
 ## The handler signature
 
@@ -35,9 +37,9 @@ function and no `main`, it **synthesises one for you**:
   exports `wasi:http/incoming-handler` instead — the standard component
   interface that `wasmtime serve` and edge hosts speak.
 
-Each invocation runs inside an implicit arena, so every string the
-handler allocates is reclaimed when it returns — no leaks across a
-long-running deployment, no GC pauses.
+Every value the handler allocates is reference-counted, so each string
+and struct is freed as its last reference drops at the end of the
+request — no leaks across a long-running deployment, and no GC pauses.
 
 ## Try it: a routed handler
 

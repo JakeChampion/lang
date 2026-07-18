@@ -1,6 +1,6 @@
 ---
 title: Fern
-description: Fern is a small, fast-startup language with native arm64 / x86-64 / wasm backends.
+description: Fern is a small, general-purpose, fast-startup language with native arm64 / x86-64 / wasm backends.
 template: splash
 # Hero `link:` values are passed verbatim to `<a href>` by
 # Starlight's Hero / LinkButton — base path is NOT auto-prepended
@@ -8,7 +8,7 @@ template: splash
 # resolve to `/lang/tutorial/install/` etc. instead of 404-ing
 # at the apex `/tutorial/install/`.
 hero:
-  tagline: A small, statically-typed language that compiles to fast-starting native binaries and tiny WebAssembly modules — built for CLI tools and edge HTTP handlers.
+  tagline: A small, statically-typed, general-purpose language that compiles to fast-starting native binaries and tiny WebAssembly modules — with a soft spot for CLI tools and edge HTTP handlers.
   actions:
     - text: Get started
       link: /lang/tutorial/install/
@@ -31,10 +31,13 @@ and no garbage collector. One source file compiles to a lean native
 binary or a self-contained `.wasm` component — the same program, across
 arm64 (Linux + macOS), x86-64 (Linux), and WebAssembly.
 
-It's designed for two jobs where startup time and binary size matter:
-**short-lived CLI tools** and **edge-function-style HTTP servers**. No
-JIT warm-up, no interpreter boot, no megabytes of runtime to ship —
-your code starts in milliseconds and exits clean.
+It's a general-purpose language that's especially at home in two jobs
+where startup time and binary size matter: **short-lived CLI tools** and
+**edge-function-style HTTP servers**. No JIT warm-up, no interpreter
+boot, no megabytes of runtime to ship — your code starts in milliseconds
+and exits clean. Reference counting (with a Perceus-style elision pass)
+means the same language also handles long-running, allocation-heavy
+programs — Fern's own compiler is written in Fern.
 
 <CardGrid stagger>
   <Card title="Starts in milliseconds" icon="rocket">
@@ -188,9 +191,11 @@ scrolling.
 - **One language, three backends.** The same source targets native
   arm64/x86-64 and WebAssembly through a shared, target-agnostic IR.
   Prototype with the interpreter, then compile for production.
-- **Small by design.** Fern began TypeScript-flavoured but has grown its
-  own shape, taking cues from Roc, Zig, Rust, and Go where they fit the
-  goal: tiny, fast, predictable programs.
+- **Small by design, general in reach.** Fern began TypeScript-flavoured
+  but has grown its own shape, taking cues from Roc, Zig, Rust, and Go:
+  tiny, fast, predictable programs. It's tuned hardest for CLI tools and
+  edge handlers, but it's a general-purpose language — long-running
+  services and its own self-hosted compiler run on it too.
 
 ## Where next
 
