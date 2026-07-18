@@ -62,6 +62,21 @@ var reuseDifferentialCases = []struct {
 	// going forward. Array-field and nested-struct-field donors.
 	{"own-param-donor-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2] + u; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 32, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-array-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; var s: i32 = c.id + c.items[0] + c.items[2] + u; if (s != 32) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 2h widened (struct_fields_reusable_param): Map / leak-safe tuple /
+	// leak-safe Option fields are admitted on the own-param families — all three
+	// are leak-only boxes (released nowhere), so the reuse arm's release walk
+	// skips them and no donor-freshness proof is needed (enum / string stay
+	// excluded: their release proof reads a bind literal a param doesn't have).
+	// The Map field VALUE is a bare ident — a map-returning CALL as a struct-lit
+	// field value is a separate pre-existing crash on this path, reuse on or off.
+	{"own-param-donor-map-field", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); var c = C { id: 10, m: mm }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-tuple-field", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var u: i32 = d.id + d.t.0; var c = T2 { id: 10, t: (7, 8) }; return c.id + c.t.1 + u; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 22, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-tuple-field-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var u: i32 = d.id + d.t.0; var c = T2 { id: 10, t: (7, 8) }; var s: i32 = c.id + c.t.1 + u; if (s != 22) { return 99; } return __rc_underflow(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-opt-field", `struct O1 { id: i32, o: Option[i32] } function f(own d: O1): i32 { var u: i32 = d.id; match (d.o) { Some(v) => { u = u + v; }, None => {} } var c = O1 { id: 10, o: Some(9) }; var r: i32 = c.id + u; match (c.o) { Some(v) => { r = r + v; }, None => {} } return r; } function main(): i32 { return f(O1 { id: 3, o: Some(2) }); }`, 24, "call __fn___fern_alloc_reuse"},
+	// Own-param SELF-OVERWRITE with a CARRIED tuple field: `c = T2 { ...d, id: 10 }`
+	// moves d's tuple pointer with the reused box (leak-only, no per-field balance).
+	{"own-param-funcupdate-tuple-carried", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var c = T2 { ...d, id: 10 }; return c.id + c.t.0 + c.t.1; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 13, "call __fn___fern_alloc_reuse"},
+	{"own-param-funcupdate-tuple-carried-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var c = T2 { ...d, id: 10 }; var s: i32 = c.id + c.t.0 + c.t.1; if (s != 13) { return 99; } return __rc_underflow(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-nested-detector", `struct Inner { a: i32, b: i32 } struct Outer { id: i32, inner: Inner } function bump(own d: Outer): i32 { var u: i32 = d.id + d.inner.a; var c = Outer { id: 5, inner: Inner { a: 7, b: 8 } }; var s: i32 = c.id + c.inner.a + c.inner.b + u; if (s != 23) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(Outer { id: 1, inner: Inner { a: 2, b: 3 } }); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 1g — OWN-PARAM base in the SELF-OVERWRITE family (#4356 slice 12):
 	// `var c = T { ...own_d, f: v }` functional-update of an owned param reuses
