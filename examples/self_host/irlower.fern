@@ -2550,6 +2550,14 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     // `m.keys()` on a string-keyed map / `m.values()` on a
                     // string-valued map yields a string[].
                     if (map_kv_elem_tag(cfa.obj, cfa.field, c.args.len(), s) == "string") { return true; }
+                    // A string[]-returning user METHOD (`f.mks()` — the #5101
+                    // sibling): resolve the receiver's struct type and look up
+                    // the qualified "<BaseType>.<method>" registry entry.
+                    // Without this the tuple-element tag fell to scalar and
+                    // `t.N[i].len()` dispatched to a nonexistent i32 method
+                    // (link failure / miscompile).
+                    var mrrt: string = expr_struct_type(cfa.obj, s);
+                    if (mrrt != "" && s.is_strarr_ret_fn(mrrt + "." + cfa.field)) { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -27850,7 +27858,18 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type == "string[]") { out = out.append(funcs[k].name); }
+        if (funcs[k].ret_type == "string[]") {
+            out = out.append(funcs[k].name);
+            // A receiver METHOD additionally gets a QUALIFIED
+            // "<BaseType>.<method>" entry so a method-call site
+            // (`(f.mks(), 3)` — the tuple-element shape) can resolve it via
+            // the receiver's struct type; the bare entry stays for the
+            // existing consumers. The qualified spelling never collides with
+            // a free-fn lookup (free names carry no '.').
+            if (funcs[k].receiver_type.len() > 0) {
+                out = out.append(util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
+            }
+        }
         // An ERASED-generic free fn returning `T[]` for a bare type-var `T`
         // bound to a param (`dup[T](x: T): T[]`): record "name|$arg<i>" so
         // expr_is_strarr re-types the call by the ACTUAL argument — the

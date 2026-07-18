@@ -1505,6 +1505,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// The METHOD-call sibling (`(f.mk(), 3)`): the registry keys methods
 		// "<BaseType>.<method>", resolved via the receiver's struct type.
 		{"map-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, f.base); return m; } function main(): i32 { var f: Fac = Fac { base: 7 }; var t: (Map[i32, i32], i32) = (f.mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		// The string[]-returning METHOD sibling (`(f.mks(), 3)`): before the
+		// qualified strarr_ret_fns entry + expr_is_strarr method arm, the
+		// element tag fell to scalar and `t.0[0].len()` dispatched to a
+		// nonexistent `__fn_i32__len` (link failure).
+		{"strarr-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mks(): string[] { var xs: string[] = []; xs = xs.append("ab"); return xs; } function main(): i32 { var f: Fac = Fac { base: 7 }; var t: (string[], i32) = (f.mks(), 3); return t.1 + t.0.len() + t.0[0].len(); }`, 6},
 		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
