@@ -97,8 +97,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-user
+      # The x86-driver-emits-arm64 + qemu-aarch64 tests (both the stage-2 /
+      # native-mmc heavyweights and the lighter IR-path element tests like
+      # TupleFnIRArm64 / CloArrayFieldCallIRArm64) skip on both the x86
+      # selfhost shards (no aarch64 cross toolchain) and the aarch64 shards
+      # (no native-x86 driver), so this lane is their only home. Extend the
+      # regex when a new such cross-host test lands.
       - name: go test (cross-host arm64)
         run: >-
           gotestsum --format pkgname-and-test-fails -- -timeout 50m
-          -run '^(TestSelfHostStage2FixedPointArm64|TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64StrForeachAST|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST)$'
+          -run '^(TestSelfHostStage2FixedPointArm64|TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64StrForeachAST|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64)$'
           ./internal/e2eselfhost/

@@ -2262,8 +2262,24 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
             return emit_method_call(c, fa, s);
         },
         _ => {
-            s = s.write("    // call target not ident\n");
-            s = s.write("    mov x0, #0\n");
+            // Generic closure-VALUE call: any callee expression that
+            // evaluates to a closure box — an array element `arr[i]()`,
+            // a tuple element, a call result — not just a bare
+            // ident / lambda / method. Evaluate the callee to its box
+            // ptr, push args above it, then invoke via the closure
+            // convention (box ptr in x9, fn_addr = box[0]). Same shape
+            // as the ExprLambda IIFE arm above; the previous `mov x0, #0`
+            // stub silently compiled such a call to "return 0".
+            s = emit_expr(c.callee, s); // push closure box
+            var cla: i32 = c.args.len() - 1;
+            while (cla >= 0) {
+                s = emit_expr(c.args[cla], s);
+                cla = cla - 1;
+            }
+            s = s.write("    ldr x9, [sp, #" + util.i32_to_string(c.args.len() * 16) + "]\n"); // box ptr (below args)
+            s = s.write("    ldr x2, [x9]\n");
+            s = s.write("    blr x2\n");
+            s = s.write("    add sp, sp, #" + util.i32_to_string((c.args.len() + 1) * 16) + "\n"); // pop args + box
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         }
