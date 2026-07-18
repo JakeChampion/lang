@@ -10248,6 +10248,15 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 // blind, so the scalar elements ride the freed buffer
                                 // and nothing can dangle.
                                 se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                            } else if (util.index_of_str(s.reclaimable_names, "MAPRET:" + dcid.name) >= 0) {
+                                // A discarded call to a MAPF-registered map builder
+                                // (`mk(i);`, #4357): the result is a fresh sole-owner
+                                // scalar-column map that leaks whole if merely dropped.
+                                // __fern_map_free frees both column buffers and returns
+                                // the mapbox to the freelist (the same helper the slot
+                                // reclaim uses — deep on wasm via $__fern_map_release);
+                                // the shared tail drop discards the helper's return.
+                                se = se.emit(ir.op_call_direct("__fern_map_free", 1));
                             } else {
                                 // A discarded call to a TUPLE-fresh-ret free function
                                 // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
@@ -27701,7 +27710,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // DISCARDS as a bare call statement (`mk(i);`) — the same narrow-seeding
     // rule as BORROW: above, so the arena stays flat. The StmtExpr lowering
     // consults the entry (discarded_tuple_ret_flags) to deep-drop the flagged
-    // array positions and free the box.
+    // array positions and free the box. "MAPF:" builder entries seed the same
+    // way as "MAPRET:<name>" — a discarded builder call's fresh scalar-column
+    // map frees whole via __fern_map_free (#4357).
     var dccs: string[] = [];
     var dcci: i32 = 0;
     while (dcci < fn.body.len()) { dccs = discarded_call_callees_stmt(fn.body[dcci], dccs); dcci = dcci + 1; }
@@ -27713,6 +27724,8 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                 var tfbar: i32 = 5;
                 while (tfbar < tfe.len() && tfe[tfbar] != 124) { tfbar = tfbar + 1; }   // 124 = '|'
                 if (util.index_of_str(dccs, tfe[5:tfbar]) >= 0) { reclaim = reclaim.append("TUPRET:" + tfe[5:tfe.len()]); }
+            } else if (tfe.len() > 5 && tfe[0:5] == "MAPF:") {
+                if (util.index_of_str(dccs, tfe[5:tfe.len()]) >= 0) { reclaim = reclaim.append("MAPRET:" + tfe[5:tfe.len()]); }
             }
             tfk = tfk + 1;
         }
