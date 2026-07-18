@@ -319,7 +319,13 @@ function main(): i32 {
         // read_dir builds its string[] result via $__fern_arr_push, so it folds
         // into this gate (emitted once — a read_dir module that ALSO uses .append
         // shares the single definition).
-        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push") || wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) { o = o + wasm.arr_push_helper(); }
+        // str_split_helper (emitted above for str_split / str_lines) already
+        // begins with arr_push_helper(), so it defines $__fern_arr_push itself —
+        // gating that out here keeps the single definition (else a module using
+        // BOTH .split()/lines AND .append double-defines it → "duplicate func").
+        var needs_arr_push: boolean = wasm_ir.module_emits_op_cached(ir_cache, "arr_push") || wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all");
+        var split_emits_push: boolean = wasm_ir.module_emits_op_cached(ir_cache, "str_split") || wasm_ir.module_uses_str_lines(ir_cache);
+        if (needs_arr_push && !split_emits_push) { o = o + wasm.arr_push_helper(); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) { o = o + wasm.arr_push_owned_helper(); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
