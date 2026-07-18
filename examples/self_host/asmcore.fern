@@ -378,13 +378,18 @@ pub function rt_src_clock(which: string): string {
 // 4, follows symlinks — 2-arg, so __syscall3 suffices) into the fixed static
 // scratch buffer, read st_mode (offset 24, 4 bytes) + st_size (offset 48, 8
 // bytes) via __load_i32/__load_i64, classify by S_IFMT, and build
-// Ok(FileStat{...}) — or Err(NotFound(path)) on failure (a FRESH string boxed
-// from the raw path copy, not the borrowed `path`, so no RC double-free). The
-// FileStat struct + Result/Err construction lower through the normal IR path
-// (emit_ir_runtime_fern_fn receives all_structs). x86-64-only (arch-specific
-// syscall number); arm64/AST keep their hand-asm __fern_stat.
+// Ok(FileStat{...}) — or, on failure, the IoError variant native's __fern_io_error
+// (and the retired hand-asm __fern_stat) map the errno to: ENOENT(2) → NotFound,
+// EACCES(13) → PermissionDenied, EEXIST(17) → AlreadyExists, EINTR(4) →
+// Interrupted, else → Other(path, ""). This restores the full mapping the initial
+// migration (#5243) had flattened to NotFound-only. The path-carrying variants
+// box a FRESH string from the raw NUL-term copy (not the borrowed `path`), so the
+// Ok path never stores `path` either and it stays a borrowed read-only param —
+// no RC double-free. The FileStat struct + Result/variant construction lower
+// through the normal IR path (emit_ir_runtime_fern_fn receives all_structs).
+// x86-64-only (arch-specific syscall number); arm64/AST keep their hand-asm.
 pub function rt_src_stat(): string {
-    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { return Err(NotFound(__raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { var e: i32 = 0 - rc; if (e == 4) { return Err(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Err(NotFound(ep)); } if (e == 13) { return Err(PermissionDenied(ep)); } if (e == 17) { return Err(AlreadyExists(ep)); } return Err(Other(ep, \"\")); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {
