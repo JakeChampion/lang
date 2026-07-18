@@ -44,7 +44,12 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > i32 raw-pointer floor can't do 64-bit-safe `buf + offset` arithmetic on a high
 > heap buffer — correct for regular files ≤ 2 GiB read without interruption. And
 > **`remove_file`** (`rt_src_remove_file` → `Option[IoError]`): `unlinkat` via
-> `__syscall3`, `None` on success / `Some(NotFound(_))` on failure.
+> `__syscall3`, `None` on success / the errno-mapped `Some(IoError)` on failure.
+> `stat`, `read_file` and `remove_file` all use the **same** five-way errno→variant
+> classification (`ENOENT→NotFound`, `EACCES→PermissionDenied`,
+> `EEXIST→AlreadyExists`, `EINTR→Interrupted`, else `Other`), inlined per helper
+> (the self-contained `emit_ir_runtime_fern_fn` can't yet call a shared
+> `__fern_io_error` in Fern) — matching native + the arm64 hand-asm.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
