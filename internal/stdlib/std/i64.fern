@@ -405,6 +405,32 @@ pub function (n: i64) overflowing_mul(other: i64): (i64, boolean) {
     return (p, p / n != other);
 }
 
+// Unary overflow: negation and magnitude, the i64 siblings of std/i32's. i64::MIN
+// is the one value where `-n` and `|n|` overflow (the result 2^63 has no i64
+// representation), so `abs()` / unary `-` wrap MIN to itself; these give the
+// overflow-safe forms.
+
+// `(n: i64) checked_neg()` — `Some(-n)`, or `None` for i64::MIN.
+pub function (n: i64) checked_neg(): Option[i64] {
+    if (n == ((0 as i64) - (9223372036854775807 as i64) - (1 as i64))) { return None; }
+    return Some((0 as i64) - n);
+}
+
+// `(n: i64) checked_abs()` — `Some(|n|)`, or `None` for i64::MIN. The
+// overflow-safe counterpart of `abs`.
+pub function (n: i64) checked_abs(): Option[i64] {
+    if (n == ((0 as i64) - (9223372036854775807 as i64) - (1 as i64))) { return None; }
+    if (n < (0 as i64)) { return Some((0 as i64) - n); }
+    return Some(n);
+}
+
+// `(n: i64) overflowing_neg()` — the wrapped negation paired with a
+// did-overflow boolean; only i64::MIN overflows (negating to itself).
+pub function (n: i64) overflowing_neg(): (i64, boolean) {
+    if (n == ((0 as i64) - (9223372036854775807 as i64) - (1 as i64))) { return (n, true); }
+    return ((0 as i64) - n, false);
+}
+
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
 // of std/i32's `sqrt_floor`. Newton's method on the wider type, so it stays
 // exact for magnitudes past the i32 range (e.g. `sqrt_floor(10000000000)` is

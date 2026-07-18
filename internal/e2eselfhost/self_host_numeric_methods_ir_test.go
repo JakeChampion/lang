@@ -423,6 +423,32 @@ function main(): i32 {
     if (o4) { r = r + 11; }                                        // 10^10 overflows
     return r;
 }`},
+	// checked_neg / checked_abs / overflowing_neg (the std/i32 · i64
+	// additions): unary MIN-overflow safety. overflowing_neg returns the
+	// (wrapped, did_overflow) tuple; the inlined checked_abs uses an i64
+	// sentinel for the MIN case. Exercises the MIN == -2147483648 branch,
+	// a tuple return + destructure, and i64 widening on the IR path.
+	// Oracle-checked. Four hits → 42.
+	{"int-checked-neg", `function i32_oneg(n: i32): (i32, boolean) {
+    if (n == (0 - 2147483647 - 1)) { return (n, true); }
+    return (0 - n, false);
+}
+function i32_cabs(n: i32): i64 {
+    if (n == (0 - 2147483647 - 1)) { return (0 as i64) - 2147483648; }   // MIN sentinel
+    if (n < 0) { return (0 - n) as i64; }
+    return n as i64;
+}
+function main(): i32 {
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    var (a1, o1) = i32_oneg(5);
+    if (a1 == (0 - 5) && !o1) { r = r + 10; }
+    var (a2, o2) = i32_oneg(min32);
+    if (a2 == min32 && o2) { r = r + 11; }                          // MIN negates to itself
+    if (i32_cabs(0 - 7) == (7 as i64)) { r = r + 10; }
+    if (i32_cabs(min32) == ((0 as i64) - 2147483648)) { r = r + 11; }  // MIN sentinel
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

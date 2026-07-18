@@ -550,6 +550,33 @@ pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
     return (p as i32, p < lo || p > hi);
 }
 
+// Unary overflow: negation and magnitude. i32::MIN (-2147483648) is the one
+// value where `-n` and `|n|` overflow — the result 2^31 has no i32
+// representation — so `abs()` / unary `-` wrap MIN to itself. These give the
+// overflow-safe forms, the unary counterparts of the checked_ / overflowing_
+// binary ops.
+
+// `(n: i32) checked_neg()` — `Some(-n)`, or `None` for i32::MIN.
+pub function (n: i32) checked_neg(): Option[i32] {
+    if (n == (0 - 2147483647 - 1)) { return None; }
+    return Some(0 - n);
+}
+
+// `(n: i32) checked_abs()` — `Some(|n|)`, or `None` for i32::MIN (whose
+// magnitude overflows). The overflow-safe counterpart of `abs`.
+pub function (n: i32) checked_abs(): Option[i32] {
+    if (n == (0 - 2147483647 - 1)) { return None; }
+    if (n < 0) { return Some(0 - n); }
+    return Some(n);
+}
+
+// `(n: i32) overflowing_neg()` — the wrapped negation paired with a
+// did-overflow boolean; only i32::MIN overflows (negating to itself).
+pub function (n: i32) overflowing_neg(): (i32, boolean) {
+    if (n == (0 - 2147483647 - 1)) { return (n, true); }
+    return (0 - n, false);
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }
