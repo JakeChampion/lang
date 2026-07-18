@@ -550,6 +550,20 @@ pub function (n: i32) log2_floor(): i32 {
     return 31 - n.leading_zeros();
 }
 
+// `(n: i32) log10_floor()` — `floor(log10(n))` for `n >= 1`; `-1`
+// for `n <= 0` (no real log; the same `>= 0`-means-valid sentinel
+// as `log2_floor`). The base-10 sibling of `log2_floor`, and the
+// digit-count primitive: a positive `n` has `n.log10_floor() + 1`
+// decimal digits. Counts divisions by ten (exact, overflow-free —
+// it only ever shrinks `n`), so it needs no float `log10`.
+pub function (n: i32) log10_floor(): i32 {
+    if (n <= 0) { return 0 - 1; }
+    var r: i32 = 0;
+    var m: i32 = n;
+    while (m >= 10) { m = m / 10; r = r + 1; }
+    return r;
+}
+
 // `(n: i32) sqrt_floor()` — integer square root. floor(sqrt(n))
 // for n >= 0; 0 for n <= 0 (degenerate fallback). Newton's
 // method from a half-of-n starting point — converges in

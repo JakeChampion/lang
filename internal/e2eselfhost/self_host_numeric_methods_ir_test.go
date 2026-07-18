@@ -197,6 +197,40 @@ function main(): i32 {
     if (u32_cdiv(9 as u32, 3 as u32) == 3) { r = r + 12; }
     return r;
 }`},
+	// log10_floor (the std/i32 · i64 · u32 additions): floor(log10 n) by
+	// counting divisions by ten, with the -1 sentinel for n <= 0 (n == 0
+	// unsigned). Exercises i32/i64/u32 divide + unsigned compare + branch
+	// across function calls on the IR path; the u32 case uses a value above
+	// 2^31 so a signed compare/divide would truncate the loop early (the
+	// same unsigned-correctness the u32 min/max case guards). Oracle-checked,
+	// so the count must be right, not just stable. Five hits → 42.
+	{"int-log10-floor", `function i32_log10(n: i32): i32 {
+    if (n <= 0) { return 0 - 1; }
+    var r: i32 = 0; var m: i32 = n;
+    while (m >= 10) { m = m / 10; r = r + 1; }
+    return r;
+}
+function i64_log10(n: i64): i32 {
+    if (n <= (0 as i64)) { return 0 - 1; }
+    var r: i32 = 0; var m: i64 = n;
+    while (m >= (10 as i64)) { m = m / (10 as i64); r = r + 1; }
+    return r;
+}
+function u32_log10(n: u32): i32 {
+    if (n == (0 as u32)) { return 0 - 1; }
+    var r: i32 = 0; var m: u32 = n;
+    while (m >= (10 as u32)) { m = m / (10 as u32); r = r + 1; }
+    return r;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i32_log10(999) == 2) { r = r + 10; }
+    if (i32_log10(1000) == 3) { r = r + 10; }
+    if (i32_log10(0) == (0 - 1)) { r = r + 10; }
+    if (i64_log10(1000000000000 as i64) == 12) { r = r + 6; }        // 10^12, 13 digits
+    if (u32_log10(4000000000 as u32) == 9) { r = r + 6; }            // > 2^31, 10 digits
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
