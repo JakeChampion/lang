@@ -115,6 +115,20 @@ var closureArrayIRCases = []struct {
 	// plain-dispatched even when the callee is called from a match scrutinee —
 	// the scan must NOT over-eagerly mark it is_closurearr. inc(5)=6 → arm 100.
 	{"param-namedfn-plain-in-match", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; match (apply(fs, 5)) { 6 => { return 100; }, _ => { return 99; } } }`, 100},
+	// #5119: a closure-array param FORWARDED to another function must keep the
+	// final callee env-first. The proof is a fixpoint: chain's param proves
+	// from main's closure-array local, then apply's proves from chain's
+	// forwarded (already-proven) param. Without it, apply's param stayed
+	// unmarked and fs[0](v) bare-called the element box → SIGSEGV.
+	// one hop: (x+2)(4) = 6.
+	{"param-forward-one-hop", `function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { return apply(fs, 4); } function main(): i32 { var k = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return chain(fs); }`, 6},
+	// two hops: outer → mid → apply, each forwarding its param.
+	{"param-forward-two-hops", `function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function mid(fs: ((i32) => i32)[]): i32 { return apply(fs, 4); } function outer(fs: ((i32) => i32)[]): i32 { return mid(fs); } function main(): i32 { var k = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return outer(fs); }`, 6},
+	// the forwarder ALSO dispatches an element itself: fs[0](1)=3, apply=6 → 9.
+	{"param-forward-and-dispatch", `function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { var a = fs[0](1); return a + apply(fs, 4); } function main(): i32 { var k = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return chain(fs); }`, 9},
+	// regression: a BARE named-fn array forwarded through the same shape must
+	// STAY plain-dispatched (the fixpoint must not over-mark). inc(5) = 6.
+	{"param-forward-namedfn-plain", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { return apply(fs, 5); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; return chain(fs); }`, 6},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted

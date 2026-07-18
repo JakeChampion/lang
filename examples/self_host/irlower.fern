@@ -30143,11 +30143,13 @@ pub function (s: LowerState) is_closurearr_ret_fn(name: string): boolean {
 
 // arg_is_closurearr classifies a call ARGUMENT at an fn-array param position:
 // true only when the arg is PROVABLY an array of closure boxes — a closure-
-// array literal, a call to a closurearr-returning fn, or an ident bound
-// (anywhere in the calling body) to either. Anything else — a bare-fn array
-// (`[inc, dbl]`), an unresolvable ident — reads false, keeping the callee on
-// the plain fn-pointer dispatch those need.
-function arg_is_closurearr(arg: parser.Expr, caller_body: parser.Stmt[], closureset: string[], caset: string[]): boolean {
+// array literal, a call to a closurearr-returning fn, an ident bound
+// (anywhere in the calling body) to either, or an ident naming a PARAM of the
+// caller that is itself an already-proven closure-array param (caller_cparams
+// — the #5119 forwarding case, resolved by fn_param_sigs_of's fixpoint).
+// Anything else — a bare-fn array (`[inc, dbl]`), an unresolvable ident —
+// reads false, keeping the callee on the plain fn-pointer dispatch those need.
+function arg_is_closurearr(arg: parser.Expr, caller_body: parser.Stmt[], closureset: string[], caset: string[], caller_cparams: string[]): boolean {
     match (arg) {
         parser.ExprArray(_) => { return array_lit_is_closurearr(arg, closureset); },
         parser.ExprCall(ac) => {
@@ -30156,7 +30158,10 @@ function arg_is_closurearr(arg: parser.Expr, caller_body: parser.Stmt[], closure
                 _ => {}
             }
         },
-        parser.ExprIdent(aid) => { return body_binds_closurearr_local(caller_body, aid.name, closureset, caset); },
+        parser.ExprIdent(aid) => {
+            if (util.index_of_str(caller_cparams, aid.name) >= 0) { return true; }
+            return body_binds_closurearr_local(caller_body, aid.name, closureset, caset);
+        },
         _ => {}
     }
     return false;
@@ -30181,7 +30186,7 @@ function arg_is_closurearr(arg: parser.Expr, caller_body: parser.Stmt[], closure
 // proof succeed. A bare fn-POINTER-array caller still classifies (1,0) and
 // blocks the proof (nok < nseen), and a non-call use of the name is still
 // unmatched by any call (nident > nseen) — so the analysis stays conservative.
-function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body: parser.Stmt[], closureset: string[], caset: string[]): (i32, i32) {
+function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body: parser.Stmt[], closureset: string[], caset: string[], caller_cparams: string[]): (i32, i32) {
     var seen: i32 = 0;
     var okc: i32 = 0;
     match (e) {
@@ -30190,51 +30195,51 @@ function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body:
                 parser.ExprIdent(cid) => {
                     if (cid.name == fname) {
                         seen = seen + 1;
-                        if (pidx < c.args.len() && arg_is_closurearr(c.args[pidx], caller_body, closureset, caset)) { okc = okc + 1; }
+                        if (pidx < c.args.len() && arg_is_closurearr(c.args[pidx], caller_body, closureset, caset, caller_cparams)) { okc = okc + 1; }
                     }
                 },
                 _ => {
-                    var (ka, kb) = ca_classify_expr(c.callee, fname, pidx, caller_body, closureset, caset);
+                    var (ka, kb) = ca_classify_expr(c.callee, fname, pidx, caller_body, closureset, caset, caller_cparams);
                     seen = seen + ka; okc = okc + kb;
                 }
             }
             var ci: i32 = 0;
             while (ci < c.args.len()) {
-                var (aa, ab) = ca_classify_expr(c.args[ci], fname, pidx, caller_body, closureset, caset);
+                var (aa, ab) = ca_classify_expr(c.args[ci], fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + aa; okc = okc + ab;
                 ci = ci + 1;
             }
         },
         parser.ExprBinary(b) => {
-            var (la, lb) = ca_classify_expr(b.left, fname, pidx, caller_body, closureset, caset);
-            var (ra, rb) = ca_classify_expr(b.right, fname, pidx, caller_body, closureset, caset);
+            var (la, lb) = ca_classify_expr(b.left, fname, pidx, caller_body, closureset, caset, caller_cparams);
+            var (ra, rb) = ca_classify_expr(b.right, fname, pidx, caller_body, closureset, caset, caller_cparams);
             seen = seen + la + ra; okc = okc + lb + rb;
         },
-        parser.ExprUnary(u) => { var (ua, ub) = ca_classify_expr(u.operand, fname, pidx, caller_body, closureset, caset); seen = seen + ua; okc = okc + ub; },
+        parser.ExprUnary(u) => { var (ua, ub) = ca_classify_expr(u.operand, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ua; okc = okc + ub; },
         parser.ExprIndex(x) => {
-            var (aa, ab) = ca_classify_expr(x.array, fname, pidx, caller_body, closureset, caset);
-            var (ia, ib) = ca_classify_expr(x.index, fname, pidx, caller_body, closureset, caset);
+            var (aa, ab) = ca_classify_expr(x.array, fname, pidx, caller_body, closureset, caset, caller_cparams);
+            var (ia, ib) = ca_classify_expr(x.index, fname, pidx, caller_body, closureset, caset, caller_cparams);
             seen = seen + aa + ia; okc = okc + ab + ib;
         },
         parser.ExprSlice(sl) => {
-            var (aa, ab) = ca_classify_expr(sl.array, fname, pidx, caller_body, closureset, caset);
-            var (sa, sb) = ca_classify_expr(sl.start, fname, pidx, caller_body, closureset, caset);
-            var (ea, eb) = ca_classify_expr(sl.end, fname, pidx, caller_body, closureset, caset);
+            var (aa, ab) = ca_classify_expr(sl.array, fname, pidx, caller_body, closureset, caset, caller_cparams);
+            var (sa, sb) = ca_classify_expr(sl.start, fname, pidx, caller_body, closureset, caset, caller_cparams);
+            var (ea, eb) = ca_classify_expr(sl.end, fname, pidx, caller_body, closureset, caset, caller_cparams);
             seen = seen + aa + sa + ea; okc = okc + ab + sb + eb;
         },
-        parser.ExprFieldAccess(fa) => { var (oa, ob) = ca_classify_expr(fa.obj, fname, pidx, caller_body, closureset, caset); seen = seen + oa; okc = okc + ob; },
+        parser.ExprFieldAccess(fa) => { var (oa, ob) = ca_classify_expr(fa.obj, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + oa; okc = okc + ob; },
         parser.ExprArray(a) => {
             var ai: i32 = 0;
-            while (ai < a.elements.len()) { var (ea, eb) = ca_classify_expr(a.elements[ai], fname, pidx, caller_body, closureset, caset); seen = seen + ea; okc = okc + eb; ai = ai + 1; }
+            while (ai < a.elements.len()) { var (ea, eb) = ca_classify_expr(a.elements[ai], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ea; okc = okc + eb; ai = ai + 1; }
         },
         parser.ExprTuple(t) => {
             var ti: i32 = 0;
-            while (ti < t.elements.len()) { var (ea, eb) = ca_classify_expr(t.elements[ti], fname, pidx, caller_body, closureset, caset); seen = seen + ea; okc = okc + eb; ti = ti + 1; }
+            while (ti < t.elements.len()) { var (ea, eb) = ca_classify_expr(t.elements[ti], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ea; okc = okc + eb; ti = ti + 1; }
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base) { var (ba, bb) = ca_classify_expr(sl.base, fname, pidx, caller_body, closureset, caset); seen = seen + ba; okc = okc + bb; }
+            if (sl.has_base) { var (ba, bb) = ca_classify_expr(sl.base, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ba; okc = okc + bb; }
             var fi: i32 = 0;
-            while (fi < sl.field_values.len()) { var (va, vb) = ca_classify_expr(sl.field_values[fi], fname, pidx, caller_body, closureset, caset); seen = seen + va; okc = okc + vb; fi = fi + 1; }
+            while (fi < sl.field_values.len()) { var (va, vb) = ca_classify_expr(sl.field_values[fi], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + va; okc = okc + vb; fi = fi + 1; }
         },
         _ => {}
     }
@@ -30246,43 +30251,43 @@ function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body:
 // the same positions astwalk.collect_idents_stmt does, so the (seen) total
 // matches the `fname` ident-occurrence total fnarr_param_all_closurearr
 // cross-checks against.
-function ca_scan_stmts(body: parser.Stmt[], fname: string, pidx: i32, caller_body: parser.Stmt[], closureset: string[], caset: string[]): (i32, i32) {
+function ca_scan_stmts(body: parser.Stmt[], fname: string, pidx: i32, caller_body: parser.Stmt[], closureset: string[], caset: string[], caller_cparams: string[]): (i32, i32) {
     var seen: i32 = 0;
     var okc: i32 = 0;
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
-            parser.StmtVar(sv) => { var (va, vb) = ca_classify_expr(sv.init, fname, pidx, caller_body, closureset, caset); seen = seen + va; okc = okc + vb; },
-            parser.StmtReturn(sr) => { var (ra, rb) = ca_classify_expr(sr.value, fname, pidx, caller_body, closureset, caset); seen = seen + ra; okc = okc + rb; },
-            parser.StmtExpr(sx) => { var (xa, xb) = ca_classify_expr(sx.value, fname, pidx, caller_body, closureset, caset); seen = seen + xa; okc = okc + xb; },
-            parser.StmtAssign(sa) => { var (aa, ab) = ca_classify_expr(sa.value, fname, pidx, caller_body, closureset, caset); seen = seen + aa; okc = okc + ab; },
-            parser.StmtDefer(sd) => { var (da, db) = ca_scan_stmts([sd.action], fname, pidx, caller_body, closureset, caset); seen = seen + da; okc = okc + db; },
+            parser.StmtVar(sv) => { var (va, vb) = ca_classify_expr(sv.init, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + va; okc = okc + vb; },
+            parser.StmtReturn(sr) => { var (ra, rb) = ca_classify_expr(sr.value, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ra; okc = okc + rb; },
+            parser.StmtExpr(sx) => { var (xa, xb) = ca_classify_expr(sx.value, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + xa; okc = okc + xb; },
+            parser.StmtAssign(sa) => { var (aa, ab) = ca_classify_expr(sa.value, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + aa; okc = okc + ab; },
+            parser.StmtDefer(sd) => { var (da, db) = ca_scan_stmts([sd.action], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + da; okc = okc + db; },
             parser.StmtIf(sif) => {
-                var (ca, cb) = ca_classify_expr(sif.cond, fname, pidx, caller_body, closureset, caset);
+                var (ca, cb) = ca_classify_expr(sif.cond, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + ca; okc = okc + cb;
-                var (ia, ib) = ca_scan_stmts(sif.then_body, fname, pidx, caller_body, closureset, caset);
+                var (ia, ib) = ca_scan_stmts(sif.then_body, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + ia; okc = okc + ib;
-                var (ea, eb) = ca_scan_stmts(sif.else_body, fname, pidx, caller_body, closureset, caset);
+                var (ea, eb) = ca_scan_stmts(sif.else_body, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + ea; okc = okc + eb;
             },
             parser.StmtWhile(swh) => {
-                var (wca, wcb) = ca_classify_expr(swh.cond, fname, pidx, caller_body, closureset, caset);
+                var (wca, wcb) = ca_classify_expr(swh.cond, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + wca; okc = okc + wcb;
-                var (wa, wb) = ca_scan_stmts(swh.body, fname, pidx, caller_body, closureset, caset);
+                var (wa, wb) = ca_scan_stmts(swh.body, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + wa; okc = okc + wb;
             },
             parser.StmtFor(sfr) => {
-                var (fia, fib) = ca_classify_expr(sfr.iter, fname, pidx, caller_body, closureset, caset);
+                var (fia, fib) = ca_classify_expr(sfr.iter, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + fia; okc = okc + fib;
-                var (fa2, fb2) = ca_scan_stmts(sfr.body, fname, pidx, caller_body, closureset, caset);
+                var (fa2, fb2) = ca_scan_stmts(sfr.body, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + fa2; okc = okc + fb2;
             },
             parser.StmtMatch(smt) => {
-                var (sca, scb) = ca_classify_expr(smt.scrutinee, fname, pidx, caller_body, closureset, caset);
+                var (sca, scb) = ca_classify_expr(smt.scrutinee, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + sca; okc = okc + scb;
                 var mi: i32 = 0;
                 while (mi < smt.arms.len()) {
-                    var (ma, mb) = ca_scan_stmts(smt.arms[mi].body, fname, pidx, caller_body, closureset, caset);
+                    var (ma, mb) = ca_scan_stmts(smt.arms[mi].body, fname, pidx, caller_body, closureset, caset, caller_cparams);
                     seen = seen + ma; okc = okc + mb;
                     mi = mi + 1;
                 }
@@ -30300,14 +30305,31 @@ function ca_scan_stmts(body: parser.Stmt[], fname: string, pidx: i32, caller_bod
 // count of `fname` equals the classified-call count (so a call at a nested
 // expression position or a bare fn-value reference — either of which the
 // classifier can't see — reads as unknown and blocks the proof). At least
-// one call must exist.
-function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pidx: i32, closureset: string[], caset: string[]): boolean {
+// one call must exist. `cparams` ("fname|pname" entries) is the set of
+// closure-array params already proven by fn_param_sigs_of's fixpoint: a
+// caller FORWARDING such a param of its own counts as passing a closure
+// array (#5119 — without this, `chain(fs)` → `apply(fs, …)` left `apply`'s
+// param unproven and its element dispatch went plain → SIGSEGV).
+function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pidx: i32, closureset: string[], caset: string[], cparams: string[]): boolean {
     var nseen: i32 = 0;
     var nok: i32 = 0;
     var nident: i32 = 0;
     var fi: i32 = 0;
     while (fi < funcs.len()) {
-        var (cs, co) = ca_scan_stmts(funcs[fi].body, fname, pidx, funcs[fi].body, closureset, caset);
+        // The caller's own already-proven closure-array param NAMES (free
+        // functions only — method params are never flagged, and a method
+        // sharing a free function's name must not inherit its proof).
+        var caller_cparams: string[] = [];
+        if (funcs[fi].receiver_type.len() == 0) {
+            var cpj: i32 = 0;
+            while (cpj < funcs[fi].params.len()) {
+                if (util.index_of_str(cparams, funcs[fi].name + "|" + funcs[fi].params[cpj].name) >= 0) {
+                    caller_cparams = caller_cparams.append(funcs[fi].params[cpj].name);
+                }
+                cpj = cpj + 1;
+            }
+        }
+        var (cs, co) = ca_scan_stmts(funcs[fi].body, fname, pidx, funcs[fi].body, closureset, caset, caller_cparams);
         nseen = nseen + cs;
         nok = nok + co;
         var ids: string[] = [];
@@ -30339,9 +30361,40 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
     }
     var closureset: string[] = [];
     var caset: string[] = [];
+    // caparams: "fname|pname" for every free-function fn[] param proven to be
+    // a closure array, computed to a FIXPOINT: a round that proves a param
+    // lets the next round accept that param FORWARDED as a call argument
+    // (arg_is_closurearr's caller_cparams case), so `main → chain(fs) →
+    // apply(fs, …)` proves chain's param first and apply's from it (#5119).
+    // Monotone (the set only grows from sound base cases) and bounded by the
+    // number of fn[] params, so it terminates; a program with no fn[] params
+    // never enters the loop (the bootstrap self-compile pays nothing).
+    var caparams: string[] = [];
     if (have_fnarr) {
         closureset = closure_ret_fns_of(funcs);
         caset = closurearr_ret_fns_of(funcs);
+        var ca_changed: boolean = true;
+        while (ca_changed) {
+            ca_changed = false;
+            var fk: i32 = 0;
+            while (fk < funcs.len()) {
+                if (funcs[fk].receiver_type.len() == 0) {
+                    var fpj: i32 = 0;
+                    while (fpj < funcs[fk].params.len()) {
+                        if (funcs[fk].params[fpj].type_name == "fn[]") {
+                            var fkey: string = funcs[fk].name + "|" + funcs[fk].params[fpj].name;
+                            if (util.index_of_str(caparams, fkey) < 0
+                                && fnarr_param_all_closurearr(funcs, funcs[fk].name, fpj, closureset, caset, caparams)) {
+                                caparams = caparams.append(fkey);
+                                ca_changed = true;
+                            }
+                        }
+                        fpj = fpj + 1;
+                    }
+                }
+                fk = fk + 1;
+            }
+        }
     }
     // #4873 port: the may-grow array-param masks, merged below as flag '4'.
     var growset: string[] = grow_param_flags_of(funcs);
@@ -30375,13 +30428,14 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
             else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
                      && !is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "2"; any = true; }
             // An fn-ARRAY param (`((T) => R)[]`, coarsed "fn[]") whose every
-            // call site provably passes a closure ARRAY: flag '3'. lower_func
-            // marks the param slot is_closurearr so `fns[i](args)` dispatches
-            // env-first (the elements are boxes). Distinct from '1'/'2' so the
-            // existing consumers are unaffected. Free functions only — a
-            // method's call sites aren't scanned.
+            // call site provably passes a closure ARRAY: flag '3' (proven by
+            // the caparams fixpoint above). lower_func marks the param slot
+            // is_closurearr so `fns[i](args)` dispatches env-first (the
+            // elements are boxes). Distinct from '1'/'2' so the existing
+            // consumers are unaffected. Free functions only — a method's
+            // call sites aren't scanned.
             else if (have_fnarr && funcs[k].params[pj].type_name == "fn[]" && funcs[k].receiver_type.len() == 0
-                     && fnarr_param_all_closurearr(funcs, funcs[k].name, pj, closureset, caset)) { flags = flags + "3"; any = true; }
+                     && util.index_of_str(caparams, funcs[k].name + "|" + funcs[k].params[pj].name) >= 0) { flags = flags + "3"; any = true; }
             // #4873: an array param the callee may grow in place — flag '4'
             // so the call site brackets a surviving argument. Distinct from
             // '1'/'2'/'3' (an array param is never fn/dyn), so the existing
