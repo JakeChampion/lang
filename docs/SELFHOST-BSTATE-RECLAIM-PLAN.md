@@ -315,4 +315,40 @@ native residuals above; only one is still live:
   self-mutations), gated so no mutation stored a param-derived VALUE into the
   map — the arg-escape tracking that makes it non-trivial, and a wrong map
   reclaim is a cow-handle use-after-free, so it wants its own test-first
-  change, not a drive-by. Tracked in #4357.
+  change, not a drive-by. Tracked in #4357. (Landed 2026-07-18: native #5096;
+  self-host #5126/#5128/#5131/#5134 — bound, loop-declared, builder-call and
+  discarded forms all bounded on both compilers.)
+
+**2026-07-18 — the deferred `wasm.fern` SSA-emit re-measure.** Same method
+(`ssa_emit_run.fern` built by `cmd/fern -target x86-64`, input on stdin,
+peak RSS via `getrusage`), on a main with the dead-intermediate drop
+(#4533), the map reclaim arc (#5096 + self-host ports), and everything
+between merged:
+
+| input | lines | peak RSS (was) | peak RSS (now) |
+|-------|-------|----------------|----------------|
+| `asm.fern` | 7558 (was 8263, pre-asmcore split) | 44 MB | **23.5 MB** |
+| `wasm.fern` 6000-line prefix | 6000 | 136 MB | **119 MB** |
+| `wasm.fern` ~baseline-size prefix | 9879 (vs 10187) | 935 MB | **2356 MB** |
+| `wasm.fern` (full) | 12881 (was 10187) | — | **2404 MB** |
+
+The "expect tens of MB" prediction did NOT materialize, and the residual is
+NOT the dead-intermediate shape: the small inputs improved (44→23.5,
+136→119 — the merged reclaim work is visible), while the like-for-like
+~10k-line prefix got 2.5× WORSE. Localization by prefix bisection: the cost
+concentrates in `wasm.fern` lines ~7000–9900 — the WAT-template
+string-builder functions (`map_helpers` 389 lines, `strcat_helpers` 208,
+the env/random/args/fs `*_func`/`*_helpers` families), each a huge
+string-concat chain over long literals — at ~0.5 MB RSS per input LINE.
+Wall time is linear (1.9 s full file) and the emitted output is only
+2.5 MB, so the 2.4 GB is unreclaimed allocation churn in the driver's own
+SSA build/emit of those functions, not live data and not quadratic time.
+Two adjacent native micro-leaks probed while localizing (heap-bump
+fixpoint): a discarded concat-chain fresh-ret result (`chunk(i).len()`,
+chunk returning `"a" + p + "b" + …`) leaks ~128 B/call, and a
+scope-per-iteration `s = s + lit` accumulation leaks ~96 B/iteration —
+real, but 3–4 orders of magnitude too small to explain the blowup. The
+dominant churn is therefore inside the SSA data-structure build for
+huge-bodied functions (per-op / per-literal allocations the current drops
+never reclaim) and needs its own instrumented investigation before any
+fix is proposed.
