@@ -35186,6 +35186,29 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                     if (v.type_name.len() > 0) { return v.type_name; }
                     return cap_type_expr(v.init, fd, depth, structs);
                 }
+                // A tuple-destructure `var (a, b) = t` binds `name` as the
+                // element at its position: resolve the tuple type (annotation
+                // or inferred from the init) and read the element tag at that
+                // index (#5173). Without this a lambda capturing a destructure
+                // binding resolved "" and declined to the miscompiling AST
+                // path. Only scalar/string element tags are returned (a
+                // pointer-element tag would need env-box handling the capture
+                // path doesn't do) — a miss stays a declined lift.
+                if (rc_fe_is_destructure(v.name)) {
+                    var dnames: string[] = rc_fe_split_csv(v.name);
+                    var didx: i32 = util.index_of_str(dnames, name);
+                    if (didx >= 0) {
+                        var tty: string = v.type_name;
+                        if (tty.len() == 0) { tty = cap_type_expr(v.init, fd, depth, structs); }
+                        if (tty.len() >= 2 && tty[0] == 40) {
+                            var etags: string[] = rc_fe_split_csv(tuple_elem_tags(tty));
+                            if (didx < etags.len()) {
+                                var et: string = etags[didx];
+                                if (et == "i32" || et == "string" || et == "boolean" || et == "i64" || et == "u64" || et == "f64" || et == "u32") { return et; }
+                            }
+                        }
+                    }
+                }
             },
             parser.StmtIf(f) => {
                 var tt: string = cap_type_in_stmts(f.then_body, name, fd, depth, structs);

@@ -61,6 +61,21 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		{"user-enum-three-payload",
 			`enum E { P(i32, i32, i32), Q } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { P(a, b, c) => { var h: H = H { f: function (x: i32): i32 { return x + a + b + c; }, id: b }; r = h.f(1) + h.id; }, Q => { r = 0; } } return r; } function main(): i32 { return g(P(3, 4, 5)); }`,
 			17},
+		// TUPLE-DESTRUCTURE bindings (#5173): `var (a, b) = t` is encoded
+		// comma-joined ("a,b"). collect_bound_stmt now splits it so each name
+		// is an enclosing local (lambda_captures' encl gate), and
+		// cap_type_in_stmts resolves each binding's type as the tuple element
+		// at its index (rc_fe_split_csv over tuple_elem_tags). Covers i32,
+		// string (captured `.len()`), and three-element destructures.
+		{"tuple-destructure-i32",
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; var h: H = H { f: function (x: i32): i32 { return x + a + b; }, id: a }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
+			11},
+		{"tuple-destructure-string",
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (string, i32) = ("abc", 5); var (s, n) = t; var h: H = H { f: function (x: i32): i32 { return x + s.len() + n; }, id: n }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
+			14},
+		{"tuple-destructure-three",
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (i32, i32, i32) = (2, 3, 4); var (a, b, c) = t; var h: H = H { f: function (x: i32): i32 { return x + a + b + c; }, id: b }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
+			13},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
