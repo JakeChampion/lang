@@ -39,6 +39,14 @@ function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5, 6]; var e: i32[] = xs.fil
 	// find: first matching element as Option[T].
 	{"find", `import "std/array";
 function main(): i32 { var xs: i32[] = [5, 8, 3, 9]; match (xs.find(function (n: i32): boolean { return n > 7; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+	// find_last: LAST matching element (right-to-left mirror of find). In
+	// [5,8,3,9,2] the elements > 4 are 5,8,9 — the last is 9.
+	{"find_last", `import "std/array";
+function main(): i32 { var xs: i32[] = [5, 8, 3, 9, 2]; match (xs.find_last(function (n: i32): boolean { return n > 4; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+	// rposition: index of the LAST matching element. In [1,2,3,2,1] the 2s
+	// are at indices 1 and 3 — rposition returns 3.
+	{"rposition", `import "std/array";
+function main(): i32 { var xs: i32[] = [1, 2, 3, 2, 1]; match (xs.rposition(function (n: i32): boolean { return n == 2; })) { Some(i) => { return i; }, None => { return 9; } } }`},
 }
 
 func TestSelfHostArrayClosureMethodIR(t *testing.T) {
