@@ -225,6 +225,8 @@ func (s *Server) handleMethod(method string, params json.RawMessage) (any, *rpcE
 		return s.handleReferences(params)
 	case "textDocument/rename":
 		return s.handleRename(params)
+	case "textDocument/codeAction":
+		return s.handleCodeAction(params)
 	case "textDocument/formatting":
 		return s.handleFormatting(params)
 	}
@@ -259,6 +261,7 @@ func (s *Server) handleInitialize() initializeResult {
 			ReferencesProvider:         true,
 			RenameProvider:             true,
 			DocumentFormattingProvider: true,
+			CodeActionProvider:         true,
 		},
 		ServerInfo: &serverInfo{Name: "lang-lsp"},
 	}
@@ -456,6 +459,14 @@ func (s *Server) handleRename(raw json.RawMessage) (any, *rpcError) {
 		return nil, nil
 	}
 	return edit, nil
+}
+
+func (s *Server) handleCodeAction(raw json.RawMessage) (any, *rpcError) {
+	var p codeActionParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	return runCodeAction(p.TextDocument.URI, p), nil
 }
 
 func (s *Server) handleSignatureHelp(raw json.RawMessage) (any, *rpcError) {
