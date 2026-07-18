@@ -14484,7 +14484,27 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
         parser.ExprNumber(_) => { return false; },
         parser.ExprString(_) => { return false; },
         parser.ExprBool(_) => { return false; },
-        parser.ExprBinary(b) => { return expr_unsafe_for(b.left, name, borrowable) || expr_unsafe_for(b.right, name, borrowable); },
+        parser.ExprBinary(b) => {
+            // A DIRECT bare-ident operand of a binary is a BORROW, not an
+            // escape: binaries on this AST produce scalars or FRESH strings
+            // (str_concat copies the operand's bytes; comparisons read only),
+            // so the operand's box never aliases the result. This is what
+            // lets a literal-bound local read by a return-position concat
+            // (`var p = "..."; return "a" + p;` — the SSA-emit WAT-template
+            // shape) keep its exit-sweep STR: credit. Nested operands still
+            // recurse — only the direct ident read is sanctioned.
+            var blu: boolean = false;
+            match (b.left) {
+                parser.ExprIdent(_) => {},
+                _ => { blu = expr_unsafe_for(b.left, name, borrowable); }
+            }
+            if (blu) { return true; }
+            match (b.right) {
+                parser.ExprIdent(_) => { return false; },
+                _ => { return expr_unsafe_for(b.right, name, borrowable); }
+            }
+            return false;
+        },
         parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name, borrowable); },
         parser.ExprIndex(ix) => {
             var base_unsafe: boolean = false;
