@@ -120,6 +120,14 @@ pub function (n: u32) checked_div(other: u32): Option[u32] {
     return Some(n / other);
 }
 
+// `(n: u32) checked_rem(other)` — `Some(n % other)`, or `None` on divide-by-zero.
+// Unsigned remainder never overflows, so divide-by-zero is the only failure. The
+// remainder sibling of `checked_div`.
+pub function (n: u32) checked_rem(other: u32): Option[u32] {
+    if (other == (0 as u32)) { return None; }
+    return Some(n % other);
+}
+
 // `(n: u32) div_euclid(rhs)` / `rem_euclid(rhs)` — the unsigned counterparts of
 // std/i32's Euclidean division. For an unsigned type the remainder of `/`/`%`
 // is already non-negative, so these coincide exactly with `/` and `%`; they

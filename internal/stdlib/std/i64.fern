@@ -311,6 +311,16 @@ pub function (n: i64) checked_div(other: i64): Option[i64] {
     return Some(n / other);
 }
 
+// `(n: i64) checked_rem(other)` — `Some(n % other)`, or `None` on divide-by-zero
+// or on i64::MIN % -1; the i64 sibling of std/i32's `checked_rem`, the remainder
+// counterpart of `checked_div`.
+pub function (n: i64) checked_rem(other: i64): Option[i64] {
+    if (other == (0 as i64)) { return None; }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (n == min64 && other == ((0 as i64) - (1 as i64))) { return None; }
+    return Some(n % other);
+}
+
 // `(n: i64) checked_mul(other)` — `Some(n * other)`, or `None` on i64 overflow.
 // The i64 sibling of std/i32's `checked_mul`, completing the `checked_` family.
 // i64 has no wider type to widen into, so it detects overflow with the inverse

@@ -472,6 +472,26 @@ function main(): i32 {
     if (i32_cshr(16, 2) == (4 as i64)) { r = r + 9; }
     return r;
 }`},
+	// checked_rem (the std/i32 · i64 · u32 · u64 additions): remainder guarded
+	// against divide-by-zero and MIN % -1. The inlined i32 form returns an
+	// out-of-i32-range i64 sentinel for the None cases. Exercises i32 % +
+	// compare + branch + i64 widening on the IR path. Oracle-checked. Five
+	// hits → 42.
+	{"int-checked-rem", `function i32_crem(n: i32, other: i32): i64 {
+    if (other == 0) { return (0 as i64) - 9999999999; }
+    if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return (0 as i64) - 9999999999; }
+    return (n % other) as i64;
+}
+function main(): i32 {
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    if (i32_crem(17, 5) == (2 as i64)) { r = r + 8; }
+    if (i32_crem(0 - 17, 5) == ((0 as i64) - 2)) { r = r + 8; }        // sign of dividend
+    if (i32_crem(5, 0) == ((0 as i64) - 9999999999)) { r = r + 8; }    // divide-by-zero sentinel
+    if (i32_crem(min32, 0 - 1) == ((0 as i64) - 9999999999)) { r = r + 9; }  // MIN % -1 sentinel
+    if (i32_crem(10, 3) == (1 as i64)) { r = r + 9; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
