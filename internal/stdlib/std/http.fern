@@ -4,9 +4,8 @@
 // auto-synthesised handler `main()`) can do
 // request → response work without rolling its own parser.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
-// Phase 5, so callers now `import "std/http";` explicitly.
+// No prelude: callers now `import "std/http";` explicitly
+// (docs/PRELUDE-TO-MODULES.md, Phase 5).
 //
 // Scope: HTTP/1.1 only, Content-Length-delimited bodies, no
 // chunked transfer encoding, no persistent connections (every

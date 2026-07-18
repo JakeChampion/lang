@@ -5,9 +5,8 @@
 // format specs. `format_bytes(n)` / `format_duration_ms(ms)` —
 // pre-canned shapes for byte sizes and elapsed durations.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
-// Phase 5, so callers now `import "std/format";` explicitly.
+// No prelude: callers now `import "std/format";` explicitly
+// (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 // std/format's bodies dispatch (i32) `.abs()` (for negative
 // sign handling) and (i32) `.to_string()` (in format_bytes /

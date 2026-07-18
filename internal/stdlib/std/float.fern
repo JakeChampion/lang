@@ -8,8 +8,9 @@
 // covers every practically-encountered case but isn't bit-
 // exact against `f64.const inf`.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/float";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 // __float_to_string's body dispatches (i64) `.to_string()` on
 // the integer and fractional parts (both `intPart` / `fracInt`

@@ -34,10 +34,9 @@
 // comparator form `sort_by[T](arr, cmp)` (below) covers any element
 // type / custom ordering.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
-// Phase 5, so a program now `import "std/sort";` explicitly
-// to call `sort_i32_asc(arr)` etc.
+// No prelude: a program now `import "std/sort";` explicitly to
+// call `sort_i32_asc(arr)` etc. (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 //
 // `string_cmp` / `string_cmp_ci` are the underlying byte-
 // lex comparators the string sorts use; exporting them so

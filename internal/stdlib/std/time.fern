@@ -31,7 +31,7 @@ import "core/int";
 import "std/i64";
 // std/time dispatches string methods (.index_of) when parsing
 // ISO timestamps; declare the source module so they resolve under
-// no-prelude (the auto-prelude used to make them universally visible).
+// no-prelude.
 import "std/string";
 
 // Unit conversion constants — used everywhere; pull them out

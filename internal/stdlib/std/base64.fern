@@ -8,8 +8,9 @@
 // without special handling), preserving the bytes
 // successfully decoded up to that point.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/base64";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 function __b64_alphabet(v: i32): i32 {
     if (v < 26)  { return v + 65; }     // A-Z (0..25 → 65..90)

@@ -1,7 +1,8 @@
 // std/u64 — unsigned 64-bit integer receiver methods.
 //
-// Counterpart to std/u32 for the wider type. Migrated from the
-// former auto-injected prelude per docs/PRELUDE-TO-MODULES.md.
+// Counterpart to std/u32 for the wider type. No prelude: a
+// program `import "std/u64";` to bring these methods into scope
+// (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 import "core/int";
 
