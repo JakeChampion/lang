@@ -34847,7 +34847,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                         _ => {}
                     }
                     if (ity.len() > 2 && ity[ity.len() - 2 : ity.len()] == "[]") {
-                        return ity[0 : ity.len() - 2];
+                        return ity[0 : ity.len() - 2] + "";
                     }
                     match (fr.iter) {
                         parser.ExprBinary(itb) => {
