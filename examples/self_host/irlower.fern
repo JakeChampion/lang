@@ -28622,6 +28622,59 @@ pub function append_dyn_str_ret_fns(base: string[], trait_reqs: parser.TraitReq[
     return out;
 }
 
+// append_dyn_i64_ret_fns is the i64/u64-return sibling of
+// append_dyn_str_ret_fns: without a "dyn <Trait>.<method>" entry in
+// i64_ret_fns a 64-bit value returned by a `dyn Trait` dispatch and chained in
+// arithmetic (`d.v() + 1`) width-tracks as i32 (infer_expr_width's method arm
+// misses the "dyn <Trait>.<method>" key), so the add lowers 32-bit and
+// truncates the high word. Mirrors i64_ret_fns_of's "<key>|<retflag><paramflags>"
+// format (retflag '1' since the method returns i64/u64; u64 rides the i64 path).
+pub function append_dyn_i64_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
+    var out: string[] = base;
+    var t: i32 = 0;
+    while (t < trait_reqs.len()) {
+        var tr: parser.TraitReq = trait_reqs[t];
+        var m: i32 = 0;
+        while (m < tr.req_sigs.len()) {
+            var fn: parser.FuncDecl = tr.req_sigs[m];
+            if (fn.ret_type == "i64" || fn.ret_type == "u64") {
+                var flags: string = "";
+                var pj: i32 = 0;
+                while (pj < fn.params.len()) {
+                    if (fn.params[pj].type_name == "i64" || fn.params[pj].type_name == "u64") { flags = flags + "1"; }
+                    else { flags = flags + "0"; }
+                    pj = pj + 1;
+                }
+                out = out.append("dyn " + tr.trait_name + "." + fn.name + "|1" + flags);
+            }
+            m = m + 1;
+        }
+        t = t + 1;
+    }
+    return out;
+}
+
+// append_dyn_f64_ret_fns is the f64/f32-return sibling: an f64/f32 value
+// returned by a `dyn Trait` dispatch and chained (`d.f() + 0.5`) mis-lowers as
+// integer arithmetic on the float bits without a "dyn <Trait>.<method>" entry in
+// f64_ret_fns (expr_is_f64's method arm misses the key). f32 rides the f64 twin
+// for value ops, so is_f64_scalar_type_name (which matches both) is the right
+// filter. Plain membership like f64_ret_fns_of (no flag suffix).
+pub function append_dyn_f64_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
+    var out: string[] = base;
+    var t: i32 = 0;
+    while (t < trait_reqs.len()) {
+        var tr: parser.TraitReq = trait_reqs[t];
+        var m: i32 = 0;
+        while (m < tr.req_sigs.len()) {
+            if (is_f64_scalar_type_name(tr.req_sigs[m].ret_type)) { out = out.append("dyn " + tr.trait_name + "." + tr.req_sigs[m].name); }
+            m = m + 1;
+        }
+        t = t + 1;
+    }
+    return out;
+}
+
 // str_ret_argref returns the argument index an erased-generic fn's return
 // mirrors ("name|$arg<i>" entries from str_ret_fns_of), or -1. The caller
 // re-types the call by the ACTUAL argument at that position.

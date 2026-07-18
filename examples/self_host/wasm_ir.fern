@@ -72,11 +72,11 @@ pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
     var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
@@ -2076,11 +2076,11 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
     var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
     var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var ft: string[] = fn_value_table(cache);

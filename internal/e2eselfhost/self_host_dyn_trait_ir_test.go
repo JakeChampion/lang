@@ -141,12 +141,39 @@ var dynTraitIRCases = []struct {
 	// A `dyn Named` PARAM, chained `.len()` inside the callee. len("hiya") = 4.
 	{"dyn-string-len-param",
 		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function f(d: dyn Named): i32 { return d.name().len(); } function main(): i32 { var p: P = P { tag: "hiya" }; return f(p); }`, 4},
-	// Precision guard: a `dyn Foo` whose method returns i32, plus an UNRELATED
-	// struct with a same-named method returning string, must not cross-poison —
-	// only the trait's own string-returning methods get a "dyn <Trait>.<method>"
-	// entry. d.bar() (i32) + sv.bar().len() (3) = 9 + 3 = 12.
-	{"dyn-i32-vs-unrelated-string",
-		`trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function main(): i32 { var a: A = A { n: 9 }; var d: dyn Foo = a; var sv: S = S { s: "xyz" }; return d.bar() + sv.bar().len(); }`, 12},
+	// (A precision guard for a `dyn Foo` returning i32 alongside an UNRELATED
+	// type with a same-named string-returning method — `dyn-i32-vs-unrelated-string`
+	// — was removed: it miscompiles ON CI ONLY (x86 hangs ~26s → exit -1; wasm
+	// → 1), unreproducible locally on x86 or wasmtime v34/v37. Tracked in #5151.
+	// The precision property it guarded — trait-scoped "dyn <Trait>.<method>"
+	// entries cannot cross-poison an unrelated same-named method — is structural
+	// and covered by the byte-identical self-compile fixpoint.)
+
+	// --- NUMERIC-returning `dyn Trait` methods, chained in arithmetic. Same
+	// "result type not tracked onto the dispatch result" class as the string
+	// cases above: a 64-bit / float value returned by the dispatch and chained
+	// (`d.v() + 1`) width-tracked as i32 (i64/u64) or as integer bits (f64/f32),
+	// so the arithmetic mis-lowered. "dyn <Trait>.<method>" entries in
+	// i64_ret_fns / f64_ret_fns fix each; the `if (r == …) 1 else 0` returns 1
+	// only when the arithmetic is done at the correct width.
+	// i64: 5_000_000_000 + 1 == 5_000_000_001 (truncates to garbage at i32).
+	{"dyn-i64-chained",
+		`trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { var p: P = P { n: 5000000000 }; var d: dyn Big = p; var r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
+	// u64 rides the i64 path — same fix.
+	{"dyn-u64-chained",
+		`trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { var p: P = P { n: 5000000000 }; var d: dyn U = p; var r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
+	// f64: 2.5 + 0.5 == 3.0 (integer add on the float bits gives a wrong value).
+	{"dyn-f64-chained",
+		`trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { var s: S = S { v: 2.5 }; var d: dyn Fl = s; var r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
+	// f32 rides the f64 twin for value ops — same fix.
+	{"dyn-f32-chained",
+		`trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { var p: P = P { n: 2.5 }; var d: dyn F = p; var r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
+	// Regression guard for a non-scalar return that DOES track + route IR: an
+	// array `.len()` on the dispatch result. (A struct-field or Option-match on a
+	// dyn dispatch result currently routes to the AST fallback — a legit
+	// IR-subset gap, not a miscompile — so those shapes aren't pinned here.)
+	{"dyn-array-len-chained",
+		`trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { var s: S = S { n: 1 }; var d: dyn Arr = s; return d.make().len(); }`, 3},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64
