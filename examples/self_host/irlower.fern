@@ -14970,7 +14970,8 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
-                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)) { is_map = true; }
+                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)
+                        && !map_identity_escape(body, v.name)) { is_map = true; }
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
@@ -17701,6 +17702,98 @@ function map_has_explicit_iter_stmt(st: parser.Stmt, name: string): boolean {
     }
 }
 
+// expr_map_identity_use reports whether expr `e` contains `name.insert(...)` or
+// `name.without(...)` anywhere — the map reclaim's soundness gate for the
+// IDENTITY-CARRYING method hole. Both return the receiver's OWN mapbox (insert
+// mutates in place and hands the same box back; without returns a
+// [map, existed] tuple wrapping it), so their RESULT flowing into any position
+// (a struct-lit field value, a tuple element, a call arg, a fresh bind) can
+// smuggle the box past the borrow-only escape walk — expr_unsafe_for treats a
+// method RECEIVER as a borrow, so `C { m: mm.insert(1, 1) }` looked
+// non-escaping and the reclaim freed a mapbox the program still reads (the
+// map-call-as-struct-field UAF). Distinguishing an escaping result from a
+// discarded one cheaply is not worth it: ANY identity-carrying use
+// conservatively excludes the map from reclaim (it just leaks — the
+// pre-reclaim default). The self-reassign form `m = m.insert(k, v)` is caught
+// too, but such a name is already excluded by the not-reassigned gate.
+// Unlike expr_iters_map this walker recurses into struct-lit / array / tuple
+// positions — exactly where the escaping results hide.
+function expr_map_identity_use(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(id) => { if (id.name == name && (fa.field == "insert" || fa.field == "without")) { return true; } },
+                        _ => {}
+                    }
+                    if (expr_map_identity_use(fa.obj, name)) { return true; }
+                },
+                _ => { if (expr_map_identity_use(c.callee, name)) { return true; } }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (expr_map_identity_use(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return expr_map_identity_use(b.left, name) || expr_map_identity_use(b.right, name); },
+        parser.ExprUnary(u) => { return expr_map_identity_use(u.operand, name); },
+        parser.ExprIndex(ix) => { return expr_map_identity_use(ix.array, name) || expr_map_identity_use(ix.index, name); },
+        parser.ExprSlice(sl) => { return expr_map_identity_use(sl.array, name) || expr_map_identity_use(sl.start, name) || expr_map_identity_use(sl.end, name); },
+        parser.ExprFieldAccess(fa) => { return expr_map_identity_use(fa.obj, name); },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && expr_map_identity_use(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (expr_map_identity_use(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (expr_map_identity_use(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (expr_map_identity_use(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
+// map_identity_escape: does the body contain an identity-carrying method call
+// on `name` (see expr_map_identity_use) anywhere? Shared soundness gate for
+// BOTH map reclaim sites — the "MAP:" exit set and the precise-drop candidate.
+function map_identity_escape(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (map_identity_escape_stmt(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function map_identity_escape_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_map_identity_use(v.init, name); },
+        parser.StmtAssign(a) => { return expr_map_identity_use(a.value, name); },
+        parser.StmtExpr(ex) => { return expr_map_identity_use(ex.value, name); },
+        parser.StmtReturn(r) => { return expr_map_identity_use(r.value, name); },
+        parser.StmtFor(f) => { return expr_map_identity_use(f.iter, name) || map_identity_escape(f.body, name); },
+        parser.StmtIf(iff) => { return expr_map_identity_use(iff.cond, name) || map_identity_escape(iff.then_body, name) || map_identity_escape(iff.else_body, name); },
+        parser.StmtWhile(w) => { return expr_map_identity_use(w.cond, name) || map_identity_escape(w.body, name); },
+        parser.StmtMatch(m) => {
+            if (expr_map_identity_use(m.scrutinee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard && expr_map_identity_use(m.arms[i].guard, name)) { return true; }
+                if (map_identity_escape(m.arms[i].body, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
 // --- string[] ELEMENT reclaim (#4355: string RC, string-array slice) ---------
 //
 // A fresh string[] local whose EVERY stored element is provably fresh (a concat /
@@ -18823,7 +18916,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (util.index_of_str(reassigned, maps[mi]) < 0
             && util.index_of_str(aliased_m, maps[mi]) < 0
             && !body_unsafe_for(body, maps[mi], borrowable)
-            && !map_has_explicit_iter(body, maps[mi])) {
+            && !map_has_explicit_iter(body, maps[mi])
+            // Identity-carrying method hole (insert/without return the
+            // receiver's own box — see expr_map_identity_use): any such use
+            // can smuggle the mapbox past the borrow-only escape walk, so it
+            // excludes the map from reclaim.
+            && !map_identity_escape(body, maps[mi])) {
             out = out.append("MAP:" + maps[mi]);
             // #4353: a reclaimable map whose every VALUE (resp. KEY) is a fresh
             // string additionally deep-releases that column — via

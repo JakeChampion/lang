@@ -257,6 +257,27 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// STRING corruption probe: a fresh array after the string-field reuse
 		// reads back intact and the recipient's string content is right.
 		{"struct-string-field-corruption-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32; var c = N { id: 2, name: "wxyz" + "q" }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (u != 3) { return 90; } if (s != 66) { return 91; } if (c.name[0] != 119) { return 92; } return __rc_underflow(); }`, 0},
+		// MAP IDENTITY-CARRYING method hole (map_identity_escape): `mm.insert(1,1)`
+		// returns mm's OWN mapbox, and as a struct-lit field value it smuggled the
+		// box past the borrow-only escape walk — the map reclaim then freed a box
+		// the program still reads through c.m (a SIGSEGV before the gate). Any
+		// insert/without use of a fresh map local now excludes it from reclaim
+		// (conservative leak). Value 3 + 1 = 4; corruption probe: a fresh array
+		// after the struct-lit reads back intact and c.m survives.
+		{"map-callvalue-struct-field-value", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; return c.id + c.m.len(); }`, 4},
+		{"map-callvalue-struct-field-corruption-detector", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (s != 66) { return 91; } if (c.id + c.m.len() != 4) { return 92; } return __rc_underflow(); }`, 0},
+		// The own-param sibling (the shape that first surfaced the UAF while
+		// testing #5087): the struct with the smuggled mapbox flows through an
+		// `own` param donor site — value stays correct with the map excluded.
+		{"map-callvalue-own-param-field-value", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); var c = C { id: 10, m: mm.insert(1, 5) }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); var c0 = C { id: 3, m: m0.insert(1, 1) }; return f(c0); }`, 15},
+		// The `.without` sibling: its (Map, existed) tuple wraps the SAME mapbox,
+		// so the destructured m2 aliases mm — reclaiming mm at its last use (the
+		// without statement) freed the box before m2.get_or read it (SIGSEGV
+		// before the gate: 2 map_free calls in the old asm). The identity gate
+		// excludes mm; m2.get_or reads the live box. Value 7 (absent key →
+		// default; interp-oracle-checked), detector 0.
+		{"map-without-alias-bind-value", `function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.without(1); return m2.get_or(2, 7); }`, 7},
+		{"map-without-alias-bind-detector", `function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.without(1); var r: i32 = m2.get_or(2, 7); if (r != 7) { return 99; } return __rc_underflow(); }`, 0},
 		// NON-firing: the donor's string field is a bare-ident ALIAS — rejected
 		// by the donor freshness gate; the aliased buffer stays valid.
 		{"struct-string-no-reuse-aliased-donor-detector", `struct N { id: i32, name: string } function main(): i32 { var nm: string = "ab" + "c"; var d = N { id: 1, name: nm }; var u: i32 = d.name.len() as i32 + d.id; var c = N { id: 2, name: "wxyz" + "q" }; var s: i32 = c.name.len() as i32 + c.id + u + nm.len() as i32; if (s != 14) { return 99; } return __rc_underflow(); }`, 0},
