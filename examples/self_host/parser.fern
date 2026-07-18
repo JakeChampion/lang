@@ -3819,6 +3819,25 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // loop spins (OOM). std/string's split_at / split_once use
         // `(string, string)` and `Option[(string, string)]`.
         if (p.peek_punct() == "(") {
+            // A parenthesized SINGLE trait-object type — `(dyn T)`,
+            // `(dyn A + B)`, optionally arrayed `(dyn T)[]`. The parens are
+            // redundant grouping (source needs them so a trailing `[]` binds to
+            // the whole `dyn T`, not to a trait generic-arg). Unwrap to the
+            // paren-free `dyn T` / `dyn T[]` spelling the `dyn` branch above
+            // produces — otherwise the tuple char-collect loop below mashes
+            // `dyn Shape` into `(dynShape)` (space dropped, parens kept) and
+            // every `type_name[0:4] == "dyn "` consumer misses, so a
+            // `(dyn Trait)[]` PARAM's element dispatch declines the IR path
+            // (#5203). A genuine tuple whose first element is `dyn`
+            // (`(dyn A, i32)`) is NOT a single-type wrap: the `)`-follows check
+            // fails and the untouched cursor runs the unchanged tuple path.
+            var dpa: Par = p.advance();   // peek past `(`
+            if (dpa.peek_keyword() == "dyn") {
+                var (dpw_name, dpw_ret_arr, dpw_fn_ret, dpw_p) = parse_type_name(dpa);
+                if (dpw_p.peek_punct() == ")") {
+                    return consume_array_suffix(dpw_p.advance(), dpw_name);
+                }
+            }
             var tbuf: string = "";
             var td: i32 = 0;
             var is_fn: boolean = false;
