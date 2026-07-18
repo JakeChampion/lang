@@ -1,0 +1,36 @@
+import "core/int";
+// Block-shaped defer / errdefer (#5153): the native parser now accepts a
+// brace-block action `defer { … }` / `errdefer { … }` (long supported by the
+// self-host parser), parsed as a value-less BlockExpr so every backend lowers
+// it via the existing defer machinery. Deferred actions run at function exit,
+// AFTER the return value is captured — so they order/side-effect exactly like
+// single-statement defers. Runs interp / x86-64 / arm64 / wasm.
+
+// Two block defers: LIFO at exit, but the return value (0) is already captured.
+function two(): i32 {
+    var acc: i32 = 0;
+    defer { acc = acc + 100; }
+    defer { acc = acc + 10; }
+    return acc;                 // 0
+}
+// errdefer block runs only on the error exit.
+function risky(fail: boolean): Result[i32, i32] {
+    var code: i32 = 0;
+    errdefer { code = code + 7; }
+    if (fail) { return Err(code + 1); }
+    return Ok(50);
+}
+// Block defer with an early return still fires.
+function early(n: i32): i32 {
+    var x: i32 = 5;
+    defer { x = 0; }
+    if (n > 0) { return n; }
+    return x;
+}
+function main(): i32 {
+    var r: i32 = two();                                                     // 0
+    match (risky(false)) { Ok(v) => { r = r + v; }, Err(e) => { r = r + e; } }  // +50
+    match (risky(true))  { Ok(v) => { r = r + v; }, Err(e) => { r = r + e; } }  // +1
+    r = r + early(9);                                                       // +9
+    return r;                                                               // 60
+}

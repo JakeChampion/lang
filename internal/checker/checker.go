@@ -8407,11 +8407,29 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s", want, got)
 		}
 	case *ast.Defer:
-		// Just type-check the expression; its result is
-		// discarded (defer is statement-shaped, not
-		// expression-shaped). The IR builder is responsible
-		// for replaying the expression at function exits.
-		c.checkExpr(n.Expr, s)
+		// Just type-check the action; its result is discarded (defer is
+		// statement-shaped, not expression-shaped). The IR builder is
+		// responsible for replaying it at function exits.
+		//
+		// A block action `defer { … }` (#5153) is value-less by design, so
+		// check its statements directly rather than through checkBlockExpr —
+		// which would report E061 for the missing trailing value. Only the
+		// immediate block is exempt; any nested value-position block inside
+		// still goes through the normal value-required check.
+		if blk, ok := n.Expr.(*ast.BlockExpr); ok {
+			bs := newScope(s)
+			prevMutualRec := c.mutualRecSiblings
+			c.mutualRecSiblings = nil
+			for _, st := range blk.Stmts {
+				c.checkStmt(st, bs)
+			}
+			c.mutualRecSiblings = prevMutualRec
+			if blk.Tail != nil {
+				c.checkExpr(blk.Tail, bs)
+			}
+		} else {
+			c.checkExpr(n.Expr, s)
+		}
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)

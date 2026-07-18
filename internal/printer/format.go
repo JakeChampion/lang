@@ -955,8 +955,15 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		} else {
 			f.b.WriteString("defer ")
 		}
-		f.formatExpr(x.Expr, precLowest)
-		f.b.WriteByte(';')
+		// A block-shaped action `defer { … }` (#5153) prints as the block
+		// with no trailing `;` (matching the parse form); a plain expression
+		// action keeps its `;`.
+		if be, ok := x.Expr.(*ast.BlockExpr); ok {
+			f.formatBlockExpr(be)
+		} else {
+			f.formatExpr(x.Expr, precLowest)
+			f.b.WriteByte(';')
+		}
 	case *ast.Match:
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)

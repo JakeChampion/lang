@@ -82,6 +82,41 @@ func TestParseDeferAndErrDefer(t *testing.T) {
 	}
 }
 
+// Block-shaped `defer { … }` / `errdefer { … }` (#5153) parse to *ast.Defer
+// whose Expr is a value-less *ast.BlockExpr (the block's action), matching the
+// self-host parser. No trailing `;` follows the closing brace.
+func TestParseDeferBlockForm(t *testing.T) {
+	prog, err := Parse(`function f(): Result[i32, i32] {
+		var x: i32 = 0;
+		defer { x = x + 1; }
+		errdefer { x = x + 2; }
+		return Ok(x);
+	}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	for i, want := range []bool{false, true} { // stmt 1 = defer, stmt 2 = errdefer
+		d, ok := stmts[i+1].(*ast.Defer)
+		if !ok {
+			t.Fatalf("stmt %d: expected *ast.Defer, got %T", i+1, stmts[i+1])
+		}
+		if d.OnError != want {
+			t.Errorf("stmt %d: OnError = %v, want %v", i+1, d.OnError, want)
+		}
+		blk, ok := d.Expr.(*ast.BlockExpr)
+		if !ok {
+			t.Fatalf("stmt %d: expected Defer.Expr *ast.BlockExpr, got %T", i+1, d.Expr)
+		}
+		if blk.Tail != nil {
+			t.Errorf("stmt %d: block action should be value-less (Tail == nil)", i+1)
+		}
+		if len(blk.Stmts) != 1 {
+			t.Errorf("stmt %d: expected 1 stmt in block, got %d", i+1, len(blk.Stmts))
+		}
+	}
+}
+
 // TestParseAssertDesugar pins that `assert(cond)` / `assert(cond, msg)`
 // desugars, at parse time, to `if (!cond) { eprint(<text>); exit(1); }`
 // (#4416) — so no dedicated AST node, checker rule, or codegen is needed;

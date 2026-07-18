@@ -14563,6 +14563,14 @@ func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
 		}
 		return true
 	}
+	if blk, ok := e.(*ast.BlockExpr); ok {
+		// A block-expression leaves a value only when it has a trailing
+		// expression. A value-less (void) block — e.g. a `defer { … }`
+		// action whose last element is a `;`-statement — pushes nothing,
+		// so no drop must follow it (else the wasm stack underflows and
+		// the module fails to validate).
+		return blk.Tail != nil
+	}
 	return true
 }
 
