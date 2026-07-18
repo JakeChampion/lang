@@ -35650,8 +35650,28 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     return ClosureLift { body: newbody, acc: nacc, changed: true };
 }
 
-// closure_lift_one lifts the FIRST liftable capturing-lambda binding in body
-// (top-level statements). The caller loops until no change.
+// cl_replace_at returns `body` with the statement at `at` replaced by `ns`.
+// Used by closure_lift_one to splice a rewritten control-flow statement (whose
+// nested body had a lambda lifted) back into its enclosing body.
+function cl_replace_at(body: parser.Stmt[], at: i32, ns: parser.Stmt): parser.Stmt[] {
+    var nb: parser.Stmt[] = [];
+    var k: i32 = 0;
+    while (k < body.len()) {
+        if (k == at) { nb = nb.append(ns); } else { nb = nb.append(body[k]); }
+        k = k + 1;
+    }
+    return nb;
+}
+
+// closure_lift_one lifts the FIRST liftable capturing-lambda binding in body,
+// recursing into nested loop / if / match bodies. The caller loops until no
+// change. A `var f = <capturing lambda>` that is only CALLED (not escaping)
+// is param-lifted to a hoisted `__lam_N` + direct call sites — whether it sits
+// at the top level OR inside a `while` / `for` / `if` / `match` body. Before
+// the nested recursion only top-level bindings lifted, so a loop-local
+// capturing closure (`while (…) { var f = function(n){ return n + base; }; …
+// f(i) … }`) was never lifted and the whole module fell to the AST path
+// (correct, but off the IR path — the loop-local capturing-closure IR gap).
 function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: parser.StructDecl[]): ClosureLift {
     var assigns: string[] = body_assign_targets(body);
     var i: i32 = 0;
@@ -35670,6 +35690,50 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
                         if (lifted.changed) { return lifted; }
                     },
                     _ => { }
+                }
+            },
+            parser.StmtWhile(w) => {
+                // A lambda binding lives in the loop body, not `body`: recurse.
+                // Captures resolve against the whole `fd`, so a capture declared
+                // outside the loop (`base` / `c.base`) types fine; the escape
+                // check runs on the loop-local scope (the binding isn't visible
+                // outside it).
+                var sw: ClosureLift = closure_lift_one(w.body, fd, acc, gfns, structs);
+                if (sw.changed) {
+                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtWhile { cond: w.cond, body: sw.body, label: w.label }), acc: sw.acc, changed: true };
+                }
+            },
+            parser.StmtFor(fr) => {
+                var sf: ClosureLift = closure_lift_one(fr.body, fd, acc, gfns, structs);
+                if (sf.changed) {
+                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: sf.body, label: fr.label }), acc: sf.acc, changed: true };
+                }
+            },
+            parser.StmtIf(f) => {
+                var st: ClosureLift = closure_lift_one(f.then_body, fd, acc, gfns, structs);
+                if (st.changed) {
+                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtIf { cond: f.cond, then_body: st.body, else_body: f.else_body }), acc: st.acc, changed: true };
+                }
+                var se: ClosureLift = closure_lift_one(f.else_body, fd, acc, gfns, structs);
+                if (se.changed) {
+                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtIf { cond: f.cond, then_body: f.then_body, else_body: se.body }), acc: se.acc, changed: true };
+                }
+            },
+            parser.StmtMatch(mm) => {
+                var ami: i32 = 0;
+                while (ami < mm.arms.len()) {
+                    var sm: ClosureLift = closure_lift_one(mm.arms[ami].body, fd, acc, gfns, structs);
+                    if (sm.changed) {
+                        var narms: parser.MatchArm[] = [];
+                        var q: i32 = 0;
+                        while (q < mm.arms.len()) {
+                            if (q == ami) { narms = narms.append(parser.MatchArm { pattern: mm.arms[q].pattern, body: sm.body, line: mm.arms[q].line, col: mm.arms[q].col, guard: mm.arms[q].guard, has_guard: mm.arms[q].has_guard }); }
+                            else { narms = narms.append(mm.arms[q]); }
+                            q = q + 1;
+                        }
+                        return ClosureLift { body: cl_replace_at(body, i, parser.StmtMatch { scrutinee: mm.scrutinee, arms: narms, line: mm.line, col: mm.col, origin: mm.origin }), acc: sm.acc, changed: true };
+                    }
+                    ami = ami + 1;
                 }
             },
             _ => { }
