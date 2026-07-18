@@ -81,6 +81,39 @@ pub function i32_min(): i32 { return 0 - 2147483647 - 1; }
 pub function i64_max(): i64 { return 9223372036854775807; }
 pub function i64_min(): i64 { return (0 as i64) - 9223372036854775807 - (1 as i64); }
 
+// --- floating-point angle + interpolation helpers ---
+//
+// Pure f64 arithmetic (no libm / transcendentals), so std/math keeps
+// its zero-dependency, every-backend-exact posture.
+
+// `pi()` — the ratio of a circle's circumference to its diameter, as the
+// closest f64 to π. A function (not a constant) to match how std/math
+// exposes all its values.
+pub function pi(): f64 { return 3.141592653589793; }
+
+// `tau()` — 2π, one whole turn in radians and the more natural base unit
+// for angular math (`tau() / 4.0` is a quarter turn). Exactly `2.0 *
+// pi()`, since scaling an f64 by two only bumps the exponent.
+pub function tau(): f64 { return 6.283185307179586; }
+
+// `to_radians(deg)` — convert an angle from degrees to radians
+// (`deg × π / 180`). Inverse of `to_degrees`. `to_radians(0.0)` is
+// exactly 0.0; other conversions round to the nearest f64.
+pub function to_radians(deg: f64): f64 { return deg * (pi() / 180.0); }
+
+// `to_degrees(rad)` — convert an angle from radians to degrees
+// (`rad × 180 / π`). Inverse of `to_radians`. `to_degrees(0.0)` is
+// exactly 0.0; other conversions round to the nearest f64.
+pub function to_degrees(rad: f64): f64 { return rad * (180.0 / pi()); }
+
+// `lerp(a, b, t)` — linear interpolation from `a` to `b` by fraction `t`:
+// `t == 0.0` returns `a`, `t == 1.0` returns `b`, and `t` outside [0, 1]
+// extrapolates. Uses the `a·(1−t) + b·t` form, which reproduces BOTH
+// endpoints exactly (the cheaper `a + (b−a)·t` form drifts off `b` at
+// `t == 1.0`); in exchange it is not guaranteed monotonic for `a`, `b` of
+// wildly different magnitude — the standard trade for endpoint fidelity.
+pub function lerp(a: f64, b: f64, t: f64): f64 { return a * (1.0 - t) + b * t; }
+
 // `pack_rgb(r, g, b)` — pack three 0..255 components into a
 // 24-bit i32. Inverse of `(n).to_rgb_hex()`'s shifts. Each
 // component is masked to its low 8 bits; values outside
