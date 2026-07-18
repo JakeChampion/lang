@@ -7604,6 +7604,29 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
                     if (fr.len() > 0) { return fr; }
                     return func_ret_of(funcs, cid.name);
                 },
+                ExprFieldAccess(cfa) => {
+                    // A METHOD call `recv.method(args)` as the scrutinee: resolve
+                    // the receiver's type and return the method's declared return
+                    // type, so `match (s.find(k))` over a generic-enum-returning
+                    // method recovers its instantiation and rewrites its arms.
+                    // Without this the method scrutinee resolved "" (only a free
+                    // function's return was recovered), so the arms stayed
+                    // un-mangled against the concrete enum and the match read the
+                    // wrong variant.
+                    var rt: string = me_scrutinee_type(cfa.obj, env, structs, funcs);
+                    if (rt.len() > 0) {
+                        var rbase: string = strip_struct_base(rt);
+                        var mi: i32 = 0;
+                        while (mi < funcs.len()) {
+                            if (funcs[mi].name == cfa.field && funcs[mi].receiver_type.len() > 0
+                                && strip_struct_base(funcs[mi].receiver_type) == rbase) {
+                                return funcs[mi].ret_type;
+                            }
+                            mi = mi + 1;
+                        }
+                    }
+                    return "";
+                },
                 _ => { return ""; }
             }
             return "";
