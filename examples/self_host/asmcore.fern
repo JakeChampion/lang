@@ -339,6 +339,20 @@ pub function rt_src_random_bytes(): string {
     return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); __syscall3(318, p, n, 0); return __raw_string(p, n); }";
 }
 
+// rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
+// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
+// 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
+// (syscall 8), read the whole thing in ONE read into a sized buffer that BECOMES
+// the returned string (RC-managed, like random_bytes), close. Err(NotFound(_)) on
+// open/read failure — a FRESH string boxed from the raw path copy, not the
+// borrowed `path`. Single-read (no offset-into-buffer arithmetic, which the i32
+// raw-pointer floor can't do 64-bit-safely on a high heap buffer): correct for
+// regular files ≤ 2 GiB read without interruption, which covers the use (the
+// compiler reading source). x86-64-only (arch-specific syscall numbers).
+pub function rt_src_read_file(): string {
+    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { return Err(NotFound(__raw_string(pathz, plen))); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { return Err(NotFound(__raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
+}
+
 // rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
 // selects monotonic_ns / now_ns / now_unix_ms. Each reads a `timespec { i64
 // tv_sec; i64 tv_nsec }` from clock_gettime (x86-64 syscall 228) into the fixed

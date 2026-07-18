@@ -90,8 +90,11 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 	for _, tc := range readFileIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call __fern_read_file")) {
-				t.Fatalf("%s: no call to __fern_read_file — did not lower through the IR path", tc.name)
+			// x86-64 read_file is now a Fern runtime function (#2649): op_read_file
+			// calls the stack-ABI __fn___fern_read_file (wasm/arm64 keep the
+			// register-ABI __fern_read_file — not migrated).
+			if !bytes.Contains(asm, []byte("call __fn___fern_read_file")) {
+				t.Fatalf("%s: no call to __fn___fern_read_file — did not lower through the IR path", tc.name)
 			}
 			assertNoDanglingLocalLabels(t, tc.name, asm)
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
