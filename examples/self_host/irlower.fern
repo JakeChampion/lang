@@ -25036,44 +25036,40 @@ function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
-                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
-                                // every leak-safe array field VALUE must be a fresh
-                                // array literal (the reused box then owns it) — same
-                                // rule as cross_reuse_sites.
-                                var okv: boolean = true;
-                                var fk: i32 = 0;
-                                while (fk < slit.field_names.len()) {
-                                    var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
-                                    if (is_leaksafe_array_field(fkt)) {
-                                        match (slit.field_values[fk]) {
-                                            parser.ExprArray(_) => {},
-                                            _ => { okv = false; }
-                                        }
+                            // Recipient admission widened to the CROSS field-kind set
+                            // (enum / string / Map / tuple / Option — the reuse-audit
+                            // follow-through): the donor is a consumed scalar-enum box
+                            // (no old pointer slots, so the emitter's no-release write
+                            // stays sound for every kind), the recipient's pointer
+                            // field VALUES are gated FRESH by the shared
+                            // cross_recipient_fields_fresh (fresh values are
+                            // sole-owned — no alias-inc needed on the in-place
+                            // writes), and the reused box's exit drop uses the same
+                            // per-kind arms as a normally-constructed box (k_enum /
+                            // k_struct release; Map / tuple / Option leak-only,
+                            // exactly like the fresh-alloc path).
+                            if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)
+                                    && cross_recipient_fields_fresh(slit, structs)) {
+                                var want: i32 = decl_field_count(structs, slit.type_name);
+                                // find the nearest unconsumed enum donor whose
+                                // consuming match is before k and whose box size
+                                // (field count) equals the recipient's.
+                                var di: i32 = 0;
+                                var chosen: string = "";
+                                while (di < ef.idxs.len() && chosen == "") {
+                                    var dname: string = ef.names[di];
+                                    if (ef.idxs[di] < k
+                                            && dname != v.name
+                                            && util.index_of_str(donors, dname) < 0
+                                            && enum_init_box_fields(body, structs, dname) == want) {
+                                        chosen = dname;
                                     }
-                                    fk = fk + 1;
+                                    di = di + 1;
                                 }
-                                if (okv) {
-                                    var want: i32 = decl_field_count(structs, slit.type_name);
-                                    // find the nearest unconsumed enum donor whose
-                                    // consuming match is before k and whose box size
-                                    // (field count) equals the recipient's.
-                                    var di: i32 = 0;
-                                    var chosen: string = "";
-                                    while (di < ef.idxs.len() && chosen == "") {
-                                        var dname: string = ef.names[di];
-                                        if (ef.idxs[di] < k
-                                                && dname != v.name
-                                                && util.index_of_str(donors, dname) < 0
-                                                && enum_init_box_fields(body, structs, dname) == want) {
-                                            chosen = dname;
-                                        }
-                                        di = di + 1;
-                                    }
-                                    if (chosen != "") {
-                                        idxs = idxs.append(k);
-                                        recips = recips.append(slit.type_name);
-                                        donors = donors.append(chosen);
-                                    }
+                                if (chosen != "") {
+                                    idxs = idxs.append(k);
+                                    recips = recips.append(slit.type_name);
+                                    donors = donors.append(chosen);
                                 }
                             }
                         },

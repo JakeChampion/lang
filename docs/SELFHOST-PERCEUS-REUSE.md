@@ -235,9 +235,13 @@ existing test scaffolding rather than gated off:
     as a struct-lit field value crashes on the self-host x86 path with reuse
     on OR off — a separate pre-existing bug; the reuse cases use ident-valued
     Map fields.)
-  - **Enum-donor recipient** (`enum_donor_reuse_sites`): still narrow; needs a
-    recipient fresh-value gate plus the field-kind's exit-reclaim arm, or the
-    reused box leaks the new field at exit.
+  - **Enum-donor recipient** (`enum_donor_reuse_sites`): now on
+    `struct_fields_reusable_cross` + the shared `cross_recipient_fields_fresh`
+    value gate (pinned by the `enum-donor-{enum,tuple}-field-recipient*`
+    differential cases). Sound because the donor's old slots are all scalars
+    (no release needed) and the reused box's exit drop uses the same per-kind
+    arms as a fresh construction (k_enum / k_struct; Map / tuple / Option
+    leak-only).
 
 These are marginal wins; whether to pursue the rest is a value call (see §7).
 Validation for either: the reuse it changes is **on by default** (matching the
