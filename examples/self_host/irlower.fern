@@ -4097,6 +4097,40 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// expr_call_is_u32_ret reports whether `e` is a CALL whose result is u32 — a
+// concrete u32-returning free function (is_u32_ret_fn), an erased-generic fn whose
+// return mirrors a u32 argument (str_ret_argref), or a u32-returning method
+// (`recv.m()`, keyed "<Type>.<method>"). Kept SEPARATE from expr_is_u32 on purpose:
+// a call's result arrives width-clean (the callee already wrapped its own u32), so
+// it needs NO u32-wrap — only its SIGN matters, and only at a directly-chained
+// shift / div / ordering-compare. The binary lowering ORs this into the sign-
+// selection signal (not into res_u32, which drives the wrap). Without it a
+// `f_u32(a) >> 1` lowered a signed (arithmetic) shift and diverged on wasm once
+// bit 31 was set (x86/arm64 zero-extend the u32 in a 64-bit reg, hiding it). #5245.
+pub function expr_call_is_u32_ret(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (s.is_u32_ret_fn(cid.name)) { return true; }
+                    var gui: i32 = str_ret_argref(s, cid.name);
+                    if (gui >= 0 && gui < c.args.len() && expr_is_u32(c.args[gui], s)) { return true; }
+                    return false;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
+                    if (crty == "") { return false; }
+                    return s.is_u32_ret_fn(crty + "." + cfa.field);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_is_u64 mirrors expr_is_u32 for the i64 (64-bit) domain: a u64-tracked
 // local/param, a u64[] element read, an `as u64` cast, or an arithmetic /
 // bitwise / shift combination of u64 operands. It selects the UNSIGNED i64 ops
@@ -5492,14 +5526,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             var ek: string = kind;
             var left_u32: boolean = expr_is_u32(b.left, s);
             var right_u32: boolean = expr_is_u32(b.right, s);
-            if (b.op == ">>" && left_u32) { ek = "shr_u"; }
+            // SIGN-only u32-ness: a u32-returning CALL result is unsigned for the
+            // shift / div / compare op selection below, but arrives width-clean, so
+            // it must NOT feed res_u32 (the wrap). OR it into the sign signal only.
+            var left_u32s: boolean = left_u32 || expr_call_is_u32_ret(b.left, s);
+            var right_u32s: boolean = right_u32 || expr_call_is_u32_ret(b.right, s);
+            if (b.op == ">>" && left_u32s) { ek = "shr_u"; }
             // u32 ORDERING compares need the UNSIGNED IR kind (lt_u/le_u/gt_u/
             // ge_u): a u32 value ≥ 2^31 is signed-negative in a 32-bit slot, so a
             // signed compare gives the wrong answer on wasm. Remap via the same
             // to_unsigned_kind path u64 uses (#2904); the wasm backend then emits
             // i32.*_u and asm_ir emits setb/seta — both correct for a u32. eq/ne
             // are sign-agnostic and pass through. (#2917)
-            if ((left_u32 || right_u32) && (kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s")) {
+            if ((left_u32s || right_u32s) && (kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s")) {
                 ek = to_unsigned_kind(kind);
             }
             // u32 DIVISION / REMAINDER must be unsigned too: a u32 numerator >=
@@ -5508,7 +5547,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // to be right because its 64-bit reg held the value zero-extended).
             // Remap div_s/rem_s -> div_u/rem_u when either operand is u32, the
             // same way u64 does (#2904); add/sub/mul stay sign-agnostic. (#3204+)
-            if ((left_u32 || right_u32) && (kind == "div_s" || kind == "rem_s")) {
+            if ((left_u32s || right_u32s) && (kind == "div_s" || kind == "rem_s")) {
                 ek = to_unsigned_kind(kind);
             }
             var res: LowerState = s2.emit(ir.op_bin(ek, 0, false));
@@ -31589,7 +31628,13 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // '1') so is_u64_ret_fn can recover the callee's unsigned-ness at a
         // directly-chained call site (`f(a) >> 1` picks shr_u — #5159); is_i64_ret_fn
         // treats '1' and '2' alike since both are 64-bit-wide (#2904).
-        var retf: boolean = funcs[k].ret_type == "i64" || funcs[k].ret_type == "u64";
+        // A u32 RETURN flags '3' (a NON-64-bit sentinel: is_i64_ret_fn accepts only
+        // '1'/'2', param_is_i64 reads positions >= 1, so a '3' ret entry is invisible
+        // to the 64-bit routing) so is_u32_ret_fn can recover a u32-returning callee's
+        // unsigned-ness for a directly-chained shift / div / compare (`f(a) >> 1`
+        // picks shr_u on wasm — #5245). A u32 param is NOT 64-bit-wide, so it flags
+        // '0' like any other 32-bit param; only the RETURN needs the u32 marker.
+        var retf: boolean = funcs[k].ret_type == "i64" || funcs[k].ret_type == "u64" || funcs[k].ret_type == "u32";
         var flags: string = "";
         var any: boolean = retf;
         var pj: i32 = 0;
@@ -31602,6 +31647,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             var rc: string = "0";
             if (funcs[k].ret_type == "i64") { rc = "1"; }
             else if (funcs[k].ret_type == "u64") { rc = "2"; }
+            else if (funcs[k].ret_type == "u32") { rc = "3"; }
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key + "|" + rc + flags);
@@ -33635,6 +33681,15 @@ pub function (s: LowerState) is_i64_ret_fn(name: string): boolean {
 pub function (s: LowerState) is_u64_ret_fn(name: string): boolean {
     var sig: string = s.i64_sig_of(name);
     return sig.len() >= 1 && sig[0] == 50;   // 50 = '2' (u64)
+}
+// is_u32_ret_fn reports whether `name` returns u32 (ret flag '3'), so a call to
+// it directly chained in an unsigned op (`f(a) >> 1` / `f(a) / x` / `f(a) > y`)
+// selects the unsigned wasm form. The '3' flag is a non-64-bit sentinel invisible
+// to is_i64_ret_fn / param_is_i64, so it recovers ONLY the callee's u32 sign — the
+// value already arrives width-clean from the callee. #5245 (u32 sibling of #5159).
+pub function (s: LowerState) is_u32_ret_fn(name: string): boolean {
+    var sig: string = s.i64_sig_of(name);
+    return sig.len() >= 1 && sig[0] == 51;   // 51 = '3' (u32)
 }
 // is_f64_ret_fn reports whether free function `name` returns f64 (so a call to
 // it is recognised as an f64 value).
