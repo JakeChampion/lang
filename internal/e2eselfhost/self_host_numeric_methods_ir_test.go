@@ -127,6 +127,29 @@ function main(): i32 {
     if (rotl((1 as u32) << (31 as u32), 1) == (1 as u32)) { r = r + 1; }   // 12
     return r;
 }`},
+	// byte_swap (the std/u32 · std/i64 · std/u64 additions): endianness
+	// reversal over unsigned shift/mask lanes. u32 swaps 4 bytes, u64 loops
+	// over 8; ==-only, oracle-checked. Four hits → 42.
+	{"int-byte-swap", `function u32_bswap(n: u32): u32 {
+    var b0: u32 = n & (255 as u32);
+    var b1: u32 = (n >> (8 as u32)) & (255 as u32);
+    var b2: u32 = (n >> (16 as u32)) & (255 as u32);
+    var b3: u32 = (n >> (24 as u32)) & (255 as u32);
+    return (b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3;
+}
+function u64_bswap(n: u64): u64 {
+    var r: u64 = 0 as u64; var i: i32 = 0;
+    while (i < 8) { var b: u64 = (n >> ((i * 8) as u64)) & (255 as u64); r = r | (b << (((7 - i) * 8) as u64)); i = i + 1; }
+    return r;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (u32_bswap(16909060 as u32) == (67305985 as u32)) { r = r + 10; }
+    if (u32_bswap(4278190080 as u32) == (255 as u32)) { r = r + 10; }
+    if (u64_bswap(72623859790382856 as u64) == (578437695752307201 as u64)) { r = r + 10; }
+    if (u64_bswap(u64_bswap(123456789 as u64)) == (123456789 as u64)) { r = r + 12; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

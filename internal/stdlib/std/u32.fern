@@ -228,3 +228,14 @@ pub function (n: u32) rotate_right(bits: i32): u32 {
     var left: u32 = n << ((32 - k) as u32);
     return right | left;
 }
+
+// `byte_swap()` — reverse the 4 bytes of `n` (endianness swap): byte 0
+// <-> 3, 1 <-> 2. The unsigned sibling of std/i32's `byte_swap`, for
+// fixed-width big-/little-endian conversion.
+pub function (n: u32) byte_swap(): u32 {
+    var b0: u32 = n & (255 as u32);
+    var b1: u32 = (n >> (8 as u32)) & (255 as u32);
+    var b2: u32 = (n >> (16 as u32)) & (255 as u32);
+    var b3: u32 = (n >> (24 as u32)) & (255 as u32);
+    return (b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3;
+}

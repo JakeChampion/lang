@@ -225,3 +225,16 @@ pub function (n: u64) rotate_right(bits: i32): u64 {
     var left: u64 = n << ((64 - k) as u64);
     return right | left;
 }
+
+// `byte_swap()` — reverse the 8 bytes of `n` (endianness swap). The
+// unsigned 64-bit sibling of std/i32's `byte_swap`.
+pub function (n: u64) byte_swap(): u64 {
+    var r: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < 8) {
+        var b: u64 = (n >> ((i * 8) as u64)) & (255 as u64);
+        r = r | (b << (((7 - i) * 8) as u64));
+        i = i + 1;
+    }
+    return r;
+}
