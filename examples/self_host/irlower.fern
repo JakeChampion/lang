@@ -4031,24 +4031,55 @@ pub function expr_is_f32(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// expr_is_u32arr reports whether `e` is a u32[] array value — a u32[] ident slot
+// (is_arr + is_u32), a u32-element literal, or a slice of either. The u32 sibling
+// of expr_is_u64arr; drives element-index u32 tracking in expr_is_u32's ExprIndex
+// arm. (u32-ness matters on wasm, whose i32 shr/div/rem select signed vs unsigned
+// — an x86 64-bit register zero-extends, hiding the divergence.)
+pub function expr_is_u32arr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprArray(lit) => { return lit.elements.len() > 0 && expr_is_u32(lit.elements[0], s); },
+        parser.ExprIdent(id) => { var sl: i32 = s.slot_of(id.name); return s.is_arr_slot(sl) && s.is_u32_slot(sl); },
+        parser.ExprSlice(sl) => { return expr_is_u32arr(sl.array, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_is_u32 reports whether `e` evaluates to a u32 value — a u32-tracked
-// local/param, a u32[] element read `a[i]`, an `as u32` cast, or an arithmetic
-// / bitwise / shift combination of u32 operands (a comparison is a bool, not
-// u32). It drives u32 WRAPPING: a u32 arithmetic result is masked to 32 bits on
-// the register backends, and a u32 `>>` lowers to a logical shift. A
-// u32-returning CALL is intentionally NOT treated as u32 here — the callee
-// already wraps its own u32 result internally, so the value arrives clean.
+// local/param, a u32[] element read `a[i]`, a u32 struct field / tuple element,
+// an `as u32` cast, or an arithmetic / bitwise / shift combination of u32
+// operands (a comparison is a bool, not u32). It drives u32 WRAPPING (a u32
+// arithmetic result is masked to 32 bits on the register backends) and unsigned
+// op selection (a u32 `>>` / `/` / `%` / ordering-compare lowers to the logical
+// / unsigned form). A u32-returning CALL is intentionally NOT treated as u32
+// here — the callee already wraps its own u32 result internally, so the value
+// arrives clean.
 pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return s.is_u32_slot(s.slot_of(id.name)); },
         parser.ExprIndex(ix) => {
             // a[i] on a u32[] is a u32 element. The array is an ident slot
-            // marked u32 (a u32-array); other iterable forms are conservatively
-            // not u32.
+            // marked u32 (a u32-array); a u32[] literal / slice element likewise —
+            // so `[big, …][0] >> 1` / `a[lo:hi][0] >> 1` selects shr_u on wasm.
             match (ix.array) {
                 parser.ExprIdent(aid) => { return s.is_u32_slot(s.slot_of(aid.name)); },
+                parser.ExprArray(al) => { return al.elements.len() > 0 && expr_is_u32(al.elements[0], s); },
+                parser.ExprSlice(sl2) => { return expr_is_u32arr(sl2.array, s); },
                 _ => { return false; }
             }
+        },
+        // A u32 TUPLE element `t.N` or u32 STRUCT field `p.n`: the value is u32, so
+        // a chained `>> 1` / `/ x` selects the unsigned form. The u32 sibling of
+        // expr_is_u64's ExprFieldAccess arm — on wasm a signed shr/div on a
+        // bit-31-set u32 field/element diverges (x86 zero-extension hides it).
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "u32";
+            }
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "u32";
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u32") { return true; }
@@ -13624,6 +13655,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // bound value selects shr_u / gt_u instead of the signed
                             // form (which diverges once bit 63 is set).
                             ms = ms.mark_u64(bslot, true);
+                        } else if (ev_ty == "u32") {
+                            // A u32 payload (`U(u32) => x`): 4-byte (i32 width, no
+                            // read-width change), but mark_u32 so a chained `x >> 1`
+                            // / `x / y` selects the unsigned form — on wasm a signed
+                            // shr/div on a bit-31-set u32 diverges (x86 hides it).
+                            ms = ms.mark_u32(bslot, true);
                         } else if (ev_ty == "f64") {
                             ms = ms.mark_f64(bslot, true);
                         } else if (ev_ty == "fn") {
