@@ -18,8 +18,10 @@ import (
 // Result type spelling (opt_payload_type), so these shapes lower via the IR
 // path (asserted via the .Lir_ label witness) and compute the native values,
 // including a `string` payload whose captured var must dispatch `.len()`
-// correctly. (The USER-ENUM variant-payload case needs the enum decls threaded
-// into the lift pass — tracked as #5155.)
+// correctly. USER-ENUM variant payloads resolve via the enum decls threaded
+// into the lift pass (#5155); a CALL scrutinee (`match (pop(i)) { … }`)
+// resolves its Option/Result type from the callee's declared return type
+// (callee_ret_type, #5200).
 func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -76,6 +78,18 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		{"tuple-destructure-three",
 			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (i32, i32, i32) = (2, 3, 4); var (a, b, c) = t; var h: H = H { f: function (x: i32): i32 { return x + a + b + c; }, id: b }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
 			13},
+		// CALL SCRUTINEE (#5200): `match (pop(i)) { Some(v) => … }` — the arm
+		// binding's type comes from the callee's Option/Result return type,
+		// resolved from the module fn decls threaded into the lift pass
+		// (callee_ret_type: free function `pop`, receiver method `b.take()`).
+		// Previously the scrutinee type resolved "" and the payload binding
+		// declined the lift, falling to the miscompiling AST path.
+		{"call-scrutinee-option-free-fn",
+			`struct H { f: (i32) => i32, id: i32 } function pop(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; } function g(i: i32): i32 { var r: i32 = 0; match (pop(i)) { Some(v) => { var h: H = H { f: function (x: i32): i32 { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(5); }`,
+			20},
+		{"call-scrutinee-result-method",
+			`struct B { v: i32 } function (b: B) take(): Result[i32, i32] { if (b.v > 0) { return Ok(b.v); } return Err(0 - 1); } struct H { f: (i32) => i32, id: i32 } function g(b: B): i32 { var acc: i32 = 0; match (b.take()) { Ok(v) => { var h: H = H { f: function (x: i32): i32 { return x + v; }, id: v }; acc = h.f(10) + h.id; }, Err(e) => { acc = e; } } return acc; } function main(): i32 { return g(B { v: 6 }); }`,
+			22},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
