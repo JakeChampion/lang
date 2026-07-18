@@ -5181,7 +5181,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        // 8 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
+        // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
         // allocation (mirrors the native arm64 emitAllocRuntime) rather than
         // reserved as a huge `.bss` in the loaded image. Two payoffs: the
         // R+W data segment stays tiny (so the binary can be a position-
@@ -5196,7 +5196,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // plumbing is 64-bit throughout, as arm64-darwin's high heap already
         // exercises). Matches the native arm64 backend's heapBytes
         // (lockstep). The size (16 GiB = 1 << 34) is built in-asm via
-        // `mov #1; lsl #33` below, not a `ldr =N` literal — the in-process
+        // `mov #1; lsl #34` below, not a `ldr =N` literal — the in-process
         // assembler's literal parser is 32-bit and would sign-extend.
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");

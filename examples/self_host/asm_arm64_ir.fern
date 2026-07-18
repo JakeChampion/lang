@@ -556,7 +556,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");   // cursor (0 if uninit)
             s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");   // arena end
             s = s.write("    sub x2, x0, x1\n");                  // ptr − end
-            s = s.write("    mov x3, #1\n    lsl x3, x3, #33\n");// heap_size = 0x200000000 (8 GiB, lockstep with asm_arm64.fern), built via mov+lsl (32-bit literal parser)
+            s = s.write("    mov x3, #1\n    lsl x3, x3, #34\n");// heap_size = 0x400000000 (16 GiB, lockstep with asm_arm64.fern), built via mov+lsl (32-bit literal parser)
             s = s.write("    add x2, x2, x3\n");                  // ptr − base
             s = s.write("    cmp x0, #0\n");
             s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
