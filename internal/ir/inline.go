@@ -55,12 +55,21 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// inlineSizeLimit caps how many ops a callee can have to remain
-// eligible. Tuned to allow the bulk of stdlib helpers (e.g.
-// __substr_eq, __map_hash, the small hex / b64 char-classifiers)
-// to inline through their internal control flow. Tweak as real
-// workloads emerge.
+// inlineSizeLimit caps how many ops a callee can have to inline at a
+// call site OUTSIDE any loop. Tuned to allow the bulk of stdlib
+// helpers (e.g. __substr_eq, __map_hash, the small hex / b64
+// char-classifiers) to inline through their internal control flow.
+// Tweak as real workloads emerge.
 const inlineSizeLimit = 80
+
+// inlineLoopSizeLimit is the boosted cap for call sites INSIDE a loop
+// (#4412 Rec §7's cheap loop-depth slice of the cost-model inliner):
+// the call overhead there is paid every iteration, so a larger body
+// still profits. Candidacy admits bodies up to this cap; siteAllows
+// applies the depth-appropriate one per call site. Code growth stays
+// bounded — the boost only fires inside loops and inlineMaxPasses
+// still caps chain depth.
+const inlineLoopSizeLimit = 160
 
 // Inline rewrites every OpCallDirect to an eligible callee in prog
 // as the callee's op list with parameters bound to fresh local
@@ -202,7 +211,10 @@ func isInlineable(fn *Func) bool {
 	if len(fn.Ops) == 0 {
 		return false
 	}
-	if fn.InlineHint != ast.InlineHintAlways && len(fn.Ops) > inlineSizeLimit {
+	// Candidacy admits up to the LOOP cap — the flat cap is applied
+	// per call site by siteAllows, so an 81..160-op helper can inline
+	// where it's called from a loop while staying a call elsewhere.
+	if fn.InlineHint != ast.InlineHintAlways && len(fn.Ops) > inlineLoopSizeLimit {
 		return false
 	}
 	// Never inline a per-closure drop thunk: it reads captures at
@@ -235,20 +247,55 @@ func isInlineable(fn *Func) bool {
 // callee's slot types to fn.ScratchTypes.
 func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 	out := make([]Op, 0, len(ops))
+	// Track loop depth through the structured-control scope stack so
+	// each call site sees its depth-appropriate size cap (siteAllows).
+	// OpElse switches an if's arm without opening a scope, so only the
+	// three openers push; OpEnd pops whichever opener is innermost.
+	var scopes []OpKind
+	loopDepth := 0
 	for _, op := range ops {
+		switch op.Kind {
+		case OpBlock, OpLoop, OpIf:
+			scopes = append(scopes, op.Kind)
+			if op.Kind == OpLoop {
+				loopDepth++
+			}
+		case OpEnd:
+			if n := len(scopes); n > 0 {
+				if scopes[n-1] == OpLoop {
+					loopDepth--
+				}
+				scopes = scopes[:n-1]
+			}
+		}
 		if op.Kind != OpCallDirect && op.Kind != OpCallClosureDirect {
 			out = append(out, op)
 			continue
 		}
 		cand, ok := candidates[op.Str]
-		if !ok || cand.fn == fn {
-			// Unknown callee or self-recursion — leave the call.
+		if !ok || cand.fn == fn || !siteAllows(cand, loopDepth) {
+			// Unknown callee, self-recursion, or a body too big for
+			// this site's cap — leave the call.
 			out = append(out, op)
 			continue
 		}
 		out = append(out, expandInline(fn, cand)...)
 	}
 	return out
+}
+
+// siteAllows applies the per-call-site size policy (#4412 Rec §7's
+// loop-depth slice): the flat cap everywhere, the boosted cap inside
+// loops where the per-call overhead recurs every iteration. @inline
+// candidates bypass both (the hint already passed candidacy).
+func siteAllows(cand inlineCandidate, loopDepth int) bool {
+	if cand.fn.InlineHint == ast.InlineHintAlways {
+		return true
+	}
+	if len(cand.body) <= inlineSizeLimit {
+		return true
+	}
+	return loopDepth > 0 && len(cand.body) <= inlineLoopSizeLimit
 }
 
 // expandInline produces the op slice that replaces a single

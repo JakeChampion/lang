@@ -286,3 +286,54 @@ func TestInlineHintAlwaysLiftsSizeCap(t *testing.T) {
 		}
 	}
 }
+
+// The loop-depth site policy (#4412 Rec §7): a callee between the flat
+// cap (80) and the loop cap (160) inlines at a call site inside a loop
+// but stays a call at top level — the same candidate, decided per site.
+func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
+	body := "var a: i32 = x;\n"
+	for i := 0; i < 8; i++ {
+		body += "a = a + x;\na = a - 1;\n"
+	}
+	src := "function mid(x: i32): i32 {\n" + body + "return a;\n}\n" +
+		"function main(): i32 {\n" +
+		"var s: i32 = mid(1);\n" + // top-level site: must stay a call
+		"var i: i32 = 0;\n" +
+		"while (i < 3) { s = s + mid(i); i = i + 1; }\n" + // loop site: inlines
+		"return s;\n}"
+	p := loweredAndInlined(t, src)
+	mid := findFunc(p, "mid")
+	if mid == nil {
+		t.Fatal("mid not found")
+	}
+	if n := len(mid.Ops); n <= inlineSizeLimit || n > inlineLoopSizeLimit {
+		t.Fatalf("test premise broken: mid has %d ops, need %d < n <= %d", n, inlineSizeLimit, inlineLoopSizeLimit)
+	}
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	calls := 0
+	depth := 0
+	callDepths := []int{}
+	for _, op := range main.Ops {
+		switch op.Kind {
+		case OpLoop:
+			depth++
+		case OpEnd:
+			// Close whichever scope — for this simple shape only the
+			// loop matters and OpBlock/OpIf nesting inside it keeps
+			// depth >= 1, which is all the assertion needs.
+		}
+		if op.Kind == OpCallDirect && op.Str == "mid" {
+			calls++
+			callDepths = append(callDepths, depth)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly the top-level call to survive, found %d calls at depths %v:\n%s", calls, callDepths, p)
+	}
+	if callDepths[0] != 0 {
+		t.Fatalf("the surviving call should be the pre-loop one, got depth %d", callDepths[0])
+	}
+}
