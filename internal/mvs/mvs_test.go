@@ -65,7 +65,7 @@ func TestResolveMaxOfMins(t *testing.T) {
 	depsOf := func(pkg string, v Version, _ Source) (map[string]string, error) {
 		return deps[pkg+"@"+v.String()], nil
 	}
-	sel, err := Resolve(map[string]string{"foo": "1.1.0", "bar": "1.0.0"}, ix, depsOf)
+	sel, err := Resolve(map[string]string{"foo": "1.1.0", "bar": "1.0.0"}, nil, ix, depsOf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestResolveDiamond(t *testing.T) {
 	depsOf := func(pkg string, v Version, _ Source) (map[string]string, error) {
 		return deps[pkg+"@"+v.String()], nil
 	}
-	sel, err := Resolve(map[string]string{"a": "1.0.0", "b": "1.0.0"}, ix, depsOf)
+	sel, err := Resolve(map[string]string{"a": "1.0.0", "b": "1.0.0"}, nil, ix, depsOf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,9 +114,67 @@ func TestResolveDiamond(t *testing.T) {
 func TestResolveMissingVersionErrors(t *testing.T) {
 	ix, _ := ParseIndex("[foo]\n\"1.0.0\" = { path = \"foo\" }\n")
 	depsOf := func(string, Version, Source) (map[string]string, error) { return nil, nil }
-	_, err := Resolve(map[string]string{"foo": "1.2.0"}, ix, depsOf)
+	_, err := Resolve(map[string]string{"foo": "1.2.0"}, nil, ix, depsOf)
 	if err == nil {
 		t.Fatal("demanding an absent version should error")
+	}
+}
+
+// A top-level exclude on the demanded version rounds up to the next
+// higher non-excluded indexed version ("1.9 is broken"), whether the
+// demand comes from the root or a transitive dep.
+func TestResolveExcludeRoundsUp(t *testing.T) {
+	ix, _ := ParseIndex(`[foo]
+"1.0.0" = { path = "foo1" }
+[bar]
+"1.9.0" = { path = "bar19" }
+"1.9.1" = { path = "bar191" }
+"2.0.0" = { path = "bar2" }
+`)
+	deps := map[string]map[string]string{
+		"foo@1.0.0": {"bar": "1.9.0"},
+	}
+	depsOf := func(pkg string, v Version, _ Source) (map[string]string, error) {
+		return deps[pkg+"@"+v.String()], nil
+	}
+	excludes := map[string][]string{"bar": {"1.9.0", "1.9.1"}}
+	sel, err := Resolve(map[string]string{"foo": "1.0.0"}, excludes, ix, depsOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range sel {
+		got[s.Name] = s.Version.String()
+	}
+	if got["bar"] != "2.0.0" {
+		t.Errorf("bar = %s, want 2.0.0 (1.9.0 and 1.9.1 excluded, round up past both)", got["bar"])
+	}
+}
+
+// Excluding every version at or above the demand is a precise error.
+func TestResolveExcludeNoHigherErrors(t *testing.T) {
+	ix, _ := ParseIndex("[foo]\n\"1.0.0\" = { path = \"foo\" }\n")
+	depsOf := func(string, Version, Source) (map[string]string, error) { return nil, nil }
+	_, err := Resolve(map[string]string{"foo": "1.0.0"}, map[string][]string{"foo": {"1.0.0"}}, ix, depsOf)
+	if err == nil {
+		t.Fatal("excluding the only available version should error")
+	}
+}
+
+// An exclude on a version nothing demands is a no-op — the max-of-mins
+// outcome is unchanged.
+func TestResolveExcludeUnrelatedNoOp(t *testing.T) {
+	ix, _ := ParseIndex(`[foo]
+"1.0.0" = { path = "foo1" }
+"1.1.0" = { path = "foo11" }
+`)
+	depsOf := func(string, Version, Source) (map[string]string, error) { return nil, nil }
+	sel, err := Resolve(map[string]string{"foo": "1.1.0"}, map[string][]string{"foo": {"1.0.0"}}, ix, depsOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sel) != 1 || sel[0].Version.String() != "1.1.0" {
+		t.Errorf("resolved = %+v, want foo 1.1.0", sel)
 	}
 }
 

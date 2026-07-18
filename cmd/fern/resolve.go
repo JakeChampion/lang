@@ -69,7 +69,9 @@ func runResolve(start string) error {
 		return m.VersionDeps(), nil
 	}
 
-	sel, err := mvs.Resolve(rootDeps, ix, depsOf)
+	// Only the root manifest's [exclude] table applies (top-level-only,
+	// Go's exclude semantics) — a dependency's excludes never reach MVS.
+	sel, err := mvs.Resolve(rootDeps, root.Excludes, ix, depsOf)
 	if err != nil {
 		return err
 	}
