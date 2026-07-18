@@ -162,6 +162,21 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// BUILTIN NEGATIVE — `random_bytes(n)` lives in FuncSigs like a user function
+// but is NOT one: its helper's allocation contract is per-target (the darwin
+// helper returns a buffer with NO rc header), so ownedCallResultType must
+// reject non-user-declared callees outright — the is_unique gate reading a
+// missing header word is how the darwin lane crashed on `random_bytes(32)
+// .len()`. Presence in the returnsNoParamEscape oracle map (keyed over every
+// prog.Funcs decl, true or false) is the user-decl test.
+const lenCallRecvBuiltinSrc = `function main(): i32 {
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) { acc = acc + random_bytes(32).len(); i = i + 1; }
+    if (acc != 200 * 32) { return 121; }
+    return __rc_underflow_count();
+}`
+
 func runLenCallReceiverChecks(t *testing.T, run func(*testing.T, string) int, nSmall, nLarge, tail string) {
 	t.Helper()
 	for _, tc := range []struct {
@@ -185,6 +200,9 @@ func runLenCallReceiverChecks(t *testing.T, run func(*testing.T, string) int, nS
 	}
 	if code := run(t, lenCallRecvAliasSrc); code != 0 {
 		t.Errorf("alias-negative: code=%d (121-123=value corruption, >0=over-release)", code)
+	}
+	if code := run(t, lenCallRecvBuiltinSrc); code != 0 {
+		t.Errorf("builtin-negative: code=%d (121=value mismatch, >0=over-release; a crash here means a builtin's headerless buffer was freed through the rc gate)", code)
 	}
 }
 
