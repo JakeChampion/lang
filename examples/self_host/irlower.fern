@@ -18734,6 +18734,54 @@ function moves_fields_stmt(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
+// reassigned_from_alias reports whether `name` is ever the TARGET of an
+// assignment whose RHS ALIASES existing owned memory — a bare local read
+// (`lam = l`), a field read (`lam = x.f`), or an element read (`lam = xs[i]`).
+// After such an assignment `name` no longer owns a fresh box: its rc fields are
+// BORROWS of whatever the RHS points into (a match-arm payload binding, a struct
+// field, an array element — all still owned by their container). Reclaiming such
+// a local (the re-init emit_field_reclaim_store or the end-of-scope deep sweep)
+// would free the container's live fields out from under it — a double-free /
+// use-after-free. The classic bug: `box_mutated_scalar_captures`'s
+// `var lam = ExprLambda{...}; match (v.init) { ExprLambda(l) => { lam = l; } }`,
+// where the loop's next-iteration `var lam = ...` re-init reclaims the aliased
+// old `lam` and frees fd's own lambda body (#3425 stage-2). A fresh-struct-lit
+// or fresh-ret-CALL rebind (`s = mk()`, `s = s.emit(op)`) is NOT an alias — it
+// stays reclaimable — so only the three borrow-shaped RHS forms are flagged.
+// Such a local is left to LEAK, exactly like the borrowed match-payload struct
+// bindings already are (see the k_enum struct-payload note in lower_stmt_match).
+function reassigned_from_alias(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_reassigns_alias(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                match (a.value) {
+                    parser.ExprIdent(rid) => { if (rid.name != name) { return true; } },   // `name = other` — alias
+                    parser.ExprFieldAccess(_) => { return true; },                          // `name = x.f` — field borrow
+                    parser.ExprIndex(_) => { return true; },                                // `name = xs[i]` — element borrow
+                    _ => {}
+                }
+            }
+            return false;
+        },
+        parser.StmtIf(f) => { return reassigned_from_alias(f.then_body, name) || reassigned_from_alias(f.else_body, name); },
+        parser.StmtWhile(w) => { return reassigned_from_alias(w.body, name); },
+        parser.StmtFor(fo) => { return reassigned_from_alias(fo.body, name); },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { if (reassigned_from_alias(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_reassigns_alias(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -18759,7 +18807,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // inc) keep rc==1 across the chain and are freed exactly once at the last
         // box's death. A `return s` still flags `s` unsafe (escapes), so a
         // returned builder is never reclaimed. (#3456 — escaping-struct reclaim.)
-        if (!body_unsafe_for(body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
+        // Also exclude locals reassigned from an ALIAS (`lam = l` / `= x.f` /
+        // `= xs[i]`): after the rebind they hold a BORROW, so reclaiming them
+        // would free memory the aliased container still owns (#3425 stage-2).
+        if (!body_unsafe_for(body, fresh[i], borrowable) && !reassigned_from_alias(body, fresh[i])) { out = out.append(fresh[i]); }
         i = i + 1;
     }
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
