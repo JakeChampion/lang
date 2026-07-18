@@ -25,13 +25,22 @@
 //     condition, the entire `OpIf … OpElse … OpEnd` block is replaced
 //     with the surviving arm's ops.
 //
-// Division and remainder are deliberately skipped: folding `1 / 0` at
-// compile time would silently swallow a runtime trap. Floats stay
+// Division and remainder ARE folded when the divisor is a nonzero
+// constant — inlining a small `n / K` / `n % K` helper at a constant
+// call site is the common way these reach the IR. The edge shapes are
+// left in place and handled by the runtime: a zero divisor (Fern
+// defines `x / 0 == 0`, `x % 0 == x` via guarded div/rem helpers) and
+// the signed overflow `INT_MIN / -1` (backend-specific). Folding these
+// would duplicate — and risk drifting from — that runtime contract, so
+// they stay as the runtime op; `INT_MIN % -1` is the one exception (it
+// is unambiguously 0 on every backend, so it folds). Floats stay
 // untouched too — the AST optimiser handles them and there's no
-// portable way to round-trip every f32 bit-pattern through the
-// IR's float ops without surprising the user.
+// portable way to round-trip every f32 bit-pattern through the IR's
+// float ops without surprising the user.
 
 package ir
+
+import "math"
 
 // Fold rewrites every function in prog to its constant-folded form.
 // Iterates each function to a fixed point (constant arithmetic can
@@ -280,13 +289,15 @@ func isFoldableConst(k OpKind) bool {
 
 // isFoldableBinary reports whether a binary op produces a deterministic
 // result from two constant inputs of matching width. Division and
-// remainder are excluded because folding them would hide compile-
-// time-detectable runtime traps (zero divisor) and silently change
-// the program's observable behaviour. The Unsigned flag on the op
-// is honoured by foldBinary / foldBinary64.
+// remainder are included, but foldBinary / foldBinary64 bail (ok=false)
+// on the operand pairs whose result the runtime defines specially
+// (zero divisor, signed INT_MIN/-1 div) so those ops stay put and the
+// runtime helper owns the answer. The Unsigned flag on the op is
+// honoured by foldBinary / foldBinary64.
 func isFoldableBinary(k OpKind) bool {
 	switch k {
 	case OpAdd, OpSub, OpMul,
+		OpDivS, OpRemS,
 		OpAnd, OpOr, OpXor,
 		OpShl, OpShrS,
 		OpEq, OpNe,
@@ -301,9 +312,9 @@ func isFoldableBinary(k OpKind) bool {
 // arm semantics that codegen uses for runtime shifts. The unsigned
 // flag flips OpShrS to a logical right shift and the order-comparison
 // ops to their unsigned variants; signedness-agnostic ops (add, sub,
-// mul, and/or/xor, eq, ne) ignore it. The bool result is reserved for
-// ops that might bail out (none currently — DivS / RemS are excluded
-// above).
+// mul, and/or/xor, eq, ne) ignore it. The bool result is false for the
+// DivS / RemS operand pairs that trap at runtime (zero divisor, signed
+// INT_MIN/-1), so the op is left unfolded and the trap survives.
 func foldBinary(k OpKind, unsigned bool, a, b int32) (int32, bool) {
 	switch k {
 	case OpAdd:
@@ -312,6 +323,28 @@ func foldBinary(k OpKind, unsigned bool, a, b int32) (int32, bool) {
 		return a - b, true
 	case OpMul:
 		return a * b, true
+	case OpDivS:
+		if b == 0 {
+			return 0, false // x / 0 == 0 is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int32(uint32(a) / uint32(b)), true
+		}
+		if a == math.MinInt32 && b == -1 {
+			return 0, false // INT_MIN / -1 is backend-specific — leave the op
+		}
+		return a / b, true
+	case OpRemS:
+		if b == 0 {
+			return 0, false // x % 0 == x is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int32(uint32(a) % uint32(b)), true
+		}
+		if a == math.MinInt32 && b == -1 {
+			return 0, true // INT_MIN % -1 == 0, no trap
+		}
+		return a % b, true
 	case OpAnd:
 		return a & b, true
 	case OpOr:
@@ -395,6 +428,28 @@ func foldBinary64(k OpKind, unsigned bool, a, b int64) (int64, bool, bool) {
 		return a - b, false, true
 	case OpMul:
 		return a * b, false, true
+	case OpDivS:
+		if b == 0 {
+			return 0, false, false // x / 0 == 0 is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int64(uint64(a) / uint64(b)), false, true
+		}
+		if a == math.MinInt64 && b == -1 {
+			return 0, false, false // INT_MIN / -1 is backend-specific — leave the op
+		}
+		return a / b, false, true
+	case OpRemS:
+		if b == 0 {
+			return 0, false, false // x % 0 == x is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int64(uint64(a) % uint64(b)), false, true
+		}
+		if a == math.MinInt64 && b == -1 {
+			return 0, false, true // INT_MIN % -1 == 0, no trap
+		}
+		return a % b, false, true
 	case OpAnd:
 		return a & b, false, true
 	case OpOr:

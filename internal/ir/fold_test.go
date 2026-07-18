@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -66,17 +67,155 @@ func TestFoldShiftMasksCount(t *testing.T) {
 	}
 }
 
-// Division and remainder must NOT be folded — `1 / 0` would mask a
-// runtime trap. The ops survive intact even when both operands are
-// constants.
-func TestFoldSkipsDivisionAndRemainder(t *testing.T) {
-	for _, op := range []string{"/", "%"} {
-		src := `function f(): i32 { return 6 ` + op + ` 2; }`
-		p := loweredAndFolded(t, src)
+// Division / remainder by a NONZERO constant folds like any other
+// binop — `6 / 2` → 3, `7 % 3` → 1. (The AST optimiser doesn't fold
+// these, so they reach the IR as a const/const/div chain; inlining a
+// small `n / K` helper at a constant call site produces the same
+// shape.)
+func TestFoldDivRemByNonzero(t *testing.T) {
+	for _, tc := range []struct {
+		expr string
+		want int32
+	}{
+		{"6 / 2", 3},
+		{"7 / 2", 3}, // truncates toward zero
+		{"7 % 3", 1},
+		{"8 % 4", 0},
+	} {
+		p := loweredAndFolded(t, `function f(): i32 { return `+tc.expr+`; }`)
 		fn := findFunc(p, "f")
-		// Expect at least three ops: the two constants and the divs/rems.
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != tc.want {
+			t.Errorf("%q: op[0] = %s %d, want OpConstI32 %d:\n%s", tc.expr, fn.Ops[0].Kind, fn.Ops[0].I32, tc.want, p)
+		}
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS || op.Kind == OpRemS {
+				t.Errorf("%q: div/rem by nonzero should have folded:\n%s", tc.expr, p)
+			}
+		}
+	}
+}
+
+// Division / remainder by a ZERO constant must NOT be folded — the op
+// survives so the runtime trap still fires.
+func TestFoldPreservesDivRemByZero(t *testing.T) {
+	for _, op := range []string{"/", "%"} {
+		p := loweredAndFolded(t, `function f(): i32 { return 6 `+op+` 0; }`)
+		fn := findFunc(p, "f")
 		if len(fn.Ops) < 3 {
-			t.Errorf("operator %q: expected fold to leave divs/rems alone, got:\n%s", op, p)
+			t.Errorf("operator %q by 0: expected the trapping op to survive, got:\n%s", op, p)
+		}
+	}
+}
+
+// The signed overflow `INT_MIN / -1` traps at runtime (wasm i32.div_s),
+// so it stays unfolded; the sibling `INT_MIN %% -1` is 0 and doesn't
+// trap, so it folds. Constructed at the IR level — the pair only
+// reaches Fold post-inline.
+func TestFoldPreservesSignedDivOverflow(t *testing.T) {
+	// INT_MIN / -1 → keep the op (traps)
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: math.MinInt32},
+			{Kind: OpConstI32, I32: -1},
+			{Kind: OpDivS},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		kept := false
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS {
+				kept = true
+			}
+		}
+		if !kept {
+			t.Errorf("INT_MIN / -1 must stay unfolded (traps):\n%s", p)
+		}
+	}
+	// INT_MIN % -1 → fold to 0 (no trap)
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: math.MinInt32},
+			{Kind: OpConstI32, I32: -1},
+			{Kind: OpRemS},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0 || fn.Ops[1].Kind != OpReturn {
+			t.Errorf("INT_MIN %% -1 should fold to const 0:\n%s", p)
+		}
+	}
+}
+
+// Unsigned div / rem by a nonzero constant folds with unsigned
+// semantics: 0xFFFFFFFF /u 2 == 0x7FFFFFFF (not the signed -1 / 2 == 0).
+func TestFoldUnsignedDivRem(t *testing.T) {
+	// div_u
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: -1}, // 0xFFFFFFFF
+			{Kind: OpConstI32, I32: 2},
+			{Kind: OpDivS, Unsigned: true},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0x7FFFFFFF {
+			t.Errorf("0xFFFFFFFF /u 2 should fold to 0x7FFFFFFF, got %d:\n%s", fn.Ops[0].I32, p)
+		}
+	}
+	// rem_u
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: -1}, // 0xFFFFFFFF
+			{Kind: OpConstI32, I32: 16},
+			{Kind: OpRemS, Unsigned: true},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 15 { // 0xFFFFFFFF % 16 = 15
+			t.Errorf("0xFFFFFFFF %%u 16 should fold to 15, got %d:\n%s", fn.Ops[0].I32, p)
+		}
+	}
+}
+
+// i64 division / remainder folds too, with the same zero-divisor
+// carve-out.
+func TestFoldI64DivRem(t *testing.T) {
+	// 100 / 7 = 14 (i64)
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI64, I64: 100},
+			{Kind: OpConstI64, I64: 7},
+			{Kind: OpDivS, Width: 64},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI64 || fn.Ops[0].I64 != 14 {
+			t.Errorf("100 / 7 (i64) should fold to 14, got %d:\n%s", fn.Ops[0].I64, p)
+		}
+	}
+	// 100 / 0 (i64) stays put
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI64, I64: 100},
+			{Kind: OpConstI64, I64: 0},
+			{Kind: OpDivS, Width: 64},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		kept := false
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS {
+				kept = true
+			}
+		}
+		if !kept {
+			t.Errorf("100 / 0 (i64) must stay unfolded (traps):\n%s", p)
 		}
 	}
 }
