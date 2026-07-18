@@ -4658,14 +4658,28 @@ func (g *generator) emitArgsRuntime2W() {
 	g.label(".Largs2w_strlen_done")
 	g.emit("sub x0, x0, x23") // x0 = strlen
 	g.emit("mov x24, x0")     // x24 = strlen (callee-save, survives bl)
-	// Allocate strlen bytes (no length prefix; len lives in
-	// the entry's `len` half).
-	g.emit("bl __fern_alloc")
-	g.emit("mov x25, x0") // x25 = dst (callee-save, survives bl)
-	// memcpy(dst, src, strlen).
+	// Allocate via __fern_alloc_rc1 — the L2 rc-headed form, matching the
+	// single-word variant — NOT plain __fern_alloc. The entry's `len`
+	// half carries the length for readers, but every rc consumer
+	// (__fern_str_inc / __fern_str_dec / the __fern_drop_arr_str element
+	// sweep) unconditionally read-modify-writes the rc word at data-8 and
+	// the box-free path sizes the block from the length prefix at data-4.
+	// A headerless plain-alloc string made those hit the PREVIOUS argv
+	// string's tail bytes: binding or dropping any args() element
+	// silently incremented/decremented a byte inside a neighbouring
+	// argv string — path-length-dependent corruption (openat on argv[1]
+	// failing with one byte off by one; the long-standing "argv string
+	// lifetime" flake that dropped suites from the native-mmc gate).
+	// Payload is strlen + 1 so the trailing NUL survives for libc-shaped
+	// consumers, same as the single-word variant.
+	g.emit("add x0, x0, #1")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x25, x0")          // x25 = dst (callee-save, survives bl)
+	g.emit("stur w24, [x25, #-4]") // length prefix at data-4 (block sizing for box-free)
+	// memcpy(dst, src, strlen + 1) — include the NUL.
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x23")
-	g.emit("mov x2, x24")
+	g.emit("add x2, x24, #1")
 	g.emit("bl __fern_memcpy")
 	// Write entry: data at [x21 + i*16], len at [x21 + i*16 + 8].
 	g.emit("lsl x11, x22, #4")    // x11 = i * 16
