@@ -11068,7 +11068,20 @@ func (b *builder) callBody(n *ast.Call) error {
 		// literal receivers are const-folded above, so the shape reaching
 		// here in practice is a string concat / slice.)
 		lenTempSlot := int32(-1)
-		if tt, ok := b.freshOwnedRcTempType(n.Args[0]); ok {
+		tt, ok := b.freshOwnedRcTempType(n.Args[0])
+		if !ok {
+			// A USER-call receiver (`f(i).len()`) is the same dead-after-
+			// consume temp as a concat: the callee's fresh result is created
+			// solely for this length read. Reclaim it via the is_unique-gated
+			// ownedCallResultType route the discarded-stmt / index-of-fresh /
+			// field-access / call-arg sites already use — without this
+			// fallback the returned heap box leaked every call (masked below
+			// the SSO inline threshold, ~32-128 B per call above it). An
+			// aliased return (callee handing back a param) carries the
+			// return-transfer inc, so the drop only dec's it.
+			tt, ok = b.ownedCallResultType(n.Args[0])
+		}
+		if ok {
 			lenTempSlot = b.allocSlot()
 			b.locals[fmt.Sprintf("__lentmp_%d", lenTempSlot)] = lenTempSlot
 			b.scratchType[lenTempSlot] = tt

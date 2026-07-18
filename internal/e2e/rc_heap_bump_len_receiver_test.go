@@ -89,3 +89,122 @@ func TestWASMLenReceiverReclaim(t *testing.T) {
 		t.Errorf("len-receiver reclaim: got %d", got)
 	}
 }
+
+// A USER-CALL receiver — `f(i).len()` — is the same dead-after-consume temp,
+// but it never matched freshOwnedRcTempType (that classifier covers concat /
+// slice / literal shapes only), and the len site had no ownedCallResultType
+// fallback like the discarded-stmt / index-of-fresh / field-access / call-arg
+// sites, so the callee's returned heap value leaked every call: ~32-128 B for
+// strings above the SSO inline threshold (sub-threshold results return inline
+// and masked the leak in short-chain probes), one buffer per call for arrays.
+// This is the shape that fell out of #4357's SSA-emit RSS localization.
+//
+// The fix adds the fallback; safety is the same is_unique-gated argument as
+// every other ownedCallResultType site — an aliased return carries the
+// return-transfer inc, so the drop only dec's it (the alias negative below).
+// The `tail` closes main() after `g` holds the bump growth: native runners
+// read the process EXIT CODE (mod-256), so they scale + guard-cap the value;
+// the wasm runner reads main's full i32 result via `--invoke`, so it returns
+// raw growth (wasm's two-word strings put the bounded high-water at ~65 KB
+// after a few-thousand-iteration freelist warm-up — far past any exit code).
+const lenCallRecvNativeTail = `    if (g > 900) { return 119; }
+    return g / 8;
+}`
+const lenCallRecvRawTail = `    return g;
+}`
+
+func lenCallRecvStrBumpSrc(n, tail string) string {
+	return `function f(k: i32): string {
+    var p: string = "abcdefgh";
+    return "(func $x" + p + " (param i32) (result i32)" + p + " local.get 0" + p + " i32.const 1" + p + " i32.add)" + p;
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
+    if (acc < 0) { return 121; }
+    var g: i32 = __heap_bump_bytes() - before;
+` + tail
+}
+
+func lenCallRecvArrBumpSrc(n, tail string) string {
+	return `function f(k: i32): i32[] {
+    return [k, k + 1, k + 2, k + 3, k + 4, k + 5, k + 6, k + 7, k + 8, k + 9];
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
+    if (acc != ` + n + ` * 10) { return 121; }
+    var g: i32 = __heap_bump_bytes() - before;
+` + tail
+}
+
+// SOUNDNESS NEGATIVE — identity callees hand back the CALLER's value at
+// rc >= 2 (return-transfer inc), so the len-receiver drop must only dec it:
+// base / arr survive every iteration value-intact, over-release detector 0.
+const lenCallRecvAliasSrc = `function id(s: string): string { return s; }
+function idarr(xs: i32[]): i32[] { return xs; }
+function main(): i32 {
+    var base: string = "0123456789abcdef" + "-suffix-to-force-heap";
+    var arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 5000) {
+        acc = acc + id(base).len() + idarr(arr).len();
+        i = i + 1;
+    }
+    if (acc != 5000 * (37 + 10)) { return 121; }
+    if (base.len() != 37) { return 122; }
+    if (arr[9] != 100) { return 123; }
+    return __rc_underflow_count();
+}`
+
+func runLenCallReceiverChecks(t *testing.T, run func(*testing.T, string) int, nSmall, nLarge, tail string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name string
+		src  func(string, string) string
+	}{
+		{"str-chain", lenCallRecvStrBumpSrc},
+		{"arr", lenCallRecvArrBumpSrc},
+	} {
+		small := run(t, tc.src(nSmall, tail))
+		large := run(t, tc.src(nLarge, tail))
+		if small != large {
+			t.Errorf("%s call-receiver bump should be bounded: N=%s -> %d, N=%s -> %d", tc.name, nSmall, small, nLarge, large)
+		}
+		if small == 0 {
+			t.Errorf("%s: expected a non-zero bounded high-water, got 0", tc.name)
+		}
+		if tail == lenCallRecvNativeTail && small >= 119 {
+			t.Errorf("%s: growth guard tripped (%d) — the call receiver is leaking again", tc.name, small)
+		}
+	}
+	if code := run(t, lenCallRecvAliasSrc); code != 0 {
+		t.Errorf("alias-negative: code=%d (121-123=value corruption, >0=over-release)", code)
+	}
+}
+
+func TestX86_64LenCallReceiverReclaim(t *testing.T) {
+	runLenCallReceiverChecks(t, mustRunX86_64FreeOn, "50", "5000", lenCallRecvNativeTail)
+}
+
+func TestArm64LenCallReceiverReclaim(t *testing.T) {
+	runLenCallReceiverChecks(t, mustRunArm64FreeOn, "50", "5000", lenCallRecvNativeTail)
+}
+
+func TestWASMLenCallReceiverReclaim(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	// The wasm high-water plateaus only after a few thousand iterations
+	// (freelist size-class warm-up; verified flat 5000 -> 200000, vs the
+	// pre-fix ~131 B/iter linear growth), so the fixpoint compares
+	// N=5000/50000 on the raw growth `--invoke main` hands back.
+	runLenCallReceiverChecks(t, func(t *testing.T, src string) int {
+		return runWasm(t, src)
+	}, "5000", "50000", lenCallRecvRawTail)
+}
