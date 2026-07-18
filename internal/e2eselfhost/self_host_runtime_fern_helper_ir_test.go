@@ -212,6 +212,18 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_now_ns",
 			[]string{"\n__fern_now_ns:"},
 		},
+		{
+			// stat — the first syscall leaf returning a user-typed
+			// Result[FileStat, IoError] (#2649), migrated to Fern over the
+			// __syscall3 / __raw_scratch / __load_i32/i64 floor. The old
+			// hand-asm IR body (__fern_stat:) is gone; op_stat now calls
+			// __fn___fern_stat, whose body builds Ok(FileStat{...}) /
+			// Err(NotFound(_)) through the normal struct/enum lowering.
+			"stat",
+			`function main(): i32 { match (stat("/tmp")) { Ok(s) => { return 1; }, Err(e) => { return 0; } } }`,
+			"__fn___fern_stat",
+			[]string{"\n__fern_stat:"},
+		},
 	}
 
 	for _, tc := range cases {

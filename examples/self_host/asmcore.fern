@@ -359,6 +359,20 @@ pub function rt_src_clock(which: string): string {
     return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
 }
 
+// rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf returning a
+// user-typed Result[FileStat, IoError]. NUL-terminate the path, stat(2) (syscall
+// 4, follows symlinks — 2-arg, so __syscall3 suffices) into the fixed static
+// scratch buffer, read st_mode (offset 24, 4 bytes) + st_size (offset 48, 8
+// bytes) via __load_i32/__load_i64, classify by S_IFMT, and build
+// Ok(FileStat{...}) — or Err(NotFound(path)) on failure (a FRESH string boxed
+// from the raw path copy, not the borrowed `path`, so no RC double-free). The
+// FileStat struct + Result/Err construction lower through the normal IR path
+// (emit_ir_runtime_fern_fn receives all_structs). x86-64-only (arch-specific
+// syscall number); arm64/AST keep their hand-asm __fern_stat.
+pub function rt_src_stat(): string {
+    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { return Err(NotFound(__raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+}
+
 pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }
@@ -1897,6 +1911,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "__raw_scratch") { return ty_i32(); }
                     // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
                     if (id.name == "__load_i64") { return ty_i64(); }
+                    if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }
                     if (id.name == "arg_at") { return ty_string(); }
