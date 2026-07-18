@@ -223,7 +223,16 @@ existing test scaffolding rather than gated off:
   - **Closure fields — excluded everywhere.** No predicate admits them, no
     `__struct_drop` closure arm exists; needs closure exit-reclaim first.
   - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
-    admits only the leak-safe scalar arrays; native admits all.
+    admits only the leak-safe scalar arrays; native admits all. The
+    **string[] EXIT-drop prerequisite is now closed**: the strarrfld scan
+    (the "arr:"-tagged half of `strfld_reclaim_ok_types_of` —
+    element-fresh stores, `.len()`-only reads) routes admitted types and
+    the `k_str_arr` / `fr_str_arr` arms in both register backends'
+    `__struct_drop` / `__field_reclaim` bodies deep-free the field via
+    `__fern_str_arr_free` (pinned by the `strarr-field-*` cases in the
+    string-field reclaim suites, x86 + arm64). The REUSE admission for
+    rc-element arrays is still open (needs the reuse-arm release +
+    freshness branch in `cross_recipient_fields_fresh`).
   - **Own-param families** (`own_param_reuse_sites` /
     `own_param_self_overwrite_sites`): now on `struct_fields_reusable_param`
     (narrow ∪ Map / leak-safe tuple / leak-safe Option — the leak-only kinds,

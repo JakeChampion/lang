@@ -28382,6 +28382,11 @@ function strfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): strin
 // the same disjunction so the field frees stay balanced.
 pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
     if (struct_has_reclaim_array_field(s.structs, sty)) { return true; }
+    // string[]-fielded type admitted by the strarrfld scan (the "arr:"-tagged
+    // half of strfld_reclaim_ok_types_of) — routes so the backend
+    // __struct_drop k_str_arr arm reaches the field.
+    if (struct_has_strarr_field(s.structs, sty)
+        && util.index_of_str(s.reclaimable_names, "STRFLDOK:arr:" + sty) >= 0) { return true; }
     return struct_has_string_field(s.structs, sty)
         && util.index_of_str(s.reclaimable_names, "STRFLDOK:" + sty) >= 0;
 }
@@ -28425,7 +28430,180 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         }
         si = si + 1;
     }
+    // string[]-FIELD admissions (the string[]-struct-field exit-drop slice),
+    // returned as "arr:"-prefixed entries in the SAME list: every caller's
+    // seeding loop threads them as "STRFLDOK:arr:<T>" (LowerState routing) /
+    // "strfldok:arr:<T>" (backend k_str_arr arm gate) automatically, and the
+    // prefixed spellings are inert for every exact "STRFLDOK:<T>" scalar
+    // lookup. A type T is admitted iff every one of its string[]-field NAMES
+    // is (a) never read outside a bare `.len()` borrow (strarrfld_scan — any
+    // other read binds/escapes an ELEMENT alias the deep free would dangle:
+    // element stores into a string[] are MOVES, so element rc does not count
+    // the buffer's references) and (b) only ever constructed from an
+    // element-fresh array literal (strarr_elem_store_ok elements / `[]`) —
+    // the exact element-freshness contract the "SARR:" local credit uses.
+    // __fern_str_arr_free itself rc-guards the BUFFER (shared -> dec only),
+    // so buffer aliasing degrades to the old leak instead of corrupting.
+    var arr_unsafe: string[] = [];
+    var aki: i32 = 0;
+    while (aki < funcs.len()) {
+        arr_unsafe = strarrfld_scan_stmts(funcs[aki].body, structs, arr_unsafe);
+        aki = aki + 1;
+    }
+    var asi: i32 = 0;
+    while (asi < structs.len()) {
+        var at: string = structs[asi].name;
+        if (struct_has_strarr_field(structs, at)) {
+            var aok: boolean = true;
+            var afi: i32 = 0;
+            while (afi < structs[asi].fields.len()) {
+                if (structs[asi].fields[afi].type_name == "string[]"
+                    && util.index_of_str(arr_unsafe, structs[asi].fields[afi].name) >= 0) { aok = false; }
+                afi = afi + 1;
+            }
+            if (aok) { out = out.append("arr:" + at); }
+        }
+        asi = asi + 1;
+    }
     return out;
+}
+
+// struct_has_strarr_field: does `sty` declare at least one string[] field?
+pub function struct_has_strarr_field(structs: parser.StructDecl[], sty: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == sty) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].type_name == "string[]") { return true; }
+                fi = fi + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk.
+// Marks a field NAME unsafe (name-keyed, same over-approximation as the
+// scalar strfld scan) when:
+//   - it is READ anywhere except as a bare `.len()` receiver — an indexed
+//     read (`x.f[i]`), an iteration (`for s in x.f`), a bare copy, a method
+//     receiver, or a call argument all create/bind an element or buffer
+//     alias the deep free could dangle;
+//   - a struct-literal stores a NON-element-fresh value into a string[]
+//     field — anything but an array literal whose every element is
+//     strarr_elem_store_ok (string literal / fresh producer) or `[]`.
+// Over-marking names of non-string[] fields is harmless: admission only
+// consults a type's string[]-field names.
+function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            a = push_str_unique(a, fa.field);
+            return strarrfld_scan(fa.obj, structs, a);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        // `x.f.len()` is the one tolerated borrow: skip marking
+                        // the receiver FIELD, but keep walking beneath it.
+                        match (cfa.obj) {
+                            parser.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, a); },
+                            _ => { a = strarrfld_scan(cfa.obj, structs, a); }
+                        }
+                    } else {
+                        a = strarrfld_scan(cfa.obj, structs, a);
+                    }
+                },
+                _ => { a = strarrfld_scan(c.callee, structs, a); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = strarrfld_scan(c.args[i], structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprBinary(b) => { return strarrfld_scan(b.right, structs, strarrfld_scan(b.left, structs, a)); },
+        parser.ExprUnary(u) => { return strarrfld_scan(u.operand, structs, a); },
+        parser.ExprIndex(ix) => { return strarrfld_scan(ix.index, structs, strarrfld_scan(ix.array, structs, a)); },
+        parser.ExprSlice(sl) => { return strarrfld_scan(sl.end, structs, strarrfld_scan(sl.start, structs, strarrfld_scan(sl.array, structs, a))); },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base) { a = strarrfld_scan(sl2.base, structs, a); }
+            var i: i32 = 0;
+            while (i < sl2.field_names.len()) {
+                var fkt: string = decl_field_type(structs, sl2.type_name, sl2.field_names[i]);
+                if (fkt == "string[]") {
+                    var store_ok: boolean = false;
+                    match (sl2.field_values[i]) {
+                        parser.ExprArray(av) => {
+                            store_ok = true;
+                            var ei: i32 = 0;
+                            while (ei < av.elements.len()) {
+                                if (!strarr_elem_store_ok(av.elements[ei])) { store_ok = false; }
+                                ei = ei + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (!store_ok) { a = push_str_unique(a, sl2.field_names[i]); }
+                }
+                a = strarrfld_scan(sl2.field_values[i], structs, a);
+                i = i + 1;
+            }
+            return a;
+        },
+        parser.ExprArray(av2) => {
+            var i: i32 = 0;
+            while (i < av2.elements.len()) { a = strarrfld_scan(av2.elements[i], structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { a = strarrfld_scan(t.elements[i], structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprLambda(lm) => { return strarrfld_scan_stmts(lm.body, structs, a); },
+        _ => { return a; }
+    }
+}
+function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { a = strarrfld_scan(v.init, structs, a); },
+            parser.StmtAssign(as2) => { a = strarrfld_scan(as2.value, structs, a); },
+            parser.StmtExpr(ex) => { a = strarrfld_scan(ex.value, structs, a); },
+            parser.StmtReturn(r) => { a = strarrfld_scan(r.value, structs, a); },
+            parser.StmtIf(iff) => {
+                a = strarrfld_scan(iff.cond, structs, a);
+                a = strarrfld_scan_stmts(iff.then_body, structs, a);
+                a = strarrfld_scan_stmts(iff.else_body, structs, a);
+            },
+            parser.StmtWhile(w) => {
+                a = strarrfld_scan(w.cond, structs, a);
+                a = strarrfld_scan_stmts(w.body, structs, a);
+            },
+            parser.StmtFor(fo) => {
+                a = strarrfld_scan(fo.iter, structs, a);
+                a = strarrfld_scan_stmts(fo.body, structs, a);
+            },
+            parser.StmtMatch(m) => {
+                a = strarrfld_scan(m.scrutinee, structs, a);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { a = strarrfld_scan(m.arms[ai].guard, structs, a); }
+                    a = strarrfld_scan_stmts(m.arms[ai].body, structs, a);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { a = strarrfld_scan_stmts([d.action], structs, a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // tuple_elem_tags parses a tuple type string `(t0, t1, …)` into its element
