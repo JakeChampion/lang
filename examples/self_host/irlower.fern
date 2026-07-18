@@ -11802,6 +11802,22 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var atet: string = arrtup_elem_tuple_type(v.type_name, se.structs);
         if (atet != "") { arrarr_e = atet; }
     }
+    // An all-scalar `(u64, i32)[]` tuple-array is NOT deep-droppable, so
+    // arrtup_elem_tuple_type returned "" above — but the READ side still needs the
+    // element tuple type so `xs[i].N` recovers a u64 element's SIGN (the #5206
+    // sibling: elem_type_tag coarsens a u64 tuple element to "i64", losing the
+    // unsigned-ness so a chained `xs[i].N >> 1` / `> x` used shr_s / gt_s). Record
+    // the ANNOTATION's tuple string here — it preserves "u64" — for the read side
+    // only. Reclaim-inert: collect_fresh_arrtup_names gates on deep-droppability, so
+    // an all-scalar tuple array never earns the ARRTUP credit slot_is_reclaimable_
+    // arrtup also requires, and the array stays leak-only.
+    if (is_arr && !is_arrarr && arrarr_e == "") {
+        var tan: string = v.type_name;
+        if (tan.len() >= 4 && tan[tan.len() - 2 : tan.len()] == "[]") {
+            var tin: str = tan[0 : tan.len() - 2];
+            if (tin.len() >= 2 && tin[0:1] == "(") { arrarr_e = tin + ""; }
+        }
+    }
     // UNANNOTATED array-of-tuples literal (`var a = [(e0, e1), …]`): infer the
     // element tuple tag from the FIRST literal element (elem_type_tag — post-lift,
     // so a lambda element reads "clo"), so `a[j].N` reads and the `a[j].N(args)`
