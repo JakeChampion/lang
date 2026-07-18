@@ -449,6 +449,29 @@ function main(): i32 {
     if (i32_cabs(min32) == ((0 as i64) - 2147483648)) { r = r + 11; }  // MIN sentinel
     return r;
 }`},
+	// checked_shl / checked_shr (the std/i32 · i64 · u32 · u64 additions): a
+	// shift guarded to the amount range [0, width) — the bare << / >> mask the
+	// amount, so 1 << 32 silently yields 1. The inlined i32 form returns an
+	// out-of-i32-range i64 sentinel for the None case. Exercises i32 << / >>
+	// (arithmetic shr) + i64 compare + branch on the IR path. Oracle-checked.
+	// Five hits → 42.
+	{"int-checked-shift", `function i32_cshl(n: i32, rhs: i32): i64 {
+    if (rhs < 0 || rhs >= 32) { return (0 as i64) - 9999999999; }
+    return (n << rhs) as i64;
+}
+function i32_cshr(n: i32, rhs: i32): i64 {
+    if (rhs < 0 || rhs >= 32) { return (0 as i64) - 9999999999; }
+    return (n >> rhs) as i64;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i32_cshl(1, 4) == (16 as i64)) { r = r + 8; }
+    if (i32_cshl(1, 32) == ((0 as i64) - 9999999999)) { r = r + 8; }    // out-of-range sentinel
+    if (i32_cshr(0 - 8, 2) == ((0 as i64) - 2)) { r = r + 8; }          // arithmetic shr
+    if (i32_cshl(1, 31) == ((0 as i64) - 2147483648)) { r = r + 9; }    // 1<<31 = MIN
+    if (i32_cshr(16, 2) == (4 as i64)) { r = r + 9; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

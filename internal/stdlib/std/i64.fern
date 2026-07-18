@@ -431,6 +431,19 @@ pub function (n: i64) overflowing_neg(): (i64, boolean) {
     return ((0 as i64) - n, false);
 }
 
+// `(n: i64) checked_shl(rhs)` / `checked_shr(rhs)` — the i64 siblings of
+// std/i32's checked shifts: `Some(n << rhs)` / `Some(n >> rhs)`, or `None` when
+// the shift amount is out of range (`rhs < 0` or `rhs >= 64`). `>>` is
+// arithmetic (sign-extending) on the signed type.
+pub function (n: i64) checked_shl(rhs: i32): Option[i64] {
+    if (rhs < 0 || rhs >= 64) { return None; }
+    return Some(n << (rhs as i64));
+}
+pub function (n: i64) checked_shr(rhs: i32): Option[i64] {
+    if (rhs < 0 || rhs >= 64) { return None; }
+    return Some(n >> (rhs as i64));
+}
+
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
 // of std/i32's `sqrt_floor`. Newton's method on the wider type, so it stays
 // exact for magnitudes past the i32 range (e.g. `sqrt_floor(10000000000)` is

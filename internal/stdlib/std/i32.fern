@@ -577,6 +577,21 @@ pub function (n: i32) overflowing_neg(): (i32, boolean) {
     return (0 - n, false);
 }
 
+// `(n: i32) checked_shl(rhs)` / `checked_shr(rhs)` — `Some(n << rhs)` /
+// `Some(n >> rhs)`, or `None` when the shift amount is out of range (`rhs < 0`
+// or `rhs >= 32`). The bare `<<` / `>>` mask the amount to the width — `1 << 32`
+// silently yields `1`, not `0` — so these guard the amount for the "shift by a
+// runtime value" case. `>>` is arithmetic (sign-extending) on the signed type,
+// matching Rust's `checked_shr`.
+pub function (n: i32) checked_shl(rhs: i32): Option[i32] {
+    if (rhs < 0 || rhs >= 32) { return None; }
+    return Some(n << rhs);
+}
+pub function (n: i32) checked_shr(rhs: i32): Option[i32] {
+    if (rhs < 0 || rhs >= 32) { return None; }
+    return Some(n >> rhs);
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }

@@ -197,6 +197,19 @@ pub function (n: u64) overflowing_mul(other: u64): (u64, boolean) {
     return (p, p / n != other);
 }
 
+// `(n: u64) checked_shl(rhs)` / `checked_shr(rhs)` — the unsigned u64 siblings
+// of std/i32's checked shifts: `Some(n << rhs)` / `Some(n >> rhs)`, or `None`
+// when the shift amount is out of range (`rhs < 0` or `rhs >= 64`). `>>` is
+// logical (zero-fill) on the unsigned type.
+pub function (n: u64) checked_shl(rhs: i32): Option[u64] {
+    if (rhs < 0 || rhs >= 64) { return None; }
+    return Some(n << (rhs as u64));
+}
+pub function (n: u64) checked_shr(rhs: i32): Option[u64] {
+    if (rhs < 0 || rhs >= 64) { return None; }
+    return Some(n >> (rhs as u64));
+}
+
 // `(n: u64) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so there are no negative-input cases: `sqrt_floor(0)` is 0,
 // and the iteration converges in O(log n). Exact across the full u64 range,
