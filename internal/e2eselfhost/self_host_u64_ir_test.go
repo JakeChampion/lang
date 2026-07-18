@@ -67,6 +67,13 @@ var u64IRCases = []struct {
 	// a struct-field arm (the u64 sibling of expr_is_f64's / the tuple-element
 	// case) so the shift stays unsigned — 124, not the signed 252.
 	{"struct-u64-field-shift", `var p: UPair = UPair { n: 18000000000000000000 as u64 }; return (p.n >> 57) as i32;`},
+	// A direct index of a u64[] LITERAL chained in a shift (`[big, …][0] >> 57`):
+	// expr_is_u64's ExprIndex arm gained an ExprArray case so the element is
+	// unsigned — 124, not the signed 252.
+	{"u64-literal-index-shift", `return ([18000000000000000000 as u64, 1 as u64][0] >> 57) as i32;`},
+	// A direct index of a u64[] SLICE chained in a shift (`a[lo:hi][0] >> 57`):
+	// the sliced array is u64[] (expr_is_u64arr), so the element stays unsigned.
+	{"u64-slice-index-shift", `var a: u64[] = [18000000000000000000 as u64, 1 as u64, 2 as u64]; return (a[0:2][0] >> 57) as i32;`},
 }
 
 func u64IRSrc(mainBody string) string {
