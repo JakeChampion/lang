@@ -3407,9 +3407,99 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
+	// COW self-reassign carve-out (#4357's map-intermediate leak): a
+	// `m = m.set(..)` / `m = m.insert(..)` / `m = m.cleared()` / `a =
+	// a.with(..)` statement — the isSelfMapMutation shape, receiver
+	// occurring EXACTLY once in the RHS — does not end the local's
+	// freshness. The cow mutator returns either the SAME handle (rc==1
+	// in-place) or a fresh copy of it, so by induction a handle that
+	// started fresh (the init check below) stays param-free through any
+	// number of such rebinds.
+	//
+	// What the mutation STORES matters too: Map_set moves keys/values in
+	// UNCOUNTED (the escape-taint model), and the fresh-credit reclaim
+	// (emitMapSlotDrop) deep-frees the value column and string keys —
+	// so a param-derived store would be freed out from under the caller.
+	// Hence every NON-receiver argument must itself be escape-free
+	// against the declared key/value/element slot type (scalar slots
+	// pass trivially — the diagnosed `Map[i32, i32]` builder shape;
+	// `m.insert(k, param_array)` correctly disqualifies). An array
+	// `.with` element is additionally inc'd at the store
+	// (emitArraySet's needsRcIncOnAlias) so its deep walk balances, but
+	// the same escape-free requirement is applied uniformly — simpler
+	// and strictly conservative. An unannotated declaration (no slot
+	// types to check against) rejects the carve-out.
+	//
+	// Cow-assigns to a PARAM can't be admitted here structurally —
+	// params aren't Var decls, so they never enter the candidate set,
+	// and `mk(m: Map..) { m = m.insert(..); return m; }` (whose rc==1
+	// in-place path would hand back the CALLER's handle) stays
+	// unproven. Keyed by node identity so any OTHER occurrence of the
+	// name still taints.
+	cowArgSlots := func(calleeName string, declared ast.Type, nargs int) ([]ast.Type, bool) {
+		switch calleeName {
+		case "__method_Map_clear":
+			return nil, nargs == 1 // receiver only
+		case "__method_Map_set":
+			st, ok := declared.(ast.StructType)
+			if !ok || st.Name != "Map" || len(st.Args) != 2 || nargs != 3 {
+				return nil, false
+			}
+			return []ast.Type{st.Args[0], st.Args[1]}, true // key, value
+		case "__method_Array_set":
+			at, ok := declared.(ast.ArrayType)
+			if !ok || nargs != 3 {
+				return nil, false
+			}
+			return []ast.Type{ast.NumberType{}, at.Elem}, true // index, element
+		}
+		return nil, false
+	}
+	cowUse := map[*ast.Ident]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		asn, ok := n.(*ast.Assign)
+		if !ok {
+			return true
+		}
+		tid, ok := asn.Target.(*ast.Ident)
+		if !ok || !isSelfMapMutation(asn.Value, tid.Name) {
+			return true
+		}
+		decl, isDecl := decls[tid.Name]
+		if !isDecl || decl.Type == nil {
+			return true
+		}
+		call := asn.Value.(*ast.Call)
+		callee := call.Callee.(*ast.Ident)
+		slots, ok := cowArgSlots(callee.Name, decl.Type, len(call.Args))
+		if !ok {
+			return true
+		}
+		for i, slot := range slots {
+			// Args[0] is the receiver; slots align with Args[1:]. No
+			// freshLocals set is passed (empty map) — an argument that is
+			// itself a fresh local is conservatively rejected rather than
+			// entangling this collection with the fixpoint below.
+			if !exprNoParamEscape(call.Args[i+1], slot, info, variantPayloads, q, nil) {
+				return true
+			}
+		}
+		var occurrences []*ast.Ident
+		ast.Walk(asn.Value, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == tid.Name {
+				occurrences = append(occurrences, id)
+			}
+			return true
+		})
+		if len(occurrences) == 1 {
+			cowUse[tid] = true
+			cowUse[occurrences[0]] = true
+		}
+		return true
+	})
 	tainted := map[string]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && !inReturn[id] {
+		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] {
 			tainted[id.Name] = true
 		}
 		return true
@@ -3555,6 +3645,17 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 					return false
 				}
 			}
+			return true
+		}
+		// `map_new(cap)` constructs a FRESH empty map: its handle and bucket
+		// buffer are newly allocated and its arguments are scalars (the cap
+		// hint plus the injected keyKind/valKind tags), so no parameter heap
+		// can flow through the result. Admitting it here is what lets a
+		// cow-threaded map builder (`var m = map_new(8); m = m.insert(..);
+		// return m;`) prove its return fresh (#4357's map-intermediate leak) —
+		// without it the builtin (absent from q) rejected the init and the
+		// local never entered freshLocals.
+		if id.Name == "map_new" {
 			return true
 		}
 		// User function / method call: its result can't contain OUR args iff the
