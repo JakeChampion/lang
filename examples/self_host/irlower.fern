@@ -17220,6 +17220,20 @@ function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] 
     match (st) {
         parser.StmtVar(v) => {
             if (str_local_binding_is_fresh(v.init)) { return push_str_unique(acc, v.name); }
+            // A LITERAL binding (`var p: string = "...";`) allocates a fresh
+            // 16-byte box per execution whose DATA is .rodata — the box leaked
+            // at exit (24 B/call, even unused; #4357's SSA-emit localization).
+            // __fern_str_free's heap-base guard no-ops on the static data and
+            // reclaims the box — the exact contract the accumulator reclaim
+            // already relies on for its initial "" literal. Admitted only
+            // HERE (the STR: local collector), not in the shared
+            // str_local_binding_is_fresh predicate, whose ~20 other call
+            // sites classify operand/field freshness with different rc
+            // balances.
+            match (v.init) {
+                parser.ExprString(_) => { return push_str_unique(acc, v.name); },
+                _ => {}
+            }
             return acc;
         },
         parser.StmtIf(iff) => {
@@ -17386,15 +17400,26 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
 
 // body_has_nonfresh_str_return: any return whose value is NOT a fresh string
 // producer (str_local_binding_is_fresh — a concat, a string method, or a named
-// producer). A bare `return ident` (an accumulator move-out) is conservatively
-// NOT admitted: proving that ident is a sole-owned local needs the per-callee
-// accumulator analysis, a follow-up. A `return param` / `return field` / `return
-// "lit"` is likewise not fresh (may alias / is static).
+// producer) and not a direct LITERAL. A bare `return ident` (an accumulator
+// move-out) is conservatively NOT admitted: proving that ident is a sole-owned
+// local needs the per-callee accumulator analysis, a follow-up. A `return
+// param` / `return field` is likewise not fresh (may alias). A `return "lit"`
+// IS fresh: only its DATA is static — const_str allocates a fresh 16-byte box
+// per call that leaked in every caller binding until #4357's literal-box
+// slice; the caller-side __fern_str_free reclaims the box and heap-base-guards
+// the .rodata data.
 function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!str_local_binding_is_fresh(r.value)) { return true; } },
+            parser.StmtReturn(r) => {
+                var rfresh: boolean = str_local_binding_is_fresh(r.value);
+                match (r.value) {
+                    parser.ExprString(_) => { rfresh = true; },
+                    _ => {}
+                }
+                if (!rfresh) { return true; }
+            },
             parser.StmtIf(f) => { if (body_has_nonfresh_str_return(f.then_body) || body_has_nonfresh_str_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_str_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_str_return(fo.body)) { return true; } },
