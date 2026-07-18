@@ -15015,7 +15015,15 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                // The reassigned gate: maps admit the sanctioned COW self-reassign
+                // (`m = m.insert(k, v)` — map_nonself_reassigned, the same carve-out
+                // as the "MAP:" exit set / #4357): insert mutates the SAME box in
+                // place, so the slot value is unchanged and the precise drop after
+                // the last use still frees exactly one live box. Every other
+                // candidate kind keeps the blanket not-reassigned gate.
+                var reassign_ok: boolean = util.index_of_str(reassigned, v.name) < 0;
+                if (!reassign_ok && is_map && !map_nonself_reassigned(body, v.name)) { reassign_ok = true; }
+                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -17815,6 +17823,125 @@ function expr_map_identity_use(e: parser.Expr, name: string): boolean {
     }
 }
 
+// map_expr_mentions_name: does `e` mention the bare ident `name` anywhere?
+// FAIL-CLOSED: an expression variant this walker doesn't model returns true
+// (treated as a mention), because its caller (is_map_selfcow_assign) uses
+// absence-of-mention as a soundness guarantee — a missed mention could
+// smuggle the reclaimed mapbox into a live structure (UAF), while a false
+// positive merely declines the reclaim (the pre-#4357 leak default).
+function map_expr_mentions_name(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprBinary(b) => { return map_expr_mentions_name(b.left, name) || map_expr_mentions_name(b.right, name); },
+        parser.ExprUnary(u) => { return map_expr_mentions_name(u.operand, name); },
+        parser.ExprFieldAccess(fa) => { return map_expr_mentions_name(fa.obj, name); },
+        parser.ExprIndex(ix) => { return map_expr_mentions_name(ix.array, name) || map_expr_mentions_name(ix.index, name); },
+        parser.ExprSlice(sl) => { return map_expr_mentions_name(sl.array, name) || map_expr_mentions_name(sl.start, name) || map_expr_mentions_name(sl.end, name); },
+        parser.ExprCall(c) => {
+            if (map_expr_mentions_name(c.callee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (map_expr_mentions_name(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && map_expr_mentions_name(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (map_expr_mentions_name(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (map_expr_mentions_name(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (map_expr_mentions_name(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// is_map_selfcow_assign: `st` is the sanctioned COW self-reassign
+// `name = name.insert(k, v)` — target `name`, RHS a direct insert call whose
+// receiver is the bare ident `name`, and `name` appearing NOWHERE in the call
+// arguments (an arg occurrence could smuggle the box). The identity-carrying
+// result lands back in the SAME slot, so unlike every other identity use it
+// cannot leak the box past the escape walk — the native twin is
+// isSelfMapMutation + the computeFreshLocals cow carve-out (#5096).
+// `without` is excluded (it returns a [map, existed] tuple, never a bare
+// reassign RHS); `insert` at rc==1 mutates in place and returns the same box,
+// so the slot's value is unchanged and the exit / precise reclaim still frees
+// exactly one live box.
+function is_map_selfcow_assign(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target != name) { return false; }
+            match (a.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprFieldAccess(fa) => {
+                            if (fa.field != "insert") { return false; }
+                            match (fa.obj) {
+                                parser.ExprIdent(id) => {
+                                    if (id.name != name) { return false; }
+                                },
+                                _ => { return false; }
+                            }
+                            var i: i32 = 0;
+                            while (i < c.args.len()) {
+                                if (map_expr_mentions_name(c.args[i], name)) { return false; }
+                                i = i + 1;
+                            }
+                            return true;
+                        },
+                        _ => { return false; }
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// map_nonself_reassigned: any reassignment of `name` that is NOT the
+// sanctioned self-cow form (is_map_selfcow_assign). The "MAP:" reclaim gate
+// uses this instead of the blanket reassigned list, so a cow-threaded
+// builder loop (`var m = map_new(8); m = m.insert(..)`) keeps its reclaim —
+// the self-host half of #4357's map-intermediate leak (the box stays THE
+// same rc==1 box through in-place inserts, so the per-iteration / exit free
+// still releases exactly one live box). Any other rebind (a fresh literal, a
+// different call, an alias) disqualifies exactly as before.
+function map_nonself_reassigned(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name && !is_map_selfcow_assign(stmts[i], name)) { return true; }
+            },
+            parser.StmtIf(iff) => { if (map_nonself_reassigned(iff.then_body, name) || map_nonself_reassigned(iff.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (map_nonself_reassigned(w.body, name)) { return true; } },
+            parser.StmtFor(f) => { if (map_nonself_reassigned(f.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { if (map_nonself_reassigned(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // map_identity_escape: does the body contain an identity-carrying method call
 // on `name` (see expr_map_identity_use) anywhere? Shared soundness gate for
 // BOTH map reclaim sites — the "MAP:" exit set and the precise-drop candidate.
@@ -17829,7 +17956,15 @@ function map_identity_escape(stmts: parser.Stmt[], name: string): boolean {
 function map_identity_escape_stmt(st: parser.Stmt, name: string): boolean {
     match (st) {
         parser.StmtVar(v) => { return expr_map_identity_use(v.init, name); },
-        parser.StmtAssign(a) => { return expr_map_identity_use(a.value, name); },
+        parser.StmtAssign(a) => {
+            // The sanctioned self-cow reassign (`name = name.insert(k, v)`,
+            // is_map_selfcow_assign) is exempt: its identity-carrying result
+            // lands back in the same slot, so no box escapes. The arg walk
+            // inside is_map_selfcow_assign already rejected any occurrence of
+            // `name` in the arguments, so nothing here is smuggled either.
+            if (is_map_selfcow_assign(st, name)) { return false; }
+            return expr_map_identity_use(a.value, name);
+        },
         parser.StmtExpr(ex) => { return expr_map_identity_use(ex.value, name); },
         parser.StmtReturn(r) => { return expr_map_identity_use(r.value, name); },
         parser.StmtFor(f) => { return expr_map_identity_use(f.iter, name) || map_identity_escape(f.body, name); },
@@ -19116,7 +19251,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var aliased_m: string[] = aliased_array_names_of(body);
     var mi: i32 = 0;
     while (mi < maps.len()) {
-        if (util.index_of_str(reassigned, maps[mi]) < 0
+        // The reassigned gate admits the sanctioned COW self-reassign
+        // (`m = m.insert(k, v)` — map_nonself_reassigned / #4357): insert at
+        // rc==1 mutates in place and returns the SAME box, so the slot's
+        // value is unchanged and the exit / precise reclaim still frees
+        // exactly one live box. Any other rebind disqualifies as before.
+        if (!map_nonself_reassigned(body, maps[mi])
             && util.index_of_str(aliased_m, maps[mi]) < 0
             && !body_unsafe_for(body, maps[mi], borrowable)
             && !map_has_explicit_iter(body, maps[mi])

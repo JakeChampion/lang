@@ -825,8 +825,16 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    str x3, [sp, #-16]!\n");   // save default across the call (x3 is caller-saved)
             s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
             s = s.write("    ldr x3, [sp], #16\n");      // restore default
-            s = s.write("    ldr x4, [x0]\n    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
-            s = s.write("    ldr x0, [x0, #8]\n    b " + golbl + "_e\n");
+            // Free the Option box __fern_map_get allocated (raw 16-byte
+            // {tag@0, payload@8}) — it is consumed right here, so it goes
+            // back to the size-class-2 freelist like the x86-64 sibling
+            // (#4357's ~16 B/call get_or leak). Extract tag + payload FIRST,
+            // then thread the box onto freelist[2] (slot at base + 16).
+            s = s.write("    ldr x4, [x0]\n    ldr x6, [x0, #8]\n");   // tag, payload
+            s = s.write("    adrp x7, __fern_freelist\n    add x7, x7, :lo12:__fern_freelist\n");
+            s = s.write("    ldr x8, [x7, #16]\n    str x8, [x0]\n    str x0, [x7, #16]\n");
+            s = s.write("    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
+            s = s.write("    mov x0, x6\n    b " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 131) {  // map_keys
             // parallel-array map: keys[] pointer at box+0. Scalar column
