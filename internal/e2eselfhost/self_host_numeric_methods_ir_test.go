@@ -231,6 +231,37 @@ function main(): i32 {
     if (u32_log10(4000000000 as u32) == 9) { r = r + 6; }            // > 2^31, 10 digits
     return r;
 }`},
+	// checked_mul (the std/i32 · i64 additions): overflow-checked multiply.
+	// i32 widens to i64 and range-checks (a -1 sentinel stands in for None on
+	// overflow); i64 has no wider type so it detects overflow with the inverse
+	// division (p/n == other) and rejects the MIN * -1 wrap explicitly (a -2
+	// sentinel). Exercises i64 multiply + divide + compare across function
+	// calls on the IR path; oracle-checked, so the overflow verdict must be
+	// right, not just stable. Four hits → 42.
+	{"int-checked-mul", `function i32_cmul(n: i32, other: i32): i64 {
+    var p: i64 = (n as i64) * (other as i64);
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    var hi: i64 = 2147483647 as i64;
+    if (p < lo || p > hi) { return (0 as i64) - 1; }
+    return p;
+}
+function i64_cmul(n: i64, other: i64): i64 {
+    if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    var neg1: i64 = (0 as i64) - (1 as i64);
+    if ((n == min64 && other == neg1) || (other == min64 && n == neg1)) { return (0 as i64) - 2; }
+    var p: i64 = n * other;
+    if (p / n != other) { return (0 as i64) - 2; }
+    return p;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i32_cmul(6, 7) == (42 as i64)) { r = r + 10; }
+    if (i32_cmul(100000, 100000) == ((0 as i64) - 1)) { r = r + 10; }        // 10^10 overflows i32
+    if (i64_cmul(6 as i64, 7 as i64) == (42 as i64)) { r = r + 11; }
+    if (i64_cmul(3037000500 as i64, 3037000500 as i64) == ((0 as i64) - 2)) { r = r + 11; }  // ~9.22e18 overflows i64
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
