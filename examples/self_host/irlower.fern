@@ -34830,8 +34830,34 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 if (tw.len() > 0) { return tw; }
             },
             parser.StmtFor(fr) => {
-                // The for-in binder itself: element type unknown here; only
-                // its BODY is searched for `var name` bindings.
+                // The for-in BINDER: resolve its type from the iterated
+                // expression's element type — an ident iterating a declared
+                // `T[]` local/param binds a T (strip the "[]"), and a range
+                // (`for x in 0..n`, any non-array iter of scalar shape) binds
+                // an i32. Without this a lambda capturing a for-in binder
+                // resolved "" → cap_slot_ok declined → the whole module fell
+                // to the AST path, where a capturing lambda in a struct fn
+                // FIELD miscompiles (silent wrong values — the f5/f4 probes).
+                // A capture only labels the hoisted fn's param, so a miss
+                // stays a declined lift, never a miscompile.
+                if (fr.var_name == name) {
+                    var ity: string = "";
+                    match (fr.iter) {
+                        parser.ExprIdent(itid) => { ity = cap_type_at(itid.name, fd, depth); },
+                        _ => {}
+                    }
+                    if (ity.len() > 2 && ity[ity.len() - 2 : ity.len()] == "[]") {
+                        return ity[0 : ity.len() - 2];
+                    }
+                    match (fr.iter) {
+                        parser.ExprBinary(itb) => {
+                            // `for x in a..b` — the range desugar's iter is a
+                            // `..` binary; the binder is an i32.
+                            if (itb.op == "..") { return "i32"; }
+                        },
+                        _ => {}
+                    }
+                }
                 var tf: string = cap_type_in_stmts(fr.body, name, fd, depth);
                 if (tf.len() > 0) { return tf; }
             },
