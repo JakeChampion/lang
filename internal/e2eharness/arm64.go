@@ -69,6 +69,19 @@ func RunArm64Bin(qemu, binPath string, args ...string) *exec.Cmd {
 
 func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) {
 	t.Helper()
+	binPath, qemu := CompileArm64Bin(t, src)
+	cmd := RunArm64Bin(qemu, binPath)
+	out, _ := cmd.CombinedOutput()
+	return finishArm64Run(t, cmd, out)
+}
+
+// CompileArm64Bin compiles src with the arm64 backend and links it
+// (gcc, or the native backend under FERN_NATIVE_ASM=1), returning the
+// binary path and the qemu runner ("" on native arm64 hosts). Callers
+// exec it via RunArm64Bin — with extra argv when the test needs it
+// (e.g. the args()-rc regression gate).
+func CompileArm64Bin(t *testing.T, src string) (binPath, qemu string) {
+	t.Helper()
 	gcc, qemu := Arm64Tooling(t)
 
 	// Route the source through modload so cross-module qualified
@@ -108,7 +121,7 @@ func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	}
 
 	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
+	binPath = filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
@@ -126,7 +139,15 @@ func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	} else if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
-	cmd := RunArm64Bin(qemu, binPath)
-	out, _ := cmd.CombinedOutput()
+	return binPath, qemu
+}
+
+// finishArm64Run turns a completed run into (stdout, exit code), failing
+// the test on an abnormal (non-exited) end.
+func finishArm64Run(t *testing.T, cmd *exec.Cmd, out []byte) (string, int) {
+	t.Helper()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("arm64 binary did not exit normally (out=%q)", out)
+	}
 	return string(out), cmd.ProcessState.ExitCode()
 }

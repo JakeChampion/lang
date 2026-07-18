@@ -4010,7 +4010,12 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov rdi, r13")
 	g.emit(fmt.Sprintf("movabs rsi, %d", heapBytes))
 	g.emit("mov edx, 3")
-	g.emit("mov r10d, 0x22")
+	// MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000): exempt the
+	// big lazy arena from Linux's overcommit accounting — without it the
+	// heuristic refuses the single 8 GiB anonymous map outright on hosts
+	// with RAM+swap below the arena size, failing every binary AT STARTUP
+	// (the arm64 backend does the same; its comment has the full story).
+	g.emit("mov r10d, 0x4022")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
 	g.emit(fmt.Sprintf("mov eax, %d", sysMmap))
