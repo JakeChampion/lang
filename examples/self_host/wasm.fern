@@ -1157,13 +1157,13 @@ pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[])
     var frt: string[] = wasm_ir.field_reclaim_types(cache);
     var frti: i32 = 0;
     while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(cache), util.index_of_str(sfok, frt[frti]) >= 0);
+        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(cache), util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0);
         frti = frti + 1;
     }
     var sdt: string[] = wasm_ir.struct_drop_types(cache, mod.structs);
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
-        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx, util.index_of_str(sfok, sdt[sdti]) >= 0);
+        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0);
         sdti = sdti + 1;
     }
     // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
@@ -1205,7 +1205,7 @@ function emit_wasm_struct_arr_elems_drop_body(e: string, cx: Ctx): string {
     return o;
 }
 
-function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean): string {
+function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean, clo_ok: boolean): string {
     var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
     var si: i32 = 0;
     while (si < cx.structs.len()) {
@@ -1260,6 +1260,16 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean): string
                         // "S") stay leak-only — is_struct_type is false for them.
                         o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
                     }
+                } else if (ft == "fn" && clo_ok) {
+                    // An fn-typed (closure) field: the slot holds an rc-headered
+                    // `__mkclo$` env box, shallow-freed via the rc-guarded
+                    // $__fern_arr_dec — one level, captures leak. GATED on the
+                    // clofld admission ("clo:<T>" in strfld_reclaim_ok_types_of:
+                    // fresh-lambda-only values, no base copies, call-only reads),
+                    // the wasm sibling of the register backends' k_clo arm
+                    // (#5104). A non-admitted type keeps the sound leak.
+                    var cldload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + cldload + "))\n";
                 } else if (ft == "string" && str_ok) {
                     // A `string` field is an rc-headered INLINE block on wasm
                     // ([rc][bsz][len][bytes]); reclaim it with $__fern_arr_dec — frees
@@ -1298,7 +1308,7 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean): string
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32, str_ok: boolean): string {
+function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32, str_ok: boolean, clo_ok: boolean): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
     var si: i32 = 0;
@@ -1315,7 +1325,11 @@ function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32, str_ok: boole
                 // read scan (str_ok) — see the x86 emit_ir_field_reclaim_one
                 // string arm.
                 var frk: string = struct_field_kind_char(ft, cx);
-                if (frk == "a" || (frk == "s" && str_ok)) {
+                // A replaced fn (closure) field rides the same guarded
+                // $__fern_arr_dec: the superseded `__mkclo$` env box is one
+                // rc-headered block, shallow-freed (captures leak). Gated on
+                // the clofld admission (clo_ok) — the wasm fr_clo sibling.
+                if (frk == "a" || (frk == "s" && str_ok) || (ft == "fn" && clo_ok)) {
                     var off: string = util.i32_to_string(8 + k * 8);
                     var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
                     var newf: string = "(i32.load offset=" + off + " (local.get $new))";
