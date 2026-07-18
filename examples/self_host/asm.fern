@@ -2348,8 +2348,25 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
             return emit_method_call(c, fa, s);
         },
         _ => {
-            s = s.write("    # call target not ident\n");
-            s = s.write("    pushq $0\n");
+            // Generic closure-VALUE call: any callee expression that
+            // evaluates to a closure box — an array element `arr[i]()`,
+            // a tuple element, a call result — not just a bare
+            // ident / lambda / method. Evaluate the callee to its box
+            // ptr, push args above it, then invoke via the closure
+            // convention (box ptr in %r10, fn_addr = box[0]). Same shape
+            // as the ExprLambda IIFE arm above; the previous `pushq $0`
+            // stub silently compiled such a call to "return 0".
+            s = emit_expr(c.callee, s); // push closure box
+            var cla: i32 = c.args.len() - 1;
+            while (cla >= 0) {
+                s = emit_expr(c.args[cla], s);
+                cla = cla - 1;
+            }
+            s = s.write("    movq " + util.i32_to_string(c.args.len() * 8) + "(%rsp), %r10\n"); // box ptr (below args)
+            s = s.write("    movq (%r10), %rdx\n");
+            s = s.write("    call *%rdx\n");
+            s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n"); // pop args + box
+            s = s.write("    pushq %rax\n");
             return s;
         }
     }
