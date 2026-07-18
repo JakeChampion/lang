@@ -1,0 +1,36 @@
+import "std/u32";
+import "std/u64";
+// u32 + u64 bit-op family (unsigned counterparts to i32/i64): count_ones,
+// count_zeros, leading_zeros, trailing_zeros, bit_length, rotate_left/right.
+// Distinct nonzero exit per failure; 42 = all pass. interp/x86-64/arm64/wasm.
+function main(): i32 {
+    // --- u32 ---
+    if ((7 as u32).count_ones() != 3) { return 1; }
+    if ((7 as u32).count_zeros() != 29) { return 2; }
+    if ((0 as u32).count_zeros() != 32) { return 3; }
+    if ((1 as u32).leading_zeros() != 31) { return 4; }
+    if ((0 as u32).leading_zeros() != 32) { return 5; }
+    if (((1 as u32) << (31 as u32)).leading_zeros() != 0) { return 6; }
+    if ((8 as u32).trailing_zeros() != 3) { return 7; }
+    if ((0 as u32).trailing_zeros() != 32) { return 8; }
+    if ((255 as u32).bit_length() != 8) { return 9; }
+    if ((256 as u32).bit_length() != 9) { return 10; }
+    if ((0 as u32).bit_length() != 0) { return 11; }
+    if ((1 as u32).rotate_left(1) != (2 as u32)) { return 12; }
+    if (((1 as u32) << (31 as u32)).rotate_left(1) != (1 as u32)) { return 13; }
+    if ((1 as u32).rotate_right(1) != ((1 as u32) << (31 as u32))) { return 14; }
+    if ((12345 as u32).rotate_left(7).rotate_right(7) != (12345 as u32)) { return 15; }
+    // --- u64 ---
+    if ((7 as u64).count_ones() != 3) { return 21; }
+    if ((7 as u64).count_zeros() != 61) { return 22; }
+    if ((1 as u64).leading_zeros() != 63) { return 23; }
+    if ((0 as u64).leading_zeros() != 64) { return 24; }
+    if (((1 as u64) << (40 as u64)).leading_zeros() != 23) { return 25; }
+    if (((1 as u64) << (40 as u64)).trailing_zeros() != 40) { return 26; }
+    if ((0 as u64).trailing_zeros() != 64) { return 27; }
+    if ((256 as u64).bit_length() != 9) { return 28; }
+    if ((1 as u64).rotate_right(1) != ((1 as u64) << (63 as u64))) { return 29; }
+    if (((1 as u64) << (63 as u64)).rotate_left(1) != (1 as u64)) { return 30; }
+    if ((999 as u64).rotate_left(20).rotate_right(20) != (999 as u64)) { return 31; }
+    return 42;
+}

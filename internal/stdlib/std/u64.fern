@@ -155,3 +155,73 @@ pub function (n: u64) log2_floor(): i32 {
     while (m > (1 as u64)) { m = m / (2 as u64); r = r + 1; }
     return r;
 }
+
+// === u64 bit ops (the unsigned counterparts to std/i64's) ===
+// Software implementations over u64 shifts/masks, O(64) per call — the
+// same shape as std/i64's, but with no sign bit (unsigned shifts are
+// logical).
+
+// `count_ones()` — the number of set bits in `n`.
+pub function (n: u64) count_ones(): i32 {
+    var u: u64 = n;
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < 64) {
+        if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; }
+        u = u >> (1 as u64);
+        i = i + 1;
+    }
+    return c;
+}
+
+// `count_zeros()` — the number of clear bits (`64 - count_ones()`).
+pub function (n: u64) count_zeros(): i32 { return 64 - n.count_ones(); }
+
+// `leading_zeros()` — the number of zero bits above the highest set bit
+// (`0` → 64).
+pub function (n: u64) leading_zeros(): i32 {
+    if (n == (0 as u64)) { return 64; }
+    var u: u64 = n;
+    var top: u64 = (1 as u64) << (63 as u64);
+    var c: i32 = 0;
+    while ((u & top) == (0 as u64)) {
+        c = c + 1;
+        u = u << (1 as u64);
+    }
+    return c;
+}
+
+// `trailing_zeros()` — the number of zero bits below the lowest set bit
+// (`0` → 64).
+pub function (n: u64) trailing_zeros(): i32 {
+    if (n == (0 as u64)) { return 64; }
+    var u: u64 = n;
+    var c: i32 = 0;
+    while ((u & (1 as u64)) == (0 as u64)) {
+        c = c + 1;
+        u = u >> (1 as u64);
+    }
+    return c;
+}
+
+// `bit_length()` — the position of the highest set bit, plus one
+// (`64 - leading_zeros()`); `0` → 0.
+pub function (n: u64) bit_length(): i32 { return 64 - n.leading_zeros(); }
+
+// `rotate_left(bits)` / `rotate_right(bits)` — cyclic bit rotation.
+// `bits` is taken mod 64.
+pub function (n: u64) rotate_left(bits: i32): u64 {
+    var k: i32 = bits & 63;
+    if (k == 0) { return n; }
+    var left: u64 = n << (k as u64);
+    var right: u64 = n >> ((64 - k) as u64);
+    return left | right;
+}
+
+pub function (n: u64) rotate_right(bits: i32): u64 {
+    var k: i32 = bits & 63;
+    if (k == 0) { return n; }
+    var right: u64 = n >> (k as u64);
+    var left: u64 = n << ((64 - k) as u64);
+    return right | left;
+}
