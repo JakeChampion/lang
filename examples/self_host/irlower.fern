@@ -1881,6 +1881,33 @@ pub function field_access_arr_field_type(e: parser.Expr, s: LowerState): string 
     return "";
 }
 
+// closurearr_field_type is the CLOSURE-ARRAY twin of field_access_arr_field_type:
+// it returns a non-empty sentinel ("fn[]") if `e` reads a struct field `r.hs`
+// whose <Type>.hs was CONSTRUCTED as a closure array (`Type { hs: [<capturing
+// lambda>|<__mkclo$>|<closure-call>] }`), else "". The declared field spelling is
+// no help: the self-host parser coarsens `(() => T)[]` to a leak-safe scalar-
+// array shape (the return type's array), which reads identically for a closure
+// array and a plain fn-pointer array — so the closure fact is instead recorded
+// per (struct, field) at every construction site by clof_of_stmt and carried as a
+// "CLOF:<Type>.<field>" marker on the closure_fns registry. This admits binding a
+// closure-array struct field onto the IR path with env-first element dispatch —
+// the whole field (`var xs = r.hs`), an element (`var f = r.hs[0]`), and the
+// `for h in r.hs` foreach. Without it the element bind loses the "closure box,
+// not bare fn pointer" tag and `f()` calls the box as raw code — #5160 defect B
+// (SIGSEGV).
+pub function (s: LowerState) closurearr_field_type(e: parser.Expr): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            if (util.index_of_str(s.closure_fns, "CLOF:" + oty + "." + fa.field) >= 0) { return "fn[]"; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     var seen: string[] = [];
     return decl_is_leaksafe_d(structs, struct_name, 0, seen);
@@ -10466,6 +10493,56 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
+    // Binding a CLOSURE-ARRAY struct field (`var xs = r.hs`, hs a closure array —
+    // #5160) aliases the struct's array exactly like the scalar case below: the
+    // Perceus dup is on the buffer POINTER, and the exit-sweep's shallow arr_dec
+    // balances it. Closures are leak-only (the struct never re-frees the field),
+    // so the inc+dec leaves the buffer at its original rc — the array leaks WITH
+    // the struct, sound. The slot is marked is_closurearr so `xs[i]()` and
+    // `for h in xs` dispatch env-first. Checked BEFORE the scalar-array branch:
+    // a `(() => T)[]` field type coarsens to a leak-safe-array spelling, so
+    // scalar_arr_field_type would otherwise claim it first and bind xs a plain
+    // (non-closure) array. This ALSO drives `for h in r.hs`: the foreach
+    // snapshots r.hs into a hidden local through this same StmtVar path, and the
+    // ident-foreach then reads is_closurearr to bind the loop var a closure local.
+    var vclof: string = s.closurearr_field_type(v.init);
+    if (vclof != "") {
+        var vcs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
+        if (!vcs.ok) { return vcs; }
+        vcs = vcs.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
+        var vcb: LowerState = vcs.add_local(v.name);
+        var vcslot: i32 = vcb.slot_of(v.name);
+        vcb = vcb.mark_arr(vcslot, true);
+        vcb = vcb.mark_closurearr(vcslot, true);
+        return vcb.emit(ir.op_store_local(vcslot));
+    }
+    // Binding a closure-array struct-field ELEMENT (`var f = r.hs[0]`, hs a
+    // closure array — #5160): f aliases the element's closure box, which is
+    // OWNED by the struct (leak-only; the struct's field reclaim frees it). So
+    // bind f a closure local for env-first `f()` dispatch, but do NOT mark it
+    // is_arr — the exit-sweep must not dec the BORROWED box (a second dec beyond
+    // the struct's own reclaim underflows its rc). Checked before the generic
+    // clo_init path below, which marks a bound closure local is_arr — correct for
+    // an OWNED lambda / local-array element box, wrong for this struct-owned
+    // borrow.
+    match (v.init) {
+        parser.ExprIndex(cfe) => {
+            match (cfe.array) {
+                parser.ExprFieldAccess(_) => {
+                    if (s.closurearr_field_type(cfe.array) != "") {
+                        var ces: LowerState = lower_expr(v.init, s);   // arr_get -> element box ptr
+                        if (!ces.ok) { return ces; }
+                        var ceb: LowerState = ces.add_local(v.name);
+                        var ceslot: i32 = ceb.slot_of(v.name);
+                        ceb = ceb.mark_closure_local(v.name);
+                        return ceb.emit(ir.op_store_local(ceslot));
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
         var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
@@ -12658,12 +12735,21 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // handled here — aliasing them needs the reclamation analysis to
     // borrow-track the field, left to the Perceus self-host port (#3003).
     if (!for_var_comma) {
-        var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[], 3 Option/Result[]
+        var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[], 3 Option/Result[], 4 closure[]
         var fld_elem_ty: string = "";
         match (fr.iter) {
             parser.ExprFieldAccess(ffa) => {
                 var foty: string = expr_struct_type(ffa.obj, s);
-                if (foty != "") {
+                // `for h in r.hs` over a CLOSURE-ARRAY field (#5160): each element
+                // is a closure box, so the loop var binds a closure local (its
+                // call unpacks the box env-first). Checked BEFORE the field-type
+                // cases below — a `(() => T)[]` field spelling coarsens to a
+                // leak-safe-array shape one of them would otherwise claim, binding
+                // the loop var a plain array element and mis-dispatching `h()` as
+                // a raw fn-pointer call (SIGSEGV). closurearr_field_type keys off
+                // the per-construction "CLOF:" marker, not the coarsed spelling.
+                if (s.closurearr_field_type(fr.iter) != "") { fld_elem_kind = 4; }
+                else if (foty != "") {
                     var fft: string = decl_field_type(s.structs, foty, ffa.field);
                     if (fft == "string[]") { fld_elem_kind = 1; }
                     else if (is_struct_array_field_type(s.structs, fft) || is_enum_array_field_type(s.structs, fft)) {
@@ -12707,6 +12793,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             var fldvslot: i32 = lf.slot_of(fr.var_name);
             if (fld_elem_kind == 1) { lf = lf.mark_str(fldvslot, true); }
             else if (fld_elem_kind == 3) { lf = lf.mark_opt_type(fldvslot, fld_elem_ty); }
+            else if (fld_elem_kind == 4) { lf = lf.mark_closure_local(fr.var_name); }
             else { lf = lf.mark_struct_type(fldvslot, fld_elem_ty); }
             // counted loop using explicit arr_len/arr_get on the borrow.
             lf = lf.emit(ir.op_block(0)).enter_loop();
@@ -30561,6 +30648,23 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             fi = fi + 1;
         }
     }
+    // #5160: also collect closure-ARRAY struct FIELDS — `Type { field:
+    // [<closures>] }` — as "CLOF:Type.field" markers riding this registry, so a
+    // later read of that field on the IR path (`var f = r.field[i]`, `var xs =
+    // r.field`, `for h in r.field`) recognises it holds closure boxes and
+    // dispatches the element call env-first (closurearr_field_type). `out` is the
+    // resolved closure-returning-fn set, which array_lit_is_closurearr consults
+    // for `[mk(), …]` elements; the "CLOF:" prefix keeps these entries disjoint
+    // from the plain function names (a fn name can't contain ':').
+    var cfi: i32 = 0;
+    while (cfi < funcs.len()) {
+        var cfb: i32 = 0;
+        while (cfb < funcs[cfi].body.len()) {
+            out = clof_of_stmt(funcs[cfi].body[cfb], out, gfns, out);
+            cfb = cfb + 1;
+        }
+        cfi = cfi + 1;
+    }
     return out;
 }
 
@@ -30591,6 +30695,146 @@ function array_lit_is_closurearr(init: parser.Expr, closureset: string[]): boole
         _ => {}
     }
     return false;
+}
+
+// clof_elem_is_boxed_closure reports whether an array literal's FIRST element is
+// a genuinely env-BOXED closure — a CAPTURING lambda, a `__mkclo$` env-box
+// constructor, or a call to a closure-returning fn. Deliberately STRICTER than
+// array_lit_is_closurearr, which admits any lambda: a NON-capturing lambda lowers
+// as a bare fn POINTER (fn-pointer array, raw dispatch), so a struct field built
+// from `[() => 7]` must NOT be tagged a closure array — its element call dispatch
+// stays raw, not env-first. `gfns` (module fn names) lets lambda_has_no_captures
+// ignore references to module functions (not captures); `closureset` admits a
+// `[mk(), …]` element (mk a closure-returning fn).
+function clof_elem_is_boxed_closure(init: parser.Expr, closureset: string[], gfns: string[]): boolean {
+    match (init) {
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return false; }
+            match (a.elements[0]) {
+                parser.ExprLambda(lm) => { return !lambda_has_no_captures(lm, gfns); },
+                parser.ExprCall(ec) => {
+                    match (ec.callee) {
+                        parser.ExprIdent(ecid) => {
+                            if (ecid.name.len() > 8 && ecid.name[0:8] == "__mkclo$") { return true; }
+                            if (util.index_of_str(closureset, ecid.name) >= 0) { return true; }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// clof_of_expr / clof_of_stmt walk a function body for struct literals whose
+// array-typed fields are CONSTRUCTED with genuinely env-boxed closure elements
+// (`Type { hs: [<capturing lambda>|<__mkclo$>|<closure-returning call>] }`) and
+// append a "CLOF:<Type>.<hs>" marker per such field to `acc` (deduped). The
+// markers ride the closure_fns registry (folded into closure_ret_fns_of) so
+// closurearr_field_type can recognise a `r.hs` read as a closure array on the IR
+// path and dispatch its element call env-first (#5160 defect B). A non-capturing
+// lambda field (fn-pointer array) is excluded by clof_elem_is_boxed_closure.
+// Mirrors collect_idents_expr's recursion so a struct literal nested anywhere is
+// found.
+function clof_of_expr(e: parser.Expr, closureset: string[], gfns: string[], acc: string[]): string[] {
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = clof_of_expr(sl.base, closureset, gfns, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (clof_elem_is_boxed_closure(sl.field_values[i], closureset, gfns)) {
+                    var mk: string = "CLOF:" + sl.type_name + "." + sl.field_names[i];
+                    if (util.index_of_str(acc, mk) < 0) { acc = acc.append(mk); }
+                }
+                acc = clof_of_expr(sl.field_values[i], closureset, gfns, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprBinary(b) => {
+            acc = clof_of_expr(b.left, closureset, gfns, acc);
+            return clof_of_expr(b.right, closureset, gfns, acc);
+        },
+        parser.ExprUnary(u) => { return clof_of_expr(u.operand, closureset, gfns, acc); },
+        parser.ExprCall(c) => {
+            acc = clof_of_expr(c.callee, closureset, gfns, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = clof_of_expr(c.args[i], closureset, gfns, acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = clof_of_expr(a.elements[i], closureset, gfns, acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = clof_of_expr(t.elements[i], closureset, gfns, acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = clof_of_expr(x.array, closureset, gfns, acc);
+            return clof_of_expr(x.index, closureset, gfns, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = clof_of_expr(sl.array, closureset, gfns, acc);
+            acc = clof_of_expr(sl.start, closureset, gfns, acc);
+            return clof_of_expr(sl.end, closureset, gfns, acc);
+        },
+        parser.ExprFieldAccess(fa) => { return clof_of_expr(fa.obj, closureset, gfns, acc); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { acc = clof_of_stmt(lm.body[i], closureset, gfns, acc); i = i + 1; }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function clof_of_stmt(st: parser.Stmt, closureset: string[], gfns: string[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtDefer(d) => { return clof_of_stmt(d.action, closureset, gfns, acc); },
+        parser.StmtVar(v) => { return clof_of_expr(v.init, closureset, gfns, acc); },
+        parser.StmtReturn(r) => { return clof_of_expr(r.value, closureset, gfns, acc); },
+        parser.StmtExpr(e) => { return clof_of_expr(e.value, closureset, gfns, acc); },
+        parser.StmtAssign(a) => { return clof_of_expr(a.value, closureset, gfns, acc); },
+        parser.StmtIf(i) => {
+            acc = clof_of_expr(i.cond, closureset, gfns, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) { acc = clof_of_stmt(i.then_body[ti], closureset, gfns, acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) { acc = clof_of_stmt(i.else_body[ei], closureset, gfns, acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = clof_of_expr(w.cond, closureset, gfns, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = clof_of_stmt(w.body[i], closureset, gfns, acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtMatch(m) => {
+            acc = clof_of_expr(m.scrutinee, closureset, gfns, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = clof_of_stmt(m.arms[ai].body[bi], closureset, gfns, acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = clof_of_expr(f.iter, closureset, gfns, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) { acc = clof_of_stmt(f.body[i], closureset, gfns, acc); i = i + 1; }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
 }
 
 // body_binds_closurearr_local reports whether `body` (recursing into nested

@@ -16,11 +16,13 @@ import (
 // closure convention (box ptr in %r10/x9, fn_addr = box[0]), mirroring the
 // ExprLambda arm right above it.
 //
-// (A SEPARATE, still-open defect — issue #5160 — is `var f = reg.hs[i]; f()`
-// and `for h in reg.hs { h() }`: binding a closure-array element from a struct
-// field yields a value the `f()` lowering treats as a raw fn pointer rather
-// than a closure box, so it SIGSEGVs. That is the element-BIND path, not the
-// direct-call callee dispatch these cases exercise.)
+// (The SEPARATE element-BIND defect — issue #5160 defect #2, `var f =
+// reg.hs[i]; f()` / `for h in reg.hs { h() }` — is now fixed on the IR path:
+// see self_host_clo_array_field_bind_ir_test.go. That fix (irlower.fern) makes
+// the whole struct-field-closure-array shape IR-eligible, so these direct-call
+// cases now ALSO lower on the IR path rather than bailing to the AST emitter;
+// the AST fallthrough fix above stays as a backstop for shapes still outside
+// the IR subset.)
 //
 // Exit codes cross-checked against the interpreter and the native Go backend.
 var cloArrayFieldCallCases = []struct {
