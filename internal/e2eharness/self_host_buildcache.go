@@ -459,12 +459,16 @@ func CachedLink(t *testing.T, gcc, asm string) string {
 // no-payoff default, not a correctness requirement.
 //
 // HUGE links — the stage-2 self-compile of the whole compiler, ~450 MB of
-// asm — instead go through the in-process native assembler first
-// (nativeLinkX86), under a build-memory reservation sized to its measured
-// footprint. The gcc path on those inputs ran GNU `as` at ~4.7 GB RSS
-// with NO reservation at all (CachedLink predates the budget), which
-// could stack with a concurrent driver build's peak and OOM a 16 GB
-// host. Native-assembler errors fall back to the gcc path unchanged.
+// asm — first try the in-process native assembler (nativeLinkX86) under a
+// build-memory reservation sized to its measured footprint. NOTE: the
+// self-host x86-64 emitter currently writes AT&T-syntax asm, which the
+// Intel-only native assembler rejects immediately — so today the stage-2
+// link always takes the gcc fallback below; the native attempt costs
+// microseconds and starts winning the moment the emitted dialect becomes
+// parseable. Either way the big-link gcc path now runs under a
+// reservation too: it ran GNU `as` at ~4.7 GB RSS with NO reservation at
+// all (CachedLink predates the budget), which could stack with a
+// concurrent driver build's peak and OOM a 16 GB host.
 func linkSelfHostAsm(gcc, base, key, asm, binPath string) error {
 	if len(asm) >= nativeLinkMinAsmBytes {
 		if err := withBuildMemory(nativeLinkWeightMB(len(asm)), func() error {
@@ -481,10 +485,22 @@ func linkSelfHostAsm(gcc, base, key, asm, binPath string) error {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
 	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		return fmt.Errorf("gcc: %w\n%s", err, out)
+	gccLink := func() error {
+		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+			return fmt.Errorf("gcc: %w\n%s", err, out)
+		}
+		return nil
 	}
-	return nil
+	// Big-asm gcc links (today: every stage-2 self-compile — the self-host
+	// x86-64 emitter writes AT&T syntax, which the Intel-only native
+	// assembler rejects, so the native attempt above always falls through
+	// for them) run GNU `as` at multi-GB RSS. Reserve the estimated peak so
+	// the link can't stack with a concurrent driver build's peak — this
+	// link had NO reservation historically. Small links stay unreserved.
+	if len(asm) >= nativeLinkMinAsmBytes {
+		return withBuildMemory(gccBigLinkWeightMB(len(asm)), gccLink)
+	}
+	return gccLink()
 }
 
 // copyExecutable links (preferably) or copies src to dst with 0755 perms.

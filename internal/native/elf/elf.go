@@ -196,7 +196,24 @@ func StaticExecutableDataX86WX(text, data []byte) []byte {
 }
 
 func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
-	return imageWX(text, data, machine)
+	return imageWX(text, data, machine, 0)
+}
+
+// StaticExecutableDataWXEntry is StaticExecutableDataWX with an explicit
+// entry point: entryOff is the byte offset of the entry instruction within
+// .text (e_entry = TextVAddrWX + entryOff). The offset-0 default assumes
+// `_start` is the first thing in .text — true for the Go backends' output,
+// but the SELF-HOST emitters place `_start` after other functions, so a
+// binary linked from their asm with entry 0 starts executing mid-function
+// and crashes. arm64 (EM_AARCH64).
+func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
+	return imageWX(text, data, emAArch64, entryOff)
+}
+
+// StaticExecutableDataX86WXEntry is the x86-64 sibling of
+// StaticExecutableDataWXEntry (EM_X86_64).
+func StaticExecutableDataX86WXEntry(text, data []byte, entryOff uint64) []byte {
+	return imageWX(text, data, emX86_64, entryOff)
 }
 
 // imageWX emits an ELF header (e_phnum = 2) + two PT_LOAD program headers
@@ -205,13 +222,13 @@ func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
 // R+W. File offsets equal virtual-address offsets (both measured from
 // baseVAddr) so the page-aligned data offset is congruent to its load
 // address mod the page size — what mmap requires.
-func imageWX(text, data []byte, machine uint16) []byte {
+func imageWX(text, data []byte, machine uint16, entryOff uint64) []byte {
 	const headers = ehSize + 2*phSize        // 64 + 112 = 176
 	textEnd := uint64(headers + len(text))   // end of the R+X segment
 	dataOff := pageUpFor(textEnd, machine)   // file offset == vaddr offset of data
 	codeVAddr := uint64(baseVAddr)           // headers + .text
 	dataVAddr := uint64(baseVAddr) + dataOff // .rodata + writable globals
-	entry := uint64(TextVAddrWX)             // first instruction of .text
+	entry := uint64(TextVAddrWX) + entryOff  // entry instruction within .text
 	codeSz := textEnd                        // headers + .text live in one segment
 	dataSz := uint64(len(data))              // p_memsz: the full segment (incl. .bss)
 	// .bss is materialised as trailing zero bytes in `data`, and a PT_LOAD with

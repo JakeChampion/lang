@@ -508,6 +508,17 @@ func SXTB(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 7) }
 func SXTH(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 15) }
 func SXTW(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 31) }
 
+// UXTB / UXTH: zero-extend byte / halfword — aliases of the 32-bit UBFM
+// (`ubfm wd, wn, #0, #7|#15`; sf=0 opc=10 → base 0x53000000, immr=0).
+// Writing a W destination zeroes the upper 32 bits, so the full X
+// register holds the zero-extended value.
+func UXTB(rd, rn uint32) uint32 {
+	return 0x53001C00 | ((rn & regMask) << 5) | (rd & regMask)
+}
+func UXTH(rd, rn uint32) uint32 {
+	return 0x53003C00 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // UBFX / SBFX encode `<op> Xd, Xn, #lsb, #width` — extract a width-bit
 // field starting at bit lsb, zero- (UBFX) or sign- (SBFX) extended.
 // UBFM/SBFM aliases with imms = lsb + width - 1.
