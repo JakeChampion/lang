@@ -3748,10 +3748,11 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
         },
         // Nested read `m[i][j]`: the outer array here is `m[i]` (an ExprIndex over
         // a T[][] slot). Its element width is the arrarr slot's recorded inner
-        // kind — "i64" (covers u64[][] too) selects the 8-byte arr_get_i64. #2691.
+        // kind — "i64" or "u64" both select the 8-byte arr_get_i64 (the
+        // unsigned-ness is recovered separately by expr_is_u64). #2691 / #5206.
         parser.ExprIndex(ix2) => {
             match (ix2.array) {
-                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)) == "i64"; },
+                parser.ExprIdent(aid) => { var ae: string = s.arrarr_elem_of_slot(s.slot_of(aid.name)); return ae == "i64" || ae == "u64"; },
                 _ => { return false; }
             }
             return false;
@@ -3839,11 +3840,12 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
             return !expr_is_f64(lit.elements[0], s) && infer_expr_width(lit.elements[0], s) == 64;
         },
         parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
-        // `m[i]` over an i64[][] slot is itself an i64[] (so `var r = m[i]` tracks
-        // r as i64[] and its `r[j]` reads 8-byte). #2691.
+        // `m[i]` over an i64[][] or u64[][] slot is itself an 8-byte-element
+        // array (so `var r = m[i]` tracks r for 8-byte `r[j]` reads). #2691 /
+        // #5206 — the width is shared; expr_is_u64 recovers the u64 sign.
         parser.ExprIndex(ix2) => {
             match (ix2.array) {
-                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)) == "i64"; },
+                parser.ExprIdent(aid) => { var ae: string = s.arrarr_elem_of_slot(s.slot_of(aid.name)); return ae == "i64" || ae == "u64"; },
                 _ => { return false; }
             }
             return false;
@@ -4071,8 +4073,8 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
 // expr_is_u64arr reports whether `e` is a u64[] ARRAY value — a u64[] ident slot
 // (is_arr + is_u64), a u64-element array LITERAL, or a slice of either. Drives the
 // element-index unsigned tracking in expr_is_u64's ExprIndex arm (the u64 sibling
-// of expr_is_i64arr, tightened to the ident/literal/slice forms u64-ness is
-// tracked for — a u64[][] inner element is NOT distinguished at the arrarr layer).
+// of expr_is_i64arr). A u64[][] inner element is tracked separately at the arrarr
+// layer (arrarr_elem == "u64"), which expr_is_u64's nested-index arm checks (#5206).
 pub function expr_is_u64arr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprArray(lit) => { return lit.elements.len() > 0 && expr_is_u64(lit.elements[0], s); },
@@ -4089,11 +4091,19 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
         parser.ExprIndex(ix) => {
             match (ix.array) {
                 parser.ExprIdent(aid) => { return s.is_u64_slot(s.slot_of(aid.name)); },
+                // Nested index of a u64[][] (`m[i][j]`): the inner array `m[i]`
+                // names a u64[][] slot whose arrarr layer now records "u64", so a
+                // chained `>> 1` / `> x` selects shr_u / gt_u. #5206.
+                parser.ExprIndex(inner) => {
+                    match (inner.array) {
+                        parser.ExprIdent(aid2) => { return s.arrarr_elem_of_slot(s.slot_of(aid2.name)) == "u64"; },
+                        _ => { return false; }
+                    }
+                    return false;
+                },
                 // Direct index of a u64[] LITERAL (`[big, …][i]`) or a u64[] SLICE
                 // (`a[lo:hi][i]`): the element is u64, so a chained `>> 1` / `> x`
-                // selects shr_u / gt_u. Mirrors arr_index_is_i64's width arms; a
-                // u64[][] nested index (`m[i][j]`) is NOT covered — the arrarr
-                // layer records only the i64 width, not the u64 sign.
+                // selects shr_u / gt_u. Mirrors arr_index_is_i64's width arms.
                 parser.ExprArray(al) => { return al.elements.len() > 0 && expr_is_u64(al.elements[0], s); },
                 parser.ExprSlice(sl2) => { return expr_is_u64arr(sl2.array, s); },
                 _ => { return false; }
@@ -11729,14 +11739,22 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (is_arrarr) {
         if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])) {
             var innr: str = v.type_name[0 : v.type_name.len() - 4];
-            if (innr == "i64" || innr == "u64") { arrarr_e = "i64"; }
+            // "u64" is kept DISTINCT from "i64" so a nested read m[i][j] chained
+            // in an unsigned op selects shr_u / lt_u (#5206); both still route
+            // the 8-byte WIDTH load via arr_index_is_i64 (which accepts "u64").
+            if (innr == "i64") { arrarr_e = "i64"; }
+            if (innr == "u64") { arrarr_e = "u64"; }
             if (innr == "f64") { arrarr_e = "f64"; }
             if (innr == "string") { arrarr_e = "string"; }
         }
         match (v.init) {
             parser.ExprArray(aarr2) => {
                 if (aarr2.elements.len() > 0) {
-                    if (expr_is_i64arr(aarr2.elements[0], se)) { arrarr_e = "i64"; }
+                    // Don't let the literal-first-element i64 probe DOWNGRADE a
+                    // u64[][] annotation to "i64": a bare wide literal element
+                    // (`[big, 1]`) reads i64arr but the annotation already
+                    // recorded the unsigned sign (#5206).
+                    if (arrarr_e != "u64" && expr_is_i64arr(aarr2.elements[0], se)) { arrarr_e = "i64"; }
                     if (expr_is_f64arr(aarr2.elements[0], se)) { arrarr_e = "f64"; }
                     if (expr_is_strarr(aarr2.elements[0], se)) { arrarr_e = "string"; }
                 }
