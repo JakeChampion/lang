@@ -24,8 +24,17 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > existing `__load_i64` for the i64 `tv_sec`/`tv_nsec` read-back. What remains
 > hand-written (the residue tracked by
 > [#2649](https://github.com/JakeChampion/lang/issues/2649)) is `read_file` + the
-> fs family, the syscall leaves on arm64/AST/wasm, `__fern_alloc` itself, and the
-> map/array mutator core.
+> rest of the fs family, the syscall leaves on arm64/AST/wasm, `__fern_alloc`
+> itself, and the map/array mutator core.
+>
+> **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
+> first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
+> it lowers as a Fern function (`asmcore.rt_src_stat`): `stat(2)` into
+> `__raw_scratch`, read `st_mode`/`st_size` with `__load_i32`/`__load_i64`, then
+> build `Ok(FileStat{...})` / `Err(NotFound(_))`. This proves a runtime helper
+> compiled via `emit_ir_runtime_fern_fn` can construct user structs/enums (it
+> receives `all_structs`), which is the capability `read_file` and the rest of
+> the fs family need.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,

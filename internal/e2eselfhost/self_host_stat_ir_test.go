@@ -16,9 +16,11 @@ import (
 // (__fern_stat) but no IR lowering, so a program using it bailed `BAIL call[stat]`
 // -> AST, dragging the `batch7` test module (std/test's assert_is_file /
 // assert_is_dir / assert_file_size) to the legacy emitter (#3457). It now lowers
-// to op_stat -> the same __fern_stat runtime the AST path calls (x86 transcribed,
-// with FileStat pre-interned via shape_ref before the literal pool; arm64 reuses
-// asm_arm64's heap-block runtime).
+// to op_stat -> __fn___fern_stat, which on x86-64 is now a Fern runtime function
+// (#2649: asmcore.rt_src_stat — stat(2) via __syscall3 into __raw_scratch, then
+// build Ok(FileStat{...}) / Err(NotFound(_))); arm64/AST keep the hand-asm
+// __fern_stat (FileStat pre-interned via shape_ref). `Contains(asm, "__fern_stat")`
+// still holds — __fn___fern_stat contains it as a substring.
 //
 // This is the first struct-RESULT builtin on the IR path: the match arm
 // `Ok(s) => s.is_file` binds `s` as a FileStat struct and the field reads resolve
