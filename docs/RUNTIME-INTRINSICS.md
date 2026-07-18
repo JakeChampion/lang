@@ -31,9 +31,12 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
 > it lowers as a Fern function (`asmcore.rt_src_stat`): `stat(2)` into
 > `__raw_scratch`, read `st_mode`/`st_size` with `__load_i32`/`__load_i64`, then
-> build `Ok(FileStat{...})` / `Err(NotFound(_))`. This proves a runtime helper
-> compiled via `emit_ir_runtime_fern_fn` can construct user structs/enums (it
-> receives `all_structs`), which is the capability `read_file` and the rest of
+> build `Ok(FileStat{...})` or, on failure, the errno-mapped `IoError` variant
+> (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
+> `EINTR→Interrupted`, else `Other`) — the same mapping native's `__fern_io_error`
+> and the arm64 hand-asm use. This proves a runtime helper compiled via
+> `emit_ir_runtime_fern_fn` can construct user structs **and multi-variant enums**
+> (it receives `all_structs`), which is the capability `read_file` and the rest of
 > the fs family need. **`read_file` followed** (`asmcore.rt_src_read_file` →
 > `Result[string, IoError]`): openat/lseek/read/close via `__syscall3`, the sized
 > read buffer becomes the `Ok(string)`. It reads the whole file in ONE `read`

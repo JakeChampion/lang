@@ -26,6 +26,17 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 	if err := os.WriteFile(okPath, []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write ok file: %v", err)
 	}
+	// A regular file used as a directory component makes stat(2) fail with
+	// ENOTDIR (20) — a non-ENOENT errno that must classify as Other, not
+	// NotFound. This is the regression guard for stat's errno→IoError mapping:
+	// the x86-64 IR path's Fern __fern_stat maps the full errno set (matching
+	// native + the arm64 hand-asm), where an earlier cut flattened every
+	// failure to NotFound. Root-safe (ENOTDIR isn't a permission check).
+	regFile := filepath.Join(t.TempDir(), "reg.txt")
+	if err := os.WriteFile(regFile, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write reg file: %v", err)
+	}
+	notDir := regFile + "/child"
 	return []ioErrorCase{
 		// The issue's repro: matching the Err payload's variant.
 		{"notfound-variant", `function main(): i32 { match (read_file("/nonexistent-fern-probe")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } } } return 0; }`, 2},
@@ -41,6 +52,10 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		{"writefile-ok-control", `function main(): i32 { match (write_file("` + filepath.Join(t.TempDir(), "out.txt") + `", "hi")) { Some(_) => { return 90; }, None => { return 1; } } return 0; }`, 1},
 		// stat / remove_file error payloads (the same NULL-payload class).
 		{"stat-notfound-payload-len", `function main(): i32 { match (stat("/nonexistent-fern-probe")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, 23},
+		// stat ENOTDIR (non-ENOENT errno) → Other, NOT NotFound. Guards the full
+		// errno→IoError mapping in the Fern __fern_stat (x86-64 IR); matches native
+		// interp + the arm64 hand-asm.
+		{"stat-notdir-is-other", `function main(): i32 { match (stat("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
 		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
 	}
 }
