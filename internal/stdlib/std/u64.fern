@@ -238,3 +238,25 @@ pub function (n: u64) byte_swap(): u64 {
     }
     return r;
 }
+
+// `bit(i)` / `set_bit(i)` / `clear_bit(i)` / `toggle_bit(i)` — read /
+// set / clear / flip bit `i` (0 = LSB), the unsigned 64-bit siblings of
+// std/i32's accessors. Out-of-range `i` (< 0 or >= 64) reads false /
+// returns `n`.
+pub function (n: u64) bit(i: i32): boolean {
+    if (i < 0 || i >= 64) { return false; }
+    return (n & ((1 as u64) << (i as u64))) != (0 as u64);
+}
+pub function (n: u64) set_bit(i: i32): u64 {
+    if (i < 0 || i >= 64) { return n; }
+    return n | ((1 as u64) << (i as u64));
+}
+pub function (n: u64) clear_bit(i: i32): u64 {
+    if (i < 0 || i >= 64) { return n; }
+    var inv: u64 = (((0 as i64) - (1 as i64)) as u64) ^ ((1 as u64) << (i as u64));
+    return n & inv;
+}
+pub function (n: u64) toggle_bit(i: i32): u64 {
+    if (i < 0 || i >= 64) { return n; }
+    return n ^ ((1 as u64) << (i as u64));
+}

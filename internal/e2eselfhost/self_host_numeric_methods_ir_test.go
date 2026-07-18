@@ -150,6 +150,31 @@ function main(): i32 {
     if (u64_bswap(u64_bswap(123456789 as u64)) == (123456789 as u64)) { r = r + 12; }
     return r;
 }`},
+	// Single-bit accessors (the std/i64 · u32 · u64 additions): read / set /
+	// clear a bit via shift/mask over u64 lanes, incl. the top-bit path.
+	// ==/!=-only, oracle-checked. Four hits → 42.
+	{"int-bit-accessors", `function i64_bit(n: i64, i: i32): boolean {
+    if (i < 0 || i >= 64) { return false; }
+    var mask: u64 = (1 as u64) << (i as u64);
+    return ((n as u64) & mask) != (0 as u64);
+}
+function i64_set(n: i64, i: i32): i64 {
+    if (i < 0 || i >= 64) { return n; }
+    return ((n as u64) | ((1 as u64) << (i as u64))) as i64;
+}
+function i64_clear(n: i64, i: i32): i64 {
+    if (i < 0 || i >= 64) { return n; }
+    var inv: u64 = (((0 as i64) - (1 as i64)) as u64) ^ ((1 as u64) << (i as u64));
+    return ((n as u64) & inv) as i64;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i64_bit(5 as i64, 0)) { r = r + 10; }
+    if (!i64_bit(5 as i64, 1)) { r = r + 10; }
+    if (i64_set(0 as i64, 3) == (8 as i64)) { r = r + 10; }
+    if (i64_clear(15 as i64, 1) == (13 as i64)) { r = r + 12; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
