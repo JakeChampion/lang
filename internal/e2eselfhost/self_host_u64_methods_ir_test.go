@@ -43,6 +43,14 @@ function main(): i32 { var n: u64 = 4294967296 as u64; if (n.to_string() == "429
 	// to_string of a high-bit-set value (> 2^63, 20 digits) — exact match.
 	{"to_string-highbit", `import "std/u64";
 function main(): i32 { var n: u64 = 18000000000000000007 as u64; if (n.to_string() == "18000000000000000007") { return 42; } return n.to_string().len(); }`},
+	// A USER struct method RETURNING u64, chained directly in an unsigned op
+	// where the call is the sole u64 operand (`p.big() >> 57`). expr_is_u64
+	// gained an ExprFieldAccess arm (the method sibling of the concrete-free-fn
+	// #5172 and IIFE cases) so the shift stays unsigned: 0xF9CCD8A1C5080000 >> 57
+	// is 124 unsigned, 252 (sign-extended low byte) signed.
+	{"user-method-u64-shift", `struct P { n: u64 }
+impl P { function big(self: Self): u64 { return self.n; } }
+function main(): i32 { var p: P = P { n: 18000000000000000000 as u64 }; return (p.big() >> 57) as i32; }`},
 }
 
 func TestSelfHostU64MethodsIR(t *testing.T) {
