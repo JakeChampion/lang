@@ -15625,6 +15625,20 @@ function cross_recipient_fields_fresh(slit: parser.ExprStructLit, structs: parse
         } else if (fkt == "fn") {
             // Fresh lambda / __mkclo$ env box only (a bare closure ident may
             // alias a live box the donor-release side would free).
+            var dbg_shape: string = "other";
+            match (slit.field_values[fk]) {
+                parser.ExprLambda(_) => { dbg_shape = "lambda"; },
+                parser.ExprCall(dc) => {
+                    dbg_shape = "call";
+                    match (dc.callee) {
+                        parser.ExprIdent(dcid) => { dbg_shape = "call:" + dcid.name; },
+                        _ => { dbg_shape = "call-nonident"; }
+                    }
+                },
+                parser.ExprIdent(did) => { dbg_shape = "ident:" + did.name; },
+                _ => {}
+            }
+            print("CRFF-DBG fld=" + slit.field_names[fk] + " fkt=" + fkt + " shape=" + dbg_shape);
             if (!fn_field_value_is_fresh(slit.field_values[fk])) { return false; }
         }
         fk = fk + 1;
