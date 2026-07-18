@@ -26,10 +26,17 @@ This language started TypeScript-flavoured (the syntax for functions, `var`,
 `if/else`, struct literals, etc. all came from TS) but **that's no longer the
 target**. It's evolving into its own thing. When designing new features —
 syntax, type system, error handling, stdlib shape — feel free to look beyond
-TS for inspiration. The stated use cases are small fast-startup CLI tools and
-short-lived edge-function-style HTTP servers, so cribbing from Roc, MoonBit,
-Rust, Zig, Go is more productive than reaching for TS conventions when they
-don't fit.
+TS for inspiration. Fern is now a **general-purpose** language: the two
+workloads it grew up around — small fast-startup CLI tools and short-lived
+edge-function-style HTTP servers — remain the places it's most polished,
+but they're no longer the boundary of what it's for. Long-running,
+allocation-heavy programs are in scope too (the self-hosted compiler is the
+proof: it's exactly such a program, and it's what drove the move from
+arena-and-forget to reference counting). Cribbing from Roc, MoonBit, Rust,
+Zig, Go is more productive than reaching for TS conventions when they don't
+fit — and when a design choice trades general-purpose fitness for a
+narrow edge/CLI optimisation, weigh that trade explicitly rather than
+assuming short-lived-process semantics.
 
 Concretely: don't justify a design choice with "this is how TS does it" if a
 better shape exists. Treat the existing TS-shaped surface as historical, not

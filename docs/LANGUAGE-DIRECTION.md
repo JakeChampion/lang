@@ -6,7 +6,12 @@ each phase lands.
 
 ## Positioning
 
-Two target use cases, both short-lived:
+Fern is a **general-purpose** language. It grew up around two
+short-lived workloads it's especially good at, and those remain the
+places it's most polished — but they're no longer the boundary of
+what it targets.
+
+The two workloads it grew up around:
 
 - **CLI tools** with fast startup (cold-start measured in
   milliseconds, not seconds).
@@ -16,9 +21,30 @@ Two target use cases, both short-lived:
   sealed at end of scope.
 
 Both share a memory profile: programs allocate freely, then the
-whole address space tears down. Means we can lean on a bump
-allocator (no free, no GC), and design slices/views to share the
-arena's lifetime instead of carrying ownership.
+whole address space tears down. That profile is what *originally*
+justified leaning on a bump allocator (no free, no GC) and designing
+slices/views to share a scope's lifetime instead of carrying
+ownership.
+
+**But that assumption no longer bounds the language.** The clearest
+proof is the self-hosted compiler: a long-running, allocation-heavy
+program that is neither a CLI one-shot nor a per-request handler.
+Building it is exactly what forced Fern past the arena-and-forget
+model into runtime reference counting with a Perceus-style elision
+pass (see the "Roc's runtime refcounting" reversal below, and
+`RC-PERCEUS-PLAN.md`). So Fern now carries **two memory models** —
+scope-scoped RC for the general case, with the short-lived
+edge/CLI shapes reclaimed by the same RC rather than a special
+arena — and general-purpose, long-running programs are a first-class
+target, not an off-label use.
+
+Practical consequence for design work: when a feature would trade
+general-purpose fitness for a narrow edge/CLI optimisation (leaking
+because "the process exits soon", assuming single-threaded, assuming
+no cycles), weigh that trade explicitly instead of assuming
+short-lived-process semantics. The edge/CLI niche stays a design
+*center of gravity* — the workloads we tune hardest for — not a
+*ceiling*.
 
 The historical TS-flavoured surface (`var`, `T[]`, `if/else`) was a
 starting point, not a constraint. From here we look at Roc, MoonBit,

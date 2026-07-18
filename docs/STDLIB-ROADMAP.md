@@ -5,9 +5,13 @@ MoonBit, Gleam, Elixir, Go, Zig — and proposes a prioritised
 list of stdlib additions for Fern. Companion to
 `ROADMAP-AND-SELF-HOSTING.md` and `LANGUAGE-DIRECTION.md`.
 
-Fern's target use cases are small fast-startup CLI tools and
-short-lived edge-function-style HTTP servers. The picks below
-favour those over general-purpose breadth.
+Fern is a general-purpose language whose two sweet spots are small
+fast-startup CLI tools and short-lived edge-function-style HTTP
+servers. The picks below are ordered by leverage for those two
+workloads first — that's where the stdlib is most complete — but
+general-purpose breadth is now in scope rather than something to
+trade away, so a broadly useful primitive is no longer disqualified
+just because it isn't edge/CLI-specific.
 
 ## Current state
 

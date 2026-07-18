@@ -55,7 +55,7 @@ export default defineConfig({
         alt: "Fern",
       },
       description:
-        "Fern — a small, fast-startup language with native arm64 / x86-64 / wasm backends.",
+        "Fern — a small, general-purpose, fast-startup language with native arm64 / x86-64 / wasm backends.",
       // Register Fern's own TextMate grammar (loaded above) so ```fern
       // fences get language-accurate highlighting — method receivers,
       // `match`, sized integer types, generics, f-strings, and the

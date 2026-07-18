@@ -6,9 +6,12 @@
 [standard library](https://jakechampion.github.io/lang/stdlib/) ·
 [playground](https://jakechampion.github.io/lang/playground/))
 
-Fern is a small statically-typed language with several backends, written
-in Go, built for fast-startup CLI tools and short-lived edge-function HTTP
-servers. Targets so far:
+Fern is a small statically-typed, general-purpose language with several
+backends, written in Go. It grew up around two workloads it's especially
+good at — fast-startup CLI tools and short-lived edge-function HTTP
+servers — and is broadening out from there into a language you can reach
+for generally, including long-running programs (its own self-hosted
+compiler among them). Targets so far:
 
 - **ARM64 / aarch64** Linux ELF — the **default** target (Raspberry Pi 4+,
   AWS Graviton, Android, qemu-aarch64). Assembled and linked **in-process**
