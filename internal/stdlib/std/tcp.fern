@@ -15,7 +15,10 @@
 // Per-connection lifecycle:
 //   1. tcp_recv up to 8192 bytes (matches http_parse_request's
 //      header-size cap) plus body bytes via a follow-up recv
-//      loop driven by Content-Length.
+//      loop driven by Content-Length — the whole read bounded
+//      by a per-request deadline (default 10 s; see
+//      `tcp_serve_deadline` / `tcp_recv_deadline`) so a
+//      slow-loris client can't pin the accept loop.
 //   2. http_parse_request — return None ⇒ close the socket
 //      without a response (HTTP/1.1 §10 explicitly allows
 //      server-side reset on malformed input).
@@ -44,12 +47,75 @@ import "std/headers";
 // lines (the raw exit code, straight to stderr).
 import "core/int";
 
+// __recv_deadline_default() — default per-request read deadline for the
+// serve loops (10 s): the whole request (headers + body) must arrive
+// within this window or the connection is closed without a response.
+// This is the slow-loris guard — without it one client trickling bytes
+// pins the single-threaded accept loop forever. `tcp_serve_deadline`
+// takes a caller-chosen value.
+function __recv_deadline_default(): i32 {
+    return 10000;
+}
+
 pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    return tcp_serve_deadline(port, handler, __recv_deadline_default());
+}
+
+// tcp_serve_deadline(port, handler, recv_deadline_ms) — `tcp_serve`
+// with an explicit per-request read deadline (milliseconds). A client
+// that hasn't delivered a complete request within the window is
+// disconnected without a response and the loop moves on.
+pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline_ms: i32): i32 {
     var listener: i32 = tcp_listen(port);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop(listener, handler);
+    return __serve_loop(listener, handler, recv_deadline_ms);
+}
+
+// tcp_recv_deadline(fd, max, deadline_ms) — recv up to `max` bytes,
+// waiting at most `deadline_ms` for the socket to become readable.
+// Returns `Some(chunk)` when bytes (or EOF — an empty chunk) arrived in
+// time, `None` when the deadline passed first. This is the
+// recv-with-deadline primitive the serve loop and std/fetch's deadline
+// variants are built on.
+//
+// Portability: the wait is the same poll shape `async.with_deadline`
+// uses — native poll(2) honors the millisecond timeout directly (the
+// appended timer token is -1, ignored); wasm `poll` ignores its timeout
+// argument, so a real timer pollable in the set fires at the deadline.
+// On interp, `poll` is a stub that returns -1 IMMEDIATELY, which is
+// distinguished from a native timeout (which only reports -1 after
+// waiting the window out) by elapsed time: an instant -1 means
+// readiness is unavailable here, and the call degrades to a plain
+// blocking recv — preserving interp behavior at the cost of the
+// deadline.
+pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[string] {
+    var wait_ms: i32 = deadline_ms;
+    if (wait_ms < 1) { wait_ms = 1; }
+    var ns_per_ms: i64 = 1000000;
+    var start_ns: i64 = monotonic_ns();
+    var tok: i32 = tcp_pollable(fd);
+    var timer: i32 = wasm_timer_pollable((wait_ms as i64) * ns_per_ms);
+    var pollset: i32[] = [tok, timer];
+    var ready: i32 = poll(pollset, wait_ms);
+    var dtimer: i32 = wasm_pollable_drop(timer);
+    var dtok: i32 = wasm_pollable_drop(tok);
+    if (ready == 0) {
+        return Some(tcp_recv(fd, max));
+    }
+    if (ready == 1) {
+        // The timer pollable fired first (wasm) — deadline.
+        return None;
+    }
+    // ready < 0: a native poll(2) only reports this after the wait
+    // elapsed (timeout); an instant -1 is the interp stub (or EINTR /
+    // a poll error), where blocking recv preserves the old behavior.
+    var waited_ns: i64 = monotonic_ns() - start_ns;
+    if (waited_ns * 2 >= (wait_ms as i64) * ns_per_ms) {
+        return None;
+    }
+    return Some(tcp_recv(fd, max));
 }
 
 // __serve_loop — the HTTP/1.1 accept loop factored out of
@@ -60,8 +126,9 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // and any pending connections in it — survives a worker death.
 // Loops forever under normal operation; the i32 return only
 // materialises for the type system (no clean-shutdown channel
-// exposed yet).
-function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+// exposed yet). `recv_deadline_ms` bounds each connection's
+// request read (see `tcp_serve_deadline`).
+function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline_ms: i32): i32 {
     while (true) {
         var fd: i32 = tcp_accept(listener);
         if (fd < 0) {
@@ -94,8 +161,25 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             body: "",
             headers: headers.header_map_new(),
         };
+        var read_start_ns: i64 = monotonic_ns();
+        var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
         while (true) {
-            var chunk: string = tcp_recv(fd, 4096);
+            // Per-request read deadline (slow-loris guard): the whole
+            // request must arrive within `recv_deadline_ms` or the
+            // connection is dropped without a response.
+            var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
+            if (remaining_ms <= 0) {
+                break;
+            }
+            var chunk: string = "";
+            var timed_out: boolean = false;
+            match (tcp_recv_deadline(fd, 4096, remaining_ms)) {
+                Some(c) => { chunk = c; },
+                None => { timed_out = true; },
+            }
+            if (timed_out) {
+                break;
+            }
             if (chunk.len() == 0) {
                 // EOF before request complete.
                 break;
@@ -183,7 +267,7 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
         if (pid == -38) {
             // ENOSYS: no fork on this host. Graceful degradation.
             eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
-            return __serve_loop(listener, handler);
+            return __serve_loop(listener, handler, __recv_deadline_default());
         }
         if (pid < 0) {
             return pid;
@@ -193,7 +277,7 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
             // inherited listener. It never returns under normal
             // operation; if it somehow does, exit with its code
             // rather than falling into a second supervision loop.
-            var rc: i32 = __serve_loop(listener, handler);
+            var rc: i32 = __serve_loop(listener, handler, __recv_deadline_default());
             exit(rc);
             return rc;
         }

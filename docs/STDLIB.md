@@ -613,7 +613,16 @@ serializer.
 
 - `tcp_serve(port, handler)` — HTTP/1.1 accept loop. Calls
   `handler(req: HttpRequest): HttpResponse` once per accepted
-  connection.
+  connection. Each connection's request read is bounded by a
+  10 s deadline (the slow-loris guard).
+- `tcp_serve_deadline(port, handler, recv_deadline_ms)` —
+  `tcp_serve` with an explicit per-request read deadline; a
+  client that hasn't delivered a complete request in time is
+  disconnected without a response.
+- `tcp_recv_deadline(fd, max, deadline_ms): Option[string]` —
+  recv bounded by a readability deadline: `Some(chunk)` in time
+  (empty chunk = EOF), `None` at the deadline. On interp (where
+  `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
   programs can be tuned via `PORT=N ./bin`.
@@ -622,6 +631,29 @@ The raw socket primitives `tcp_listen` / `tcp_accept` / `tcp_recv`
 / `tcp_send` / `tcp_close` are runtime-provided, emitted by
 codegen from extern stubs at module boundary — not declared in
 this module.
+
+### `std/fetch`
+
+Outbound HTTP/1.1 client (the upstream-fetch half of the edge
+use case). Hosts are literal IPv4 (no DNS / TLS yet).
+
+- **Addresses:** `ipv4(a,b,c,d)` / `parse_ipv4(s)` — pack a
+  dotted-quad into the network-byte-order i32 `tcp_connect` wants.
+- **Blocking:** `fetch_raw(host_be, port, request)`,
+  `fetch_get(host_be, port, path)`, `get_url("http://…")` — send
+  and read the whole response ("" on failure).
+- **Deadline-bounded:** `fetch_raw_deadline` /
+  `fetch_get_deadline(host_be, port, path, deadline_ms):
+  Option[string]` — `Some(response)` in time, `None` when the
+  upstream was too slow (connect/send failure is `Some("")`,
+  mirroring `fetch_raw`).
+- **Awaitable:** `fetch_future(host_be, port, path):
+  async.Future[string]` — fan out through `async.gather` /
+  `async.race` / `async.with_deadline`.
+- **Response helpers:** `http_status(resp)`, `http_body(resp)`.
+- **Capability-scoped:** `(plat: Platform).fetch(host, port,
+  path): i32` — status-code GET through the handler's `Platform`
+  bag.
 
 ### `std/headers`
 
