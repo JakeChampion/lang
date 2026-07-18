@@ -34045,8 +34045,20 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 }
                 sc = sc + 1;
             }
+            // Bound names in this function's scope (params + body binders): a
+            // bare fn-name ELEMENT is only an unshadowed module fn when it names
+            // no local/param — mirrors the tuple case's `tbound`. Only needed on
+            // the mixed (has_cap_lam) path.
+            var abound: string[] = [];
+            if (has_cap_lam) {
+                var abp: i32 = 0;
+                while (abp < fd.params.len()) { abound = abound.append(fd.params[abp].name); abp = abp + 1; }
+                var abs: i32 = 0;
+                while (abs < fd.body.len()) { abound = astwalk.collect_bound_stmt(fd.body[abs], abound); abs = abs + 1; }
+            }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
+                var awrapped: boolean = false;
                 match (arr.elements[i]) {
                     parser.ExprLambda(lam) => {
                         if (has_cap_lam) {
@@ -34058,11 +34070,36 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                             var tr: InlineCloRes = try_inline_closure(lam, fd, fs, ct, gfns);
                             fs = tr.funcs; ct = tr.counter; nelems = nelems.append(tr.expr);
                         }
+                        awrapped = true;
                     },
-                    _ => {
-                        var er: InlineCloRes = lift_inline_closures_expr(arr.elements[i], fd, fs, ct, gfns, structs, mfuncs);
-                        fs = er.funcs; ct = er.counter; nelems = nelems.append(er.expr);
-                    }
+                    parser.ExprIdent(aid) => {
+                        // A bare fn-name element in a MIXED closure array (one that
+                        // also holds a capturing lambda, so it dispatches env-first):
+                        // wrap the unshadowed module fn into a `$wrap` env box too, so
+                        // env-first dispatch is valid for it as well — otherwise its
+                        // bare fn pointer is plain-dispatched-as-a-box or box-dispatched-
+                        // as-bare → SIGSEGV. Mirrors the tuple / struct-field ident
+                        // wrapping. Outside a mixed array a named-fn array stays a plain
+                        // fn-pointer array (is_fnarr) — left untouched.
+                        if (has_cap_lam && util.index_of_str(abound, aid.name) < 0) {
+                            var afnok: boolean = false;
+                            var ami: i32 = 0;
+                            while (ami < mfuncs.len()) {
+                                if (mfuncs[ami].name == aid.name && mfuncs[ami].receiver_type.len() == 0 && mfuncs[ami].params.len() > 0) { afnok = true; }
+                                ami = ami + 1;
+                            }
+                            if (afnok) {
+                                var aw: InlineCloRes = try_fn_field_value(arr.elements[i], fd, fs, ct, gfns, mfuncs);
+                                fs = aw.funcs; ct = aw.counter; nelems = nelems.append(aw.expr);
+                                awrapped = true;
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                if (!awrapped) {
+                    var er: InlineCloRes = lift_inline_closures_expr(arr.elements[i], fd, fs, ct, gfns, structs, mfuncs);
+                    fs = er.funcs; ct = er.counter; nelems = nelems.append(er.expr);
                 }
                 i = i + 1;
             }
