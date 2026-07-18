@@ -349,6 +349,39 @@ pub function (n: i64) saturating_mul(other: i64): i64 {
     return p;
 }
 
+// `(n: i64) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
+// or `None` on i64 overflow; the i64 sibling of std/i32's `checked_pow`. i64 has
+// no wider type, so each intermediate product is overflow-tested inline with the
+// same inverse division `checked_mul` uses (`p / base == result` iff the multiply
+// didn't wrap; `base` is non-zero throughout because `n == 0` is handled up
+// front). Negative `exp` returns `None`; `exp == 0` is `Some(1)`. The final base
+// squaring is skipped once the exponent is exhausted, so an exact result never
+// reports a spurious overflow.
+pub function (n: i64) checked_pow(exp: i32): Option[i64] {
+    if (exp < 0) { return None; }
+    if (n == (0 as i64)) {
+        if (exp == 0) { return Some(1 as i64); }
+        return Some(0 as i64);
+    }
+    var result: i64 = 1 as i64;
+    var base: i64 = n;
+    var e: i32 = exp;
+    while (e > 0) {
+        if (e % 2 == 1) {
+            var p: i64 = result * base;
+            if (p / base != result) { return None; }
+            result = p;
+        }
+        e = e / 2;
+        if (e > 0) {
+            var q: i64 = base * base;
+            if (q / base != base) { return None; }
+            base = q;
+        }
+    }
+    return Some(result);
+}
+
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
 // of std/i32's `sqrt_floor`. Newton's method on the wider type, so it stays
 // exact for magnitudes past the i32 range (e.g. `sqrt_floor(10000000000)` is
