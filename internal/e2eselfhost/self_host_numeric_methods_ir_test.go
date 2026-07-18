@@ -550,6 +550,25 @@ function main(): i32 {
     if (i32_sabs(min32) == max32) { r = r + 9; }                   // |MIN| clamps to MAX
     return r;
 }`},
+	// unsigned_abs (the std/i32 · i64 additions): |n| as the same-width unsigned
+	// type, where the one magnitude the signed abs / checked_abs cannot hold —
+	// MIN, whose |n| is 2^(w-1) — fits exactly. Exercises the MIN branch + an
+	// i32 → u32 widening cast + u32 compare on the IR path. Oracle-checked. Four
+	// hits → 42.
+	{"int-unsigned-abs", `function i32_uabs(n: i32): u32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483648 as u32; }
+    if (n < 0) { return (0 - n) as u32; }
+    return n as u32;
+}
+function main(): i32 {
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    if (i32_uabs(0 - 5) == (5 as u32)) { r = r + 10; }
+    if (i32_uabs(7) == (7 as u32)) { r = r + 10; }
+    if (i32_uabs(0) == (0 as u32)) { r = r + 11; }
+    if (i32_uabs(min32) == (2147483648 as u32)) { r = r + 11; }    // |MIN| fits u32
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
