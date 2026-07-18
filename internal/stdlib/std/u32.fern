@@ -193,6 +193,19 @@ pub function (n: u32) overflowing_mul(other: u32): (u32, boolean) {
     return (p as u32, p > (4294967295 as u64));
 }
 
+// `(n: u32) checked_shl(rhs)` / `checked_shr(rhs)` — the unsigned u32 siblings
+// of std/i32's checked shifts: `Some(n << rhs)` / `Some(n >> rhs)`, or `None`
+// when the shift amount is out of range (`rhs < 0` or `rhs >= 32`). `>>` is
+// logical (zero-fill) on the unsigned type.
+pub function (n: u32) checked_shl(rhs: i32): Option[u32] {
+    if (rhs < 0 || rhs >= 32) { return None; }
+    return Some(n << (rhs as u32));
+}
+pub function (n: u32) checked_shr(rhs: i32): Option[u32] {
+    if (rhs < 0 || rhs >= 32) { return None; }
+    return Some(n >> (rhs as u32));
+}
+
 // `(n: u32) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so no negative-input cases; `sqrt_floor(0)` is 0. Exact
 // across the u32 range, e.g. `sqrt_floor(4294836225)` (which is `(2^16 - 1)^2`)
