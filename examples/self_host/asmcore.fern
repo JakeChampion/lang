@@ -348,6 +348,19 @@ pub function rt_src_remove_file(): string {
     return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Some(NotFound(__raw_string(pathz, plen))); } return None; }";
 }
 
+// rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
+// Option[IoError]. NUL-terminate the path, openat(AT_FDCWD, path,
+// O_WRONLY|O_CREAT|O_TRUNC=577, mode=420=0644) — the mode arg is meaningful, so
+// this is the first __syscall4 user. Copy the contents bytes into a buffer and
+// write them in ONE write (single write, no offset-loop, like read_file's single
+// read — regular-file writes complete in one call), close. None on success;
+// on openat failure the errno-mapped IoError variant (matching stat / native's
+// __fern_io_error), the path-carrying variants boxing a FRESH path string.
+// x86-64-only (arch-specific syscall numbers).
+pub function rt_src_write_file(): string {
+    return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { var e: i32 = 0 - fd; if (e == 4) { return Some(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Some(NotFound(ep)); } if (e == 13) { return Some(PermissionDenied(ep)); } if (e == 17) { return Some(AlreadyExists(ep)); } return Some(Other(ep, \"\")); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
+}
+
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
 // 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
@@ -1934,6 +1947,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // Syscall sub-floor (#2649): the raw-memory floor's I/O
                     // sibling. Returns the syscall result as i32.
                     if (id.name == "__syscall3") { return ty_i32(); }
+                    if (id.name == "__syscall4") { return ty_i32(); }
                     // Fixed static scratch buffer for syscall leaves (timespec /
                     // stat) — reused, never freed. Returns the buffer ptr as i32.
                     if (id.name == "__raw_scratch") { return ty_i32(); }

@@ -242,6 +242,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_remove_file",
 			[]string{"\n__fern_remove_file:"},
 		},
+		{
+			// write_file — Option[IoError] leaf (#2649), first __syscall4 user
+			// (openat with O_CREAT mode). Old hand-asm IR body (__fern_write_file:)
+			// gone; op_write_file calls __fn___fern_write_file.
+			"write_file",
+			`function main(): i32 { match (write_file("/tmp/fern-lockin-wf", "x")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			"__fn___fern_write_file",
+			[]string{"\n__fern_write_file:"},
+		},
 	}
 
 	for _, tc := range cases {
