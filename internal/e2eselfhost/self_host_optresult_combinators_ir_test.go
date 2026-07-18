@@ -97,6 +97,21 @@ function main(): i32 {
     if (er.is_err_and(pos)) { r = r + 5; }
     return r;                                  // 15
 }`},
+	// Option.is_none_or: the mirror of is_some_and — None short-circuits to
+	// true. Some(7) satisfies pos → +10; None → +32. 42.
+	{"opt-is_none_or", `
+pub function (o: Option[T]) is_none_or(pred: (T) => boolean): boolean {
+    match (o) { Some(x) => { return pred(x); }, None => { return true; } }
+}
+function pos(x: i32): boolean { return x > 0; }
+function main(): i32 {
+    var a: Option[i32] = Some(7);
+    var n: Option[i32] = None;
+    var r: i32 = 0;
+    if (a.is_none_or(pos)) { r = r + 10; }
+    if (n.is_none_or(pos)) { r = r + 32; }
+    return r;
+}`},
 	// Option.transpose: Option[Result[T,E]] -> Result[Option[T],E].
 	// Nested-match, callback-free — routes IR like flatten. Some(Ok(5))
 	// -> Ok(Some(5)) (+5); Some(Err(9)) -> Err(9) (+9); None -> Ok(None)

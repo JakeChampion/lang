@@ -82,6 +82,15 @@ pub function (o: Option[T]) is_some_and(pred: (T) => boolean): boolean {
     match (o) { Some(x) => { return pred(x); }, None => { return false; } }
 }
 
+// is_none_or reports whether the option is empty OR its value satisfies
+// `pred` — the mirror of `is_some_and`, flipping the empty case to true.
+// Handy for "absent or valid" checks: `port.is_none_or(in_range)` passes
+// when no port was supplied and when the supplied one is in range. `None`
+// short-circuits to true (pred is not called).
+pub function (o: Option[T]) is_none_or(pred: (T) => boolean): boolean {
+    match (o) { Some(x) => { return pred(x); }, None => { return true; } }
+}
+
 // or returns this option if present, else `other` (the eagerly-evaluated
 // counterpart of `or_else`).
 pub function (o: Option[T]) or(other: Option[T]): Option[T] {
