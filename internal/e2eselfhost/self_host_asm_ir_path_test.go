@@ -1215,6 +1215,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// VALUES are non-deterministic, so they ride the IR-only block below.)
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`},
 		{"random-bytes-len-var", `function main(): i32 { var s: string = random_bytes(13); return s.len(); }`},
+		// Clock leaves migrated to Fern on the IR path (#2649). The VALUES are
+		// non-deterministic, but deterministic PROPERTIES (a live clock reads
+		// positive; realtime is past 2023) hold identically on the hand-asm AST
+		// path and the Fern IR helper — the differential proves the IR helper
+		// (via __syscall3 / __raw_scratch / __load_i64 + i64 math) matches.
+		{"monotonic-ns-positive", `function main(): i32 { var a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`},
+		{"now-unix-ms-past-2023", `function main(): i32 { var ms: i64 = now_unix_ms(); if (ms / (1000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`},
+		{"now-ns-past-2023", `function main(): i32 { var ns: i64 = now_ns(); if (ns / (1000000000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`},
+		{"monotonic-ns-nondecreasing", `function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { return 1; } return 0; }`},
 		{"as-bytes-len", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b.len(); }`},
 		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b[0] + b[1] + b[2]; }`},
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); return b[0] + b[1]; }`},

@@ -339,6 +339,26 @@ pub function rt_src_random_bytes(): string {
     return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); __syscall3(318, p, n, 0); return __raw_string(p, n); }";
 }
 
+// rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
+// selects monotonic_ns / now_ns / now_unix_ms. Each reads a `timespec { i64
+// tv_sec; i64 tv_nsec }` from clock_gettime (x86-64 syscall 228) into the fixed
+// static scratch buffer (no per-call leak — the buffer is reused), then does i64
+// math. CLOCK_MONOTONIC = 1, CLOCK_REALTIME = 0. Allocation-free (scratch is
+// static, not heap), so these emit independently of the heap runtime. One
+// compiler function for the three helpers keeps the merged-bundle self-compile
+// under its function budget (#3425). x86-64-only: the clock_gettime syscall
+// number is arch-specific (arm64 = 113), so arm64/AST keep their hand-asm; wasm
+// has no generic syscall.
+pub function rt_src_clock(which: string): string {
+    if (which == "monotonic_ns") {
+        return "function __fern_monotonic_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 1, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
+    }
+    if (which == "now_unix_ms") {
+        return "function __fern_now_unix_ms(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000 as i64) + nsec / (1000000 as i64); }";
+    }
+    return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
+}
+
 pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }
@@ -1872,6 +1892,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // Syscall sub-floor (#2649): the raw-memory floor's I/O
                     // sibling. Returns the syscall result as i32.
                     if (id.name == "__syscall3") { return ty_i32(); }
+                    // Fixed static scratch buffer for syscall leaves (timespec /
+                    // stat) — reused, never freed. Returns the buffer ptr as i32.
+                    if (id.name == "__raw_scratch") { return ty_i32(); }
+                    // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
+                    if (id.name == "__load_i64") { return ty_i64(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }
                     if (id.name == "arg_at") { return ty_string(); }

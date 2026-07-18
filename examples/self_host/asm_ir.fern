@@ -329,71 +329,12 @@ function emit_ir_random_i32(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_monotonic_ns / emit_ir_now_unix_ms append the clock-reading helpers,
-// transcribed verbatim from asm.fern's emit_runtime so the IR path is a
-// byte-compatible drop-in for the AST path's clock builtins. Kept OUT of
-// emit_ir_runtime (heap-gated) — a pure-scalar program that only times
-// something allocates nothing, so its helper must still emit. clock_gettime is
-// x86-64 syscall 228; the kernel writes a `struct timespec { i64 tv_sec; i64
-// tv_nsec }`. Errno is ignored (fixed clock id + stack buffer we control).
-function emit_ir_monotonic_ns(s: asmcore.EmitState): asmcore.EmitState {
-    // monotonic_ns: CLOCK_MONOTONIC=1 → tv_sec*1e9 + tv_nsec.
-    s = s.write("__fern_monotonic_ns:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // timespec
-    s = s.write("    movq $1, %rdi\n");           // CLOCK_MONOTONIC
-    s = s.write("    movq %rsp, %rsi\n");         // &timespec
-    s = s.write("    movq $228, %rax\n");         // clock_gettime
-    s = s.write("    syscall\n");
-    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
-    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
-    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
-function emit_ir_now_unix_ms(s: asmcore.EmitState): asmcore.EmitState {
-    // now_unix_ms: CLOCK_REALTIME=0 → tv_sec*1000 + tv_nsec/1e6.
-    s = s.write("__fern_now_unix_ms:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // timespec
-    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
-    s = s.write("    movq %rsp, %rsi\n");         // &timespec
-    s = s.write("    movq $228, %rax\n");         // clock_gettime
-    s = s.write("    syscall\n");
-    s = s.write("    movq (%rsp), %r10\n");       // tv_sec
-    s = s.write("    imulq $1000, %r10, %r10\n"); // sec * 1000
-    s = s.write("    movq 8(%rsp), %rax\n");      // tv_nsec
-    s = s.write("    movq $0, %rdx\n");
-    s = s.write("    movq $1000000, %rcx\n");
-    s = s.write("    divq %rcx\n");               // rax = nsec / 1e6
-    s = s.write("    addq %r10, %rax\n");
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
-
-// emit_ir_now_ns appends the __fern_now_ns() helper — wall-clock nanoseconds via
-// clock_gettime(CLOCK_REALTIME) → tv_sec*1e9 + tv_nsec (the nanosecond twin of
-// now_unix_ms). Allocation-free, gated on the now_ns need like the siblings.
-function emit_ir_now_ns(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_now_ns:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // timespec
-    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
-    s = s.write("    movq %rsp, %rsi\n");         // &timespec
-    s = s.write("    movq $228, %rax\n");         // clock_gettime
-    s = s.write("    syscall\n");
-    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
-    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
-    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// The clock helpers (__fern_monotonic_ns / _now_unix_ms / _now_ns) are now Fern
+// runtime functions (#2649): asmcore.rt_src_monotonic_ns / _now_unix_ms / _now_ns,
+// lowered through the IR pipeline via emit_ir_runtime_fern_fn in the entry block
+// (need-gated). They read clock_gettime (syscall 228) into the fixed static
+// __fern_scratch buffer via the __syscall3 / __raw_scratch / __load_i64 floor,
+// then do i64 math — no heap, no per-call leak. arm64/AST keep their hand-asm.
 
 // emit_ir_poll appends __fern_poll(%rdi = i32[] box ptr, %rsi = timeout_ms) ->
 // i32 index of the first POLLIN-ready fd, or -1. Mirrors the native poll(2)
@@ -2280,7 +2221,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r14\n");
         s = s.write("    pushq %r15\n");
         s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    call __fern_monotonic_ns\n");
+        // monotonic_ns is now the Fern-compiled __fn___fern_monotonic_ns (#2649);
+        // 0-arg, i64 result in %rax, so the register-ABI call is unchanged in shape.
+        // temp_dir's op handler marks the monotonic_ns need, so the symbol is present.
+        s = s.write("    call __fn___fern_monotonic_ns\n");
         s = s.write("    movq %rax, %r15\n");
         s = s.write("    movq 8(%rbx), %r12\n");
         s = s.write("    leaq 27(%r12), %rdi\n");
@@ -4251,7 +4195,13 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // __fn___fern_random_bytes (#2649). Both listed during the transition —
         // a .globl of an undefined symbol is a harmless no-op per backend.
         "__fern_random_bytes", "__fn___fern_random_bytes",
-        "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
+        // clocks (#2649): register-ABI symbols kept for arm64/AST (hand-asm); the
+        // x86-64 IR path defines the Fern-compiled __fn___fern_*_ns. Both listed
+        // during the transition (a .globl of an undefined symbol is a no-op).
+        // (__fern_now_unix_ms is already listed below.)
+        "__fern_monotonic_ns", "__fern_now_ns",
+        "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
+        "__fern_poll",
         "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
@@ -4685,6 +4635,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // top). System V syscall convention — nr→%rax, a1→%rdi, a2→%rsi,
             // a3→%rdx, `syscall`, result in %rax. No runtime symbol.
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    popq %rax\n    syscall\n    pushq %rax\n");
+        } else if (o.kind_tag == 205) {  // raw_scratch
+            // [n] → the fixed static scratch buffer's address (#2649). n is a
+            // hint; discard it and push &__fern_scratch (reused, never freed).
+            s = s.write("    popq %rax\n    leaq __fern_scratch(%rip), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern the bytes in .rodata, build an rc-headered box
             // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
@@ -4718,16 +4672,16 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
         } else if (o.kind_tag == 182) {  // monotonic_ns
-            // no operands; __fern_monotonic_ns() -> i64 in %rax.
-            s = s.write("    call __fern_monotonic_ns\n    pushq %rax\n");
+            // no operands; Fern-compiled __fn___fern_monotonic_ns() -> i64 in %rax (#2649).
+            s = s.write("    call __fn___fern_monotonic_ns\n    pushq %rax\n");
             s = s.need("monotonic_ns");
         } else if (o.kind_tag == 184) {  // now_unix_ms
-            // no operands; __fern_now_unix_ms() -> i64 in %rax.
-            s = s.write("    call __fern_now_unix_ms\n    pushq %rax\n");
+            // no operands; Fern-compiled __fn___fern_now_unix_ms() -> i64 in %rax (#2649).
+            s = s.write("    call __fn___fern_now_unix_ms\n    pushq %rax\n");
             s = s.need("now_unix_ms");
         } else if (o.kind_tag == 183) {  // now_ns
-            // no operands; __fern_now_ns() -> i64 in %rax.
-            s = s.write("    call __fern_now_ns\n    pushq %rax\n");
+            // no operands; Fern-compiled __fn___fern_now_ns() -> i64 in %rax (#2649).
+            s = s.write("    call __fn___fern_now_ns\n    pushq %rax\n");
             s = s.need("now_ns");
         } else if (o.kind_tag == 187) {  // poll
             // operand stack [fds, timeout]; __fern_poll(%rdi=fds box ptr,
@@ -6633,11 +6587,28 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
-    // Clock helpers: allocation-free, so emitted independently of the heap
-    // runtime (a clock-only program is heap-free), like random_i32.
-    if (s.has_need("monotonic_ns")) { s = emit_ir_monotonic_ns(s); }
-    if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
-    if (s.has_need("now_ns")) { s = emit_ir_now_ns(s); }
+    // Clock helpers: now Fern runtime functions (#2649), lowered through the IR
+    // pipeline. Allocation-free (they read clock_gettime into the fixed static
+    // __fern_scratch buffer, not the heap), so emitted independently of the heap
+    // runtime like random_i32. The scratch buffer is emitted once here (in .bss)
+    // when any scratch user is needed, then the helpers in .text. x86-64-only:
+    // the clock_gettime syscall number is arch-specific — arm64/AST keep their
+    // hand-asm. The op_*_ns handlers call the stack-ABI __fn___fern_*_ns symbols.
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns")) {
+        s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
+    }
+    if (s.has_need("monotonic_ns")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns"), all_structs, s);
+    }
+    if (s.has_need("now_unix_ms")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms"), all_structs, s);
+    }
+    if (s.has_need("now_ns")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns"), all_structs, s);
+    }
     if (s.has_need("poll")) { s = emit_ir_poll(s); }
     if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }

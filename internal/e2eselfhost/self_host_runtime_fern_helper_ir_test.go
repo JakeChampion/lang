@@ -190,6 +190,28 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_random_bytes",
 			[]string{"\n__fern_random_bytes:"},
 		},
+		{
+			// monotonic_ns — clock leaf migrated to Fern (#2649) over the
+			// __syscall3 / __raw_scratch / __load_i64 floor. The old hand-asm
+			// IR body (__fern_monotonic_ns:) must be gone; op_monotonic_ns now
+			// calls __fn___fern_monotonic_ns.
+			"monotonic_ns",
+			`function main(): i32 { var a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			"__fn___fern_monotonic_ns",
+			[]string{"\n__fern_monotonic_ns:"},
+		},
+		{
+			"now_unix_ms",
+			`function main(): i32 { var a: i64 = now_unix_ms(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			"__fn___fern_now_unix_ms",
+			[]string{"\n__fern_now_unix_ms:"},
+		},
+		{
+			"now_ns",
+			`function main(): i32 { var a: i64 = now_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			"__fn___fern_now_ns",
+			[]string{"\n__fern_now_ns:"},
+		},
 	}
 
 	for _, tc := range cases {

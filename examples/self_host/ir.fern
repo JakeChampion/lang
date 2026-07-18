@@ -390,6 +390,13 @@ pub function op_raw_string(): Op { return op0("raw_string"); }
 // read_file) are written against so they can move off hand-asm into Fern.
 // Unsafe / unchecked / `__`-prefixed, like the `__raw_*` intrinsics.
 pub function op_syscall3(): Op { return op0("syscall3"); }
+// raw_scratch (#2649 syscall sub-floor, clocks slice): pops [n] → a fixed
+// static (.bss) scratch buffer ptr — the buffer the syscall leaves hand the
+// kernel to write into (timespec, stat), reused/never-freed so no per-call leak
+// (the hand-asm used a stack buffer). `n` is a size hint; the buffer is fixed.
+// Non-reentrant: a leaf helper must finish reading it before another runs.
+// (The i64 read-back of tv_sec/tv_nsec reuses the existing __load_i64/op_load_i64.)
+pub function op_raw_scratch(): Op { return op0("raw_scratch"); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -1216,6 +1223,7 @@ function kind_id_4(name: string): i32 {
     if (name == "writer_write") { return 202; }
     if (name == "open_file") { return 203; }
     if (name == "syscall3") { return 204; }
+    if (name == "raw_scratch") { return 205; }
     return 0;
 }
 
@@ -1449,6 +1457,7 @@ function kind_name_4(id: i32): string {
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
     if (id == 204) { return "syscall3"; }
+    if (id == 205) { return "raw_scratch"; }
     return "invalid";
 }
 

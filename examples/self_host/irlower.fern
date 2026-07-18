@@ -6599,6 +6599,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sc3.ok) { return sc3; }
                         return sc3.emit(ir.op_syscall3());
                     }
+                    // __raw_scratch(n) — fixed static scratch buffer ptr (#2649).
+                    if (cid.name == "__raw_scratch" && c.args.len() == 1) {
+                        var rsc: LowerState = lower_expr(c.args[0], s);
+                        if (!rsc.ok) { return rsc; }
+                        return rsc.emit(ir.op_raw_scratch());
+                    }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).
                     if (cid.name == "exit" && c.args.len() == 1) {
