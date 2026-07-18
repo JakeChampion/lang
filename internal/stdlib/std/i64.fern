@@ -476,6 +476,17 @@ pub function (n: i64) checked_abs(): Option[i64] {
     return Some(n);
 }
 
+// `(n: i64) unsigned_abs()` — `|n|` as a u64, the i64 sibling of std/i32's. The
+// one magnitude the signed `abs` / `checked_abs` cannot represent — i64::MIN,
+// whose |n| is 2^63 — fits exactly (9223372036854775808); every other value
+// equals the signed magnitude. The MIN case takes the u64 literal directly,
+// since `0 - n` would overflow i64 before the widening cast.
+pub function (n: i64) unsigned_abs(): u64 {
+    if (n == ((0 as i64) - (9223372036854775807 as i64) - (1 as i64))) { return 9223372036854775808 as u64; }
+    if (n < (0 as i64)) { return ((0 as i64) - n) as u64; }
+    return n as u64;
+}
+
 // `(n: i64) overflowing_neg()` — the wrapped negation paired with a
 // did-overflow boolean; only i64::MIN overflows (negating to itself).
 pub function (n: i64) overflowing_neg(): (i64, boolean) {
