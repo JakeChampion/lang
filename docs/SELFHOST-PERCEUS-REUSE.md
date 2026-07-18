@@ -226,11 +226,14 @@ existing test scaffolding rather than gated off:
     copies, call-only reads) routes admitted fn-fielded types, and the
     `k_clo` / `fr_clo` arms shallow-free the field's env box (captures leak,
     the k_struct model); the `moves_fields` NODEEP walk exempts calls
-    through a local's own fn fields. Pinned by
-    `TestSelfHostClofldDropIRX86_64`. Still open: the loop-REINIT release
-    stays box-only for fn fields, wasm has no arm, and the REUSE admission
-    (native's FuncType kind) still needs the reuse-arm release + freshness
-    branch.
+    through a local's own fn fields — with the local's type resolved by
+    the nesting-aware `fresh_struct_lit_type_deep`, so loop/if-nested
+    declarations get the exemption too and the loop-REINIT re-bind routes
+    through `__field_reclaim_<T>`'s `fr_clo` arm (the prior iteration's
+    env box is reclaimed, no longer a per-iteration leak). Pinned by
+    `TestSelfHostClofldDropIRX86_64` (the churn case asserts the reclaim
+    call). Still open: wasm has no arm, and the REUSE admission (native's
+    FuncType kind) still needs the reuse-arm release + freshness branch.
   - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
     admits only the leak-safe scalar arrays; native admits all. The
     **string[] EXIT-drop prerequisite is now closed**: the strarrfld scan
