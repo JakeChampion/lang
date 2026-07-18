@@ -200,6 +200,17 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
                 match (m.arms[ai].pattern) {
                     parser.PatVariant(pv) => {
                         if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
+                        // Multi-payload variants (`Tag(a, b)`) bind every extra
+                        // payload too — collecting only the main binding left an
+                        // extra binding invisible as an enclosing local, so a
+                        // lambda capturing it (lambda_captures' encl gate)
+                        // declined the lift and the module fell to the
+                        // miscompiling AST path (#5155).
+                        var ebi: i32 = 0;
+                        while (ebi < pv.extra_bindings.len()) {
+                            if (pv.extra_bindings[ebi].len() > 0) { acc = acc.append(pv.extra_bindings[ebi]); }
+                            ebi = ebi + 1;
+                        }
                     },
                     parser.PatWildcard(_) => { }
                 }
