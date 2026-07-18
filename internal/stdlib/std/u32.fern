@@ -166,6 +166,19 @@ pub function (n: u32) log2_floor(): i32 {
     return r;
 }
 
+// `(n: u32) log10_floor()` — `floor(log10 n)` for `n >= 1`, returned as an i32
+// (the exponent spans 0..9); `-1` for `n == 0` (the same `>= 0`-means-valid
+// sentinel as `log2_floor`). The base-10 sibling of `log2_floor` and the
+// digit-count primitive — a non-zero `n` has `n.log10_floor() + 1` decimal
+// digits. Counts divisions by ten; the divide is the unsigned u32 divide.
+pub function (n: u32) log10_floor(): i32 {
+    if (n == (0 as u32)) { return 0 - 1; }
+    var r: i32 = 0;
+    var m: u32 = n;
+    while (m >= (10 as u32)) { m = m / (10 as u32); r = r + 1; }
+    return r;
+}
+
 // === u32 bit ops (the unsigned counterparts to std/i32's) ===
 // Software implementations over u32 shifts/masks (no intrinsics
 // surface in the language), O(32) per call — the same shape as the

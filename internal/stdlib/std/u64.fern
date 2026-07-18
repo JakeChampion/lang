@@ -164,6 +164,20 @@ pub function (n: u64) log2_floor(): i32 {
     return r;
 }
 
+// `(n: u64) log10_floor()` — `floor(log10 n)` for `n >= 1`, returned as an i32
+// (the exponent spans 0..19 across the u64 range); `-1` for `n == 0` (the same
+// `>= 0`-means-valid sentinel as `log2_floor`). The base-10 sibling of
+// `log2_floor` and the wide digit-count primitive — a non-zero `n` has
+// `n.log10_floor() + 1` decimal digits. Counts unsigned u64 divisions by ten,
+// so it stays exact past the i64 range where a float `log10` would round.
+pub function (n: u64) log10_floor(): i32 {
+    if (n == (0 as u64)) { return 0 - 1; }
+    var r: i32 = 0;
+    var m: u64 = n;
+    while (m >= (10 as u64)) { m = m / (10 as u64); r = r + 1; }
+    return r;
+}
+
 // === u64 bit ops (the unsigned counterparts to std/i64's) ===
 // Software implementations over u64 shifts/masks, O(64) per call — the
 // same shape as std/i64's, but with no sign bit (unsigned shifts are
