@@ -44,6 +44,26 @@ function main(): i32 {
     var o: Opt[i32] = Nn;
     match (o) { Sm(n) => { return n; }, Nn => { return 9; } }
 }`, 9},
+	// unit variant passed BARE as a call argument (#5247): the callee's declared
+	// parameter type `Opt[i32]` — not a var annotation at the use site — must pin
+	// the bare `Nn`'s instantiation. Before the fix the argument stayed
+	// un-mangled, monomorphize_enums dropped the generic `Nn` struct, and the
+	// dangling reference dragged the whole module to the AST emitter (and the AST
+	// path then miscompiled it into a SIGSEGV).
+	{"unit_variant_call_arg", `enum Opt[T] { Sm(T), Nn }
+function get(o: Opt[i32]): i32 { match (o) { Sm(v) => { return v; }, Nn => { return 42; } } }
+function main(): i32 { return get(Nn); }`, 42},
+	// mixed call arguments pin per-index off the callee's parameter list: arg 0
+	// is a bare unit variant (needs the param type), arg 1 a payload variant
+	// (infers from `40`). 1 + 40 == 41.
+	{"unit_variant_call_arg_mixed", `enum Opt[T] { Sm(T), Nn }
+function combine(a: Opt[i32], b: Opt[i32]): i32 {
+    var x: i32 = 0;
+    match (a) { Sm(v) => { x = v; }, Nn => { x = 1; } }
+    match (b) { Sm(w) => { x = x + w; }, Nn => { x = x + 2; } }
+    return x;
+}
+function main(): i32 { return combine(Nn, Sm(40)); }`, 41},
 	// construction-only (no match): the construction alone previously bailed.
 	{"construction_only", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
