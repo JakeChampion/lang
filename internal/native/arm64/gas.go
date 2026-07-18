@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -142,7 +143,7 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmMov(a, ops)
 	case "movz", "movk":
 		return asmMoveWide(a, mnem, ops)
-	case "add", "sub":
+	case "add", "sub", "adds", "subs":
 		return asmAddSub(a, mnem, ops)
 	case "and", "orr", "eor", "mul", "udiv", "sdiv":
 		return asm3Reg(a, mnem, ops)
@@ -190,7 +191,7 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmFcvtToInt(a, ops, FCVTZU, FCVTZUS)
 	case "lsl", "lsr", "asr":
 		return asmShift(a, mnem, ops)
-	case "sxtb", "sxth", "sxtw":
+	case "sxtb", "sxth", "sxtw", "uxtb", "uxth":
 		return asmExtend(a, mnem, ops)
 	case "rev16":
 		return asm2Reg(a, ops, REV16)
@@ -382,6 +383,17 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	if len(ops) < 3 {
 		return fmt.Errorf("%s expects 3 operands", mnem)
 	}
+	// `adds` / `subs` are the flag-setting variants: every add/sub encoding
+	// class (immediate, shifted-register, extended-register) places the S
+	// bit at bit 29, so they share the base encoders with S OR'd in.
+	isAdd := mnem == "add" || mnem == "adds"
+	setS := mnem == "adds" || mnem == "subs"
+	emit := func(insn uint32) {
+		if setS {
+			insn |= 1 << 29
+		}
+		a.Emit(insn)
+	}
 	rd, err := parseReg(ops[0])
 	if err != nil {
 		return err
@@ -414,10 +426,10 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 				return fmt.Errorf("%s immediate %s out of range", mnem, ops[2])
 			}
 		}
-		if mnem == "add" {
-			a.Emit(clearSF(ADDimm(rd, rn, i12, shift12), w))
+		if isAdd {
+			emit(clearSF(ADDimm(rd, rn, i12, shift12), w))
 		} else {
-			a.Emit(clearSF(SUBimm(rd, rn, i12, shift12), w))
+			emit(clearSF(SUBimm(rd, rn, i12, shift12), w))
 		}
 		return nil
 	}
@@ -438,10 +450,10 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 			if eerr != nil {
 				return eerr
 			}
-			if mnem == "add" {
-				a.Emit(ADDextReg(rd, rn, rm, opt, amt))
+			if isAdd {
+				emit(ADDextReg(rd, rn, rm, opt, amt))
 			} else {
-				a.Emit(SUBextReg(rd, rn, rm, opt, amt))
+				emit(SUBextReg(rd, rn, rm, opt, amt))
 			}
 			return nil
 		}
@@ -449,10 +461,10 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 		if serr != nil {
 			return serr
 		}
-		if mnem == "add" {
-			a.Emit(clearSF(ADDregShift(rd, rn, rm, st, amt), w))
+		if isAdd {
+			emit(clearSF(ADDregShift(rd, rn, rm, st, amt), w))
 		} else {
-			a.Emit(clearSF(SUBregShift(rd, rn, rm, st, amt), w))
+			emit(clearSF(SUBregShift(rd, rn, rm, st, amt), w))
 		}
 		return nil
 	}
@@ -470,17 +482,17 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	// "sp" and "xzr" share register number 31.
 	if isSPReg(ops[0]) || isSPReg(ops[1]) {
 		const uxtx = 3
-		if mnem == "add" {
-			a.Emit(ADDextReg(rd, rn, rm, uxtx, 0))
+		if isAdd {
+			emit(ADDextReg(rd, rn, rm, uxtx, 0))
 		} else {
-			a.Emit(SUBextReg(rd, rn, rm, uxtx, 0))
+			emit(SUBextReg(rd, rn, rm, uxtx, 0))
 		}
 		return nil
 	}
-	if mnem == "add" {
-		a.Emit(clearSF(ADDreg(rd, rn, rm), w))
+	if isAdd {
+		emit(clearSF(ADDreg(rd, rn, rm), w))
 	} else {
-		a.Emit(clearSF(SUBreg(rd, rn, rm), w))
+		emit(clearSF(SUBreg(rd, rn, rm), w))
 	}
 	return nil
 }
@@ -847,6 +859,10 @@ func asmExtend(a *Assembler, mnem string, ops []string) error {
 		a.Emit(SXTH(rd, rn))
 	case "sxtw":
 		a.Emit(SXTW(rd, rn))
+	case "uxtb":
+		a.Emit(UXTB(rd, rn))
+	case "uxth":
+		a.Emit(UXTH(rd, rn))
 	}
 	return nil
 }
@@ -943,8 +959,18 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		return nil
 	}
 
-	if m.off < 0 {
-		return fmt.Errorf("%s negative offset needs the unscaled (ldur) form, not supported yet", mnem)
+	// Negative or non-size-aligned displacements can't be expressed by the
+	// scaled unsigned-offset form (its 12-bit field is an unsigned multiple
+	// of the access size) — route them to the unscaled LDUR/STUR family,
+	// whose signed 9-bit byte offset covers -256..255. GAS does the same
+	// mnemonic substitution. The self-host arm64 emitter addresses frame
+	// locals as `[x29, #-N]`, so this form is pervasive in its output.
+	if m.off < 0 || m.off%(1<<size) != 0 {
+		if m.off < -256 || m.off > 255 {
+			return fmt.Errorf("%s unscaled offset %d out of range (-256..255)", mnem, m.off)
+		}
+		a.Emit(LoadStoreUnscaled(rt, m.base, int32(m.off), size, sz.load))
+		return nil
 	}
 	a.Emit(LoadStoreUnsigned(rt, m.base, uint32(m.off), size, sz.load))
 	return nil
@@ -1225,6 +1251,17 @@ func asmFcmp(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
+	// `fcmp Dn, #0.0` — the compare-against-zero form (opc bit 3 set,
+	// Rm=0). Only the literal zero exists as an immediate; anything else
+	// is a parse error.
+	if ops[1] == "#0.0" || ops[1] == "#0" {
+		if single {
+			a.Emit(FCMPS(rn, 0) | 0x08)
+		} else {
+			a.Emit(FCMP(rn, 0) | 0x08)
+		}
+		return nil
+	}
 	rm, _, err := parseVReg(ops[1])
 	if err != nil {
 		return err
@@ -1243,6 +1280,26 @@ func asmFmov(a *Assembler, ops []string) error {
 		return fmt.Errorf("fmov expects 2 operands")
 	}
 	dstF, srcF := isFReg(ops[0]), isFReg(ops[1])
+	// `fmov Dd, #imm` — the FP-immediate form. The 8-bit VFP immediate
+	// encodes ±(1 + frac/16) × 2^E for frac in 0..15 and E in -3..4;
+	// anything outside that set is a loud error (GAS would materialise it
+	// from a literal pool, which this single-section assembler doesn't do).
+	if dstF && strings.HasPrefix(ops[1], "#") {
+		rd, single, err := parseVReg(ops[0])
+		if err != nil {
+			return err
+		}
+		imm8, ok := vfpImm8(strings.TrimPrefix(ops[1], "#"))
+		if !ok {
+			return fmt.Errorf("fmov immediate %q not encodable as a VFP imm8", ops[1])
+		}
+		if single {
+			a.Emit(0x1E201000 | uint32(imm8)<<13 | (rd & regMask))
+		} else {
+			a.Emit(0x1E601000 | uint32(imm8)<<13 | (rd & regMask))
+		}
+		return nil
+	}
 	switch {
 	case dstF && srcF: // fmov Dd,Dn or Sd,Sn
 		rd, single, err := parseVReg(ops[0])
@@ -1768,4 +1825,31 @@ var condCodes = map[string]uint32{
 	"lo": CondLO, "cc": CondLO, "mi": CondMI, "pl": CondPL,
 	"vs": CondVS, "vc": CondVC, "hi": CondHI, "ls": CondLS,
 	"ge": CondGE, "lt": CondLT, "gt": CondGT, "le": CondLE,
+}
+
+// vfpImm8 computes the AArch64 8-bit VFP immediate for a float literal:
+// value = (-1)^s × (1 + frac/16) × 2^E with frac in 0..15, E in -3..4.
+// imm8 = s<<7 | ((E-1)&7)<<4 | frac (so 1.0 → 0x70, 2.0 → 0x00). Returns
+// ok=false for values outside the encodable set.
+func vfpImm8(lit string) (uint8, bool) {
+	v, err := strconv.ParseFloat(lit, 64)
+	if err != nil || v == 0 || math.IsInf(v, 0) || math.IsNaN(v) {
+		return 0, false
+	}
+	var sign uint8
+	if v < 0 {
+		sign = 1
+		v = -v
+	}
+	fr, exp := math.Frexp(v) // v = fr × 2^exp, fr in [0.5, 1)
+	m := fr * 2              // mantissa in [1, 2)
+	e := exp - 1
+	if e < -3 || e > 4 {
+		return 0, false
+	}
+	frac := (m - 1) * 16
+	if frac != math.Trunc(frac) {
+		return 0, false
+	}
+	return sign<<7 | uint8((e-1)&7)<<4 | uint8(frac), true
 }

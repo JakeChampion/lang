@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // stripLinesWithPrefix drops every line that starts with the given
@@ -386,18 +388,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 	}
 }
 
-// buildBinArm64 assembles+links arm64 asm into dir/name and returns
-// its path. Drops the x86-specific `-no-pie` flag (some aarch64 gcc
-// builds reject it).
+// buildBinArm64 assembles+links arm64 asm into dir/name and returns its
+// path. Now a thin alias for the harness helper, which routes HUGE asm
+// (the aarch64 stage-2 self-compile, the native-mmc driver) through the
+// in-process native arm64 assembler under a memory-budget reservation
+// and keeps small programs on the aarch64 gcc toolchain unchanged.
 func buildBinArm64(t *testing.T, gcc, dir, name, asm string) string {
 	t.Helper()
-	asmPath := filepath.Join(dir, name+".s")
-	binPath := filepath.Join(dir, name)
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write %s asm: %v", name, err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc %s: %v\n%s", name, err, out)
-	}
-	return binPath
+	return e2eharness.BuildBinArm64(t, gcc, dir, name, asm)
 }
