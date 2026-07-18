@@ -3522,8 +3522,8 @@ pub function eligible_core_known_main(mod: parser.Module, known: string[], requi
     var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs, mod.structs);
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -3577,8 +3577,8 @@ pub function eligible_core_known_main_view(mod: parser.Module, known: string[], 
     var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -3620,7 +3620,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     // PROGRAM struct union for a per-module unit (so a function touching an
     // imported struct's layout lowers in the gate exactly as it does in
     // emit_module_funcs, which already lowers against all_structs).
-    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs), cnf, bparams, fn_names, [], [], [], [], [], [], []);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, bparams, fn_names, [], [], [], [], [], [], []);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -5812,8 +5812,8 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var frf: string[] = irlower.f64_ret_fns_of(fns);
     var farf: string[] = irlower.f64arr_ret_fns_of(fns);
     var iarf: string[] = irlower.i64arr_ret_fns_of(fns);
-    var fps: string[] = irlower.fn_param_sigs_of(fns);
-    var cfs: string[] = irlower.closure_ret_fns_of(fns);
+    var fps: string[] = irlower.fn_param_sigs_of(fns, all_structs);
+    var cfs: string[] = irlower.closure_ret_fns_of(fns, all_structs);
     var cnf: string[] = irlower.const_fns_of(fns);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(fns, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
@@ -5831,7 +5831,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(fns), cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(fns, all_structs), cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -5886,8 +5886,8 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
     var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
@@ -5911,7 +5911,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
         if (cache.len() == 0) {
-            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         } else {
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s);
         }
@@ -6040,8 +6040,8 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(im.funcs), im.trait_reqs);
     var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(im.funcs), im.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(im.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(im.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(im.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(im.funcs, im.structs);
+    var cfs: string[] = irlower.closure_ret_fns_of(im.funcs, im.structs);
     var cnf: string[] = irlower.const_fns_of(im.funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(im.funcs, im.structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(im.funcs, im.structs);
@@ -6056,7 +6056,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var cache: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(im.funcs), cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(im.funcs, im.structs), cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         if (!r.ok) { return ""; }
         var j: i32 = 0;
         while (j < r.ops.len()) {

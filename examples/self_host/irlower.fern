@@ -30721,7 +30721,65 @@ function collect_returns(body: parser.Stmt[], acc: parser.Expr[]): parser.Expr[]
     return acc;
 }
 
-pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+// body_local_decl_type returns the DECLARED type annotation of local `name` in
+// `body` (recursing into nested blocks), or "" if none / unannotated. The
+// LowerState-free lookup the closure-return detector uses to resolve a local
+// container's type (params resolve directly from FuncDecl.params).
+function body_local_decl_type(body: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(sv) => { if (sv.name == name && sv.type_name.len() > 0) { return sv.type_name; } },
+            parser.StmtIf(bif) => {
+                var t: string = body_local_decl_type(bif.then_body, name);
+                if (t.len() > 0) { return t; }
+                var e: string = body_local_decl_type(bif.else_body, name);
+                if (e.len() > 0) { return e; }
+            },
+            parser.StmtWhile(bwh) => { var wt: string = body_local_decl_type(bwh.body, name); if (wt.len() > 0) { return wt; } },
+            parser.StmtFor(bfr) => { var ft: string = body_local_decl_type(bfr.body, name); if (ft.len() > 0) { return ft; } },
+            parser.StmtMatch(bmt) => {
+                var mi: i32 = 0;
+                while (mi < bmt.arms.len()) { var mt: string = body_local_decl_type(bmt.arms[mi].body, name); if (mt.len() > 0) { return mt; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// detector_expr_type resolves the coarse type spelling of container expr `e`
+// within function `fn`, using only fn.params + local annotations + structs —
+// the LowerState-free type view the closure-return detector has. Covers the
+// shapes closure-return detection needs: an ident (param / annotated local), an
+// array index (element type = strip trailing "[]"), and a struct-field access.
+// Returns "" when unknown.
+function detector_expr_type(e: parser.Expr, fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var pi: i32 = 0;
+            while (pi < fn.params.len()) {
+                if (fn.params[pi].name == id.name) { return fn.params[pi].type_name; }
+                pi = pi + 1;
+            }
+            return body_local_decl_type(fn.body, id.name);
+        },
+        parser.ExprIndex(ix) => {
+            var at: string = detector_expr_type(ix.array, fn, structs);
+            if (at.len() >= 2 && at[at.len() - 2 : at.len()] == "[]") { return at[0 : at.len() - 2] + ""; }
+            return "";
+        },
+        parser.ExprFieldAccess(fa) => {
+            var ot: string = detector_expr_type(fa.obj, fn, structs);
+            if (ot.len() == 0) { return ""; }
+            return decl_field_type(structs, ot, fa.field);
+        },
+        _ => { return ""; }
+    }
+}
+
+pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var gfns: string[] = [];
     var gi: i32 = 0;
     while (gi < funcs.len()) {
@@ -30781,18 +30839,30 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                             // (a closure box). Register this fn closure-returning
                             // so the caller's `var g = pick()` binds g a closure
                             // local (env-first `g()`); without it g() bare-calls
-                            // the box pointer and SIGSEGVs. Local closure-array
-                            // case only (the array is a local bound to a closure-
-                            // array literal); the struct-field element
-                            // `return r.hs[0]` needs `structs` threaded here
-                            // (#5202 follow-up).
+                            // the box pointer and SIGSEGVs.
                             parser.ExprIndex(nix) => {
+                                var arrok: boolean = false;
                                 match (nix.array) {
                                     parser.ExprIdent(naid) => {
-                                        if (body_binds_closurearr_local(b, naid.name, out, [])) { hit = true; }
+                                        if (body_binds_closurearr_local(b, naid.name, out, [])) { arrok = true; }
                                     },
                                     _ => {}
                                 }
+                                // (e) `return r.hs[0]` / `return fnarr[i]` — indexing a
+                                // closure ARRAY that is a struct FIELD, a PARAM, or an
+                                // annotated local (its type resolves to "fn[]"); the
+                                // element is a closure box (#5202 B). Distinct from the
+                                // unannotated-local-literal case above.
+                                if (!arrok && detector_expr_type(nix.array, funcs[fi], structs) == "fn[]") { arrok = true; }
+                                if (arrok) { hit = true; }
+                            },
+                            // (f) `return kvs[i].f` / `return s.f` — a fn-valued struct
+                            // FIELD (a closure box). Resolve the object's struct type +
+                            // the field type (#5202 E). A numeric tuple index resolves to
+                            // "" (tuples aren't structs), so it can't misfire here.
+                            parser.ExprFieldAccess(nfa) => {
+                                var foty: string = detector_expr_type(nfa.obj, funcs[fi], structs);
+                                if (foty.len() > 0 && decl_field_type(structs, foty, nfa.field) == "fn") { hit = true; }
                             },
                             _ => {}
                         }
@@ -30896,10 +30966,10 @@ function body_binds_closurearr_local(body: parser.Stmt[], name: string, closures
     return false;
 }
 
-pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     // The single-closure registry, reused so a `[mk(), …]` element (mk a
     // closure factory) counts as a closure-array element.
-    var closureset: string[] = closure_ret_fns_of(funcs);
+    var closureset: string[] = closure_ret_fns_of(funcs, structs);
     var out: string[] = [];
     // Only functions declared to return a fn-ARRAY (`((T) => R)[]`, coarsed
     // to "fn[]") — never the compiler's own sources, keeping the self-compile
@@ -30935,6 +31005,13 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                                 },
                                 _ => {}
                             }
+                        },
+                        // (d) `return r.hs` — a whole closure-ARRAY struct FIELD (or a
+                        // fn[] param / annotated local): the field type resolves to
+                        // "fn[]", so the caller's `var hs = pick()` marks hs
+                        // is_closurearr and `hs[i]()` dispatches env-first (#5202 C).
+                        parser.ExprFieldAccess(_) => {
+                            if (detector_expr_type(rets[ri], funcs[fi], structs) == "fn[]") { hit = true; }
                         },
                         _ => {}
                     }
@@ -31153,7 +31230,7 @@ function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pid
     return nseen > 0 && nok == nseen && nident == nseen;
 }
 
-pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
+pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     // The closure registries feed the '3' (closure-array param) proof below.
     // Computed LAZILY — only when some receiver-less function actually has an
     // "fn[]" param — so the bootstrap self-compile (which has none) pays
@@ -31182,8 +31259,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
     // never enters the loop (the bootstrap self-compile pays nothing).
     var caparams: string[] = [];
     if (have_fnarr) {
-        closureset = closure_ret_fns_of(funcs);
-        caset = closurearr_ret_fns_of(funcs);
+        closureset = closure_ret_fns_of(funcs, structs);
+        caset = closurearr_ret_fns_of(funcs, structs);
         var ca_changed: boolean = true;
         while (ca_changed) {
             ca_changed = false;
@@ -31626,7 +31703,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_ret_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -31651,7 +31728,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_ret_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -34119,7 +34196,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_ret_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs));
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'

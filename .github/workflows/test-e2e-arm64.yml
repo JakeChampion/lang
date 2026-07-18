@@ -106,5 +106,5 @@ jobs:
       - name: go test (cross-host arm64)
         run: >-
           gotestsum --format pkgname-and-test-fails -- -timeout 50m
-          -run '^(TestSelfHostStage2FixedPointArm64|TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64StrForeachAST|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64|TestSelfHostCloArrayFieldBindIRArm64|TestSelfHostTupleFnStructFieldArm64|TestSelfHostReturnClosureElemIRArm64)$'
+          -run '^(TestSelfHostStage2FixedPointArm64|TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64StrForeachAST|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64|TestSelfHostCloArrayFieldBindIRArm64|TestSelfHostTupleFnStructFieldArm64|TestSelfHostReturnClosureElemIRArm64|TestSelfHostReturnClosureContainerIRArm64)$'
           ./internal/e2eselfhost/
