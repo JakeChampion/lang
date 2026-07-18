@@ -2,14 +2,11 @@
 //
 // The checker auto-discovers any `__method_Array_<name>`
 // function and registers it as `Array.<name>` for dispatch
-// (`internal/checker/checker.go`). That auto-discovery is the
-// same mechanism the prelude used from Phase 2; the carve-out
-// only changed where the bodies live.
+// (`internal/checker/checker.go`).
 //
-// Methods were migrated here from the former auto-injected
-// prelude per docs/PRELUDE-TO-MODULES.md. The prelude was
-// removed in Phase 5, so a program now `import "std/array";`
-// explicitly to call `arr.sum()` / `arr.join(",")` / etc.
+// No prelude: a program `import "std/array";` explicitly to
+// call `arr.sum()` / `arr.join(",")` / etc.
+// (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 import "std/sort";
 // core/cmp supplies the `Eq` trait that bounds the equality-driven verbs

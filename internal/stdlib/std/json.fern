@@ -12,8 +12,9 @@
 // `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX` for BMP
 // code points). Surrogate pairs aren't combined yet.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/json";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 // === JSON encoding ===
 //

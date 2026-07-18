@@ -2,8 +2,9 @@
 //
 // u32 has no `abs` — values are always non-negative — so this
 // module is just the scalar reductions and string formatting.
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: a program sees these methods only after it
+// declares `import "std/u32";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 import "core/int";
 

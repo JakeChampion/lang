@@ -1,10 +1,9 @@
 // std/i64 — signed 64-bit integer receiver methods.
 //
-// Counterpart to std/i32 for the wider type. Methods were
-// migrated here from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
-// Phase 5, so a program now `import "std/i64";` explicitly to
-// call `n.abs()` / `.gcd(…)` / etc. on an i64.
+// Counterpart to std/i32 for the wider type. No prelude: a
+// program `import "std/i64";` explicitly to call `n.abs()` /
+// `.gcd(…)` / etc. on an i64 (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 import "core/int";
 

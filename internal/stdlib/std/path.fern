@@ -25,8 +25,9 @@
 //   path_with_extension(p, ext)
 //                       — replace/append the final extension.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/path";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 pub function path_join(parts: string[]): string {
     var n: i32 = parts.len();

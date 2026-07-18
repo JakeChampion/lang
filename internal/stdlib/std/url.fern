@@ -19,8 +19,9 @@
 // otherwise fills missing sections with empty strings / port=0.
 // Query duplicates collect into a `string[]` per key.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/url";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 import "core/map";
 

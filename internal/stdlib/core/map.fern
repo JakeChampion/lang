@@ -1,6 +1,6 @@
 // core/map — generic Map[K, V] runtime.
 //
-// Auto-injected `Map` (a single-field i32-wrapper struct
+// The `Map` type (a single-field i32-wrapper struct
 // holding a kv-buffer pointer) plus its IndexMap-shaped
 // open-addressing core. The wat shims `__memcpy`, `__memset`,
 // `__alloc`, `__load_i32`, `__store_i32`, plus the slice /
@@ -60,9 +60,6 @@
 //   cursor, so its output preserves input/insertion key order
 //   for a map that was never deleted from, but a post-delete map
 //   serialises with the swapped key order.
-//
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
 
 pub function __map_pow2_ceil(n: i32): i32 {
     if (n <= 4) { return 4; }

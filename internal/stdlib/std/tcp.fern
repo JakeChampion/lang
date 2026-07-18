@@ -36,8 +36,9 @@
 // shaped programs can be tuned via `PORT=N ./bin` without a
 // manual main().
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/tcp";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 import "std/http";
 // std/headers — the placeholder HttpRequest before parse-success
