@@ -1160,10 +1160,13 @@ pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[])
         out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(cache), util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0);
         frti = frti + 1;
     }
+    // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
+    // registered field is buffer-only-freed (its elements are raw code addresses).
+    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
     var sdt: string[] = wasm_ir.struct_drop_types(cache, mod.structs);
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
-        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0);
+        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk);
         sdti = sdti + 1;
     }
     // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
@@ -1205,7 +1208,7 @@ function emit_wasm_struct_arr_elems_drop_body(e: string, cx: Ctx): string {
     return o;
 }
 
-function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean, clo_ok: boolean): string {
+function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean, clo_ok: boolean, fnptr_fields: string[]): string {
     var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
     var si: i32 = 0;
     while (si < cx.structs.len()) {
@@ -1213,7 +1216,18 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean, clo_ok:
             var k: i32 = 0;
             while (k < cx.structs[si].fields.len()) {
                 var ft: string = cx.structs[si].fields[k].type_name;
-                if (struct_field_kind_char(ft, cx) == "a") {
+                // #5235: a registered plain-fn-pointer array field — its elements
+                // are RAW code addresses, so it must NOT be walked as a pointer
+                // array ($__fern_arr_dec_ptr releases each element as a box →
+                // SIGSEGV). Free the BUFFER only (flat $__fern_arr_dec, no element
+                // walk); the buffer is a real rc box the struct owns at rc=1, so
+                // this frees it once (the wasm sibling of the register backends'
+                // k_fnptr arm).
+                var fnptr_here: boolean = util.has_str(fnptr_fields, "FNPTR:" + t + "." + cx.structs[si].fields[k].name);
+                if (struct_field_kind_char(ft, cx) == "a" && fnptr_here) {
+                    var fpload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + fpload + "))\n";
+                } else if (struct_field_kind_char(ft, cx) == "a") {
                     var load: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
                     // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field
                     // `X[]` whose element struct X is deep-drop-ok releases each element's

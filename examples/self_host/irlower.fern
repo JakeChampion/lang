@@ -897,6 +897,35 @@ pub function fn_value_arg_name(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// fn_value_array_lit reports whether `e` is an `(() => T)[]` (spelled "fn[]")
+// field/binding value that is an all-fn-VALUE array literal: an ExprArray whose
+// EVERY element is a bare identifier naming a top-level function (a fn pointer),
+// never a local, a capturing-lambda box, or a `__mkclo$` closure marker. The
+// lift pass turns a NON-capturing lambda element into a hoisted `__lam_N` fn-name
+// (lift_expr_walk's ExprArray arm), so `[() => 7]` reaches here as `[__lam_0]` —
+// the SAME shape as `[inc, dbl]`. A capturing lambda stays a `__mkclo$` marker
+// (fn_value_arg_name declines it), keeping the whole literal off this path so it
+// stays a closure array. The construction (ExprStructLit) lowering emits
+// op_const_func per element + op_arr_make, storing a plain fn-pointer array; the
+// whole-program registry (fnptr_arr_fields_of) records the field so the read side
+// dispatches it as a fn pointer, not a closure box.
+pub function fn_value_array_lit(e: parser.Expr, field_type: string, s: LowerState): boolean {
+    if (field_type != "fn[]") { return false; }
+    match (e) {
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (fn_value_arg_name(a.elements[i], s) == "") { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // ident_is_fn_value reports whether a bare ident lowers to a function VALUE
 // (op_const_func) rather than a local load / `None` / unit-variant box / const
 // call — i.e. it names a top-level function WITH params. Mirrors the ExprIdent
@@ -2093,11 +2122,38 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
 // (`Reg { hs: [inc] }`) is already miscompiled at construction (a separate
 // pre-existing gap), so this never regresses a working shape.
 pub function field_access_is_closurearr(e: parser.Expr, s: LowerState): boolean {
+    // A registered fn-POINTER array field (`hs: [inc, dbl]`) shares the "fn[]"
+    // spelling with a closure array but its elements are RAW fn pointers, not env
+    // boxes — the fn-pointer read paths (element bind / whole-array alias / direct
+    // inline call) must win, so decline the closure classification for it. The
+    // registry is threaded on s.closure_fns (fnptr_arr_fields_of markers).
+    if (field_access_is_fnarr(e, s)) { return false; }
     match (e) {
         parser.ExprFieldAccess(fa) => {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty.len() == 0) { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "fn[]";
+        },
+        _ => { return false; }
+    }
+}
+
+// field_access_is_fnarr returns true when `e` is a struct-field read `obj.field`
+// whose field is a registered PLAIN-fn-pointer array — spelled "fn[]" (like a
+// closure array) but constructed ONLY from all-fn-value array literals
+// program-wide, so its elements are raw function pointers, not `__mkclo$` env
+// boxes. The registry is the whole-program fnptr_arr_fields_of scan, threaded
+// through s.closure_fns as "FNPTR:<sty>.<field>" markers (which can never collide
+// with a real function name, so existing closure_fns consumers are unaffected). A
+// pure-type test cannot distinguish the two shapes — both are "fn[]" — hence the
+// registry. Drives the raw-fn-pointer bind / alias / inline-call dispatch (plain
+// call_indirect, NOT env-first) at the read sites (#5235).
+pub function field_access_is_fnarr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty.len() == 0) { return false; }
+            return util.has_str(s.closure_fns, "FNPTR:" + oty + "." + fa.field);
         },
         _ => { return false; }
     }
@@ -2110,6 +2166,23 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
     while (i < structs.len()) {
         if (structs[i].name == struct_name) {
             if (index >= 0 && index < structs[i].fields.len()) { return structs[i].fields[index].type_name; }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// decl_field_name_at returns the NAME of field `index` (decl order) in struct
+// `struct_name`, or "". The name-side twin of decl_field_type_at — used by the
+// per-backend struct-drop generators to key a field against the fn-pointer-array
+// registry ("FNPTR:<sty>.<field>") so a plain-fn-pointer array field leaks instead
+// of being walked as a box array (its elements are raw code addresses).
+pub function decl_field_name_at(structs: parser.StructDecl[], struct_name: string, index: i32): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            if (index >= 0 && index < structs[i].fields.len()) { return structs[i].fields[index].name; }
             return "";
         }
         i = i + 1;
@@ -5170,6 +5243,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // isn't self-evidently i64), so lower it via lower_i64.
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) {
                         sm = lower_i64(slit.field_values[found], sm);
+                    } else if (fn_value_array_lit(slit.field_values[found], cfft, sm)) {
+                        // A plain-fn-pointer array field value (`hs: [inc, dbl]`,
+                        // or `[() => 7]` after the lift hoists it to `[__lam_0]`).
+                        // The generic lower_expr would const-CALL each 0-arg fn
+                        // ident (storing f()'s result), so `r.hs[i]()` would then
+                        // call that integer as code and segfault. Emit a fn POINTER
+                        // per element (op_const_func) + op_arr_make — the array
+                        // sibling of the local `var fns: (() => T)[] = [f, g]` path,
+                        // leaving exactly ONE array pointer on the stack (identical
+                        // shape to lower_expr of a normal array). No alias-inc: a
+                        // fresh literal is struct-owned at rc=1 (#5235).
+                        match (slit.field_values[found]) {
+                            parser.ExprArray(fva) => {
+                                var fvi: i32 = 0;
+                                while (fvi < fva.elements.len()) {
+                                    sm = sm.emit(ir.op_const_func(0, fn_value_arg_name(fva.elements[fvi], sm)));
+                                    fvi = fvi + 1;
+                                }
+                                sm = sm.emit(ir.op_arr_make(fva.elements.len(), 32));
+                            },
+                            _ => {}
+                        }
                     } else {
                         sm = lower_expr(slit.field_values[found], sm);
                     }
@@ -6924,6 +7019,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                 },
                                 _ => {}
                             }
+                        },
+                        // `r.hs[i](args)` — a registered fn-POINTER array struct
+                        // field indexed + called inline, no binding (#5235). Treat
+                        // it as a plain fn-pointer array: the idx_is_arr branch below
+                        // lowers c.callee (`r.hs[i]` — struct_get then arr_get to the
+                        // fn pointer) and call_indirect(arity). Without this arm the
+                        // field-access array fell to `_` → s.fail() → AST fallback,
+                        // which miscompiled it.
+                        parser.ExprFieldAccess(_) => {
+                            if (field_access_is_fnarr(cidx.array, s)) { idx_is_arr = true; }
                         },
                         _ => {}
                     }
@@ -10683,7 +10788,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // down — claims this bind; do the closure mark HERE. Also fixes
         // `for f in r.hs { f() }`, which lowers via lower_foreach_snapshot's
         // hidden `var $forit = r.hs`.
-        if (vsaft == "fn[]") { sab = sab.mark_closurearr(saslot, true); }
+        // A registered fn-POINTER array field aliased whole (`var xs = r.hs`,
+        // #5235): its elements are RAW fn pointers, so mark the slot is_fnarr (NOT
+        // is_closurearr) — the slot is already mark_arr(true) above, so `xs[i]()`
+        // dispatches via the plain fn-pointer-array call_indirect path, and a later
+        // `xs.append(g)` of a bare named fn emits const_func. Checked before the
+        // closure-array spelling so a fn-pointer field wins.
+        if (field_access_is_fnarr(v.init, s)) { sab = sab.mark_fnarr(saslot, true); }
+        else if (vsaft == "fn[]") { sab = sab.mark_closurearr(saslot, true); }
         else { sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]); }   // element struct/enum name (strip "[]")
         return sab.emit(ir.op_store_local(saslot));
     }
@@ -10759,6 +10871,21 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprIndex(cfe) => {
             match (cfe.array) {
                 parser.ExprFieldAccess(_) => {
+                    // `var f = r.hs[0]` where hs is a plain fn-POINTER array field
+                    // (#5235): f aliases a RAW fn pointer element, OWNED by the
+                    // struct (its field reclaim frees the buffer). Bind f a plain
+                    // slot — do NOT mark_closure_local (so `f()` hits the ordinary
+                    // ident indirect-call path, not env-first) and do NOT mark_arr
+                    // (the exit sweep must not dec the struct-owned buffer). Checked
+                    // before the closure-array arm; field_access_is_closurearr also
+                    // declines a registered fnarr, so this ordering is belt-and-braces.
+                    if (field_access_is_fnarr(cfe.array, s)) {
+                        var fes: LowerState = lower_expr(v.init, s);   // arr_get -> fn pointer
+                        if (!fes.ok) { return fes; }
+                        var feb: LowerState = fes.add_local(v.name);
+                        var feslot: i32 = feb.slot_of(v.name);
+                        return feb.emit(ir.op_store_local(feslot));
+                    }
                     if (field_access_is_closurearr(cfe.array, s)) {
                         var ces: LowerState = lower_expr(v.init, s);   // arr_get -> element box ptr
                         if (!ces.ok) { return ces; }
@@ -30053,6 +30180,169 @@ function clofld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], a
     return a;
 }
 
+// FnptrAcc threads the two verdict sets of the fn-pointer-array field scan: `cand`
+// names ("<sty>.<field>") of fn[] fields SEEN constructed from an all-fn-value
+// array literal, and `bad` names of fn[] fields seen constructed from ANY other
+// value (a capturing lambda `__mkclo$` box, a closure/local ident, a call, …). A
+// field is a fn-pointer array iff it is in `cand` and never in `bad`.
+struct FnptrAcc { cand: string[], bad: string[] }
+
+// fnptr_elem_is_fnval reports whether array element `e` is a bare identifier
+// naming a receiver-less top-level function in `funcs` — the whole-program
+// (LowerState-free) analogue of fn_value_arg_name, used by the fnptr-array scan.
+// The lift has already turned every no-capture lambda element into such a
+// hoisted `__lam_N` fn-name, and a capturing lambda into a `__mkclo$` call (not
+// an ident), so this cleanly separates fn-pointer elements from closure ones.
+function fnptr_elem_is_fnval(e: parser.Expr, funcs: parser.FuncDecl[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var i: i32 = 0;
+            while (i < funcs.len()) {
+                if (funcs[i].name == id.name && funcs[i].receiver_type.len() == 0) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// fnptr_array_lit_all_fnval reports whether `e` is a non-empty ExprArray whose
+// EVERY element is fnptr_elem_is_fnval — the scan-side twin of fn_value_array_lit.
+function fnptr_array_lit_all_fnval(e: parser.Expr, funcs: parser.FuncDecl[]): boolean {
+    match (e) {
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (!fnptr_elem_is_fnval(a.elements[i], funcs)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// fnptr_scan / fnptr_scan_stmts: the whole-program walk behind fnptr_arr_fields_of.
+// It visits every struct literal reachable from a function body and, for each
+// "fn[]" field, records the construction as candidate (all-fn-value array literal)
+// or bad (anything else) — mirroring clofld_scan's traversal shape. Runs on the
+// LIFTED module (no-capture lambda elements are already hoisted to `__lam_N`
+// idents; capturing ones are `__mkclo$` calls, which land in `bad`).
+function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: FnptrAcc): FnptrAcc {
+    var a: FnptrAcc = acc;
+    match (e) {
+        parser.ExprFieldAccess(fa) => { return fnptr_scan(fa.obj, funcs, structs, a); },
+        parser.ExprCall(c) => {
+            a = fnptr_scan(c.callee, funcs, structs, a);
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = fnptr_scan(c.args[i], funcs, structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprBinary(b) => { return fnptr_scan(b.right, funcs, structs, fnptr_scan(b.left, funcs, structs, a)); },
+        parser.ExprUnary(u) => { return fnptr_scan(u.operand, funcs, structs, a); },
+        parser.ExprIndex(ix) => { return fnptr_scan(ix.index, funcs, structs, fnptr_scan(ix.array, funcs, structs, a)); },
+        parser.ExprSlice(sl) => { return fnptr_scan(sl.end, funcs, structs, fnptr_scan(sl.start, funcs, structs, fnptr_scan(sl.array, funcs, structs, a))); },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base) { a = fnptr_scan(sl2.base, funcs, structs, a); }
+            var i: i32 = 0;
+            while (i < sl2.field_names.len()) {
+                if (decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "fn[]") {
+                    var key: string = sl2.type_name + "." + sl2.field_names[i];
+                    if (fnptr_array_lit_all_fnval(sl2.field_values[i], funcs)) {
+                        a = FnptrAcc { cand: push_str_unique(a.cand, key), bad: a.bad };
+                    } else {
+                        a = FnptrAcc { cand: a.cand, bad: push_str_unique(a.bad, key) };
+                    }
+                }
+                a = fnptr_scan(sl2.field_values[i], funcs, structs, a);
+                i = i + 1;
+            }
+            return a;
+        },
+        parser.ExprArray(av2) => {
+            var i: i32 = 0;
+            while (i < av2.elements.len()) { a = fnptr_scan(av2.elements[i], funcs, structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { a = fnptr_scan(t.elements[i], funcs, structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprLambda(lm) => { return fnptr_scan_stmts(lm.body, funcs, structs, a); },
+        _ => { return a; }
+    }
+    return a;
+}
+function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: FnptrAcc): FnptrAcc {
+    var a: FnptrAcc = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { a = fnptr_scan(v.init, funcs, structs, a); },
+            parser.StmtAssign(as2) => { a = fnptr_scan(as2.value, funcs, structs, a); },
+            parser.StmtExpr(ex) => { a = fnptr_scan(ex.value, funcs, structs, a); },
+            parser.StmtReturn(r) => { a = fnptr_scan(r.value, funcs, structs, a); },
+            parser.StmtIf(iff) => {
+                a = fnptr_scan(iff.cond, funcs, structs, a);
+                a = fnptr_scan_stmts(iff.then_body, funcs, structs, a);
+                a = fnptr_scan_stmts(iff.else_body, funcs, structs, a);
+            },
+            parser.StmtWhile(w) => {
+                a = fnptr_scan(w.cond, funcs, structs, a);
+                a = fnptr_scan_stmts(w.body, funcs, structs, a);
+            },
+            parser.StmtFor(fo) => {
+                a = fnptr_scan(fo.iter, funcs, structs, a);
+                a = fnptr_scan_stmts(fo.body, funcs, structs, a);
+            },
+            parser.StmtMatch(m) => {
+                a = fnptr_scan(m.scrutinee, funcs, structs, a);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { a = fnptr_scan(m.arms[ai].guard, funcs, structs, a); }
+                    a = fnptr_scan_stmts(m.arms[ai].body, funcs, structs, a);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { a = fnptr_scan_stmts([d.action], funcs, structs, a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// fnptr_arr_fields_of returns "FNPTR:<sty>.<field>" markers for every "fn[]"
+// struct field that is constructed ONLY from all-fn-value array literals
+// program-wide — i.e. a PLAIN fn-pointer array, never a closure array. A field
+// whose ANY construction stores a non-fn-value (a capturing lambda `__mkclo$`
+// box, a closure/local ident, a call result) is treated as a closure array and
+// gets NO marker. The markers are piggybacked on the LowerState.closure_fns list
+// so the read side (field_access_is_fnarr) can distinguish the two "fn[]" shapes,
+// and are seeded as struct-drop `need`s so a fn-pointer field is not walked as a
+// box array on reclamation (its elements are raw code addresses). Runs on the
+// LIFTED module (all_funcs/all_structs), so lambda elements are already resolved.
+pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var acc: FnptrAcc = FnptrAcc { cand: [], bad: [] };
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        acc = fnptr_scan_stmts(funcs[i].body, funcs, structs, acc);
+        i = i + 1;
+    }
+    var out: string[] = [];
+    var j: i32 = 0;
+    while (j < acc.cand.len()) {
+        if (!util.has_str(acc.bad, acc.cand[j])) { out = out.append("FNPTR:" + acc.cand[j]); }
+        j = j + 1;
+    }
+    return out;
+}
+
 // strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk.
 // Marks a field NAME unsafe (name-keyed, same over-approximation as the
 // scalar strfld scan) when:
@@ -30926,6 +31216,22 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
     return out;
 }
 
+// closure_and_fnptr_fns_of is the value threaded into a LowerState's closure_fns:
+// the closure-box-returning function names (closure_ret_fns_of) PLUS the
+// "FNPTR:<sty>.<field>" plain-fn-pointer-array field markers (fnptr_arr_fields_of).
+// Both ride one list — a marker can never collide with a function name, so the
+// existing closure_fns consumers (membership tests) are unaffected, and the read
+// side's field_access_is_fnarr recovers the fn-pointer fields from it. Every
+// lower_func / lower_module call site that used to pass closure_ret_fns_of(funcs)
+// passes this instead (#5235).
+pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var out: string[] = closure_ret_fns_of(funcs, structs);
+    var fp: string[] = fnptr_arr_fields_of(funcs, structs);
+    var i: i32 = 0;
+    while (i < fp.len()) { out = out.append(fp[i]); i = i + 1; }
+    return out;
+}
+
 // body_returns_closurearr reports whether `body` returns an ARRAY of closure
 // boxes: a `return [<lambda>|<closure-call>, …]` literal, or a `return <ident>`
 // where the ident is a top-level local bound to such a literal. Element 0 is
@@ -31749,7 +32055,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_ret_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -31774,7 +32080,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_ret_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -34253,7 +34559,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_ret_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs));
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'

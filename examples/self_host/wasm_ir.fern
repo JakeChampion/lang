@@ -80,7 +80,7 @@ pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var bp: string[] = irlower.borrowable_params_of(mod.funcs);
     var fnames: string[] = irlower.fn_names_of(mod.funcs);
@@ -2085,7 +2085,7 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var ft: string[] = fn_value_table(cache);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
     var arf: string[] = asm_ir.array_ret_fns(mod);
     var out: string = "";
     // Inter-procedural borrowability computed ONCE per module (not per function —
