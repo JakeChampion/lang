@@ -509,6 +509,31 @@ pub function (n: i32) saturating_mul(other: i32): i32 {
     return p as i32;
 }
 
+// `(n: i32) saturating_div(other)` — `n / other` clamped to the i32 range, the
+// clamping companion of `checked_div` and the divide sibling of
+// `saturating_mul`. The one overflowing divide is `MIN / -1` (true result 2^31
+// has no i32 form), which saturates to i32::MAX instead of wrapping to MIN;
+// every other pair is exact. Divide-by-zero is the caller's responsibility, as
+// for the bare `/` operator.
+pub function (n: i32) saturating_div(other: i32): i32 {
+    if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return 2147483647; }
+    return n / other;
+}
+
+// `(n: i32) saturating_neg()` / `saturating_abs()` — `-n` / `|n|` clamped to the
+// i32 range, the clamping companions of `checked_neg` / `checked_abs`. i32::MIN
+// is the one value whose negation / magnitude (2^31) overflows, so both saturate
+// it to i32::MAX instead of wrapping it back to MIN.
+pub function (n: i32) saturating_neg(): i32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
+    return 0 - n;
+}
+pub function (n: i32) saturating_abs(): i32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
+    if (n < 0) { return 0 - n; }
+    return n;
+}
+
 // `(n: i32) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
 // or `None` if any intermediate multiply overflows i32. Completes the `checked_`
 // family for the last arithmetic op. Overflow is detected the same way

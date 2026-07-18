@@ -359,6 +359,31 @@ pub function (n: i64) saturating_mul(other: i64): i64 {
     return p;
 }
 
+// `(n: i64) saturating_div(other)` — `n / other` clamped to the i64 range, the
+// i64 sibling of std/i32's, the clamping companion of `checked_div`. The one
+// overflowing divide is `MIN / -1` (true result 2^63), which saturates to
+// i64::MAX instead of wrapping to MIN; every other pair is exact. Divide-by-zero
+// is the caller's responsibility, as for the bare `/` operator.
+pub function (n: i64) saturating_div(other: i64): i64 {
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (n == min64 && other == ((0 as i64) - (1 as i64))) { return 9223372036854775807 as i64; }
+    return n / other;
+}
+
+// `(n: i64) saturating_neg()` / `saturating_abs()` — `-n` / `|n|` clamped to the
+// i64 range, the i64 siblings of std/i32's. i64::MIN is the one value whose
+// negation / magnitude (2^63) overflows, so both saturate it to i64::MAX
+// instead of wrapping it back to MIN.
+pub function (n: i64) saturating_neg(): i64 {
+    if (n == ((0 as i64) - (9223372036854775807 as i64) - (1 as i64))) { return 9223372036854775807 as i64; }
+    return (0 as i64) - n;
+}
+pub function (n: i64) saturating_abs(): i64 {
+    if (n == ((0 as i64) - (9223372036854775807 as i64) - (1 as i64))) { return 9223372036854775807 as i64; }
+    if (n < (0 as i64)) { return (0 as i64) - n; }
+    return n;
+}
+
 // `(n: i64) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
 // or `None` on i64 overflow; the i64 sibling of std/i32's `checked_pow`. i64 has
 // no wider type, so each intermediate product is overflow-tested inline with the

@@ -521,6 +521,35 @@ function main(): i32 {
     if (m2 == (0 - 2) && !p2) { r = r + 11; }                       // sign of dividend
     return r;
 }`},
+	// saturating_div / saturating_neg / saturating_abs (the std/i32 · i64 · u32 ·
+	// u64 additions): the clamping companions of checked_div / checked_neg /
+	// checked_abs. The one overflowing case — MIN / -1, -MIN, |MIN| — clamps to
+	// MAX instead of wrapping to MIN. Exercises i32 / + unary neg + the MIN
+	// branch + compare on the IR path. Oracle-checked. Five hits → 42.
+	{"int-saturating-div", `function i32_sdiv(n: i32, other: i32): i32 {
+    if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return 2147483647; }
+    return n / other;
+}
+function i32_sneg(n: i32): i32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
+    return 0 - n;
+}
+function i32_sabs(n: i32): i32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
+    if (n < 0) { return 0 - n; }
+    return n;
+}
+function main(): i32 {
+    var max32: i32 = 2147483647;
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    if (i32_sdiv(17, 5) == 3) { r = r + 8; }
+    if (i32_sdiv(min32, 0 - 1) == max32) { r = r + 8; }            // MIN / -1 clamps to MAX
+    if (i32_sneg(min32) == max32) { r = r + 8; }                   // -MIN clamps to MAX
+    if (i32_sneg(0 - 7) == 7) { r = r + 9; }
+    if (i32_sabs(min32) == max32) { r = r + 9; }                   // |MIN| clamps to MAX
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
