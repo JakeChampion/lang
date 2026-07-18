@@ -329,6 +329,27 @@ pub function (n: i64) checked_mul(other: i64): Option[i64] {
     return Some(p);
 }
 
+// `(n: i64) saturating_mul(other)` — `n * other` clamped to the i64 range
+// instead of wrapping: a positive overflow saturates to i64::MAX, a negative
+// one to i64::MIN. The clamping companion of `checked_mul`; i64 has no wider
+// type, so it reuses the inverse-division overflow test and picks the clamp
+// bound from the sign of the true product (same-sign operands overflow high,
+// opposite-sign overflow low). MIN * -1 (either order) overflows positive, so
+// it clamps to MAX.
+pub function (n: i64) saturating_mul(other: i64): i64 {
+    if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
+    var max64: i64 = 9223372036854775807 as i64;
+    var min64: i64 = (0 as i64) - max64 - (1 as i64);
+    var neg1: i64 = (0 as i64) - (1 as i64);
+    if ((n == min64 && other == neg1) || (other == min64 && n == neg1)) { return max64; }
+    var p: i64 = n * other;
+    if (p / n != other) {
+        if ((n > (0 as i64)) == (other > (0 as i64))) { return max64; }
+        return min64;
+    }
+    return p;
+}
+
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
 // of std/i32's `sqrt_floor`. Newton's method on the wider type, so it stays
 // exact for magnitudes past the i32 range (e.g. `sqrt_floor(10000000000)` is

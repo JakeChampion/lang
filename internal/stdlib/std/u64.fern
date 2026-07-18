@@ -126,6 +126,17 @@ pub function (n: u64) checked_mul(other: u64): Option[u64] {
     return Some(p);
 }
 
+// `(n: u64) saturating_mul(other)` — `n * other` clamped to u64::MAX on
+// overflow instead of wrapping. The unsigned u64 clamping companion of
+// `checked_mul`; u64 has no wider type, so it reuses the inverse-division
+// overflow test and clamps to the max (no low bound for an unsigned type).
+pub function (n: u64) saturating_mul(other: u64): u64 {
+    if (n == (0 as u64) || other == (0 as u64)) { return 0 as u64; }
+    var p: u64 = n * other;
+    if (p / n != other) { return 18446744073709551615 as u64; }
+    return p;
+}
+
 // `(n: u64) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so there are no negative-input cases: `sqrt_floor(0)` is 0,
 // and the iteration converges in O(log n). Exact across the full u64 range,

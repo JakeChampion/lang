@@ -486,6 +486,18 @@ pub function (n: i32) checked_mul(other: i32): Option[i32] {
     return Some(p as i32);
 }
 
+// `(n: i32) saturating_mul(other)` — `n * other` clamped to the i32 range
+// instead of wrapping: a positive overflow saturates to i32::MAX, a negative
+// one to i32::MIN. The clamping companion of `checked_mul` and the multiply
+// sibling of `saturating_add` / `saturating_sub`. Exact: the full i32×i32
+// product fits an i64, so the clamp reads off the widened product's sign.
+pub function (n: i32) saturating_mul(other: i32): i32 {
+    var p: i64 = (n as i64) * (other as i64);
+    if (p > (2147483647 as i64)) { return 2147483647; }
+    if (p < ((0 as i64) - (2147483647 as i64) - (1 as i64))) { return 0 - 2147483647 - 1; }
+    return p as i32;
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }

@@ -262,6 +262,42 @@ function main(): i32 {
     if (i64_cmul(3037000500 as i64, 3037000500 as i64) == ((0 as i64) - 2)) { r = r + 11; }  // ~9.22e18 overflows i64
     return r;
 }`},
+	// saturating_mul (the std/i32 · i64 additions): multiply clamped to the
+	// type range instead of wrapping. i32 reads the clamp off the i64-widened
+	// product; i64 detects overflow via inverse division and picks MAX/MIN by
+	// the product's sign. Exercises i64 multiply + divide + a boolean-equality
+	// sign test across function calls on the IR path; oracle-checked, so both
+	// the clamp direction and the in-range path must be right. Five hits → 42.
+	{"int-saturating-mul", `function i32_smul(n: i32, other: i32): i32 {
+    var p: i64 = (n as i64) * (other as i64);
+    if (p > (2147483647 as i64)) { return 2147483647; }
+    if (p < ((0 as i64) - (2147483647 as i64) - (1 as i64))) { return 0 - 2147483647 - 1; }
+    return p as i32;
+}
+function i64_smul(n: i64, other: i64): i64 {
+    if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
+    var max64: i64 = 9223372036854775807 as i64;
+    var min64: i64 = (0 as i64) - max64 - (1 as i64);
+    var neg1: i64 = (0 as i64) - (1 as i64);
+    if ((n == min64 && other == neg1) || (other == min64 && n == neg1)) { return max64; }
+    var p: i64 = n * other;
+    if (p / n != other) {
+        if ((n > (0 as i64)) == (other > (0 as i64))) { return max64; }
+        return min64;
+    }
+    return p;
+}
+function main(): i32 {
+    var max32: i32 = 2147483647;
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    if (i32_smul(6, 7) == 42) { r = r + 8; }
+    if (i32_smul(100000, 100000) == max32) { r = r + 8; }               // +overflow -> MAX
+    if (i32_smul(0 - 100000, 100000) == min32) { r = r + 8; }           // -overflow -> MIN
+    if (i64_smul(3037000500 as i64, 3037000500 as i64) == (9223372036854775807 as i64)) { r = r + 9; }
+    if (i64_smul((0 as i64) - 3037000500, 3037000500 as i64) == ((0 as i64) - 9223372036854775807 - 1)) { r = r + 9; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
