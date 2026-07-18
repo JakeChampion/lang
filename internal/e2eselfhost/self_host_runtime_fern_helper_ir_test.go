@@ -251,6 +251,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_write_file",
 			[]string{"\n__fern_write_file:"},
 		},
+		{
+			// temp_dir — Result[string, IoError] leaf (#2649), the first migrated
+			// helper that CALLS another Fern helper (monotonic_ns). Old hand-asm IR
+			// body (__fern_temp_dir:) gone; op_temp_dir calls __fn___fern_temp_dir.
+			"temp_dir",
+			`function main(): i32 { match (temp_dir("ferntest")) { Ok(p) => { return 0; }, Err(e) => { return 1; } } }`,
+			"__fn___fern_temp_dir",
+			[]string{"\n__fern_temp_dir:"},
+		},
 	}
 
 	for _, tc := range cases {
