@@ -723,17 +723,25 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
 - Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
   `DAYS_PER_WEEK`, etc.
 
-### `std/task`
+### `std/async`
 
-Cooperative single-threaded task runtime — the backend-independent
-core of Fern's colorless structured-concurrency model (see
-`docs/ASYNC-IMPLEMENTATION-PLAN.md`).
+The blessed structured-concurrency surface (see
+`docs/ASYNC-REDESIGN.md`) — combinators over a `Future[T]`, a
+not-yet-ready value of type `T`. Colorless (no function coloring, no
+compiler transform) and portable: every combinator compiles and runs
+on all backends, driving the universal `poll` builtin. Replaces the
+old `concurrent { … }` / `await` keyword surface.
 
-- `reactor_new()`; `(rx).register(...)`, `(rx).poll(...)`,
-  `(rx).pending()`.
-- `run(states, reactor)` drives every task to completion;
-  `select(states, reactor)` returns on the first to finish.
-- `Step` (enum) is the per-task state; `Reactor` owns the wait set.
+- `Future[T]` (enum) — `Ready(T)` or `Pending(fd, resume)`, a poll fd
+  plus its continuation.
+- `gather(fs, on_incomplete)` — await ALL futures, values in input
+  order, their I/O overlapping on one thread; an unresolved slot gets
+  `on_incomplete`.
+- `race(fs, none_val)` — return on the FIRST to finish as `(index,
+  value)`; `(-1, none_val)` if none can progress.
+- `with_deadline(ms, fs)` — await all with a timeout, yielding
+  `Option[T][]`: `Some(v)` for each that resolved in time, `None` for
+  one abandoned at the deadline.
 
 ### `std/mock_platform`
 
