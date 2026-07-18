@@ -702,6 +702,32 @@ defer w.close();
 	}
 }
 
+// Block-shaped `defer { … }` / `errdefer { … }` (#5153) round-trips: the
+// action prints as a brace block with NO trailing `;` (so it re-parses), and
+// the format is idempotent.
+func TestFormatDeferBlockRoundTrip(t *testing.T) {
+	srcs := []string{
+		`function f(): void { var x = 0; defer { x = x + 1; } }`,
+		`function f(): Result[i32, i32] { var x = 0; errdefer { x = x + 2; } return Ok(x); }`,
+	}
+	for _, src := range srcs {
+		got := formatSrc(t, src)
+		if !strings.Contains(got, "defer { ") {
+			t.Errorf("block defer not formatted as a brace block for %q:\n%s", src, got)
+		}
+		if strings.Contains(got, "};") {
+			t.Errorf("block defer emitted an invalid trailing `;` for %q:\n%s", src, got)
+		}
+		// The formatted output must itself re-parse.
+		if _, err := parser.Parse(got); err != nil {
+			t.Errorf("formatted block defer does not re-parse for %q:\n%s\nerr: %v", src, got, err)
+		}
+		if again := formatSrc(t, got); got != again {
+			t.Errorf("format not idempotent for %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
+		}
+	}
+}
+
 // `errdefer` statements round-trip through the formatter and keep the
 // `errdefer` keyword (not silently rewritten to `defer`). The printer
 // branches on ast.Defer.OnError.

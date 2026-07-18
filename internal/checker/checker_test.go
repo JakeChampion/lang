@@ -4400,6 +4400,33 @@ func TestBlockExprChecker(t *testing.T) {
 	}
 }
 
+// A block-shaped `defer { … }` / `errdefer { … }` action (#5153) is
+// value-less by design — its result is discarded — so it must NOT trip the
+// E061 "block-expression has no trailing value" check that a value-position
+// void block does. The exemption is scoped to the immediate defer action:
+// a value-position void block anywhere else still errors E061.
+func TestCheckDeferBlockVoidAction(t *testing.T) {
+	// defer / errdefer with a value-less block action: clean.
+	if err := checkSource(t, `function f(): Result[i32, i32] {
+		var x: i32 = 0;
+		defer { x = x + 1; }
+		errdefer { x = x + 2; }
+		return Ok(x);
+	}`); err != nil {
+		t.Errorf("defer/errdefer void block action: unexpected error: %v", err)
+	}
+
+	// A value-less block in a genuine value position still errors E061 — the
+	// exemption must not leak beyond the immediate defer action.
+	err := checkSource(t, `function main(): i32 {
+		var y: i32 = { var z = 1; };
+		return y;
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "no trailing value") {
+		t.Errorf("value-position void block should still error E061, got: %v", err)
+	}
+}
+
 // A value-position block whose statements always exit early (`return` /
 // `break` / `continue`) has type `never` (bottom), NOT `void`: it is
 // assignable to / unifies with any type, so the no-tail forms below
