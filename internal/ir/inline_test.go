@@ -234,3 +234,55 @@ function main(): i32 { return clamp_zero(0 - 5); }`)
 		t.Errorf("expected a wrapper block for the early-return inline:\n%s", p)
 	}
 }
+
+// `@noinline` excludes an otherwise-trivially-inlineable callee: the
+// OpCallDirect survives (#4412 Rec §14).
+func TestInlineHintNeverBlocksInlining(t *testing.T) {
+	p := loweredAndInlined(t, `@noinline
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { return dbl(7); }`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	var sawCall bool
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "dbl" {
+			sawCall = true
+		}
+	}
+	if !sawCall {
+		t.Fatalf("@noinline dbl should NOT have been inlined:\n%s", p)
+	}
+}
+
+// `@inline` lifts the size cap: a callee over inlineSizeLimit ops still
+// substitutes. The body is a long straight-line accumulator chain that
+// comfortably exceeds the cap; without the hint it stays a call.
+func TestInlineHintAlwaysLiftsSizeCap(t *testing.T) {
+	body := "var a: i32 = x;\n"
+	for i := 0; i < 60; i++ {
+		body += "a = a + x;\na = a - 1;\n"
+	}
+	src := "function big(x: i32): i32 {\n" + body + "return a;\n}\n" +
+		"function main(): i32 { return big(3); }"
+
+	// Baseline: over the cap, not inlined.
+	p := loweredAndInlined(t, src)
+	if fn := findFunc(p, "big"); fn != nil && len(fn.Ops) <= inlineSizeLimit {
+		t.Fatalf("test premise broken: big has %d ops, need > %d", len(fn.Ops), inlineSizeLimit)
+	}
+	mustContainOp(t, p, "main", OpCallDirect)
+
+	// Hinted: same body inlines.
+	p2 := loweredAndInlined(t, "@inline\n"+src)
+	main := findFunc(p2, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "big" {
+			t.Fatalf("@inline big should have been inlined despite exceeding the size cap:\n%s", p2)
+		}
+	}
+}

@@ -696,6 +696,9 @@ type Func struct {
 	// functions. Used by codegen to size the env block + decide
 	// per-capture stride (i32 / i64 / 2-word string ABI).
 	Captures []ast.Param
+	// InlineHint carries the source-level `@inline` / `@noinline`
+	// attribute through to the Inline pass (#4412 Rec §14).
+	InlineHint ast.InlineHint
 }
 
 // ExternFunc is a body-less function bound to a WASM-component import via an
@@ -4715,6 +4718,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		Locals:     info.Locals[fn],
 		ReturnType: fn.ReturnType,
 		Captures:   fn.Captures,
+		InlineHint: fn.InlineHint,
 	}
 	b := &builder{
 		info:                 info,

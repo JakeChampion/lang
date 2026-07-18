@@ -995,6 +995,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
 		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
 		{"e032-use-annotated-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n: i32 <- apply(41);\n    return n + 1;\n}\n", nil},
+		// @inline / @noinline function attributes (#4412 Rec §14): native
+		// consults them in the IR inliner; the self-host parser
+		// parse-tolerates and drops them. Both checkers must accept the
+		// annotated program cleanly.
+		{"inline-hints-ok", "@inline\nfunction fast(x: i32): i32 { return x + x; }\n@noinline\nfunction slow(x: i32): i32 { return x + 1; }\nfunction main(): i32 { return fast(3) + slow(4); }\n", nil},
 		// E067 (@must_consume obligation, docs/MUST-CONSUME.md): a value of a
 		// marked struct/enum type must be consumed on every control-flow path
 		// before its binding leaves scope — call-argument, return, match,

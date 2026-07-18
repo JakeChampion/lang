@@ -636,6 +636,16 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ExportWITName)
 		f.b.WriteString("\")\n")
 	}
+	// `@inline` / `@noinline` (#4412 Rec §14) render on their own line —
+	// dropping one would silently change the release build's inlining.
+	switch fn.InlineHint {
+	case ast.InlineHintAlways:
+		f.indent(depth)
+		f.b.WriteString("@inline\n")
+	case ast.InlineHintNever:
+		f.indent(depth)
+		f.b.WriteString("@noinline\n")
+	}
 	f.indent(depth)
 	if fn.PackageScoped {
 		f.b.WriteString("pub(package) ")

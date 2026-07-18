@@ -301,6 +301,7 @@ func (p *parser) parseProgram() *ast.Program {
 		var importIface, importWIT string
 		var exportIface, exportWIT string
 		mustConsume := false
+		inlineHint := ast.InlineHintNone
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -317,6 +318,7 @@ func (p *parser) parseProgram() *ast.Program {
 			exportIface = attr.exportIface
 			exportWIT = attr.exportWIT
 			mustConsume = attr.mustConsume
+			inlineHint = attr.inlineHint
 		}
 		// `pub` is an optional prefix on function, struct, enum, or
 		// const decls at the top level. Track it and consume; the
@@ -495,6 +497,15 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
+		if inlineHint != ast.InlineHintNone && !p.match(lexer.Keyword, "function") && !p.match(lexer.Keyword, "async") {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@inline / @noinline only applies to a function declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
+			}
+			continue
+		}
 		// `@export` binds a single function (with a body) to a WIT export (P6).
 		if exportIface != "" && !p.match(lexer.Keyword, "function") {
 			p.errors = append(p.errors, p.errorf(p.peek().Pos,
@@ -660,6 +671,7 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.Fbip = isFbip
 			fn.FipAllowance = fipAllowance
 			fn.Async = isAsync
+			fn.InlineHint = inlineHint
 			if importIface != "" {
 				if fn.Body != nil {
 					p.errors = append(p.errors, p.errorf(fn.P,
@@ -1121,6 +1133,9 @@ type declAttr struct {
 	exportIface string
 	exportWIT   string
 	mustConsume bool
+	// inlineHint records `@inline` / `@noinline` on a function decl
+	// (#4412 Rec §14).
+	inlineHint ast.InlineHint
 }
 
 // parseAttribute parses a leading `@…` declaration attribute (the `@` is at
@@ -1173,6 +1188,15 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		// enforces that values of the type are consumed on every
 		// path. See docs/MUST-CONSUME.md.
 		return declAttr{mustConsume: true}, nil
+	case "inline":
+		// `@inline` — bare marker on a function: lift the IR
+		// inliner's size cap for this callee (shape-safety
+		// exclusions still apply). #4412 Rec §14.
+		return declAttr{inlineHint: ast.InlineHintAlways}, nil
+	case "noinline":
+		// `@noinline` — bare marker on a function: never inline
+		// this callee.
+		return declAttr{inlineHint: ast.InlineHintNever}, nil
 	case "import", "export":
 		// `@import(iface, name)` and `@export(iface, name)` share the same
 		// two-string shape; only the binding direction differs.
@@ -1185,7 +1209,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{exportIface: iface, exportWIT: name}, nil
 	default:
-		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, @export, and @must_consume are supported)", attr)
+		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, @export, @must_consume, @inline, and @noinline are supported)", attr)
 	}
 }
 
