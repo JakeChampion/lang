@@ -174,6 +174,25 @@ pub function (n: u32) checked_pow(exp: i32): Option[u32] {
     return Some(result as u32);
 }
 
+// `(n: u32) overflowing_add(other)` / `overflowing_sub(other)` /
+// `overflowing_mul(other)` — the wrapped result paired with a did-overflow
+// boolean, the unsigned u32 siblings of std/i32's overflowing_* family. Unsigned
+// add overflows when the wrapped sum is smaller than an operand; sub underflows
+// when the subtrahend exceeds the minuend; mul widens to u64 to detect overflow
+// past u32::MAX.
+pub function (n: u32) overflowing_add(other: u32): (u32, boolean) {
+    var r: u32 = n + other;
+    return (r, r < n);
+}
+pub function (n: u32) overflowing_sub(other: u32): (u32, boolean) {
+    var r: u32 = n - other;
+    return (r, other > n);
+}
+pub function (n: u32) overflowing_mul(other: u32): (u32, boolean) {
+    var p: u64 = (n as u64) * (other as u64);
+    return (p as u32, p > (4294967295 as u64));
+}
+
 // `(n: u32) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so no negative-input cases; `sqrt_floor(0)` is 0. Exact
 // across the u32 range, e.g. `sqrt_floor(4294836225)` (which is `(2^16 - 1)^2`)
