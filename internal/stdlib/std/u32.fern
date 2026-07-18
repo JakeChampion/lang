@@ -129,6 +129,16 @@ pub function (n: u32) checked_mul(other: u32): Option[u32] {
     return Some(p as u32);
 }
 
+// `(n: u32) saturating_mul(other)` — `n * other` clamped to u32::MAX
+// (4294967295) on overflow instead of wrapping. The unsigned u32 clamping
+// companion of `checked_mul`; exact via the u64-widened product (unsigned, so
+// there is no low bound to clamp to).
+pub function (n: u32) saturating_mul(other: u32): u32 {
+    var p: u64 = (n as u64) * (other as u64);
+    if (p > (4294967295 as u64)) { return 4294967295 as u32; }
+    return p as u32;
+}
+
 // `(n: u32) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so no negative-input cases; `sqrt_floor(0)` is 0. Exact
 // across the u32 range, e.g. `sqrt_floor(4294836225)` (which is `(2^16 - 1)^2`)
