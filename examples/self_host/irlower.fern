@@ -14975,7 +14975,15 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                // The reassigned gate: maps admit the sanctioned COW self-reassign
+                // (`m = m.insert(k, v)` — map_nonself_reassigned, the same carve-out
+                // as the "MAP:" exit set / #4357): insert mutates the SAME box in
+                // place, so the slot value is unchanged and the precise drop after
+                // the last use still frees exactly one live box. Every other
+                // candidate kind keeps the blanket not-reassigned gate.
+                var reassign_ok: boolean = util.index_of_str(reassigned, v.name) < 0;
+                if (!reassign_ok && is_map && !map_nonself_reassigned(body, v.name)) { reassign_ok = true; }
+                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
