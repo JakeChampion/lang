@@ -7223,6 +7223,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             var lfresh: boolean = false;
                             match (fa.obj) {
                                 parser.ExprBinary(lrb) => { if (lrb.op == "+") { lfresh = true; } },
+                                // A CALL receiver (`f(i).len()`) whose callee is
+                                // SFRLEN:-seeded (str-fresh-ret registry + this
+                                // body's len-receiver walker) hands over a fresh
+                                // box that is equally dead after the read — the
+                                // native #5141 twin. Unproven callees keep the
+                                // safe-leak (no return-transfer inc on this path).
+                                parser.ExprCall(lrc) => {
+                                    match (lrc.callee) {
+                                        parser.ExprIdent(lrcid) => {
+                                            if (util.index_of_str(s.reclaimable_names, "SFRLEN:" + lrcid.name) >= 0) { lfresh = true; }
+                                        },
+                                        _ => {}
+                                    }
+                                },
                                 _ => {}
                             }
                             if (lfresh) {
@@ -7243,6 +7257,38 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sl: LowerState = lower_expr(fa.obj, s);
                         if (!sl.ok) { return sl; }
                         if (str_recv) { return sl.emit(ir.op_str_len()); }
+                        // A FRESH-ARRAY-returning call receiver (`mk(i).len()`,
+                        // mk in the strict-fresh "ARR:" registry — every return
+                        // a direct scalar-element array literal): the returned
+                        // rc=1 buffer is dead after the length read. Stash,
+                        // read, then release with the rc-guarded __fern_rc_dec
+                        // — the discarded-statement "ARR:" reclaim's shape, in
+                        // receiver position (native #5141 twin). Element-blind
+                        // is sound: the ARR: contract is scalar elements only.
+                        var alfresh: boolean = false;
+                        match (fa.obj) {
+                            parser.ExprCall(alc) => {
+                                match (alc.callee) {
+                                    parser.ExprIdent(alcid) => {
+                                        if (util.index_of_str(s.return_fresh_struct_ret_fns, "ARR:" + alcid.name) >= 0) { alfresh = true; }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                        if (alfresh) {
+                            var ascr: string = "$lenra" + util.i32_to_string(sl.locals.len());
+                            sl = sl.add_local(ascr);
+                            var aslot: i32 = sl.slot_of(ascr);
+                            sl = sl.emit(ir.op_store_local(aslot));
+                            sl = sl.emit(ir.op_load_local(aslot));
+                            sl = sl.emit(ir.op_arr_len());
+                            sl = sl.emit(ir.op_load_local(aslot));
+                            sl = sl.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                            sl = sl.emit(ir.op_drop());
+                            return sl;
+                        }
                         return sl.emit(ir.op_arr_len());
                     }
                     // `arr.append(e)` as a general EXPRESSION (return position,
@@ -16910,6 +16956,109 @@ function discarded_call_callees_stmt(st: parser.Stmt, acc: string[]): string[] {
             while (ai < m.arms.len()) {
                 var bi: i32 = 0;
                 while (bi < m.arms[ai].body.len()) { a = discarded_call_callees_stmt(m.arms[ai].body[bi], a); bi = bi + 1; }
+                ai = ai + 1;
+            }
+        },
+        _ => {}
+    }
+    return a;
+}
+
+// len_recv_callees_expr / _stmt collect the bare-ident CALLEE names of
+// `f(..).len()` shapes — a call result consumed as a len RECEIVER — recursing
+// through every expression position (the collect_idents_expr recursion). Only
+// these callees need an "SFRLEN:" seed (the same narrow-seeding rule as
+// BORROW:/TUPRET:/MAPRET:, so the arena stays flat). A form the walker
+// doesn't model just misses its credit — never unsound.
+function len_recv_callees_expr(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprBinary(b) => {
+            a = len_recv_callees_expr(b.left, a);
+            return len_recv_callees_expr(b.right, a);
+        },
+        parser.ExprUnary(u) => { return len_recv_callees_expr(u.operand, a); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len" && c.args.len() == 0) {
+                        match (cfa.obj) {
+                            parser.ExprCall(rc) => {
+                                match (rc.callee) { parser.ExprIdent(rcid) => { a = push_str_unique(a, rcid.name); }, _ => {} }
+                            },
+                            _ => {}
+                        }
+                    }
+                    a = len_recv_callees_expr(cfa.obj, a);
+                },
+                _ => { a = len_recv_callees_expr(c.callee, a); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = len_recv_callees_expr(c.args[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { a = len_recv_callees_expr(ar.elements[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { a = len_recv_callees_expr(t.elements[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprIndex(x) => {
+            a = len_recv_callees_expr(x.array, a);
+            return len_recv_callees_expr(x.index, a);
+        },
+        parser.ExprSlice(sl) => {
+            a = len_recv_callees_expr(sl.array, a);
+            a = len_recv_callees_expr(sl.start, a);
+            return len_recv_callees_expr(sl.end, a);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { a = len_recv_callees_expr(sl.base, a); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { a = len_recv_callees_expr(sl.field_values[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprFieldAccess(fa) => { return len_recv_callees_expr(fa.obj, a); },
+        _ => {}
+    }
+    return a;
+}
+
+function len_recv_callees_stmt(st: parser.Stmt, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (st) {
+        parser.StmtExpr(e) => { return len_recv_callees_expr(e.value, a); },
+        parser.StmtVar(v) => { return len_recv_callees_expr(v.init, a); },
+        parser.StmtAssign(asn) => { return len_recv_callees_expr(asn.value, a); },
+        parser.StmtReturn(r) => { return len_recv_callees_expr(r.value, a); },
+        parser.StmtDefer(d) => { return len_recv_callees_stmt(d.action, a); },
+        parser.StmtIf(f) => {
+            a = len_recv_callees_expr(f.cond, a);
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { a = len_recv_callees_stmt(f.then_body[ti], a); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { a = len_recv_callees_stmt(f.else_body[ei], a); ei = ei + 1; }
+        },
+        parser.StmtWhile(w) => {
+            a = len_recv_callees_expr(w.cond, a);
+            var i: i32 = 0;
+            while (i < w.body.len()) { a = len_recv_callees_stmt(w.body[i], a); i = i + 1; }
+        },
+        parser.StmtFor(fo) => {
+            a = len_recv_callees_expr(fo.iter, a);
+            var i: i32 = 0;
+            while (i < fo.body.len()) { a = len_recv_callees_stmt(fo.body[i], a); i = i + 1; }
+        },
+        parser.StmtMatch(m) => {
+            a = len_recv_callees_expr(m.scrutinee, a);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { a = len_recv_callees_stmt(m.arms[ai].body[bi], a); bi = bi + 1; }
                 ai = ai + 1;
             }
         },
@@ -27792,6 +27941,23 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             }
             tfk = tfk + 1;
         }
+    }
+    // len-receiver seeding (#4357 fallout, the native #5141 twin): a
+    // str-fresh-ret callee whose result this body consumes as a `.len()`
+    // RECEIVER (`f(i).len()`) gets an "SFRLEN:<name>" entry, so the len
+    // lowering can free the fresh box after the read (the self-host IR path
+    // has no return-transfer inc, so ONLY registry-proven-fresh callees are
+    // safe to free — an unproven callee keeps its prior safe-leak). Same
+    // narrow-seeding rule as BORROW:/TUPRET:/MAPRET: above. The array
+    // sibling needs no seed — its "ARR:" strict-fresh entries already ride
+    // return_fresh_struct_ret_fns in LowerState.
+    var lrcs: string[] = [];
+    var lrci: i32 = 0;
+    while (lrci < fn.body.len()) { lrcs = len_recv_callees_stmt(fn.body[lrci], lrcs); lrci = lrci + 1; }
+    var lrk: i32 = 0;
+    while (lrk < lrcs.len()) {
+        if (util.index_of_str(str_fresh_ret_fns, lrcs[lrk]) >= 0) { reclaim = reclaim.append("SFRLEN:" + lrcs[lrk]); }
+        lrk = lrk + 1;
     }
     // #4334: pick up the parse-level defer pass's `?`-edge cleanup markers —
     // the `if (__dfa_tryall) {…}` / `if (__dfa_tryerr) {…}` blocks
