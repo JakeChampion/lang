@@ -148,6 +148,64 @@ pub function (n: i64) count_ones(): i32 {
     return c;
 }
 
+// `count_zeros()` — the number of ZERO bits in the 64-bit two's-complement
+// representation; the complement of `count_ones` (the two always sum to 64).
+pub function (n: i64) count_zeros(): i32 {
+    return 64 - n.count_ones();
+}
+
+// `leading_zeros()` — the number of zero bits above the highest set bit in
+// the 64-bit two's-complement representation. `0` has all 64 leading zeros;
+// a negative `n` has none (its sign bit is set). The i64 counterpart of
+// std/i32's `leading_zeros`.
+pub function (n: i64) leading_zeros(): i32 {
+    if (n == (0 as i64)) { return 64; }
+    var u: u64 = n as u64;
+    // Top-bit mask = 1 << 63, built by shifting (no 64-bit hex literal).
+    var top: u64 = (1 as u64) << (63 as u64);
+    var c: i32 = 0;
+    while ((u & top) == (0 as u64)) {
+        c = c + 1;
+        u = u << (1 as u64);
+    }
+    return c;
+}
+
+// `trailing_zeros()` — the number of zero bits below the lowest set bit.
+// `0` has all 64 trailing zeros. The i64 counterpart of std/i32's.
+pub function (n: i64) trailing_zeros(): i32 {
+    if (n == (0 as i64)) { return 64; }
+    var u: u64 = n as u64;
+    var c: i32 = 0;
+    while ((u & (1 as u64)) == (0 as u64)) {
+        c = c + 1;
+        u = u >> (1 as u64);
+    }
+    return c;
+}
+
+// `rotate_left(bits)` / `rotate_right(bits)` — cyclic bit rotation of the
+// 64-bit pattern: bits shifted off one end re-enter the other (unlike `<<` /
+// `>>`, which drop them). `bits` is taken mod 64, so any rotation count is
+// valid. The i64 counterparts of std/i32's rotates.
+pub function (n: i64) rotate_left(bits: i32): i64 {
+    var k: i32 = bits & 63;
+    if (k == 0) { return n; }
+    var u: u64 = n as u64;
+    var left: u64 = u << (k as u64);
+    var right: u64 = u >> ((64 - k) as u64);
+    return (left | right) as i64;
+}
+
+pub function (n: i64) rotate_right(bits: i32): i64 {
+    var k: i32 = bits & 63;
+    if (k == 0) { return n; }
+    var u: u64 = n as u64;
+    var right: u64 = u >> (k as u64);
+    var left: u64 = u << ((64 - k) as u64);
+    return (left | right) as i64;
+}
+
 // `bit_length()` — the number of bits needed to represent the MAGNITUDE `|n|`
 // (highest set bit + 1), the wider counterpart to std/i32's `bit_length`. `0`
 // needs 0 bits; a negative `n` uses its magnitude. i64::MIN is special-cased

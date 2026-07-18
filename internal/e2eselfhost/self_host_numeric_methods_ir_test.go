@@ -50,6 +50,49 @@ function main(): i32 {
     if (u32_max(big, one) == big && u32_min(big, one) == one) { return 42; }
     return 0;
 }`},
+	// i64 bit-op family (the std/i64 additions): count_zeros / leading_zeros /
+	// trailing_zeros / rotate_left / rotate_right, over u64 shifts & masks.
+	// Exercises 64-bit shift / and / or / compare across function calls on the
+	// IR path; oracle-checked, so the wide-shift logic must be correct, not just
+	// stable. count_zeros(7)=61, then four predicate hits → 65.
+	{"i64-bitops", `function count_ones(n: i64): i32 {
+    var u: u64 = n as u64; var c: i32 = 0; var i: i32 = 0;
+    while (i < 64) { if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; } u = u >> (1 as u64); i = i + 1; }
+    return c;
+}
+function count_zeros(n: i64): i32 { return 64 - count_ones(n); }
+function leading_zeros(n: i64): i32 {
+    if (n == (0 as i64)) { return 64; }
+    var u: u64 = n as u64; var top: u64 = (1 as u64) << (63 as u64); var c: i32 = 0;
+    while ((u & top) == (0 as u64)) { c = c + 1; u = u << (1 as u64); }
+    return c;
+}
+function trailing_zeros(n: i64): i32 {
+    if (n == (0 as i64)) { return 64; }
+    var u: u64 = n as u64; var c: i32 = 0;
+    while ((u & (1 as u64)) == (0 as u64)) { c = c + 1; u = u >> (1 as u64); }
+    return c;
+}
+function rotl(n: i64, bits: i32): i64 {
+    var k: i32 = bits & 63; if (k == 0) { return n; }
+    var u: u64 = n as u64;
+    var left: u64 = u << (k as u64); var right: u64 = u >> ((64 - k) as u64);
+    return (left | right) as i64;
+}
+function rotr(n: i64, bits: i32): i64 {
+    var k: i32 = bits & 63; if (k == 0) { return n; }
+    var u: u64 = n as u64;
+    var right: u64 = u >> (k as u64); var left: u64 = u << ((64 - k) as u64);
+    return (left | right) as i64;
+}
+function main(): i32 {
+    var r: i32 = count_zeros(7 as i64);                             // 61
+    if (leading_zeros(1 as i64) == 63) { r = r + 1; }              // 62
+    if (trailing_zeros(8 as i64) == 3) { r = r + 1; }             // 63
+    if (rotl(1 as i64, 1) == (2 as i64)) { r = r + 1; }          // 64
+    if (rotr((1 as i64) << (63 as i64), 63) == (1 as i64)) { r = r + 1; }   // 65
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

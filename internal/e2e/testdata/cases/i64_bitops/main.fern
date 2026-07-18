@@ -1,0 +1,28 @@
+import "std/i64";
+// i64 bit-op family parity with std/i32: count_zeros, leading_zeros,
+// trailing_zeros, rotate_left, rotate_right. Distinct nonzero exit per
+// failure; 42 = all pass. Runs interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    var r: i32 = 0;
+    // count_zeros: count_ones(7)=3 -> zeros=61
+    if ((7 as i64).count_zeros() != 61) { return 1; }
+    if ((0 as i64).count_zeros() != 64) { return 2; }
+    // leading_zeros
+    if ((1 as i64).leading_zeros() != 63) { return 3; }
+    if ((0 as i64).leading_zeros() != 64) { return 4; }
+    if (((1 as i64) << (40 as i64)).leading_zeros() != 23) { return 5; }   // bit 40 set -> 63-40=23
+    if (((0 as i64) - (1 as i64)).leading_zeros() != 0) { return 6; }      // -1 all ones
+    // trailing_zeros
+    if ((1 as i64).trailing_zeros() != 0) { return 7; }
+    if ((8 as i64).trailing_zeros() != 3) { return 8; }
+    if ((0 as i64).trailing_zeros() != 64) { return 9; }
+    if (((1 as i64) << (40 as i64)).trailing_zeros() != 40) { return 10; }
+    // rotate_left / rotate_right round-trip and known value
+    if ((1 as i64).rotate_left(1) != (2 as i64)) { return 11; }
+    if ((1 as i64).rotate_right(1) != ((1 as i64) << (63 as i64))) { return 12; }   // 1 ror 1 -> top bit
+    if (((1 as i64) << (63 as i64)).rotate_left(1) != (1 as i64)) { return 13; }     // top ror wraps to 1
+    if ((12345 as i64).rotate_left(10).rotate_right(10) != (12345 as i64)) { return 14; }
+    if ((99 as i64).rotate_left(0) != (99 as i64)) { return 15; }
+    if ((99 as i64).rotate_left(64) != (99 as i64)) { return 16; }   // mod 64
+    return 42;
+}
