@@ -7356,6 +7356,30 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: nvals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
         },
         ExprFieldAccess(fa) => {
+            // A QUALIFIED unit-variant value `Enum.Variant` (no call) flowing
+            // into a generic-enum type: pin its instantiation from `expected`
+            // and rewrite to the mangled bare form, mirroring the bare-ident
+            // arm — so `get(Opt.Non)` with `get(o: Opt[i32])` instantiates from
+            // the callee's parameter type (flowed in as `expected`) instead of
+            // staying generic and dangling once monomorphize_enums drops the
+            // generic variant struct (#5247 follow-up; the bare `get(Non)` form
+            // is pinned in the ExprIdent arm). The payloaded `Enum.Variant(args)`
+            // form is a call, handled in the ExprCall arm above.
+            match (fa.obj) {
+                ExprIdent(oid) => {
+                    if (genum_index(enums, oid.name) >= 0) {
+                        var owner: i32 = genum_owner_of_variant(enums, funcs, fa.field);
+                        if (owner >= 0) {
+                            var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
+                            if (key.len() > 0) {
+                                var nins: Insts = ins.iadd(enums[owner].name, key);
+                                return RExpr { rexpr: ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col }, rins: nins };
+                            }
+                        }
+                    }
+                },
+                _ => { }
+            }
             var ob: RExpr = me_expr(fa.obj, "", env, enums, structs, funcs, ins);
             return RExpr { rexpr: ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: ob.rins };
         },
