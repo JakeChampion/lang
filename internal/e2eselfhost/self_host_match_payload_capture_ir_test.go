@@ -46,6 +46,21 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		{"option-string-payload",
 			`struct H { f: (i32) => i32, id: i32 } function g(o: Option[string]): i32 { var r: i32 = 0; match (o) { Some(s) => { var h: H = H { f: function (x: i32): i32 { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(Some("abc")); }`,
 			15},
+		// USER-ENUM variant payloads (#5155): resolved via the enum decls now
+		// threaded into the lift pass (pat_variant_payload_field_s over the
+		// `__ev` / `__ev<k>` struct fields), and — for the EXTRA bindings of a
+		// multi-payload variant — recognised as enclosing locals by the
+		// astwalk.collect_bound_stmt extra-bindings collection (without which
+		// lambda_captures' encl gate dropped them and the lift declined).
+		{"user-enum-single-payload",
+			`enum E { One(i32), Two(string) } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { One(v) => { var h: H = H { f: function (x: i32): i32 { return x + v; }, id: v }; r = h.f(10) + h.id; }, Two(s) => { var h: H = H { f: function (x: i32): i32 { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; } } return r; } function main(): i32 { return g(One(5)) + g(Two("abcd")); }`,
+			36},
+		{"user-enum-multi-payload",
+			`enum E { Tag(i32, i32), Empty } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { Tag(a, b) => { var h: H = H { f: function (x: i32): i32 { return x + a + b; }, id: a }; r = h.f(1) + h.id; }, Empty => { r = 0; } } return r; } function main(): i32 { return g(Tag(3, 4)); }`,
+			11},
+		{"user-enum-three-payload",
+			`enum E { P(i32, i32, i32), Q } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { P(a, b, c) => { var h: H = H { f: function (x: i32): i32 { return x + a + b + c; }, id: b }; r = h.f(1) + h.id; }, Q => { r = 0; } } return r; } function main(): i32 { return g(P(3, 4, 5)); }`,
+			17},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
