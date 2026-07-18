@@ -1386,7 +1386,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(mod.funcs, mod.structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(mod.funcs, mod.structs);

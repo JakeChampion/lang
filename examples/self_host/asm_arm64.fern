@@ -3997,7 +3997,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
     var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
-    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
@@ -4028,6 +4028,11 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
+    // #5235: seed the plain-fn-pointer-array field registry as needs so
+    // emit_arm64_struct_drop_one buffer-only-decs those fields (no element walk).
+    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
+    var fpi: i32 = 0;
+    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
     // with emit_module's single-unit IR path (so the load_run / emit_module
     // route also emits them — previously only this multi-unit path did, so a
@@ -4230,7 +4235,13 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
         var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
-        var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        // A registered PLAIN-fn-pointer array field (#5235): route to the
+        // buffer-only shallow dec (k_scalar arm) instead of the k_box element
+        // WALK — its elements are raw code addresses (a box walk SIGSEGVs). The
+        // arm64 transcription of the x86 emit_ir_struct_drop_one k_fnptr gate.
+        var k_fnptr: boolean = !k_scalar && irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        var k_box: boolean = !k_scalar && !k_fnptr && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
         // A DIRECT nested-struct field (`inner: Inner`): freed SHALLOW via the
         // same __fern_arr_dec as a scalar-array buffer — one level, like a struct-
         // array element box (arr_dec already frees struct boxes). rc-guarded inside
@@ -4358,8 +4369,8 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    bl __fn___fern_str_arr_free\n");       // deep at rc==1 (elements + buffer); shared -> dec
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbers x10/x11/x12)
-        } else if (k_scalar || k_struct || k_enum || k_clo) {
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box / closure box
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box / closure box / fn-ptr array buffer (shallow, no element walk)
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");
             s = s.write("    add sp, sp, #16\n");
@@ -9329,6 +9340,10 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
+    // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
+    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
+    var fpi: i32 = 0;
+    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
     s = emit_runtime(s, darwin);
