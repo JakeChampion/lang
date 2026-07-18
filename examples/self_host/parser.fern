@@ -5263,14 +5263,53 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     return binds;
 }
 
+// lambda_ret_of returns the concrete return type of a lambda ARGUMENT —
+// what lets a type parameter that appears ONLY in a fn-param's return
+// position (`key: (T) => K`) be bound from the closure passed for it.
+// The coarse "fn" tag on the param carries no args, so bind_unify over
+// the param's type_name never sees `K`; the return spelling is recovered
+// here instead. Prefers the lambda's explicit `: R` annotation; for an
+// arrow / `use_infer` lambda with no annotation, infers R from the first
+// `return` in the body, typed under an env extended with the lambda's
+// own (declared) params. "" for a non-lambda arg or an unknown body type
+// — the call then stays generic exactly as before.
+function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+    match (e) {
+        ExprLambda(lm) => {
+            if (lm.ret_type.len() > 0) { return lm.ret_type; }
+            var lenv: MEnv = env;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                lenv = lenv.ebind(lm.params[pi].name, lm.params[pi].type_name);
+                pi = pi + 1;
+            }
+            var si: i32 = 0;
+            while (si < lm.body.len()) {
+                match (lm.body[si]) {
+                    StmtReturn(r) => { return mono_infer(r.value, lenv, funcs); },
+                    _ => {},
+                }
+                si = si + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // infer_inst infers the concrete instantiation of `fd`'s type
 // parameters from a call's arguments and returns them joined by `__` in
 // declaration order (e.g. `i32`, or `i32__string` for `Map[K, V]`).
 // Every argument contributes its bindings via bind_unify (so
 // `assert_eq(x.to_upper(), "Y")` still resolves via the literal second
 // argument when the first is opaque, and `Map[K, V]` recovers both K
-// and V from a single map argument). Returns "" if any type parameter
-// is left unbound — the call then stays generic.
+// and V from a single map argument). A type parameter that surfaces only
+// as a fn-param's RETURN (`sort_key[T, K: Ord](xs, key: (T) => K)`) is
+// bound from that argument's `lambda_ret_of` — otherwise `K` stays
+// unbound, the key is "", and the whole template is dropped (an
+// undefined-reference link error). Returns "" if any type parameter is
+// left unbound — the call then stays generic.
 function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): string {
     if (fd.type_params.len() == 0) { return ""; }
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
@@ -5280,6 +5319,16 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
             var ct: string = mono_infer(args[i], env, funcs);
             if (ct.len() > 0) {
                 binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
+            }
+            // A type param appearing ONLY in a fn-param's return position
+            // (`key: (T) => K`) is invisible to the type_name unify above —
+            // the coarse "fn" tag carries no args. Recover it from the
+            // closure argument's own return type (kept in fd.params[i].fn_ret).
+            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, fd.type_params) >= 0) {
+                var lr: string = lambda_ret_of(args[i], env, funcs);
+                if (lr.len() > 0) {
+                    binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
+                }
             }
         }
         i = i + 1;
@@ -5324,6 +5373,64 @@ function split_inst_key(s: string): string[] {
     return out;
 }
 
+// tv_word_char reports whether `c` continues a type-name token (a letter,
+// digit or `_`) — the token boundary type_str_vars scans on.
+function tv_word_char(c: i32): boolean {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
+}
+
+// type_str_vars collects the single-uppercase-letter type variables (T /
+// K / V …) appearing in a coarse type spelling, appended to `acc`
+// (deduped). A maximal `[A-Za-z0-9_]` run that is exactly one uppercase
+// letter is a var — the per-token form of looks_type_var, so it finds
+// `T` in `T[]`, both `K` and `V` in `Map[K, V]`, etc., while multi-char
+// names (Map / JsonValue) and lowercase primitives never match.
+function type_str_vars(ty: string, acc: string[]): string[] {
+    var out: string[] = acc;
+    var i: i32 = 0;
+    var n: i32 = ty.len();
+    while (i < n) {
+        if (tv_word_char(ty[i])) {
+            var start: i32 = i;
+            while (i < n && tv_word_char(ty[i])) { i = i + 1; }
+            var tok: string = ty[start : i] + "";
+            if (tok.len() == 1 && tok[0] >= 65 && tok[0] <= 90 && !util.has_str(out, tok)) {
+                out = out.append(tok);
+            }
+        } else {
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// full_ret_binds unifies EVERY param of `fd` against its argument to bind
+// the type vars in `vars` — bounded AND unbounded alike. call_ret_type
+// uses it to recover an unbounded element param that survives the
+// bounded-only substitution (the `T` in `sort_key[T, K: Ord](xs, key):
+// T[]`, erased from fd.type_params). A fn-param's own return var is
+// bound from the lambda argument's return type (mirroring infer_inst).
+function full_ret_binds(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[], vars: string[]): MEnv {
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (i < args.len()) {
+            var ct: string = mono_infer(args[i], env, funcs);
+            if (ct.len() > 0) {
+                binds = bind_unify(fd.params[i].type_name, ct, vars, binds);
+            }
+            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, vars) >= 0) {
+                var lr: string = lambda_ret_of(args[i], env, funcs);
+                if (lr.len() > 0) {
+                    binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return binds;
+}
+
 // func_ret_of returns the return type of a plain function by name.
 function func_ret_of(funcs: FuncDecl[], name: string): string {
     var i: i32 = 0;
@@ -5348,7 +5455,27 @@ function call_ret_type(funcs: FuncDecl[], name: string, args: Expr[], env: MEnv)
     if (key.len() == 0) { return ""; }
     var cts: string[] = [key];
     if (fd.type_params.len() != 1) { cts = split_inst_key(key); }
-    return subst_ty(fd.ret_type, fd.type_params, cts);
+    var rt: string = subst_ty(fd.ret_type, fd.type_params, cts);
+    // The bounded-only substitution above can leave an UNBOUNDED type
+    // param in the return type — `sort_key[T, K: Ord](xs, key): T[]`
+    // erases T from fd.type_params, so `T[]` survives with T unresolved,
+    // and a caller (`var out = sort_key(strs, key)`) then can't recover
+    // the element type for dispatch. Bind any residual var from the full
+    // param unification and substitute.
+    var rvars: string[] = type_str_vars(rt, []);
+    if (rvars.len() > 0) {
+        var fb: MEnv = full_ret_binds(fd, args, env, funcs, rvars);
+        var rcts: string[] = [];
+        var vi: i32 = 0;
+        while (vi < rvars.len()) {
+            var bv: string = fb.elook(rvars[vi]);
+            if (bv.len() == 0) { bv = rvars[vi]; }
+            rcts = rcts.append(bv);
+            vi = vi + 1;
+        }
+        rt = subst_ty(rt, rvars, rcts);
+    }
+    return rt;
 }
 
 // assoc_ret_of returns the return type of the associated function (or method)
@@ -6007,7 +6134,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: fd.params[i].fn_ret });
+        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts) });
         i = i + 1;
     }
     var notp: string[] = [];

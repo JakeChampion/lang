@@ -77,6 +77,15 @@
 // method registers under no-prelude.
 import "std/string";
 
+// `sort_key` compares projected keys via `core/cmp`'s `Ord.cmp`, so
+// declare it to register the `.cmp()` method under no-prelude. This
+// closes an import cycle (core/cmp's `impl Ord for string` already
+// calls `sort.string_cmp`), which modload resolves by its load-once
+// dedupe — a program importing only `std/sort` still gets the `Ord`
+// impls transitively, so `sort_key` needs no extra import at the call
+// site.
+import "core/cmp";
+
 pub function sort_i32_asc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
@@ -627,6 +636,62 @@ pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
             var k: i32 = lo;
             while (i < mid && j < hi) {
                 if (srck[j] < srck[i]) {
+                    dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1;
+                } else {
+                    dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1;
+                }
+                k = k + 1;
+            }
+            while (i < mid) { dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1; k = k + 1; }
+            while (j < hi) { dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1; k = k + 1; }
+            lo = lo + width + width;
+        }
+        srcv = dstv;
+        srck = dstk;
+        width = width + width;
+    }
+    return srcv;
+}
+
+// `sort_key[T, K: cmp.Ord](arr, key)` — return a fresh copy of `arr`
+// sorted ascending by the `key(x)` projection, where the key type `K`
+// is any `core/cmp.Ord` (scalar, `string`, or a `@derive(Ord)` struct
+// / enum). The generic-key generalisation of `sort_by_i32_key`: where
+// that one is pinned to an i32 key and a scalar `<`, this dispatches
+// the ordering through `k.cmp(k2)`, so you can sort records by a
+// `string` name, a `u64` id, or any composite `Ord` key without
+// spelling a full comparator. The `K: cmp.Ord` bound monomorphises the
+// compare per key type on the self-host IR path — a `string` key
+// lowers `.cmp` to the lexicographic byte compare, an `i32` key to the
+// scalar three-way — where an unbounded `[K]` would erase and mis-
+// order strings. Like `sort_by_i32_key` it is a Schwartzian transform:
+// each element's `key` is evaluated ONCE up front into a parallel
+// `K[]`, then the elements and their keys merge-sort in lockstep, so a
+// costly projection is not recomputed O(n log n) times. Stable bottom-
+// up merge sort, O(n log n); the input is not mutated (equal keys keep
+// input order — the merge takes from the right run only on a STRICT
+// `.cmp(...) < 0`).
+pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
+    var srcv: T[] = arr;
+    var srck: K[] = [];
+    for x in srcv { srck = srck.append(key(x)); }
+    var n: i32 = srcv.len();
+    if (n < 2) { return srcv; }
+    var width: i32 = 1;
+    while (width < n) {
+        var dstv: T[] = srcv;
+        var dstk: K[] = srck;
+        var lo: i32 = 0;
+        while (lo < n) {
+            var mid: i32 = lo + width;
+            if (mid > n) { mid = n; }
+            var hi: i32 = lo + width + width;
+            if (hi > n) { hi = n; }
+            var i: i32 = lo;
+            var j: i32 = mid;
+            var k: i32 = lo;
+            while (i < mid && j < hi) {
+                if (srck[j].cmp(srck[i]) < 0) {
                     dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1;
                 } else {
                     dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1;

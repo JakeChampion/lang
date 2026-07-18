@@ -426,6 +426,15 @@ the small-list convenience cases.
 - `sort_strings_asc(arr)`, `sort_strings_desc(arr)`,
   `sort_strings_asc_ci(arr)`
 - `string_cmp(a, b)`, `string_cmp_ci(a, b)`
+- `sort_by_i32_key(arr, key)` — sort by an `i32` projection
+  (Schwartzian: each `key(x)` computed once)
+- `sort_key[T, K: cmp.Ord](arr, key)` — the generic-key
+  generalisation: sort by a projection to any `Ord` key
+  (`string`, `u64`, a `@derive(Ord)` struct), dispatching the
+  order through `key.cmp(...)`
+
+`sort_by[T](xs, cmp)` (comparator-driven) and `sort[T: cmp.Ord]`
+(no-comparator, `Ord`-ordered) live in `std/array` / `core/cmp`.
 
 ### `std/set`
 
