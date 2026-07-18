@@ -286,10 +286,9 @@ existing test scaffolding rather than gated off:
     `own-param-donor-{map,tuple,opt}-field*` differential cases). Enum /
     string fields remain BLOCKED there — the alias-free release proof
     (`donor_enum_fields_fresh`) reads the donor's bind literal, which a
-    parameter doesn't have. (Aside found while testing: a map-returning CALL
-    as a struct-lit field value crashes on the self-host x86 path with reuse
-    on OR off — a separate pre-existing bug; the reuse cases use ident-valued
-    Map fields.)
+    parameter doesn't have. (The map-returning-CALL-as-field-value crash
+    once noted here is fixed — the shape now fires reuse and is pinned by the
+    `own-param-donor-map-field-call` differential case.)
   - **Enum-donor recipient** (`enum_donor_reuse_sites`): now on
     `struct_fields_reusable_cross` + the shared `cross_recipient_fields_fresh`
     value gate (pinned by the `enum-donor-{enum,tuple}-field-recipient*`
