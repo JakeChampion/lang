@@ -1,0 +1,14 @@
+import "std/option";
+// Option.is_none_or: mirror of is_some_and (None -> true). Distinct nonzero
+// exit per failure; 42 = all pass. Runs interp / x86-64 / arm64 / wasm.
+function pos(x: i32): boolean { return x > 0; }
+function main(): i32 {
+    var a: Option[i32] = Some(7);
+    var b: Option[i32] = Some(0 - 3);
+    var n: Option[i32] = None;
+    var r: i32 = 0;
+    if (a.is_none_or(pos)) { r = r + 10; }     // Some(7), 7>0 -> true
+    if (b.is_none_or(pos)) { r = r + 1; }      // Some(-3), -3>0 false -> false (no add)
+    if (n.is_none_or(pos)) { r = r + 32; }     // None -> true
+    return r;   // 10 + 32 = 42
+}
