@@ -208,7 +208,13 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
                         // miscompiling AST path (#5155).
                         var ebi: i32 = 0;
                         while (ebi < pv.extra_bindings.len()) {
-                            if (pv.extra_bindings[ebi].len() > 0) { acc = acc.append(pv.extra_bindings[ebi]); }
+                            // Bind the element to a typed local before .len() /
+                            // .append — a direct `pv.extra_bindings[ebi].len()`
+                            // mis-dispatched the string element as i32 (an
+                            // undefined `__fn_i32__len` at single-module link),
+                            // the idiom irlower.fern uses for the same field.
+                            var ebn: string = pv.extra_bindings[ebi];
+                            if (ebn.len() > 0) { acc = acc.append(ebn); }
                             ebi = ebi + 1;
                         }
                     },
