@@ -298,6 +298,36 @@ function main(): i32 {
     if (i64_smul((0 as i64) - 3037000500, 3037000500 as i64) == ((0 as i64) - 9223372036854775807 - 1)) { r = r + 9; }
     return r;
 }`},
+	// reverse_bits (the std/i32 · i64 additions): bit-order reversal over the
+	// unsigned twin's logical shifts (bit i -> bit width-1-i). The bit-level
+	// counterpart of byte_swap; exercises u32/u64 shift | & across function
+	// calls on the IR path (same shape as int-byte-swap), plus the involution.
+	// Oracle-checked. Five hits → 42.
+	{"int-reverse-bits", `function i32_rev(n: i32): i32 {
+    var u: u32 = n as u32;
+    var r: u32 = 0 as u32;
+    var i: i32 = 0;
+    while (i < 32) { r = (r << (1 as u32)) | (u & (1 as u32)); u = u >> (1 as u32); i = i + 1; }
+    return r as i32;
+}
+function i64_rev(n: i64): i64 {
+    var u: u64 = n as u64;
+    var r: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < 64) { r = (r << (1 as u64)) | (u & (1 as u64)); u = u >> (1 as u64); i = i + 1; }
+    return r as i64;
+}
+function main(): i32 {
+    var i32min: i32 = 0 - 2147483647 - 1;
+    var i64min: i64 = (0 as i64) - 9223372036854775807 - 1;
+    var r: i32 = 0;
+    if (i32_rev(1) == i32min) { r = r + 8; }                          // bit 0 -> bit 31
+    if (i32_rev(15) == (0 - 268435456)) { r = r + 8; }               // 0x0000000F -> 0xF0000000
+    if (i32_rev(i32_rev(12345)) == 12345) { r = r + 8; }            // involution
+    if (i64_rev(1 as i64) == i64min) { r = r + 9; }                 // bit 0 -> bit 63
+    if (i64_rev(i64_rev(987654321 as i64)) == (987654321 as i64)) { r = r + 9; }
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

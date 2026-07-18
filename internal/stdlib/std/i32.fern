@@ -756,6 +756,24 @@ pub function (n: i32) byte_swap(): i32 {
     return ((b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3) as i32;
 }
 
+// `(n: i32) reverse_bits()` — reverse the ORDER of the 32 bits: bit i moves to
+// bit 31-i. The bit-level counterpart of `byte_swap` (which reverses whole
+// bytes), completing the bit-ops family; useful for FFT/Gray-code/hash bit
+// tricks. Operates on the raw two's-complement pattern via u32 (logical shifts,
+// like the rest of the family), so `reverse_bits(1)` is i32::MIN (bit 0 -> bit
+// 31) and it round-trips (`n.reverse_bits().reverse_bits() == n`).
+pub function (n: i32) reverse_bits(): i32 {
+    var u: u32 = n as u32;
+    var r: u32 = 0 as u32;
+    var i: i32 = 0;
+    while (i < 32) {
+        r = (r << (1 as u32)) | (u & (1 as u32));
+        u = u >> (1 as u32);
+        i = i + 1;
+    }
+    return r as i32;
+}
+
 // `(n: i32) rotate_left(bits)` / `rotate_right(bits)` —
 // circular shift by `bits` positions. Bits shifted out one
 // end re-enter the other. The bit count is masked to 0..31

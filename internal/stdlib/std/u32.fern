@@ -281,6 +281,22 @@ pub function (n: u32) byte_swap(): u32 {
     return (b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3;
 }
 
+// `(n: u32) reverse_bits()` — reverse the ORDER of the 32 bits: bit i moves to
+// bit 31-i. The unsigned u32 sibling of std/i32's `reverse_bits` and the
+// bit-level counterpart of `byte_swap`. Round-trips
+// (`n.reverse_bits().reverse_bits() == n`).
+pub function (n: u32) reverse_bits(): u32 {
+    var u: u32 = n;
+    var r: u32 = 0 as u32;
+    var i: i32 = 0;
+    while (i < 32) {
+        r = (r << (1 as u32)) | (u & (1 as u32));
+        u = u >> (1 as u32);
+        i = i + 1;
+    }
+    return r;
+}
+
 // `bit(i)` / `set_bit(i)` / `clear_bit(i)` / `toggle_bit(i)` — read /
 // set / clear / flip bit `i` (0 = LSB), the unsigned counterparts to
 // std/i32's accessors. Out-of-range `i` reads false / returns `n`.

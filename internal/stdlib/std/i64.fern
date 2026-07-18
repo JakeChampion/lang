@@ -454,6 +454,23 @@ pub function (n: i64) byte_swap(): i64 {
     return r as i64;
 }
 
+// `(n: i64) reverse_bits()` — reverse the ORDER of the 64 bits: bit i moves to
+// bit 63-i. The i64 sibling of std/i32's `reverse_bits` and the bit-level
+// counterpart of `byte_swap`. Operates on the raw two's-complement pattern via
+// u64 (logical shifts), so it round-trips
+// (`n.reverse_bits().reverse_bits() == n`).
+pub function (n: i64) reverse_bits(): i64 {
+    var u: u64 = n as u64;
+    var r: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < 64) {
+        r = (r << (1 as u64)) | (u & (1 as u64));
+        u = u >> (1 as u64);
+        i = i + 1;
+    }
+    return r as i64;
+}
+
 // `bit(i)` / `set_bit(i)` / `clear_bit(i)` / `toggle_bit(i)` — read /
 // set / clear / flip bit `i` (0 = LSB), the 64-bit counterparts to
 // std/i32's accessors. An out-of-range `i` (< 0 or >= 64) reads false /
