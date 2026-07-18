@@ -2201,3 +2201,12 @@ pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) { return p
 // `xs.scan(init, f)` — method form of `scan`: the running accumulators
 // of a left fold (same length as `xs`).
 pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] { return scan(xs, init, f); }
+
+// `xs.chunks(size)` / `xs.windows(size)` — method forms of the free
+// `chunks` / `windows`, completing the receiver-method surface every
+// other array transform already has (`take` / `drop` / `partition` / …).
+// `chunks` splits into non-overlapping `T[]` groups of length `size`
+// (last group shorter); `windows` yields every contiguous length-`size`
+// sub-slice, sliding one element at a time. Both return `T[][]`.
+pub function (xs: T[]) chunks[T](size: i32): T[][] { return chunks(xs, size); }
+pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); }
