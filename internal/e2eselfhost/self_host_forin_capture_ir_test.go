@@ -54,6 +54,19 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32
 			`import "core/map";
 struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for v in m.values() { var h: H = H { f: function (x: i32): i32 { return x + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
 			62, ".Lir_main"},
+		// The iter is not a bare ident: a struct FIELD array, a SLICE, and a
+		// string field array. cap_type_in_stmts' StmtFor arm resolves the
+		// binder type from the field decl resp. the sliced array's type
+		// (the method-call iter `for x in s.get()` is the remaining gap, #5193).
+		{"forin-struct-field-array-binder",
+			`struct S { items: i32[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for x in s.items { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
+			15, ".Lir_g"},
+		{"forin-slice-binder",
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var xs: i32[] = [1, 2, 3, 4]; var acc: i32 = 0; for x in xs[0:2] { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
+			8, ".Lir_g"},
+		{"forin-string-field-array-binder",
+			`struct S { tags: string[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for t in s.tags { var h: H = H { f: function (q: i32): i32 { return q + t.len(); }, id: 1 }; acc = acc + h.f(0); } return acc; } function main(): i32 { return g(S { tags: ["ab", "cde"], n: 0 }); }`,
+			5, ".Lir_g"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -35235,6 +35235,28 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                     var ity: string = "";
                     match (fr.iter) {
                         parser.ExprIdent(itid) => { ity = cap_type_at(itid.name, fd, depth, structs); },
+                        parser.ExprFieldAccess(itfld) => {
+                            // `for x in s.items` — the iter is a struct FIELD of
+                            // array type `T[]`; resolve the field's declared type
+                            // (the `[]`-strip below yields the binder T). #5173
+                            // follow-up: previously only a bare-ident iter
+                            // resolved, so a captured field-array binder declined.
+                            match (itfld.obj) {
+                                parser.ExprIdent(itsid) => {
+                                    var sty: string = cap_type_at(itsid.name, fd, depth, structs);
+                                    if (sty.len() > 0) { ity = decl_field_type(structs, sty, itfld.field); }
+                                },
+                                _ => {}
+                            }
+                        },
+                        parser.ExprSlice(itsl) => {
+                            // `for x in xs[0:2]` — the slice's element type is the
+                            // sliced array's element type (an ident array here).
+                            match (itsl.array) {
+                                parser.ExprIdent(itaid) => { ity = cap_type_at(itaid.name, fd, depth, structs); },
+                                _ => {}
+                            }
+                        },
                         parser.ExprCall(itc) => {
                             // `for k in m.keys()` / `for v in m.values()`: the
                             // binder is the receiver Map's key resp. value type.
