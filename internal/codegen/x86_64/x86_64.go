@@ -251,6 +251,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
 		}
+		// A function's IR is dead the moment it is emitted — nothing after
+		// this loop reads ip.Funcs — but holding the whole slice keeps the
+		// entire program's ops (~160 B each, tens of millions for the
+		// self-host drivers) live until the last function is done, right
+		// when the output buffer is at its largest. Releasing each entry
+		// as we go lets the GC reclaim the IR incrementally, cutting the
+		// emit's live-heap peak by roughly the IR's size on driver-scale
+		// programs. Output is unaffected (the walk is forward-only).
+		ip.Funcs[i] = nil
 	}
 	// Reader/Writer runtime is emitted as a single bundle: every
 	// helper (open_*, read_line, read_chunk, close, write,
