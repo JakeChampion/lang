@@ -1502,6 +1502,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-ret-tuple-elem-getor", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
 		{"map-ret-tuple-elem-len", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.len(); }`, 4},
 		{"map-ret-tuple-elem-unannotated", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		// The METHOD-call sibling (`(f.mk(), 3)`): the registry keys methods
+		// "<BaseType>.<method>", resolved via the receiver's struct type.
+		{"map-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, f.base); return m; } function main(): i32 { var f: Fac = Fac { base: 7 }; var t: (Map[i32, i32], i32) = (f.mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
 		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
