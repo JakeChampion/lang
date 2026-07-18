@@ -10667,6 +10667,34 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         dvb = dvb.mark_struct_type(dvslot, v.type_name);
         return dvb.emit(ir.op_store_local(dvslot));
     }
+    // `var f = r.hs[0]` where hs is a struct closure-array FIELD (#5160): f
+    // aliases the element's closure box, which is OWNED by the struct (its
+    // field reclaim frees it). Bind f a closure local for env-first `f()`
+    // dispatch, but do NOT mark it is_arr — the exit-sweep must not dec the
+    // BORROWED box (a second dec beyond the struct's own reclaim underflows its
+    // rc). Distinct from the LOCAL element bind (`var c = fns[i]`, fns a
+    // closure-array LOCAL) in the clo_init block below, which stays is_arr: a
+    // local array is only shallow-dec'd at exit (its element boxes leak), so
+    // that bind's dec is a sound partial free, not a double free. RC-soundness
+    // follow-up to #5183.
+    match (v.init) {
+        parser.ExprIndex(cfe) => {
+            match (cfe.array) {
+                parser.ExprFieldAccess(_) => {
+                    if (field_access_is_closurearr(cfe.array, s)) {
+                        var ces: LowerState = lower_expr(v.init, s);   // arr_get -> element box ptr
+                        if (!ces.ok) { return ces; }
+                        var ceb: LowerState = ces.add_local(v.name);
+                        var ceslot: i32 = ceb.slot_of(v.name);
+                        ceb = ceb.mark_closure_local(v.name);
+                        return ceb.emit(ir.op_store_local(ceslot));
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
     // First-class closure binding (slice 3a): `var f = <lambda>` or
     // `var f = <call to a closure-returning fn>` — the init lowers to an
     // i32[] env box; bind f as an array slot AND mark it a closure local
@@ -10703,11 +10731,10 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // capture-read sibling.
                     else if (aid.name == "__env" && v.type_name == "fn") { clo_init = true; }
                 },
-                // `var f = r.hs[0]` where hs is a struct closure-array FIELD
-                // (#5160 defect #2): the element is a closure box, so bind f a
-                // closure local (its call unpacks the box). Without this f()
-                // calls the box pointer as raw code -> SIGSEGV.
-                parser.ExprFieldAccess(_) => { if (field_access_is_closurearr(ix.array, s)) { clo_init = true; } },
+                // (`var f = r.hs[0]` over a struct closure-array field is
+                // handled by the dedicated borrow branch above — it binds a
+                // closure-local BORROW, not the is_arr owner this clo_init path
+                // would produce.)
                 _ => { }
             }
         },
@@ -13030,9 +13057,15 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     if (elem_is_i64) { ff = ff.mark_i64(xslot, true); }
     if (elem_is_u64) { ff = ff.mark_u64(xslot, true); }
     // `for f in <closure[]>`: each element is a closure box, so bind the
-    // loop var as a closure local (its call unpacks the env box rather
-    // than calling the raw pointer as a table index).
-    if (s.is_closurearr_slot(aslot)) { ff = ff.mark_arr(xslot, true); ff = ff.mark_closure_local(fr.var_name); }
+    // loop var a closure local (its call unpacks the env box rather than
+    // calling the raw pointer as a table index). The loop var is a BORROW of
+    // the array's element boxes — it never owns them, so it is deliberately
+    // NOT is_arr: the exit-sweep must not dec a borrowed closure box (closures
+    // are leak-only; when the array is a struct field the struct's own field
+    // reclaim frees the boxes, so a second dec here underflows their rc — the
+    // whole-field-alias foreach `var fns = r.hs; for h in fns` and the
+    // snapshot-routed `for h in r.hs`). #5160 RC-soundness follow-up.
+    if (s.is_closurearr_slot(aslot)) { ff = ff.mark_closure_local(fr.var_name); }
     // `for row in <T[][]>`: each element is itself an array, so bind the
     // loop var as an array source — lets `for x in row` / `row` flow as an
     // array. The element loads via the default 4-byte/slot arr_get (the
