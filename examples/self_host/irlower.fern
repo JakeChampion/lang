@@ -2704,23 +2704,6 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
-// registry_has_method reports whether a return-type registry holds a
-// QUALIFIED "<Type>.<method>" entry for `method` — the name-based
-// resolution a `dyn Trait` dispatch result's type falls back to
-// (#5142). Registries hold bare free-function names and qualified
-// method entries; only the qualified form (the "." separator, which
-// bare names never contain) identifies a method.
-function registry_has_method(registry: string[], method: string): boolean {
-    var suffix: string = "." + method;
-    var i: i32 = 0;
-    while (i < registry.len()) {
-        var e: string = registry[i];
-        if (e.len() > suffix.len() && e[e.len() - suffix.len() : e.len()] == suffix) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
 pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
@@ -2875,19 +2858,16 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // receiver type so only genuine method calls match.
                     var mrty: string = expr_struct_type(cfa.obj, s);
                     if (mrty == "") { mrty = expr_recv_prim_type(cfa.obj, s); }
-                    // A `dyn Trait` receiver (#5142): the dispatch result's type is
-                    // the TRAIT method's declared return type, but traits are
-                    // erased before lowering — impls become "<Concrete>.<method>"
-                    // entries. Resolve name-based, exactly how the backend
-                    // enumerates the dispatch arms: the result is a string when
-                    // some qualified "<T>.<method>" registry entry returns string
-                    // (impls share the trait's signature, so any match is
-                    // authoritative). Without this, `d.name().len()` fell to the
-                    // generic-deref lowering and read the string DATA word as the
-                    // length.
-                    if (mrty.len() > 4 && mrty[0:4] == "dyn ") {
-                        return registry_has_method(s.str_ret_fns, cfa.field);
-                    }
+                    // A `dyn Trait` receiver (#5142) falls through to the
+                    // QUALIFIED lookup below: append_dyn_str_ret_fns seeds a
+                    // "dyn <Trait>.<method>" entry per string-returning REQUIRED
+                    // trait method, so the dispatch result tracks as a string
+                    // precisely. (An earlier name-based fallback here — "any
+                    // qualified entry with this method name" — let an UNRELATED
+                    // type's same-named string method poison an i32 trait
+                    // dispatch: `d.bar() + sv.bar().len()` lowered the `+` as
+                    // str_concat over the integer result and SIGSEGV'd — the
+                    // dyn-i32-vs-unrelated-string case.)
                     // Qualified lookup "<recvType>.<method>" (str_ret_fns_of keys
                     // methods that way) so a string-returning method on THIS
                     // receiver type is recognised — without colliding with a
