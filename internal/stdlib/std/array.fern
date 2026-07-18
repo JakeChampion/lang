@@ -1271,6 +1271,20 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
     return None;
 }
 
+// `find_last(xs, pred)` — `Some` of the LAST element satisfying `pred`,
+// scanning from the end, else `None`. The right-to-left mirror of `find`
+// (which returns the first match): `find` answers "the first matching
+// element", `find_last` "the last". Works for any element type via the
+// closure; empty → `None`.
+pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
+    var i: i32 = xs.len() - 1;
+    while (i >= 0) {
+        if (pred(xs[i])) { return Some(xs[i]); }
+        i = i - 1;
+    }
+    return None;
+}
+
 // `find_map(xs, f)` — apply `f` to each element and return the FIRST
 // `Some` it produces, else `None`. The map-and-search fusion of
 // `map(...).find(is_some)` in a single short-circuiting pass, keeping
@@ -1403,6 +1417,20 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
     while (i < xs.len()) {
         if (pred(xs[i])) { return Some(i); }
         i = i + 1;
+    }
+    return None;
+}
+
+// `rposition(xs, pred)` — `Some(i)` for the LAST index whose element
+// satisfies `pred`, scanning from the end, else `None`. The right-to-left
+// mirror of `position` (first matching index) and the predicate sibling of
+// `index_of_last` (which matches by `Eq` value). Works for any element type
+// via the closure; empty → `None`.
+pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
+    var i: i32 = xs.len() - 1;
+    while (i >= 0) {
+        if (pred(xs[i])) { return Some(i); }
+        i = i - 1;
     }
     return None;
 }
@@ -2066,6 +2094,12 @@ pub function (xs: T[]) none(pred: (T) => boolean): boolean { return none(xs, pre
 
 // `xs.find(pred)` — first element satisfying `pred`, or `None`.
 pub function (xs: T[]) find(pred: (T) => boolean): Option[T] { return find(xs, pred); }
+
+// `xs.find_last(pred)` — LAST element satisfying `pred`, or `None`.
+pub function (xs: T[]) find_last(pred: (T) => boolean): Option[T] { return find_last(xs, pred); }
+
+// `xs.rposition(pred)` — index of the LAST element satisfying `pred`, or `None`.
+pub function (xs: T[]) rposition(pred: (T) => boolean): Option[i32] { return rposition(xs, pred); }
 
 // `xs.count_where(pred)` — how many elements satisfy `pred`.
 pub function (xs: T[]) count_where(pred: (T) => boolean): i32 { return count_where(xs, pred); }
