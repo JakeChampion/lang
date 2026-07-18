@@ -233,6 +233,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_read_file",
 			[]string{"\n__fern_read_file:"},
 		},
+		{
+			// remove_file — Option[IoError] leaf (#2649): unlinkat via __syscall3.
+			// The old hand-asm IR body (__fern_remove_file:) is gone; op_remove_file
+			// calls __fn___fern_remove_file.
+			"remove_file",
+			`function main(): i32 { match (remove_file("/nonexistent-xyz")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			"__fn___fern_remove_file",
+			[]string{"\n__fern_remove_file:"},
+		},
 	}
 
 	for _, tc := range cases {

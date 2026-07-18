@@ -339,6 +339,15 @@ pub function rt_src_random_bytes(): string {
     return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); __syscall3(318, p, n, 0); return __raw_string(p, n); }";
 }
 
+// rt_src_remove_file backs `remove_file(path)` (#2649, syscall-leaf) →
+// Option[IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0) (syscall
+// 263, 3-arg so __syscall3 suffices), return None on success / Some(NotFound(_))
+// on failure — the Some payload a FRESH string boxed from the raw path copy (the
+// hand-asm used a null payload; callers bind Some with a wildcard). x86-64-only.
+pub function rt_src_remove_file(): string {
+    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Some(NotFound(__raw_string(pathz, plen))); } return None; }";
+}
+
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
 // 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file

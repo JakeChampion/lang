@@ -42,7 +42,9 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > read buffer becomes the `Ok(string)`. It reads the whole file in ONE `read`
 > (into an lseek-sized buffer, passed whole) rather than a read-loop, because the
 > i32 raw-pointer floor can't do 64-bit-safe `buf + offset` arithmetic on a high
-> heap buffer — correct for regular files ≤ 2 GiB read without interruption.
+> heap buffer — correct for regular files ≤ 2 GiB read without interruption. And
+> **`remove_file`** (`rt_src_remove_file` → `Option[IoError]`): `unlinkat` via
+> `__syscall3`, `None` on success / `Some(NotFound(_))` on failure.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
