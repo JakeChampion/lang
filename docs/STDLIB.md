@@ -390,11 +390,19 @@ Semantic Versioning 2.0.0 (semver.org) — parse and precedence-compare.
 
 ### `std/math`
 
-Free helpers — random, ranges, numeric constants, RGB packing.
+Free helpers — random, ranges, numeric constants, angle + interpolation
+helpers, RGB packing.
 
 - `random_int(lo, hi)`
 - `range(start, end)`, `range_step(start, end, step)`
 - `i32_max()`, `i32_min()`, `i64_max()`, `i64_min()`
+- `pi(): f64`, `tau(): f64` — the closest f64 to π and 2π (`tau() == 2.0 *
+  pi()` exactly).
+- `to_radians(deg): f64`, `to_degrees(rad): f64` — inverse angle
+  conversions; the zero angle is exact both ways.
+- `lerp(a, b, t): f64` — linear interpolation (`a·(1−t) + b·t`), exact at
+  both endpoints (`t == 0.0` → `a`, `t == 1.0` → `b`) and extrapolating
+  outside [0, 1].
 - `pack_rgb(r, g, b)` — pack three 0–255 channels into a 24-bit i32.
 - `parse_rgb_hex(s): Option[i32]` — inverse: parse `#rrggbb` / `rrggbb`
   / `#rgb` shorthand (case-insensitive) into a packed RGB i32, `None` if
