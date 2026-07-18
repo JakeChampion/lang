@@ -253,6 +253,166 @@ func TestReduceStrengthCleanupCascade(t *testing.T) {
 	}
 }
 
+// i64-width multiply by a power of two reduces to an i64 shift with
+// an i64 shift count (so the wasm validator sees matching operand
+// widths). `x * 8` at 64-bit → `x << 3`.
+func TestReduceStrengthMulPow2I64(t *testing.T) {
+	fn := &Func{
+		Name: "f",
+		Ops: []Op{
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpConstI64, I64: 8},
+			{Kind: OpMul, Width: 64},
+			{Kind: OpReturn},
+		},
+	}
+	p := &Program{Funcs: []*Func{fn}}
+	ReduceStrength(p)
+	var shl, count *Op
+	for i := range fn.Ops {
+		switch fn.Ops[i].Kind {
+		case OpMul:
+			t.Errorf("i64 OpMul should have been replaced:\n%s", p)
+		case OpShl:
+			shl = &fn.Ops[i]
+		case OpConstI64:
+			count = &fn.Ops[i]
+		case OpConstI32:
+			t.Errorf("i64 shift count must stay i64, found OpConstI32:\n%s", p)
+		}
+	}
+	if shl == nil || shl.Width != 64 {
+		t.Errorf("expected an i64 (Width 64) OpShl:\n%s", p)
+	}
+	if count == nil || count.I64 != 3 {
+		t.Errorf("expected i64 shift amount 3 (log2 8):\n%s", p)
+	}
+}
+
+// Unsigned division by a power of two is exact — `x /u 4` reduces to
+// `x >>u 2` (a logical shift). Signed div by 4 (the other case) is
+// left alone by TestReduceStrengthSkipsSignedDivAndRem.
+func TestReduceStrengthUnsignedDivPow2(t *testing.T) {
+	fn := &Func{
+		Name: "f",
+		Ops: []Op{
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpConstI32, I32: 4},
+			{Kind: OpDivS, Unsigned: true},
+			{Kind: OpReturn},
+		},
+	}
+	p := &Program{Funcs: []*Func{fn}}
+	ReduceStrength(p)
+	var shr, count *Op
+	for i := range fn.Ops {
+		switch fn.Ops[i].Kind {
+		case OpDivS:
+			t.Errorf("unsigned div by 2^k should reduce to a shift:\n%s", p)
+		case OpShrS:
+			shr = &fn.Ops[i]
+		case OpConstI32:
+			count = &fn.Ops[i]
+		}
+	}
+	if shr == nil || !shr.Unsigned {
+		t.Errorf("expected an unsigned OpShrS (shr_u):\n%s", p)
+	}
+	if count == nil || count.I32 != 2 {
+		t.Errorf("expected shift amount 2 (log2 4):\n%s", p)
+	}
+}
+
+// Unsigned remainder by a power of two is a low-bit mask — `x %u 8`
+// reduces to `x & 7`.
+func TestReduceStrengthUnsignedRemPow2(t *testing.T) {
+	fn := &Func{
+		Name: "f",
+		Ops: []Op{
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpConstI32, I32: 8},
+			{Kind: OpRemS, Unsigned: true},
+			{Kind: OpReturn},
+		},
+	}
+	p := &Program{Funcs: []*Func{fn}}
+	ReduceStrength(p)
+	var and, mask *Op
+	for i := range fn.Ops {
+		switch fn.Ops[i].Kind {
+		case OpRemS:
+			t.Errorf("unsigned rem by 2^k should reduce to a mask:\n%s", p)
+		case OpAnd:
+			and = &fn.Ops[i]
+		case OpConstI32:
+			mask = &fn.Ops[i]
+		}
+	}
+	if and == nil {
+		t.Errorf("expected an OpAnd:\n%s", p)
+	}
+	if mask == nil || mask.I32 != 7 {
+		t.Errorf("expected mask 7 (8-1):\n%s", p)
+	}
+}
+
+// Division by 1 is exact for either sign — `x / 1` collapses to `x`.
+// Remainder by 1 is always 0 — `x % 1` becomes `<expr>; drop; const 0`
+// so any side effect in the operand position still runs. Both cases
+// apply to signed OpDivS / OpRemS (divisor 1 has no rounding hazard).
+func TestReduceStrengthDivRemByOne(t *testing.T) {
+	// x / 1 = x
+	{
+		fn := &Func{
+			Name: "f",
+			Ops: []Op{
+				{Kind: OpLoadLocal, I32: 0},
+				{Kind: OpConstI32, I32: 1},
+				{Kind: OpDivS},
+				{Kind: OpReturn},
+			},
+		}
+		p := &Program{Funcs: []*Func{fn}}
+		ReduceStrength(p)
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS || (op.Kind == OpConstI32 && op.I32 == 1) {
+				t.Errorf("`x / 1` should drop both ops:\n%s", p)
+			}
+		}
+	}
+	// call() % 1 = 0, side effect preserved via OpDrop
+	{
+		fn := &Func{
+			Name: "f",
+			Ops: []Op{
+				{Kind: OpCallDirect, Str: "side_effect", I32: 0},
+				{Kind: OpConstI32, I32: 1},
+				{Kind: OpRemS},
+				{Kind: OpReturn},
+			},
+		}
+		p := &Program{Funcs: []*Func{fn}}
+		ReduceStrength(p)
+		hasCall, hasDrop, hasRem := false, false, false
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case OpCallDirect:
+				hasCall = true
+			case OpDrop:
+				hasDrop = true
+			case OpRemS:
+				hasRem = true
+			}
+		}
+		if hasRem {
+			t.Errorf("`x %% 1` should be eliminated:\n%s", p)
+		}
+		if !hasCall || !hasDrop {
+			t.Errorf("`call() %% 1` must keep the call and a Drop for its value:\n%s", p)
+		}
+	}
+}
+
 // Idempotent: a second ReduceStrength on already-reduced ops
 // produces identical output.
 func TestReduceStrengthIsIdempotent(t *testing.T) {
