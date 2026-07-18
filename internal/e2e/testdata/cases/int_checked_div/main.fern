@@ -1,0 +1,21 @@
+import "std/i64";
+import "std/u32";
+import "std/u64";
+// checked_div for i64/u32/u64, mirroring std/i32: None on divide-by-zero
+// (and i64::MIN / -1 overflow). Distinct nonzero exit per failure; 42 = pass.
+// Runs interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    // i64
+    match ((10 as i64).checked_div(2 as i64)) { Some(x) => { if (x != (5 as i64)) { return 1; } }, None => { return 2; } }
+    match ((10 as i64).checked_div(0 as i64)) { Some(x) => { return 3; }, None => {} }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    match (min64.checked_div((0 as i64) - (1 as i64))) { Some(x) => { return 4; }, None => {} }   // overflow -> None
+    match (min64.checked_div(2 as i64)) { Some(x) => {}, None => { return 5; } }                    // fine
+    // u32
+    match ((9 as u32).checked_div(3 as u32)) { Some(x) => { if (x != (3 as u32)) { return 11; } }, None => { return 12; } }
+    match ((9 as u32).checked_div(0 as u32)) { Some(x) => { return 13; }, None => {} }
+    // u64
+    match ((100 as u64).checked_div(4 as u64)) { Some(x) => { if (x != (25 as u64)) { return 21; } }, None => { return 22; } }
+    match ((1 as u64).checked_div(0 as u64)) { Some(x) => { return 23; }, None => {} }
+    return 42;
+}

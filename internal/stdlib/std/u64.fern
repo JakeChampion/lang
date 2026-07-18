@@ -106,6 +106,14 @@ pub function (n: u64) checked_sub(other: u64): Option[u64] {
     return Some(n - other);
 }
 
+// `(n: u64) checked_div(other)` — None on divide-by-zero, else Some(n / other).
+// Unsigned division never overflows, so divide-by-zero is the only failure.
+// The u64 sibling of std/i32's `checked_div`.
+pub function (n: u64) checked_div(other: u64): Option[u64] {
+    if (other == (0 as u64)) { return None; }
+    return Some(n / other);
+}
+
 // `(n: u64) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so there are no negative-input cases: `sqrt_floor(0)` is 0,
 // and the iteration converges in O(log n). Exact across the full u64 range,

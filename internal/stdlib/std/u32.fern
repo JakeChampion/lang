@@ -111,6 +111,14 @@ pub function (n: u32) checked_sub(other: u32): Option[u32] {
     return Some(n - other);
 }
 
+// `(n: u32) checked_div(other)` — None on divide-by-zero, else Some(n / other).
+// Unsigned division never overflows (no signed MIN/-1 case), so divide-by-zero
+// is the only failure. The u32 sibling of std/i32's `checked_div`.
+pub function (n: u32) checked_div(other: u32): Option[u32] {
+    if (other == (0 as u32)) { return None; }
+    return Some(n / other);
+}
+
 // `(n: u32) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so no negative-input cases; `sqrt_floor(0)` is 0. Exact
 // across the u32 range, e.g. `sqrt_floor(4294836225)` (which is `(2^16 - 1)^2`)
