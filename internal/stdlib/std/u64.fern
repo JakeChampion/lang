@@ -205,6 +205,18 @@ pub function (n: u64) overflowing_mul(other: u64): (u64, boolean) {
     return (p, p / n != other);
 }
 
+// `(n: u64) overflowing_div(other)` / `overflowing_rem(other)` — the unsigned
+// u64 siblings, completing the overflowing_ family for `/` and `%`. Unsigned
+// division can never overflow, so the flag is always false; the pair form is
+// provided for API parity with the signed types and Rust's u64. Divide-by-zero
+// is the caller's responsibility, as for the bare `/` and `%` operators.
+pub function (n: u64) overflowing_div(other: u64): (u64, boolean) {
+    return (n / other, false);
+}
+pub function (n: u64) overflowing_rem(other: u64): (u64, boolean) {
+    return (n % other, false);
+}
+
 // `(n: u64) checked_shl(rhs)` / `checked_shr(rhs)` — the unsigned u64 siblings
 // of std/i32's checked shifts: `Some(n << rhs)` / `Some(n >> rhs)`, or `None`
 // when the shift amount is out of range (`rhs < 0` or `rhs >= 64`). `>>` is
