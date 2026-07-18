@@ -67,9 +67,12 @@ var reuseDifferentialCases = []struct {
 	// are leak-only boxes (released nowhere), so the reuse arm's release walk
 	// skips them and no donor-freshness proof is needed (enum / string stay
 	// excluded: their release proof reads a bind literal a param doesn't have).
-	// The Map field VALUE is a bare ident — a map-returning CALL as a struct-lit
-	// field value is a separate pre-existing crash on this path, reuse on or off.
+	// Map field values: both a bare ident and a map-returning CALL fire.
+	// The call-valued shape once crashed on this path (reuse on or off) and
+	// was excluded; that bug has been fixed upstream, so the -call case
+	// below pins it as a firing reuse shape.
 	{"own-param-donor-map-field", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); var c = C { id: 10, m: mm }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-map-field-call", `struct C { id: i32, m: Map[i32, i32] } function make_map(): Map[i32, i32] { var mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); return mm; } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var c = C { id: 10, m: make_map() }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-tuple-field", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var u: i32 = d.id + d.t.0; var c = T2 { id: 10, t: (7, 8) }; return c.id + c.t.1 + u; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 22, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-tuple-field-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var u: i32 = d.id + d.t.0; var c = T2 { id: 10, t: (7, 8) }; var s: i32 = c.id + c.t.1 + u; if (s != 22) { return 99; } return __rc_underflow(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-opt-field", `struct O1 { id: i32, o: Option[i32] } function f(own d: O1): i32 { var u: i32 = d.id; match (d.o) { Some(v) => { u = u + v; }, None => {} } var c = O1 { id: 10, o: Some(9) }; var r: i32 = c.id + u; match (c.o) { Some(v) => { r = r + v; }, None => {} } return r; } function main(): i32 { return f(O1 { id: 3, o: Some(2) }); }`, 24, "call __fn___fern_alloc_reuse"},
