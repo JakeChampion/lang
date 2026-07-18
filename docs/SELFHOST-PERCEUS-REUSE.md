@@ -232,8 +232,19 @@ existing test scaffolding rather than gated off:
     through `__field_reclaim_<T>`'s `fr_clo` arm (the prior iteration's
     env box is reclaimed, no longer a per-iteration leak). Pinned by
     `TestSelfHostClofldDropIRX86_64` (the churn case asserts the reclaim
-    call). Still open: wasm has no arm, and the REUSE admission (native's
-    FuncType kind) still needs the reuse-arm release + freshness branch.
+    call). The **REUSE admission (native's FuncType kind) is now closed**
+    too: the coarse "fn" spelling reads as enum-like
+    (`is_enum_like_name("fn")` is deliberately true), so the freshness
+    walks test fn BEFORE their enum arm (`fn_field_value_is_fresh` — a
+    lambda literal or its lifted `__mkclo$` spelling, required by
+    `donor_enum_fields_fresh` / `cross_recipient_fields_fresh` / the
+    self-overwrite override walk) and the enum-like release arm's shallow
+    rc-guarded dec doubles as the k_clo env-box release. Cross /
+    self-overwrite / enum-donor families fire (pinned by the
+    `fn-field-*` reuse-differential cases + aliased-value exclusions); a
+    donor whose own closure field is CALLED stays conservatively excluded
+    by the general escape walk (method-shaped receiver use — same as
+    every field kind). Still open: wasm has no k_clo/fr_clo drop arms.
   - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
     admits only the leak-safe scalar arrays; native admits all. The
     **string[] EXIT-drop prerequisite is now closed**: the strarrfld scan

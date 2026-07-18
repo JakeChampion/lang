@@ -178,6 +178,20 @@ var reuseDifferentialCases = []struct {
 	{"strarr-field-self-overwrite", `struct P { tags: string[], n: i32 } function main(): i32 { var d: P = P { tags: ["x", "y"], n: 1 }; var c: P = P { ...d, tags: ["z", "w", "v"] }; if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n; }`, 4, "call __fn___fern_alloc_reuse"},
 	{"strarr-field-carried-copy", `struct P { tags: string[], n: i32 } function main(): i32 { var d: P = P { tags: ["x", "y"], n: 1 }; var c: P = P { ...d, n: 5 }; if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + c.tags[0].len() + c.tags[1].len(); }`, 9, "call __fn___fern_alloc_reuse"},
 	{"strarr-field-churn-detector", `struct P { tags: string[], n: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: P = P { tags: ["x", "y"], n: i }; var c: P = P { ...d, tags: ["z"] }; if (c.tags.len() + c.n != 1 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// fn (closure) fields (#4356 Delta B, native's FuncType kind): admitted to
+	// the cross / self-overwrite / enum-donor families. The coarse "fn"
+	// spelling reads as enum-like, so the freshness walks test fn BEFORE their
+	// enum arm (fn_field_value_is_fresh: a lambda literal or its lifted
+	// __mkclo$ spelling) and the enum-like release arm's shallow rc-guarded
+	// dec IS the k_clo env-box release. A donor whose own closure field is
+	// CALLED stays conservatively excluded by the general escape walk (a
+	// method-shaped receiver use) — same as every other field kind. Exit
+	// codes cross-checked against native -interp (17 / 21 / 15 / 11).
+	{"fn-field-cross", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var a: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var s1: i32 = a.id + 4; var b: H = H { f: function (x: i32): i32 { return x * 2; }, id: 2 }; return s1 + b.f(5) + b.id; }`, 17, "call __fn___fern_alloc_reuse"},
+	{"fn-field-self-overwrite", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var d: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var c: H = H { ...d, f: function (x: i32): i32 { return x * 4; } }; if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id; }`, 21, "call __fn___fern_alloc_reuse"},
+	{"fn-field-carried-copy", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var d: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var c: H = H { ...d, id: 7 }; if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id; }`, 15, "call __fn___fern_alloc_reuse"},
+	{"fn-field-churn-detector", `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: H = H { f: function (x: i32): i32 { return x + 1; }, id: i }; var c: H = H { ...d, f: function (x: i32): i32 { return x + 2; } }; if (c.f(10) + c.id != 12 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-fn-field-recipient", `enum D2 { P(i32, i32), Q } struct M { tag: i32, g: (i32) => i32 } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = M { tag: 2, g: function (q: i32): i32 { return q + 1; } }; return y.g(1) + y.tag + u; }`, 11, "call __fn___fern_alloc_reuse"},
 	// ENUMRE — the in-place enum reassign upgrade (emit_enum_inplace_reassign),
 	// gated with the layer; reuse-off falls back to emit_enum_reclaim_store's
 	// free+alloc. No distinct call symbol, so no witness string — the asm
@@ -263,13 +277,13 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrarrReuseExclusionX86_64 pins the string[] reuse admission's
-// NEGATIVE space: an ALIASED string[] value (a bare local ident as a donor
-// field / a self-overwrite override) fails the element-fresh-literal gate
-// (strarr_lit_all_elems_fresh), so no reuse fires — the emitted asm carries
-// no __fern_alloc_reuse call — and the alias stays readable after the second
-// construction (values cross-checked against native -interp: 10 / 4), with
-// the rc-underflow detector clean.
+// TestSelfHostStrarrReuseExclusionX86_64 pins the string[] AND fn reuse
+// admissions' NEGATIVE space: an ALIASED value (a bare local ident as a donor
+// field / a self-overwrite override) fails the freshness gate
+// (strarr_lit_all_elems_fresh / fn_field_value_is_fresh), so no reuse fires —
+// the emitted asm carries no __fern_alloc_reuse call — and the alias stays
+// usable after the second construction (values cross-checked against native
+// -interp: 10 / 4 / 25 / 18), with the rc-underflow detector clean.
 func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -289,6 +303,8 @@ func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 	}{
 		{"aliased-donor-field", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k", "m"]; var a: P = P { tags: xs, n: 1 }; var s1: i32 = a.tags.len() + a.n; var b: P = P { tags: ["z"], n: 2 }; var live: i32 = xs.len() + xs[0].len() + xs[1].len(); if (__rc_underflow() != 0) { return 99; } return s1 + b.tags.len() + b.n + live; }`, 10},
 		{"aliased-override", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k"]; var d: P = P { tags: ["x"], n: 1 }; var c: P = P { ...d, tags: xs, n: 2 }; var live: i32 = xs[0].len(); if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + live; }`, 4},
+		{"aliased-fn-donor-field", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var a: H = H { f: g, id: 1 }; var s1: i32 = a.f(5) + a.id; var b: H = H { f: function (x: i32): i32 { return x + 1; }, id: 2 }; var live: i32 = g(3); if (__rc_underflow() != 0) { return 99; } return s1 + b.f(5) + b.id + live; }`, 25},
+		{"aliased-fn-override", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var d: H = H { f: function (x: i32): i32 { return x + 1; }, id: 1 }; var c: H = H { ...d, f: g, id: 2 }; var live: i32 = g(3); if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id + live; }`, 18},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
