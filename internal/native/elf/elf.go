@@ -205,15 +205,10 @@ func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
 // `_start` is the first thing in .text — true for the Go backends' output,
 // but the SELF-HOST emitters place `_start` after other functions, so a
 // binary linked from their asm with entry 0 starts executing mid-function
-// and crashes. arm64 (EM_AARCH64).
+// and crashes. arm64 (EM_AARCH64); an x86-64 sibling can pass emX86_64 to
+// imageWX the day the self-host x86 dialect becomes natively parseable.
 func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
 	return imageWX(text, data, emAArch64, entryOff)
-}
-
-// StaticExecutableDataX86WXEntry is the x86-64 sibling of
-// StaticExecutableDataWXEntry (EM_X86_64).
-func StaticExecutableDataX86WXEntry(text, data []byte, entryOff uint64) []byte {
-	return imageWX(text, data, emX86_64, entryOff)
 }
 
 // imageWX emits an ELF header (e_phnum = 2) + two PT_LOAD program headers
