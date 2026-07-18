@@ -70,6 +70,20 @@ var closureArrayIRCases = []struct {
 	{"namedfn-append-after-literal", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f]; fns = fns.append(g); return fns[1](); }`, 5},
 	// append three named fns, sum via a `for` loop: 1 + 2 + 4 = 7.
 	{"namedfn-append-loop", `function a(): i32 { return 1; } function b(): i32 { return 2; } function c(): i32 { return 4; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(a); fns = fns.append(b); fns = fns.append(c); var s = 0; for f in fns { s = s + f(); } return s; }`, 7},
+	// #5071: a MIXED closure array (capturing + non-capturing lambda in ONE
+	// literal). The capturing element makes the array env-first-dispatched, so
+	// the non-capturing element must be boxed into a `$wrap` env trampoline
+	// too — otherwise its bare fn pointer is deref'd as a box → SIGSEGV. Both
+	// element orderings, plus loop / append / fn-arg dispatch.
+	// capturing first, dispatch the non-capturing elem: (5)*(5) = 25.
+	{"mixed-cap-then-noncap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base, (x: i32) => x * x]; return fs[1](5); }`, 25},
+	// non-capturing first, dispatch the capturing elem: 5 + 2 = 7.
+	{"mixed-noncap-then-cap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x * x, (x: i32) => x + base]; return fs[1](5); }`, 7},
+	// mixed array summed over a variable-index loop: (5+2) + (5*5) = 32.
+	{"mixed-loop", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base, (x: i32) => x * x]; var s = 0; var i = 0; while (i < fs.len()) { s = s + fs[i](5); i = i + 1; } return s; }`, 32},
+	// append a non-capturing lambda onto a NON-empty capturing-lambda literal,
+	// then dispatch the appended element: 5 * 5 = 25.
+	{"mixed-append-noncap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base]; fs = fs.append((y: i32) => y * y); return fs[1](5); }`, 25},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted

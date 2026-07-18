@@ -34027,12 +34027,41 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             var fs: parser.FuncDecl[] = funcs;
             var ct: i32 = counter;
             var nelems: parser.Expr[] = [];
+            // #5071: a closure-array literal that MIXES capturing and
+            // non-capturing lambdas must give every lambda element the SAME
+            // env-first box representation. The array gets ONE dispatch ABI
+            // (env-first, because a capturing element marks it a closure array
+            // via the `__mkclo$` element[0] check), so a non-capturing element
+            // left as a bare fn pointer is deref'd as a box → SIGSEGV. When any
+            // element is a capturing lambda, wrap EVERY lambda element via
+            // try_fn_field_value (capturing → [funcval, caps…]; no-capture → a
+            // `$wrap` env-taking trampoline → [funcval]) so all elements are
+            // env boxes — the same uniform-env-box treatment the tuple /
+            // struct-field cases already apply. An all-non-capturing lambda
+            // array (no capturing element) keeps the bare fn-pointer + plain-
+            // dispatch representation unchanged.
+            var has_cap_lam: boolean = false;
+            var sc: i32 = 0;
+            while (sc < arr.elements.len()) {
+                match (arr.elements[sc]) {
+                    parser.ExprLambda(sclam) => { if (lambda_captures(sclam, gfns, fd).len() > 0) { has_cap_lam = true; } },
+                    _ => {}
+                }
+                sc = sc + 1;
+            }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
                 match (arr.elements[i]) {
                     parser.ExprLambda(lam) => {
-                        var tr: InlineCloRes = try_inline_closure(lam, fd, fs, ct, gfns);
-                        fs = tr.funcs; ct = tr.counter; nelems = nelems.append(tr.expr);
+                        if (has_cap_lam) {
+                            // Uniform env-box: capturing lambdas box as before,
+                            // no-capture lambdas get a `$wrap` env trampoline.
+                            var trw: InlineCloRes = try_fn_field_value(arr.elements[i], fd, fs, ct, gfns, mfuncs);
+                            fs = trw.funcs; ct = trw.counter; nelems = nelems.append(trw.expr);
+                        } else {
+                            var tr: InlineCloRes = try_inline_closure(lam, fd, fs, ct, gfns);
+                            fs = tr.funcs; ct = tr.counter; nelems = nelems.append(tr.expr);
+                        }
                     },
                     _ => {
                         var er: InlineCloRes = lift_inline_closures_expr(arr.elements[i], fd, fs, ct, gfns, structs, mfuncs);
