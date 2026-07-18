@@ -60,17 +60,21 @@ var strReclaimIRCases = []struct {
 	// NEGATIVE: an ALIASED fresh string (`var t = s`) must NOT be reclaimed — t is a
 	// bare-ident alias of s's box, so freeing either would double-free. s is used as
 	// a bare ident (RHS of t's binding) → body_unsafe_for flags it → not in the
-	// reclaim set. The concat operands are bare IDENTS (a/b), not fresh temps, so
-	// emit_str_concat_reclaim does not free them either; this isolates the aliased-
+	// reclaim set. The concat operands a/b are themselves bare-ident ALIASES of src
+	// (so neither src nor a/b is credited — literal-bound locals ARE reclaimable
+	// since the #4357 literal-box slice, so a direct literal operand would now
+	// legitimately emit a free and break this count); this isolates the aliased-
 	// RESULT contract. No __fern_str_free emitted; value stays correct. 3 + 3 = 6.
 	{"aliased-not-reclaimed",
-		`function main(): i32 { var a: string = "ab"; var b: string = "c"; var s: string = a + b; var t: string = s; return s.len() + t.len(); }`,
+		`function main(): i32 { var src: string = "ab"; var a: string = src; var src2: string = "c"; var b: string = src2; var s: string = a + b; var t: string = s; return s.len() + t.len(); }`,
 		6, false},
 	// NEGATIVE: a RETURNED fresh string escapes → not reclaimed. Returned through a
-	// helper so main can measure it. h() returns a fresh concat of two ident operands
-	// (x/y, not fresh temps, so no operand reclaim); s escapes, not freed in h.
+	// helper so main can measure it. h() returns a fresh concat; its operands x/y
+	// are bare-ident aliases (not credited — see aliased-not-reclaimed's note on
+	// literal-bound locals); s escapes, not freed in h. h's bare-ident return also
+	// keeps it out of str_fresh_ret, so main's binding-free never fires either.
 	{"returned-not-reclaimed",
-		`function h(): string { var x: string = "xy"; var y: string = "z"; var s: string = x + y; return s; } function main(): i32 { return h().len(); }`,
+		`function h(): string { var src0: string = "xy"; var x: string = src0; var src1: string = "z"; var y: string = src1; var s: string = x + y; return s; } function main(): i32 { return h().len(); }`,
 		3, false},
 	// ANNOTATED i32_to_string in a loop: reclaimed each iter. On the self-host the
 	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),
