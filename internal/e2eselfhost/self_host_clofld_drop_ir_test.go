@@ -20,9 +20,12 @@ import (
 // through the local's own fn fields (`h.f(10)` moves nothing), so a called
 // fn-field struct stays deep-drop-worthy.
 //
-// The loop-REINIT release path is still box-only for fn fields (the closure
-// box leaks per re-bound iteration) — a follow-up; the churn case here proves
-// the new machinery stays BALANCED (values right, no over-release) at scale.
+// The loop-REINIT release path also routes: a loop-nested `var h: H = …`
+// re-bind reclaims the prior iteration's env box through __field_reclaim_<T>'s
+// fr_clo arm (the NODEEP fn-field exemption resolves the local's type with the
+// nesting-aware fresh_struct_lit_type_deep, so a loop/if-nested declaration is
+// no longer wrongly NODEEP'd into the box-only shallow dec). The churn case
+// asserts the reclaim call and proves it stays BALANCED at scale.
 func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -62,11 +65,13 @@ func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var r: i32 = h.f(10); return r; }`,
 		"clofld-drop-fires", 13, "call __fn___struct_drop_H")
 
-	// CHURN balance: the c1 shape — a capturing lambda field built and
-	// called per iteration, 2M cycles. Values right and the underflow
-	// detector clean prove the admission + drops never over-release.
+	// CHURN balance + loop-REINIT reclaim: the c1 shape — a capturing lambda
+	// field built and called per iteration, 2M cycles. The loop-nested
+	// re-bind routes through __field_reclaim_H (fr_clo frees the prior
+	// iteration's env box); values right and the underflow detector clean
+	// prove the admission + drops never over-release.
 	run(t, `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var k: i32 = i % 5; var h: H = H { f: function (x: i32): i32 { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"clofld-capture-churn-balanced", 0, "")
+		"clofld-capture-churn-balanced", 0, "call __fn___field_reclaim_H")
 
 	// NON-admitted: a bare closure IDENT as the field value (an alias of a
 	// live closure local) — the clofld store gate marks the field unsafe and

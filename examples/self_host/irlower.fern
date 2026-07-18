@@ -18881,8 +18881,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (mvi < mvn) {
         // Exempt calls through the local's own fn-typed FIELDS from the
         // method-receiver hazard (the clofld slice): `h.f(10)` on a field
-        // closure moves nothing — see moves_fields_expr's header.
-        var mvty: string = fresh_struct_lit_type(body, out[mvi]);
+        // closure moves nothing — see moves_fields_expr's header. The DEEP
+        // lookup reaches loop/if-nested declarations (the top-level-only
+        // fresh_struct_lit_type returned "" for those, so a loop-local
+        // fn-field struct was wrongly NODEEP'd and its per-iteration
+        // reinit stayed box-only — the env box leaked every rebind).
+        var mvty: string = fresh_struct_lit_type_deep(body, out[mvi]);
         var mvff: string[] = [];
         if (mvty != "") { mvff = clo_field_names_of(structs, mvty); }
         if (moves_fields_stmts(body, out[mvi], mvff)) { out = out.append("NODEEP:" + out[mvi]); }
@@ -23717,6 +23721,57 @@ function fresh_struct_lit_type(body: parser.Stmt[], name: string): string {
         i = i + 1;
     }
     return "";
+}
+
+// fresh_struct_lit_type_deep: the nesting-aware sibling — finds `name`'s
+// declaration(s) anywhere in the body (loop / if / match / defer bodies
+// included) and returns the no-base struct-lit type they were bound from,
+// or "" when any binding is a different shape or a different type (a
+// shadowed / branch-divergent name stays conservatively untyped). Used by
+// the NODEEP exemption in reclaimable_names_of, whose candidates include
+// loop-nested locals the top-level-only lookup above can't see.
+function fresh_struct_lit_type_deep(stmts: parser.Stmt[], name: string): string {
+    var tys: string[] = fresh_struct_lit_types_acc(stmts, name, []);
+    if (tys.len() == 0) { return ""; }
+    var t0: string = tys[0];
+    var i: i32 = 1;
+    while (i < tys.len()) {
+        if (tys[i] != t0) { return ""; }
+        i = i + 1;
+    }
+    return t0;
+}
+function fresh_struct_lit_types_acc(stmts: parser.Stmt[], name: string, acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprStructLit(sl) => {
+                            if (sl.has_base) { a = a.append(""); } else { a = a.append(sl.type_name); }
+                        },
+                        _ => { a = a.append(""); }
+                    }
+                }
+            },
+            parser.StmtIf(iff) => {
+                a = fresh_struct_lit_types_acc(iff.then_body, name, a);
+                a = fresh_struct_lit_types_acc(iff.else_body, name, a);
+            },
+            parser.StmtWhile(w) => { a = fresh_struct_lit_types_acc(w.body, name, a); },
+            parser.StmtFor(fo) => { a = fresh_struct_lit_types_acc(fo.body, name, a); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = fresh_struct_lit_types_acc(m.arms[ai].body, name, a); ai = ai + 1; }
+            },
+            parser.StmtDefer(d) => { a = fresh_struct_lit_types_acc([d.action], name, a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // donor_bind_type: the struct type a reuse-donor candidate `name` was bound
