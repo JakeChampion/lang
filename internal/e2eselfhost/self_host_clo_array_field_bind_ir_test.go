@@ -19,6 +19,13 @@ import (
 // as __env). The for-loop rides the same fix via lower_foreach_snapshot's hidden
 // `var $forit = r.hs`.
 //
+// RC-soundness follow-up: the bound element / foreach loop var is a BORROW of the
+// struct-owned closure box (the struct's field reclaim frees it), so it must NOT
+// be marked is_arr — otherwise the function-exit sweep decs the box a second time
+// and underflows its rc. The `rc-soundness` case is a churn-loop probe
+// (__rc_underflow / __heap_bump_bytes) pinning this: element bind, direct
+// foreach, and whole-field-alias foreach each reclaim their boxes exactly once.
+//
 // Exit codes cross-checked against the interpreter and the native Go backend.
 var cloArrayFieldBindCases = []struct {
 	name string
@@ -35,6 +42,12 @@ var cloArrayFieldBindCases = []struct {
 	{"bind-arg", "struct Reg { hs: ((i32) => i32)[] } function main(): i32 { var n: i32 = 5; var r = Reg { hs: [(x: i32) => x + n] }; var f = r.hs[0]; return f(10); }", 15},
 	// alias then for-loop over the aliased local (both fixes together).
 	{"alias-for", "struct Reg { hs: (() => i32)[] } function main(): i32 { var n: i32 = 3; var r = Reg { hs: [() => n, () => n * 2] }; var fns = r.hs; var acc: i32 = 0; for h in fns { acc = acc + h(); } return acc; }", 9},
+	// RC soundness: run the element-bind / direct-foreach / whole-field-alias
+	// shapes N times and probe for over-release (__rc_underflow) and unbounded
+	// heap growth (__heap_bump_bytes) — the borrowed element boxes must be
+	// reclaimed by the owning struct exactly once, never dec'd a second time by
+	// the binding's / loop var's exit-sweep.
+	{"rc-soundness", "struct Reg { hs: (() => i32)[] } function one(k: i32): i32 { var r = Reg { hs: [() => k, () => k + 1] }; var f = r.hs[0]; var acc: i32 = f(); for h in r.hs { acc = acc + h(); } var fns = r.hs; for g in fns { acc = acc + g(); } return acc; } function churn(n: i32): i32 { var i: i32 = 0; var s: i32 = 0; while (i < n) { s = one(i); i = i + 1; } return s; } function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
 }
 
 // TestSelfHostCloArrayFieldBindIRX86_64 — the x86-64 irlower fix, through the
