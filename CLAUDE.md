@@ -271,13 +271,15 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
     long-standing `rcInlineOK` mechanism, backported — behaviour-identical).
     That cut the `asm_ir_run` driver asm from ~1028 MB → ~470 MB.
   - The cold driver emit runs under a **refcounted soft heap cap**
-    (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 4300; `<= 0`
-    disables), and both native backends **release each function's IR as
+    (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0`
+    disables), `ir.Op` keeps its rare payload fields (Str2 / Sig /
+    ArgTypes / CaptureSlots) in an `OpExt` side-table (96 B/op, was
+    160), and both native backends **release each function's IR as
     it is emitted** (`ip.Funcs[i] = nil` in the emit loop) so the IR is
     reclaimed incrementally instead of peaking alongside the output
     buffer: at default GOGC the emit ballooned to ~9 GB RSS of mostly-
-    garbage in 134 s; capped + released it runs ~5.2 GB in ~74 s.
-    Output is byte-identical.
+    garbage in 134 s; capped + shrunk + released it runs ~3.7 GB in
+    ~40 s. Output is byte-identical.
   - Driver binaries are **assembled + linked in-process** by the pure-Go
     native assembler (`internal/native/x86_64` + `internal/native/elf` —
     the same pipeline `cmd/fern -target x86-64` uses by default): ~25 s /
@@ -289,11 +291,11 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
     — while small program links stay on gcc/bfd unchanged.
   - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted
     semaphore around the cold emit+link: it reserves each heavy build's
-    estimated peak (`FERN_BUILD_HEAVY_MB`, default 5800) against a budget
-    (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so two cold
-    driver builds can't stack their peaks and OOM the run. On a 16 GB host it
-    serialises the heavy builds; on a big host it parallelises up to the
-    budget.
+    estimated peak (`FERN_BUILD_HEAVY_MB`, default 4300) against a budget
+    (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy
+    builds can't stack past the host's RAM and OOM the run. Two cold
+    driver builds now fit a 16 GB host concurrently; bigger hosts
+    parallelise further up to the budget.
 
   If a build is still OOM-killed (`signal: killed` / **exit 137** during
   the Go emit, or `as`/gcc on the fallback path — reads like a test failure

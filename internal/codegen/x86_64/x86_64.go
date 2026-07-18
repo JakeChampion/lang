@@ -2005,12 +2005,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// method in declaration order (docs/DYN-TRAITS.md §4.2.2). On
 		// natives the vtable holds POINTERS, not table indices (the wasm
 		// form): OpCallDyn loads slot k and `call`s it directly.
-		key := op.Str + "/" + op.Str2
+		key := op.Str + "/" + op.Str2()
 		if g.dynVtableCells == nil {
 			g.dynVtableCells = map[string]bool{}
 		}
 		g.dynVtableCells[key] = true
-		g.emit(fmt.Sprintf("lea rax, [rip + %s]", dynVtableLabel(op.Str, op.Str2)))
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", dynVtableLabel(op.Str, op.Str2())))
 		g.push()
 
 	case ir.OpBoxDyn:
@@ -2057,13 +2057,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
 		// function pointer (`vtable + slot*8`), then do an indirect call
 		// with [data, args...] as the SysV args (receiver-first, plain —
-		// no closure env). op.Sig is the receiver-first method
+		// no closure env). op.Sig() is the receiver-first method
 		// signature; argc = len(params) (= 1 receiver + method args),
 		// void iff Result == nil.
-		if op.Sig == nil {
-			return fmt.Errorf("x86_64: OpCallDyn missing op.Sig")
+		if op.Sig() == nil {
+			return fmt.Errorf("x86_64: OpCallDyn missing op.Sig()")
 		}
-		argc := len(op.Sig.Params)
+		argc := len(op.Sig().Params)
 		g.pop()                // rax = vtable (top)
 		g.emit("mov r10, rax") // r10 = vtable base
 		if op.I32 != 0 {
@@ -2078,7 +2078,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emitCallArgsLoad(argc)
 		g.emit("call r11")
 		g.emitCallArgsCleanup(argc)
-		if op.Sig.Result == nil {
+		if op.Sig().Result == nil {
 			break
 		}
 		g.push()
