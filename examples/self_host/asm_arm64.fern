@@ -4115,7 +4115,11 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         // call — the frame push above shifts them to [sp+48] / [sp+32] /
         // [sp+16].
         var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
-        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING[] field: deep-freed via __fern_str_arr_free (the
+        // strarrfld-gated x86 sibling arm's transcription). Its per-element
+        // __fern_str_free clobbers x10/x11/x12, so the same reload applies.
+        var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        if (fr_str || fr_str_arr || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
@@ -4128,11 +4132,16 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
             s = s.write("    str x1, [sp, #-16]!\n");
-            if (fr_str) {
-                s = s.write("    bl __fn___fern_str_free\n");      // rc-aware string free (data buffer + box)
+            if (fr_str || fr_str_arr) {
+                if (fr_str) {
+                    s = s.write("    bl __fn___fern_str_free\n");  // rc-aware string free (data buffer + box)
+                } else {
+                    s = s.write("    bl __fn___fern_str_arr_free\n");  // deep string[] free (rc-guarded)
+                }
                 s = s.write("    add sp, sp, #16\n");
-                // str_free clobbered x10/x11/x12 — reload new/old/snap from
-                // the stack args (shifted +16 by the stp x29,x30 frame).
+                // str_free / str_arr_free clobbered x10/x11/x12 — reload
+                // new/old/snap from the stack args (shifted +16 by the stp
+                // x29,x30 frame).
                 s = s.write("    ldr x10, [sp, #48]\n");           // new
                 s = s.write("    ldr x11, [sp, #32]\n");           // old
                 s = s.write("    ldr x12, [sp, #16]\n");           // snap
@@ -4204,6 +4213,11 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         // Construction alias-incs a non-fresh enum field (shared irlower) so this dec
         // is balanced. Mirrors the x86 emit_ir_struct_drop_one k_enum arm. #4297 A2.
         var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+        // A string[] field: deep-freed via __fern_str_arr_free, gated on the
+        // strarrfld admission ("strfldok:arr:<T>") — the arm64 transcription
+        // of the x86 k_str_arr arm (see its comment for the element-freshness
+        // soundness contract).
+        var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -4289,6 +4303,18 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_str_free\n");           // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    add sp, sp, #16\n");
+            // str_free clobbers x10 (freelist-head scratch) — reload the box
+            // from the frame-relative stack arg so a LATER field's arm reads
+            // a valid pointer. Before this, a string field ordered BEFORE
+            // another rc field left x10 stale and the next arm freed through
+            // garbage (the .ret reload only covered the RETURN, not the loop).
+            s = s.write("    ldr x10, [sp, #16]\n");
+        } else if (k_str_arr) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k string[] buffer
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_str_arr_free\n");       // deep at rc==1 (elements + buffer); shared -> dec
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbers x10/x11/x12)
         } else if (k_scalar || k_struct || k_enum) {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box
             s = s.write("    str x0, [sp, #-16]!\n");

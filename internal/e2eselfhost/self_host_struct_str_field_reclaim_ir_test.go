@@ -96,4 +96,31 @@ struct A { inner: B, items: i32[] }
 function churn(n: i32): i32 { var pre: string = "z"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var a: A = A { inner: B { name: pre + "xy" }, items: [1, 2] }; if (a.inner.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(1500000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
 		"nested-string-only-struct-reclaim", 0)
+
+	// STRING[] FIELD (the k_str_arr slice): a struct whose string[] field is
+	// only ever constructed from element-fresh array literals and read only
+	// via .len() is admitted by the strarrfld scan ("strfldok:arr:<T>"), so
+	// the consume-rebind __field_reclaim and the exit __struct_drop now
+	// deep-free the field via __fern_str_arr_free (elements + buffer at
+	// rc==1). 4,000,000 build/drop cycles stay balanced — no over-release
+	// (underflow 0) and correct values → exit 0.
+	run(t, `struct Diag { code: i32, notes: string[] }
+function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: Diag = Diag { code: i, notes: ["alpha", "beta" + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(4000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+		"strarr-field-reclaim-churn", 0)
+
+	// NON-admitted: the string[] field value is a bare IDENT (an alias of a
+	// live local), so the strarrfld store gate marks the field unsafe and the
+	// type keeps the sound leak — xs's element boxes must survive the struct
+	// drop (xs is read after). Value correct, underflow 0.
+	run(t, `struct Diag { code: i32, notes: string[] }
+function main(): i32 { var xs: string[] = ["ab", "cd"]; var d: Diag = Diag { code: 3, notes: xs }; var s: i32 = d.code + xs[0].len() + xs.len(); if (s != 7) { return 90; } if (__fern_rc_underflow_count() != 0) { return 99; } return 0; }`,
+		"strarr-field-aliased-excluded", 0)
+
+	// NON-admitted: an ELEMENT READ (`d.notes[0]`) binds an uncounted alias of
+	// an element box, so the read gate excludes the type — the element must
+	// survive the struct's exit drop. Value correct, underflow 0.
+	run(t, `struct Diag { code: i32, notes: string[] }
+function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] }; var n0: string = d.notes[0]; var s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__fern_rc_underflow_count() != 0) { return 99; } return 0; }`,
+		"strarr-field-read-excluded", 0)
 }

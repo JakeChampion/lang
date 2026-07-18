@@ -5650,7 +5650,16 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // keeps the arrays-only body — those reads are uncounted aliases
         // the free would dangle (the per-module compiler self-run segfault).
         var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
-        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING[] field: released DEEP via the rc-aware
+        // __fern_str_arr_free (elements + buffer at rc==1; shared buffer just
+        // decs), under the same cow + snap guards. Gated on the strarrfld
+        // admission ("strfldok:arr:<T>" — element-fresh stores, .len()-only
+        // reads), the string[] sibling of fr_str's gate. The helper preserves
+        // r9/r10/r11 (it saves rbx/r12/r13; its per-element __fern_str_free
+        // clobbers only rax/rcx/rdx/rsi/r8), so the field loop's registers
+        // survive.
+        var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        if (fr_str || fr_str_arr || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
@@ -5664,6 +5673,8 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    pushq %rsi\n");
             if (fr_str) {
                 s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)
+            } else if (fr_str_arr) {
+                s = s.write("    call __fn___fern_str_arr_free\n"); // deep string[] free (rc-guarded)
             } else {
                 s = s.write("    call __fn___fern_arr_dec\n");      // shallow dec/free the dead buffer
             }
@@ -5771,6 +5782,16 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // (irlower ExprStructLit) so this dec is balanced; a fresh variant ctor is
         // sole-owned (rc 1) → freed here. #4297 A2.
         var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+        // A string[] field (`names: string[]`): freed DEEP via the rc-aware
+        // __fern_str_arr_free — at buffer rc==1 it __fern_str_free's every
+        // element box then frees the buffer; a shared buffer just decs; null /
+        // low-addr / immortal skipped inside the helper. GATED on
+        // "strfldok:arr:<T>" (the strarrfld half of strfld_reclaim_ok_types_of)
+        // exactly like k_str's strfldok gate: the admission proves every value
+        // stored into the field is an element-fresh array literal and every
+        // read a bare .len() borrow, so the element walk frees only boxes the
+        // field solely owns. A non-admitted type keeps the sound leak.
+        var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -5860,6 +5881,12 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_str_free\n");             // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    addq $8, %rsp\n");
+        } else if (k_str_arr) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k string[] buffer
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_str_arr_free\n");         // deep at rc==1 (elements + buffer); shared -> dec; null skipped
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    movq 8(%rsp), %r11\n");                    // reload box (helper may clobber r11)
         } else if (k_scalar || k_struct || k_enum) {
             s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box / enum box (shallow)
             s = s.write("    pushq %rdi\n");
