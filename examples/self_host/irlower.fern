@@ -2083,6 +2083,26 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
     return "";
 }
 
+// field_access_is_closurearr returns true when `e` is a struct-field read
+// `obj.field` whose field is a closure/fn ARRAY — spelled "fn[]"
+// (parse_type_name coarsens `(() => T)[]` to "fn[]"). Its element is a closure
+// box, so a local bound from the whole array (`var fns = r.hs`) or from one
+// element (`var f = r.hs[0]`) must dispatch env-first — mirroring the
+// is_closurearr LOCAL. Without it those calls invoke the box pointer as raw
+// code and SIGSEGV (#5160 defect #2). A struct-field array of BARE named fns
+// (`Reg { hs: [inc] }`) is already miscompiled at construction (a separate
+// pre-existing gap), so this never regresses a working shape.
+pub function field_access_is_closurearr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty.len() == 0) { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "fn[]";
+        },
+        _ => { return false; }
+    }
+}
+
 // decl_field_type_at returns the type of field `index` (decl order) in struct
 // `struct_name`, or "".
 pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: string, index: i32): string {
@@ -10517,7 +10537,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var sab: LowerState = sas.add_local(v.name);
         var saslot: i32 = sab.slot_of(v.name);
         sab = sab.mark_arr(saslot, true);
-        sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]);   // element struct/enum name (strip "[]")
+        // A closure/fn ARRAY field (`hs: (() => T)[]`, spelled "fn[]") aliased
+        // whole (`var fns = r.hs`): its elements are closure boxes, so mark the
+        // slot is_closurearr for env-first `fns[i]()` / `for f in fns` dispatch
+        // (#5160 defect #2). "fn" reads as enum-like (is_enum_like_name), so the
+        // enum-array-field arm above — not the closurearr classification further
+        // down — claims this bind; do the closure mark HERE. Also fixes
+        // `for f in r.hs { f() }`, which lowers via lower_foreach_snapshot's
+        // hidden `var $forit = r.hs`.
+        if (vsaft == "fn[]") { sab = sab.mark_closurearr(saslot, true); }
+        else { sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]); }   // element struct/enum name (strip "[]")
         return sab.emit(ir.op_store_local(saslot));
     }
     if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
@@ -10614,6 +10643,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // capture-read sibling.
                     else if (aid.name == "__env" && v.type_name == "fn") { clo_init = true; }
                 },
+                // `var f = r.hs[0]` where hs is a struct closure-array FIELD
+                // (#5160 defect #2): the element is a closure box, so bind f a
+                // closure local (its call unpacks the box). Without this f()
+                // calls the box pointer as raw code -> SIGSEGV.
+                parser.ExprFieldAccess(_) => { if (field_access_is_closurearr(ix.array, s)) { clo_init = true; } },
                 _ => { }
             }
         },
@@ -12663,6 +12697,16 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             }
             return mkf;
         }
+    }
+    // `for h in r.hs` over a closure/fn ARRAY field (hs: (() => T)[], spelled
+    // "fn[]"): "fn" reads as enum-like, so without this it would take the
+    // enum-array field-foreach below and bind h as a struct-typed local — `h()`
+    // then bare-calls the box pointer and SIGSEGVs (#5160 defect #2). Route
+    // through the snapshot: `var $forit = r.hs` marks the hidden local
+    // is_closurearr (the enum-array-field bind arm), so the ident-foreach binds
+    // h a closure local (env-first dispatch).
+    if (!for_var_comma && field_access_is_closurearr(fr.iter, s)) {
+        return lower_foreach_snapshot(fr.var_name, fr.iter, fr.body, s);
     }
     // `for c in r.cells` over a leak-safe array-typed STRUCT FIELD
     // (string[] / struct[] / enum[] — element types that aren't
