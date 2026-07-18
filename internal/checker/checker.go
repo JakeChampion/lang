@@ -9,6 +9,7 @@ package checker
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -11587,6 +11588,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, df := range sd.Fields {
 			declared = append(declared, df.Name)
 		}
+		// A misspelt METHOD call also lands here (`p.puzh(2)` — method
+		// resolution ran first and missed), so the struct's registered
+		// method names join the near-miss candidates: the fix then
+		// suggests `push` where the field set alone offers nothing.
+		// Sorted so map-iteration order can't flip a distance tie
+		// between runs (diagnostics must be deterministic).
+		prefix := st.Name + "."
+		var methodNames []string
+		for key := range c.info.Methods {
+			if strings.HasPrefix(key, prefix) {
+				methodNames = append(methodNames, key[len(prefix):])
+			}
+		}
+		sort.Strings(methodNames)
+		declared = append(declared, methodNames...)
 		c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
 		return nil
 	}

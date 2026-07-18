@@ -1106,6 +1106,52 @@ func TestUnknownFieldFixApplies(t *testing.T) {
 	}
 }
 
+// A misspelt METHOD call routes through the unknown-field path; the
+// receiver's registered method names join the candidates, so
+// `p.puzh(2)` suggests the `push` method (the field set alone offers
+// nothing that close). Applying it fixes the program.
+func TestUnknownMethodFixSuggestsMethod(t *testing.T) {
+	src := "struct P { x: i32 }\n" +
+		"pub function (p: P) push(v: i32): i32 { return p.x + v; }\n" +
+		"function main(): i32 {\n" +
+		"\tvar p = P { x: 1 };\n" +
+		"\treturn p.puzh(2);\n" +
+		"}"
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("expected diag.Errors, got %v", err)
+	}
+	var fix *diag.Suggestion
+	for _, e := range es {
+		if ce, ok := e.(*Error); ok && ce.Fix != nil {
+			fix = ce.Fix
+		}
+	}
+	if fix == nil {
+		t.Fatalf("no error carried a fix: %v", es)
+	}
+	if fix.Replacement != "push" {
+		t.Errorf("replacement = %q, want push", fix.Replacement)
+	}
+	lines := strings.Split(src, "\n")
+	ln := lines[fix.Pos.Line-1]
+	col := fix.Pos.Col - 1
+	lines[fix.Pos.Line-1] = ln[:col] + fix.Replacement + ln[col+fix.Length:]
+	applied := strings.Join(lines, "\n")
+	prog2, err := parser.Parse(applied)
+	if err != nil {
+		t.Fatalf("applied fix does not re-parse: %v\n%s", err, applied)
+	}
+	if _, err := Check(prog2); err != nil {
+		t.Fatalf("applied fix does not check: %v\n%s", err, applied)
+	}
+}
+
 // The E001 near-miss fix is MACHINE-APPLICABLE (#4413 Rec §3): applying
 // the suggested replacement over its span must yield a program that
 // parses AND checks cleanly — the soundness bar for attaching one.
