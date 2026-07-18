@@ -364,6 +364,17 @@ pub function rt_src_write_file(): string {
     return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { var e: i32 = 0 - fd; if (e == 4) { return Some(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Some(NotFound(ep)); } if (e == 13) { return Some(PermissionDenied(ep)); } if (e == 17) { return Some(AlreadyExists(ep)); } return Some(Other(ep, \"\")); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
 }
 
+// rt_src_temp_dir backs `temp_dir(prefix)` (#2649, syscall-leaf) → Result[string,
+// IoError]. Builds a uniquely-named /tmp/<prefix>-<monotonic_ns> path with the
+// raw-memory intrinsics (inline i64→digits, like the hand-asm — avoids pulling in
+// str_concat / i64_to_string helper deps; monotonic_ns is the only callee, marked
+// by the op handler), mkdirat(AT_FDCWD, path, 0700=448) via __syscall3, returns
+// Ok(path) — the built buffer becomes the string — or the errno-mapped Err.
+// x86-64-only (arch-specific syscall number).
+pub function rt_src_temp_dir(): string {
+    return "function __fern_temp_dir(prefix: string): Result[string, IoError] { var t: i64 = monotonic_ns(); var plen: i32 = prefix.len(); var ndig: i32 = 1; var tt: i64 = t; while (tt >= (10 as i64)) { ndig = ndig + 1; tt = tt / (10 as i64); } var total: i32 = 5 + plen + 1 + ndig; var buf: i32 = __raw_alloc(total + 1); __raw_store8(buf, 0, 47); __raw_store8(buf, 1, 116); __raw_store8(buf, 2, 109); __raw_store8(buf, 3, 112); __raw_store8(buf, 4, 47); var i: i32 = 0; while (i < plen) { __raw_store8(buf, 5 + i, prefix[i]); i = i + 1; } __raw_store8(buf, 5 + plen, 45); var pos: i32 = total - 1; var v: i64 = t; if (v == (0 as i64)) { __raw_store8(buf, pos, 48); } else { while (v > (0 as i64)) { __raw_store8(buf, pos, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); pos = pos - 1; } } __raw_store8(buf, total, 0); var rc: i32 = __syscall3(258, -100, buf, 448); if (rc < 0) { var e: i32 = 0 - rc; if (e == 4) { return Err(Interrupted); } var ep: string = __raw_string(buf, total); if (e == 2) { return Err(NotFound(ep)); } if (e == 13) { return Err(PermissionDenied(ep)); } if (e == 17) { return Err(AlreadyExists(ep)); } return Err(Other(ep, \"\")); } return Ok(__raw_string(buf, total)); }";
+}
+
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
 // 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
