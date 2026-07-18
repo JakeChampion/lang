@@ -32,12 +32,28 @@ var mapFixpointIRCases = []struct {
 	fixed bool
 	want  int
 }{
-	// NOTE: a cow-threaded map DECLARED INSIDE a loop body (`while { var m =
-	// map_new(8); m = m.insert(..); .. }`) still leaks one box per iteration:
-	// precise_drop_names only walks top-level statements, and maps have no
-	// loop-reinit drop emission (the array/struct/tuple kinds do) — tracked as
-	// the remaining #4357 self-host surface. The straight-line and per-call
-	// forms below are the reclaimed shapes.
+	// A cow-threaded map DECLARED INSIDE a loop body: the loop-reinit drop
+	// (emit_map_buffers_free before the shared store) frees the prior
+	// iteration's box, so the loop's high-water is one box wide. Previously
+	// leaked one box per iteration (precise_drop_names is top-level-only, so
+	// no early drop ever fired for a loop-declared map).
+	{name: "cow-loop-getor", src: func(n string) string {
+		return `import "core/map";
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) {
+        var m: Map[i32, i32] = map_new(8);
+        m = m.insert(i, i * 2);
+        acc = acc + m.get_or(i, 0);
+        i = i + 1;
+    }
+    if (acc < 0) { return 121; }
+    var g: i32 = __heap_bump_bytes() - before;
+    if (g > 900) { return 119; }
+    return g / 8;
+}`
+	}},
 	{name: "straightline-cow-getor", src: func(n string) string {
 		return `import "core/map";
 function step2(k: i32): i32 {
