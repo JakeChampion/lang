@@ -134,6 +134,12 @@ type inlineCandidate struct {
 	// functions open a typed wrapper so the br carries the
 	// returned value through.
 	returnBlockType int32
+	// refs is the total number of references to this callee across the
+	// whole program (direct calls, closure-direct calls, and OpConstFunc
+	// address-of). When it is 1, inlining moves the sole reference's body
+	// to that call site and the original function becomes dead — a
+	// net-neutral code-size move that siteAllows admits over the flat cap.
+	refs int
 }
 
 // findInlineCandidates scans every function in prog and returns
@@ -146,6 +152,7 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 	if ptrW == 0 {
 		ptrW = 4
 	}
+	refs := programRefCounts(prog)
 	for _, fn := range prog.Funcs {
 		if !isInlineable(fn) {
 			continue
@@ -178,9 +185,34 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 			body:            fn.Ops,
 			slotTypes:       slots,
 			returnBlockType: returnBlockTypeFor(fn.ReturnType, ptrW),
+			refs:            refs[fn.Name],
 		}
 	}
 	return out
+}
+
+// programRefCounts tallies, per function name, how many ops across the
+// whole program reference it. It counts EVERY op kind that keeps a
+// function alive in dead_funcs.go's reachability walk — direct /
+// direct-pair / closure-direct calls, OpMakeClosure / OpMakeEnv closure
+// bodies, and OpConstFunc address-of — so a count of 1 guarantees the
+// function is dead after its sole call site is inlined (net-neutral code
+// size). Counting a subset would risk calling a closure-referenced
+// function "single-use" and growing code instead.
+func programRefCounts(prog *Program) map[string]int {
+	refs := map[string]int{}
+	for _, fn := range prog.Funcs {
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect,
+				OpMakeClosure, OpMakeEnv, OpConstFunc:
+				if op.Str != "" {
+					refs[op.Str]++
+				}
+			}
+		}
+	}
+	return refs
 }
 
 // slotsHaveDynTrait reports whether any slot type is a `dyn Trait` value —
@@ -309,17 +341,23 @@ func allConstArgs(out []Op, argc int) bool {
 }
 
 // siteAllows applies the per-call-site size policy (#4412 Rec §7).
-// Beyond the flat cap everywhere, two boosts to the loop cap:
-//   - inside a loop, where the per-call overhead recurs every
-//     iteration (the #5143 loop-depth slice);
-//   - when every argument is a compile-time numeric constant, because
+// Beyond the flat cap everywhere, three reasons to admit an 81..160-op
+// body:
+//   - the callee is referenced exactly once program-wide, so inlining
+//     moves its body to that sole site and dead-func elimination drops
+//     the original — a net-neutral code-size move regardless of loop
+//     depth or argument shape;
+//   - the site is inside a loop, where the per-call overhead recurs
+//     every iteration (the #5143 loop-depth slice);
+//   - every argument is a compile-time numeric constant, because
 //     inlining substitutes those constants for the param loads and the
 //     following Fold pass collapses the arithmetic — the effective
 //     inlined size is far below the body's op count, so the flat cap
 //     over-counts it. This is the partial-evaluation case (a helper
 //     called with literals, e.g. a compile-time-computed layout).
 //
-// @inline candidates bypass both (the hint already passed candidacy).
+// @inline candidates bypass all of these (the hint already passed
+// candidacy). Bodies over the loop cap are still never inlined here.
 func siteAllows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if cand.fn.InlineHint == ast.InlineHintAlways {
 		return true
@@ -330,7 +368,7 @@ func siteAllows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if len(cand.body) > inlineLoopSizeLimit {
 		return false
 	}
-	return loopDepth > 0 || constArgs
+	return cand.refs == 1 || loopDepth > 0 || constArgs
 }
 
 // expandInline produces the op slice that replaces a single
