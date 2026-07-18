@@ -115,6 +115,38 @@ var dynTraitIRCases = []struct {
 	// MISS: a `dyn Show + Weigh` holding a Brick, `d as? Apple` → None → 0.
 	{"downcast-multi-miss",
 		`trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } function main(): i32 { var x: Brick = Brick { kg: 3 }; return dc(x); }`, 99},
+
+	// --- STRING-returning `dyn Trait` methods, chained (#5142). The dispatch
+	// returns the string in the result register; a string method chained
+	// DIRECTLY on it must see a string receiver so `.len()` lowers as the
+	// length read ([ptr-4], the L2 header) rather than a plain deref ([ptr+0],
+	// the string data). Before the fix the dyn-dispatched method's declared
+	// return type wasn't tracked onto the result, so `d.name().len()` read the
+	// data pointer as a length and returned garbage (0). The trait's required
+	// method signature carries the return type; a "dyn <Trait>.<method>" entry
+	// in str_ret_fns makes the chained lowering track the string.
+	// `d.name().len()` on an SSO-inline string ("hello", <=7 bytes) → 5.
+	{"dyn-string-len-chained",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "hello" }; var d: dyn Named = p; return d.name().len(); }`, 5},
+	// Same on a HEAP string (>7 bytes, out-of-line data) → 27.
+	{"dyn-string-len-heap",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "this is a long string value" }; var d: dyn Named = p; return d.name().len(); }`, 27},
+	// Materialising into a `var s: string` first was the workaround — pin that
+	// it still works (the slot type already carried the string). → 5.
+	{"dyn-string-len-via-var",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "hello" }; var d: dyn Named = p; var s: string = d.name(); return s.len(); }`, 5},
+	// Concat chained on a dyn string result: (d.name() + "cd").len() = 2 + 2 = 4.
+	{"dyn-string-concat-chained",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "ab" }; var d: dyn Named = p; return (d.name() + "cd").len(); }`, 4},
+	// A `dyn Named` PARAM, chained `.len()` inside the callee. len("hiya") = 4.
+	{"dyn-string-len-param",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function f(d: dyn Named): i32 { return d.name().len(); } function main(): i32 { var p: P = P { tag: "hiya" }; return f(p); }`, 4},
+	// Precision guard: a `dyn Foo` whose method returns i32, plus an UNRELATED
+	// struct with a same-named method returning string, must not cross-poison —
+	// only the trait's own string-returning methods get a "dyn <Trait>.<method>"
+	// entry. d.bar() (i32) + sv.bar().len() (3) = 9 + 3 = 12.
+	{"dyn-i32-vs-unrelated-string",
+		`trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function main(): i32 { var a: A = A { n: 9 }; var d: dyn Foo = a; var sv: S = S { s: "xyz" }; return d.bar() + sv.bar().len(); }`, 12},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64

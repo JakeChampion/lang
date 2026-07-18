@@ -1374,7 +1374,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     // into every emit_function_via_ir — recomputing them per function is O(n^2)
     // and OOMs the bump heap on a large module. Mirrors bparams above, the x86
     // emit_module_ir, and the wasm backend's emit_module.
-    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
     var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
     var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
