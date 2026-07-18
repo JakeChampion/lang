@@ -1061,17 +1061,35 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
                     // Lets a chained `b.find().map(...)` recover the inner result
                     // (#3066).
                     parser.ExprFieldAccess(cfa) => {
-                        var mrty: string = expr_struct_type(cfa.obj, s);
-                        if (mrty != "") { t = s.opt_ret_type(mrty + "." + cfa.field); }
-                        else {
-                            var mrb: string = opt_recv_base_type(cfa.obj, s);
-                            if (mrb != "") { t = s.opt_ret_type(mrb + "." + cfa.field); }
-                            // An ENUM-receiver method returning Option/Result, called
-                            // on a fresh variant (`V(7).get()`) — key "<Enum>.<m>"
-                            // via the variant's enum_owner (#3076).
+                        // Associated call `Type.method()` returning Option/Result
+                        // — the object is a bare TYPE name (not a slot), so key
+                        // opt_ret_type by "<Type>.<method>" directly (mirrors
+                        // expr_struct_type's associated arm). Recovers an
+                        // unannotated `match (User.from_json(s))`'s Result[User,
+                        // string] payload types — the @derive(Json) deserialiser.
+                        var aok: boolean = false;
+                        match (cfa.obj) {
+                            parser.ExprIdent(tid) => {
+                                if (s.slot_of(tid.name) < 0) {
+                                    var art: string = s.opt_ret_type(tid.name + "." + cfa.field);
+                                    if (art != "") { t = art; aok = true; }
+                                }
+                            },
+                            _ => {}
+                        }
+                        if (!aok) {
+                            var mrty: string = expr_struct_type(cfa.obj, s);
+                            if (mrty != "") { t = s.opt_ret_type(mrty + "." + cfa.field); }
                             else {
-                                var men: string = expr_enum_type(cfa.obj, s);
-                                if (men != "") { t = s.opt_ret_type(men + "." + cfa.field); }
+                                var mrb: string = opt_recv_base_type(cfa.obj, s);
+                                if (mrb != "") { t = s.opt_ret_type(mrb + "." + cfa.field); }
+                                // An ENUM-receiver method returning Option/Result, called
+                                // on a fresh variant (`V(7).get()`) — key "<Enum>.<m>"
+                                // via the variant's enum_owner (#3076).
+                                else {
+                                    var men: string = expr_enum_type(cfa.obj, s);
+                                    if (men != "") { t = s.opt_ret_type(men + "." + cfa.field); }
+                                }
                             }
                         }
                     },
@@ -8302,6 +8320,19 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                             _ => {}
                         }
                     }
+                    // Associated call `Type.method()?` returning Option/Result —
+                    // the object is a bare TYPE name (not a slot), so key by
+                    // "<Type>.<method>" (mirrors opt_recv_base_type's associated
+                    // arm). Lets `User.from_json(s)?` propagate its Result error.
+                    match (scfa.obj) {
+                        parser.ExprIdent(tid) => {
+                            if (s.slot_of(tid.name) < 0) {
+                                var art: string = s.opt_ret_type(tid.name + "." + scfa.field);
+                                if (art != "") { return art; }
+                            }
+                        },
+                        _ => {}
+                    }
                     // `x.method()` where x's method returns Option/Result —
                     // key by "<Type>.<method>".
                     var mrty: string = expr_struct_type(scfa.obj, s);
@@ -11699,9 +11730,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     if (opt_ty == "") { opt_ty = some_opt_type(v.init, se); }
                 },
                 parser.ExprFieldAccess(ifa) => {
+                    // Associated call `Type.method()` returning Option/Result
+                    // — bare TYPE-name object (not a slot); key by
+                    // "<Type>.<method>" so `var r = User.from_json(s)` records
+                    // r's Result[User, string] type for a later `match (r)`.
+                    match (ifa.obj) {
+                        parser.ExprIdent(tid) => {
+                            if (se.slot_of(tid.name) < 0) { opt_ty = se.opt_ret_type(tid.name + "." + ifa.field); }
+                        },
+                        _ => {}
+                    }
                     // `var o = x.get()` where x's method returns
                     // Option/Result — key by "<Type>.<method>" so a
                     // later `match (o)` recovers the payload type.
+                    if (opt_ty == "") {
                     var irty: string = expr_struct_type(ifa.obj, se);
                     if (irty != "") { opt_ty = se.opt_ret_type(irty + "." + ifa.field); }
                     // An Option/Result-RECEIVER method (`Some(5).map()` /
@@ -11715,6 +11757,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             var ien: string = expr_enum_type(ifa.obj, se);
                             if (ien != "") { opt_ty = se.opt_ret_type(ien + "." + ifa.field); }
                         }
+                    }
                     }
                 },
                 // `var o = if (c) { Some(7) } else { None }` — an
@@ -13436,11 +13479,26 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                         if (srt == "") { srt = some_opt_type(m.scrutinee, ms); }
                                     },
                                     parser.ExprFieldAccess(scfa) => {
+                                        // Associated call `Type.method()` returning
+                                        // Option/Result — the object is a bare TYPE
+                                        // name (not a slot), so key opt_ret_type by
+                                        // "<Type>.<method>" directly. Recovers an
+                                        // unannotated `match (User.from_json(s))`'s
+                                        // Result[User, string] payload types (the
+                                        // @derive(Json) deserialiser).
+                                        match (scfa.obj) {
+                                            parser.ExprIdent(tid) => {
+                                                if (ms.slot_of(tid.name) < 0) {
+                                                    srt = ms.opt_ret_type(tid.name + "." + scfa.field);
+                                                }
+                                            },
+                                            _ => {}
+                                        }
                                         // Reader.read_chunk(n) → Option[string] (built-in resource
                                         // intrinsic; gated like lower_expr's interception to a
                                         // non-declared-struct / non-enum / non-string / non-array
                                         // receiver). The Some payload binds as a string (mark_str).
-                                        if ((scfa.field == "read_chunk" || scfa.field == "read_line") && !decl_is_struct(ms.structs, expr_struct_type(scfa.obj, ms))
+                                        if (srt == "" && (scfa.field == "read_chunk" || scfa.field == "read_line") && !decl_is_struct(ms.structs, expr_struct_type(scfa.obj, ms))
                                             && expr_enum_type(scfa.obj, ms) == "" && !expr_is_str(scfa.obj, ms)
                                             && !expr_is_arr_src(scfa.obj, ms)) {
                                             srt = "Option[string]";

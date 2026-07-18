@@ -10246,6 +10246,81 @@ function synth_struct_json(sd: StructDecl): FuncDecl {
     return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
+// fromjson_accessor returns the `json.json_get_*` accessor for a field
+// type, or "" when the type has none — the gate `from_json_derivable`
+// uses to decide whether the deserialise companion can be synthesised.
+// Mirrors the native synthFromJson switch: 64-bit ints go through the
+// i64 accessor, narrower ints through i32, plus bool / string. Any other
+// field type (nested struct, array, Option, f64) has no flat accessor —
+// serialise still works, deserialise is a documented follow-up (#2695).
+function fromjson_accessor(tn: string): string {
+    if (tn == "i64" || tn == "u64") { return "json_get_i64"; }
+    if (tn == "i32" || tn == "u32") { return "json_get_i32"; }
+    if (tn == "boolean") { return "json_get_bool"; }
+    if (tn == "string") { return "json_get_string"; }
+    return "";
+}
+
+// from_json_derivable reports whether every field of `sd` has a flat
+// `json.json_get_*` accessor — the precondition for synth_from_json. A
+// struct with a single unsupported field gets `to_json` only.
+function from_json_derivable(sd: StructDecl): boolean {
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        if (fromjson_accessor(sd.fields[i].type_name).len() == 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// synth_from_json builds the deserialise companion to synth_struct_json:
+// a receiver-less associated `from_json(s: string): Result[Self, string]`
+// that parses the JSON text and extracts each field by name, returning
+// `Err(...)` on invalid JSON or a missing field. The body nests one
+// `match` per field over its `json.json_get_*` accessor `Option`, so a
+// missing field short-circuits to `Err("missing field: <name>")` without
+// a `?` operator; the innermost arm returns `Ok(Self { … })`. The
+// `json.*` calls resolve through the `@derive(json.Json)` site's own
+// `import "std/json"` (basename alias `json`) — modload rewrites them to
+// the flat `json__*`. Mirrors the native synthFromJson (#2695). Only
+// called when from_json_derivable(sd) holds, so every field's accessor
+// is non-empty.
+function synth_from_json(sd: StructDecl): FuncDecl {
+    // Innermost: return Ok(Self { f: __fj_f, … }).
+    var fnames: string[] = [];
+    var fvals: Expr[] = [];
+    var k: i32 = 0;
+    while (k < sd.fields.len()) {
+        fnames = fnames.append(sd.fields[k].name);
+        fvals = fvals.append(e_ident("__fj_" + sd.fields[k].name));
+        k = k + 1;
+    }
+    var lit: Expr = e_struct_lit(sd.name, fnames, fvals, 0, 0);
+    var body: Stmt[] = [s_return(e_call(e_ident("Ok"), [lit]))];
+    // Wrap each field's accessor match, inner-to-outer.
+    var fi: i32 = sd.fields.len() - 1;
+    while (fi >= 0) {
+        var fname: string = sd.fields[fi].name;
+        var acc: string = fromjson_accessor(sd.fields[fi].type_name);
+        var accessor_call: Expr = e_call(e_field_access(e_ident("json"), acc), [e_ident("__fj_jv"), e_string(fname)]);
+        var missing: Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("missing field: " + fname)]))];
+        var arms: MatchArm[] = [];
+        arms = arms.append(MatchArm { pattern: p_variant("Some", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant("None", ""), body: missing, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        body = [s_match(accessor_call, arms)];
+        fi = fi - 1;
+    }
+    // Outermost: parse the string, then run the field chain.
+    var parse_fail: Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("invalid JSON")]))];
+    var oarms: MatchArm[] = [];
+    oarms = oarms.append(MatchArm { pattern: p_variant("Some", "__fj_jv"), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+    oarms = oarms.append(MatchArm { pattern: p_variant("None", ""), body: parse_fail, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+    var obody: Stmt[] = [s_match(e_call(e_field_access(e_ident("json"), "json_parse"), [e_ident("s")]), oarms)];
+    var params: ParamDecl[] = [ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var notp: string[] = [];
+    return FuncDecl { name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: obody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
+}
+
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
 // `Variant` — the same shape the Go synthEnumDisplay emits. Self-host
 // enum variants carry at most one payload (`__ev`), so a payload
@@ -10679,7 +10754,10 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
         if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
-        if (kind == "Json") { funcs = funcs.append(synth_struct_json(sd)); }
+        if (kind == "Json") {
+            funcs = funcs.append(synth_struct_json(sd));
+            if (from_json_derivable(sd)) { funcs = funcs.append(synth_from_json(sd)); }
+        }
         if (kind == "Default") { if (struct_default_derivable(sd)) { funcs = funcs.append(synth_struct_default(sd)); } }
         di = di + 1;
     }

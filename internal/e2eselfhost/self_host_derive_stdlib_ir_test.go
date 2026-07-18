@@ -36,6 +36,50 @@ function main(): i32 { var a = S { name: "hi", n: 1 }; var b = S { name: "hi", n
 @derive(json.Json)
 struct P { x: i32, name: string }
 function main(): i32 { var a = P { x: 7, name: "hi" }; return a.to_json().len(); }`},
+	// `@derive(json.Json)` also synthesises the deserialise companion
+	// `from_json(s): Result[Self, string]` (#2695 / #4416) — the self-host
+	// twin of native's synthFromJson. Each case exercises a distinct way the
+	// associated call `User.from_json(...)` is consumed, all of which must
+	// route IR (the associated-call Option/Result return-type recovery in
+	// irlower's four scrutinee/binding sites) and match the interpreter.
+	// A direct `match (User.from_json(...))` over valid / missing-field /
+	// invalid-JSON inputs → 9 + 7 + 5 = 21.
+	{"json-from-struct", `import "std/json";
+@derive(json.Json) struct User { id: i32, name: string }
+function main(): i32 {
+    var sum: i32 = 0;
+    match (User.from_json("{\"id\":9,\"name\":\"x\"}")) { Ok(u) => { sum = sum + u.id; }, Err(e) => { sum = sum + 100; } }
+    match (User.from_json("{\"id\":1}")) { Ok(u2) => { sum = sum + 100; }, Err(e) => { sum = sum + 7; } }
+    match (User.from_json("nope")) { Ok(u3) => { sum = sum + 100; }, Err(e) => { sum = sum + 5; } }
+    return sum;
+}`},
+	// A boolean field extracts through json_get_bool on the from_json (parse)
+	// side (the to_json render of a boolean is a separate self-host dispatch
+	// limitation, so this parses a literal rather than round-tripping) → 14.
+	{"json-from-bool", `import "std/json";
+@derive(json.Json) struct Flag { id: i32, on: boolean }
+function main(): i32 {
+    match (Flag.from_json("{\"id\":4,\"on\":true}")) { Ok(f) => { if (f.on) { return f.id + 10; } return f.id; }, Err(e) => { return 1; } }
+}`},
+	// The `var r = User.from_json(...)` binding form AND `?`-propagation of an
+	// associated-call Result through a helper → 8 + 3 = 11.
+	{"json-from-var-try", `import "std/json";
+@derive(json.Json) struct User { id: i32, name: string }
+function pick(s: string): Result[i32, string] { var u: User = User.from_json(s)?; return Ok(u.id); }
+function main(): i32 {
+    var r = User.from_json("{\"id\":8,\"name\":\"y\"}");
+    var a = 0;
+    match (r) { Ok(u) => { a = u.id; }, Err(e) => { a = 100; } }
+    match (pick("{\"id\":3,\"name\":\"z\"}")) { Ok(n) => { a = a + n; }, Err(e) => { a = a + 100; } }
+    return a;
+}`},
+	// A full serialise→deserialise round-trip over i32 / string fields → 7.
+	{"json-roundtrip", `import "std/json";
+@derive(json.Json) struct P { x: i32, name: string }
+function main(): i32 {
+    var p = P { x: 7, name: "hi" };
+    match (P.from_json(p.to_json())) { Ok(q) => { return q.x; }, Err(e) => { return 1; } }
+}`},
 	{"ord-string-key", `import "core/cmp";
 @derive(cmp.Ord)
 struct S { name: string, id: i32 }
