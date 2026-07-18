@@ -842,8 +842,24 @@ pub function wasm_eligible(mod: parser.Module): boolean {
 // ONCE — after the cheap eligible_core AST gate passes — and reuse it for both
 // this deferral gate AND emit, instead of re-lowering the whole module ~10× via
 // the mod-taking module_emits_op. Byte-identical to the old inline chain (#4652).
+// module_erased_wide: any lowered function passes a 64-bit / f64 value
+// through a bare-typevar (erased-generic) param (LowerResult.erased_wide).
+// The wasm backend types erased param locals i32, so such a module must stay
+// on the AST path — previously an f64-through-erased call emitted
+// type-invalid WAT the wasmtime loader rejects, and (post the register-side
+// widening) an i64 would truncate.
+function module_erased_wide(cache: irlower.LowerResult[]): boolean {
+    var i: i32 = 0;
+    while (i < cache.len()) {
+        if (cache[i].erased_wide) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
     return true
+        && !module_erased_wide(cache)
         // poll has no wasm IR runtime: real readiness on wasm needs the
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
