@@ -4083,7 +4083,14 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
             if (util.is_all_digits(fa.field)) {
                 return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "u64";
             }
-            return false;
+            // A u64 STRUCT field read `p.n`: the field carries u64 in the struct
+            // decl, so a chained `p.n >> 1` / `p.n > x` selects shr_u / gt_u. The
+            // width is already tracked by infer_expr_width (struct_field_is_i64);
+            // this recovers the unsigned-ness — the u64 sibling of expr_is_f64's
+            // struct-field arm.
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "u64";
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u64") { return true; }

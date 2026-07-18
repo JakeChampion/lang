@@ -29,6 +29,7 @@ const u64IRPrelude = `function u64_min(a: u64, b: u64): u64 { if (a < b) { retur
 function u64_max(a: u64, b: u64): u64 { if (a > b) { return a; } return b; }
 function u64_clamp(n: u64, lo: u64, hi: u64): u64 { if (n < lo) { return lo; } if (n > hi) { return hi; } return n; }
 function u64_id(x: u64): u64 { return x; }
+struct UPair { n: u64 }
 `
 
 var u64IRCases = []struct {
@@ -62,6 +63,10 @@ var u64IRCases = []struct {
 	// IIFE arm (the u64 sibling of expr_is_f64's) so the shift stays unsigned —
 	// same 124-vs-252 distinction as the concrete-call case.
 	{"u64-iife-shift", `var c: boolean = true; var a: u64 = 18000000000000000000 as u64; return ((if (c) { a } else { 0 as u64 }) >> 57) as i32;`},
+	// A u64 STRUCT FIELD read chained in a shift (`p.n >> 57`). expr_is_u64 gained
+	// a struct-field arm (the u64 sibling of expr_is_f64's / the tuple-element
+	// case) so the shift stays unsigned — 124, not the signed 252.
+	{"struct-u64-field-shift", `var p: UPair = UPair { n: 18000000000000000000 as u64 }; return (p.n >> 57) as i32;`},
 }
 
 func u64IRSrc(mainBody string) string {
