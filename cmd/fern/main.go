@@ -581,6 +581,7 @@ func main() {
 	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
+	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	native := flag.Bool("native", false, "force the in-process pure-Go assembler+linker (internal/native). Already the DEFAULT for arm64/x86-64 Linux and arm64-darwin, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64, arm64, arm64-android); requires -o.")
 	export := flag.String("export", "", "with -shared: comma-separated function names to export in the .so (default: main). Each must be a defined top-level function; it becomes a dynamic symbol resolvable by the loader.")
@@ -798,7 +799,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, *optimize, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -1037,7 +1038,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -1049,6 +1050,11 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	info, err := checker.Check(prog)
 	if err != nil {
 		return 1, e.format(err)
+	}
+	// -O: drop assert() checks AFTER type-checking (an ill-typed assert
+	// still fails a release build) and before monomorph/codegen.
+	if optimize {
+		constfold.ElideAsserts(prog)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, e.format(err)

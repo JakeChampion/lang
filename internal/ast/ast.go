@@ -2030,6 +2030,11 @@ type If struct {
 	Cond Expr
 	Then Stmt
 	Else Stmt // may be nil
+	// IsAssert marks an `assert(cond[, msg])` desugar (parseAssert), so the
+	// `-O` elision pass can drop the whole check (mirrors Loop.IsTodo's
+	// marker precedent). Asserts must be side-effect-free — elision removes
+	// the condition evaluation along with the check.
+	IsAssert bool
 }
 
 // IfLet is `if let <Variant>(b1, b2, …) = <expr> { … }
