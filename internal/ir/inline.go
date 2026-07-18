@@ -273,7 +273,7 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 			continue
 		}
 		cand, ok := candidates[op.Str]
-		if !ok || cand.fn == fn || !siteAllows(cand, loopDepth) {
+		if !ok || cand.fn == fn || !siteAllows(cand, loopDepth, allConstArgs(out, int(op.I32))) {
 			// Unknown callee, self-recursion, or a body too big for
 			// this site's cap — leave the call.
 			out = append(out, op)
@@ -284,18 +284,53 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 	return out
 }
 
-// siteAllows applies the per-call-site size policy (#4412 Rec §7's
-// loop-depth slice): the flat cap everywhere, the boosted cap inside
-// loops where the per-call overhead recurs every iteration. @inline
-// candidates bypass both (the hint already passed candidacy).
-func siteAllows(cand inlineCandidate, loopDepth int) bool {
+// allConstArgs reports whether a call's `argc` arguments are all
+// compile-time numeric constants — i.e. the last `argc` ops already
+// emitted into `out` are each a single numeric const-push
+// (OpConstI32/I64/F32/F64). A const push adds one operand and pops
+// nothing, so `argc` consecutive const-pushes are exactly the top
+// `argc` stack entries the call consumes as its args. Requires
+// argc >= 1: a 0-arg call has no params to fold, so no partial-
+// evaluation benefit. Only NUMERIC consts count — those are what Fold
+// propagates into arithmetic after substitution (string/func consts
+// fold nothing, so they don't justify lifting the size cap).
+func allConstArgs(out []Op, argc int) bool {
+	if argc < 1 || argc > len(out) {
+		return false
+	}
+	for _, op := range out[len(out)-argc:] {
+		switch op.Kind {
+		case OpConstI32, OpConstI64, OpConstF32, OpConstF64:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// siteAllows applies the per-call-site size policy (#4412 Rec §7).
+// Beyond the flat cap everywhere, two boosts to the loop cap:
+//   - inside a loop, where the per-call overhead recurs every
+//     iteration (the #5143 loop-depth slice);
+//   - when every argument is a compile-time numeric constant, because
+//     inlining substitutes those constants for the param loads and the
+//     following Fold pass collapses the arithmetic — the effective
+//     inlined size is far below the body's op count, so the flat cap
+//     over-counts it. This is the partial-evaluation case (a helper
+//     called with literals, e.g. a compile-time-computed layout).
+//
+// @inline candidates bypass both (the hint already passed candidacy).
+func siteAllows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
 	if cand.fn.InlineHint == ast.InlineHintAlways {
 		return true
 	}
 	if len(cand.body) <= inlineSizeLimit {
 		return true
 	}
-	return loopDepth > 0 && len(cand.body) <= inlineLoopSizeLimit
+	if len(cand.body) > inlineLoopSizeLimit {
+		return false
+	}
+	return loopDepth > 0 || constArgs
 }
 
 // expandInline produces the op slice that replaces a single

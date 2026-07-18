@@ -295,9 +295,16 @@ func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		body += "a = a + x;\na = a - 1;\n"
 	}
-	src := "function mid(x: i32): i32 {\n" + body + "return a;\n}\n" +
+	// seed is @noinline so `base` is a genuine call result (non-const):
+	// it keeps the top-level `mid(base)` site's arg non-constant, so the
+	// const-arg boost doesn't fire there and the loop-depth boost is what
+	// the test isolates. (A literal `mid(1)` would now inline under the
+	// const-arg boost — a separate policy, pinned by its own test below.)
+	src := "@noinline\nfunction seed(k: i32): i32 { return k + 1; }\n" +
+		"function mid(x: i32): i32 {\n" + body + "return a;\n}\n" +
 		"function main(): i32 {\n" +
-		"var s: i32 = mid(1);\n" + // top-level site: must stay a call
+		"var base: i32 = seed(9);\n" +
+		"var s: i32 = mid(base);\n" + // top-level, NON-const arg: must stay a call
 		"var i: i32 = 0;\n" +
 		"while (i < 3) { s = s + mid(i); i = i + 1; }\n" + // loop site: inlines
 		"return s;\n}"
@@ -335,5 +342,51 @@ func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
 	}
 	if callDepths[0] != 0 {
 		t.Fatalf("the surviving call should be the pre-loop one, got depth %d", callDepths[0])
+	}
+}
+
+// The const-arg boost (#4412 Rec §7): a callee between the flat cap and
+// the loop cap inlines at a NON-loop site when every argument is a
+// literal — Fold then collapses the substituted body — but stays a call
+// when an argument is non-constant. Same candidate, same top-level
+// depth, decided by argument constness.
+func TestInlineConstArgsBoostsSizeCap(t *testing.T) {
+	body := "var a: i32 = x + y;\n"
+	for i := 0; i < 8; i++ {
+		body += "a = a + x;\na = a - y;\n"
+	}
+	mid := "function mid(x: i32, y: i32): i32 {\n" + body + "return a;\n}\n"
+
+	// Premise: mid is over the flat cap but within the loop cap.
+	probe := loweredAndInlined(t, mid+"function main(): i32 { return mid(2, 3); }")
+	if fn := findFunc(probe, "mid"); fn != nil {
+		if n := len(fn.Ops); n <= inlineSizeLimit || n > inlineLoopSizeLimit {
+			t.Fatalf("test premise broken: mid has %d ops, need %d < n <= %d", n, inlineSizeLimit, inlineLoopSizeLimit)
+		}
+	}
+
+	// All-constant args at a top-level site: inlines (const boost).
+	pConst := loweredAndInlined(t, mid+"function main(): i32 { return mid(2, 3); }")
+	if main := findFunc(pConst, "main"); main != nil {
+		for _, op := range main.Ops {
+			if op.Kind == OpCallDirect && op.Str == "mid" {
+				t.Fatalf("mid(2, 3) with all-constant args should inline over the flat cap:\n%s", pConst)
+			}
+		}
+	}
+
+	// One non-constant arg (a param) at the same top-level site: stays a
+	// call (flat cap, no boost).
+	pVar := loweredAndInlined(t, mid+"function main(): i32 { var k: i32 = 3; return mid(2, k + 1); }")
+	if main := findFunc(pVar, "main"); main != nil {
+		var sawCall bool
+		for _, op := range main.Ops {
+			if op.Kind == OpCallDirect && op.Str == "mid" {
+				sawCall = true
+			}
+		}
+		if !sawCall {
+			t.Fatalf("mid(2, k+1) with a non-constant arg should stay a call at a non-loop site:\n%s", pVar)
+		}
 	}
 }
