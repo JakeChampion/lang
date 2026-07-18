@@ -153,6 +153,27 @@ function main(): i32 {
     return g / 8;
 }`
 	}},
+	// A DISCARDED builder call (`mk(i);` as a bare statement) previously
+	// leaked the whole fresh map per call: no binding, so no slot reclaim
+	// ever fired. The "MAPRET:" seeding (from the MAPF registry, the map
+	// sibling of TUPRET) now frees the result on the spot via
+	// __fern_map_free.
+	{name: "mkcall-discard", src: func(n string) string {
+		return `import "core/map";
+function mk(k: i32): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(k, k * 2);
+    return m;
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) { mk(i); i = i + 1; }
+    var g: i32 = __heap_bump_bytes() - before;
+    if (g > 900) { return 119; }
+    return g / 8;
+}`
+	}},
 	{name: "value-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -204,6 +225,23 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 200 * 22) { return 121; }
+    return 0;
+}`
+	}},
+	// A discarded call to a NON-builder map-returning function must NOT be
+	// freed: feed returns its param, so freeing the discarded result would
+	// free base's live box + buffers out from under the loop.
+	{name: "discard-param-negative", fixed: true, want: 0, src: func(string) string {
+		return `import "core/map";
+function feed(m: Map[i32, i32]): Map[i32, i32] {
+    return m;
+}
+function main(): i32 {
+    var base: Map[i32, i32] = map_new(8);
+    base = base.insert(1, 11);
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) { feed(base); acc = acc + base.get_or(1, 0); i = i + 1; }
+    if (acc != 200 * 11) { return 121; }
     return 0;
 }`
 	}},
