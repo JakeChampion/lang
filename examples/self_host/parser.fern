@@ -11113,6 +11113,16 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 }
                 continue;
             }
+            if (probe.peek_ident() == "inline" || probe.peek_ident() == "noinline") {
+                // `@inline` / `@noinline` markers (#4412 Rec §14) are
+                // consulted by the NATIVE inliner only — the self-host
+                // IR path runs no inline pass, so the marker is
+                // parse-tolerated and dropped (the must_consume
+                // precedent below). The following function decl parses
+                // normally on the next loop iteration.
+                p = probe.advance();
+                continue;
+            }
             if (probe.peek_ident() == "must_consume") {
                 // `@must_consume` marker (docs/MUST-CONSUME.md): stamp
                 // the following struct/enum decl so the checker's E067

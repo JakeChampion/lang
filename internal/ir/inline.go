@@ -190,7 +190,19 @@ func slotsHaveDynTrait(slots []ast.Type) bool {
 // calls to other functions are allowed; OpCallIndirect /
 // OpMakeClosure / oversized bodies disqualify.
 func isInlineable(fn *Func) bool {
-	if len(fn.Ops) == 0 || len(fn.Ops) > inlineSizeLimit {
+	// Source-level hints (#4412 Rec §14): @noinline is absolute;
+	// @inline lifts only the SIZE cap — every shape-safety exclusion
+	// below (closure drop thunks, indirect calls / closure makes, the
+	// wasm dyn-slot case in findInlineCandidates) still applies, since
+	// those guard correctness or unimplemented splice mechanics, not
+	// cost.
+	if fn.InlineHint == ast.InlineHintNever {
+		return false
+	}
+	if len(fn.Ops) == 0 {
+		return false
+	}
+	if fn.InlineHint != ast.InlineHintAlways && len(fn.Ops) > inlineSizeLimit {
 		return false
 	}
 	// Never inline a per-closure drop thunk: it reads captures at

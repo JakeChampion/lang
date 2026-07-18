@@ -2506,6 +2506,16 @@ type Param struct {
 	Default Expr
 }
 
+// InlineHint is a source-level inlining directive on a function decl
+// (`@inline` / `@noinline` — #4412 Rec §14).
+type InlineHint int
+
+const (
+	InlineHintNone   InlineHint = iota // no attribute — heuristic decides
+	InlineHintAlways                   // @inline — lift the size cap
+	InlineHintNever                    // @noinline — never a candidate
+)
+
 type FuncDecl struct {
 	P    Position
 	Name string
@@ -2662,6 +2672,12 @@ type FuncDecl struct {
 	// Default false; set by the parser for `async function`. See
 	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 	Async bool
+	// InlineHint carries a source-level `@inline` / `@noinline`
+	// attribute (#4412 Rec §14): Always lifts the IR inliner's size
+	// cap for this function (shape-safety exclusions still apply);
+	// Never excludes it from inlining entirely. None (the zero
+	// value) leaves the heuristic in charge.
+	InlineHint InlineHint
 	// IsSynthesisedHandlerMain marks the auto-`main()` the
 	// checker emits for handler-shaped programs (a top-level
 	// `handle(req: HttpRequest): HttpResponse` with no
