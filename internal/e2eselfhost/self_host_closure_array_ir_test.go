@@ -95,6 +95,26 @@ var closureArrayIRCases = []struct {
 	{"mixed-cap-then-namedfn", `function inc(x: i32): i32 { return x + 100; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [(x: i32) => x + a, inc]; return fs[1](5); }`, 105},
 	// named-fn + capturing lambda summed over a loop: (5+10) + (5+3) = 23.
 	{"mixed-namedfn-loop", `function inc(x: i32): i32 { return x + 10; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [inc, (x: i32) => x + a]; var s = 0; var i = 0; while (i < fs.len()) { s = s + fs[i](5); i = i + 1; } return s; }`, 23},
+	// #5109: a closure-array PARAM dispatched inside the callee is marked
+	// is_closurearr (→ env-first) only when a whole-program scan proves every
+	// call site passes a closure array. That scan must classify calls at EVERY
+	// expression position, not just statement-top-level ones — otherwise a call
+	// buried in a match scrutinee / if-condition / call-argument / binary
+	// operand is uncounted, the proof fails, the param stays unmarked, and
+	// `fs[i](args)` dispatches PLAIN → bare-calls the element box → SIGSEGV.
+	// callee called from an ENUM (Option) match scrutinee: fs[0](4)=14 → Some → 14.
+	{"param-enum-match-scrutinee", `function get(fs: ((i32) => i32)[], v: i32): Option[i32] { var f = fs[0]; return Some(f(v)); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; match (get(fs, 4)) { Some(v) => { return v; }, None => { return 0; } } }`, 14},
+	// callee called from a SCALAR/literal match scrutinee (desugars to an if
+	// on a binary compare — the call sits in the condition): 4+10=14 → arm 14.
+	{"param-scalar-match-scrutinee", `function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; match (get(fs, 4)) { 14 => { return 100; }, _ => { return 99; } } }`, 100},
+	// callee called in an IF-CONDITION: get(fs,4)==14 → true → 100.
+	{"param-if-condition", `function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; if (get(fs, 4) == 14) { return 100; } return 99; }`, 100},
+	// callee called as an ARGUMENT to another call: id(get(fs,4)) → 14.
+	{"param-call-argument", `function id(x: i32): i32 { return x; } function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return id(get(fs, 4)); }`, 14},
+	// regression: a BARE-fn-pointer array param (named fns, is_fnarr) must STAY
+	// plain-dispatched even when the callee is called from a match scrutinee —
+	// the scan must NOT over-eagerly mark it is_closurearr. inc(5)=6 → arm 100.
+	{"param-namedfn-plain-in-match", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; match (apply(fs, 5)) { 6 => { return 100; }, _ => { return 99; } } }`, 100},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted
