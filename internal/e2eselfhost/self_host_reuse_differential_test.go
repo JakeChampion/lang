@@ -167,6 +167,17 @@ var reuseDifferentialCases = []struct {
 	{"inarm-scalar", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, 9, "call __fn___fern_alloc_reuse"},
 	{"inarm-array-move", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } return r; } function main(): i32 { return go(); }`, 64, "call __fn___fern_alloc_reuse"},
 	{"inarm-array-replace-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } if (r != 18) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// string[] fields (#4356 Delta B, rc-element arrays): admitted to the
+	// cross / self-overwrite families with element-fresh array-literal values
+	// gated on BOTH sides (strarr_lit_all_elems_fresh in donor_enum_fields_fresh
+	// / cross_recipient_fields_fresh / the override walk); the reuse arm
+	// deep-frees the superseded field via __fern_str_arr_free and the
+	// self-overwrite fresh arm rc-incs carried copies. Exit codes cross-checked
+	// against native -interp (6 / 4 / 9); detectors prove no over-release.
+	{"strarr-field-cross", `struct P { tags: string[], n: i32 } function main(): i32 { var a: P = P { tags: ["x", "y"], n: 1 }; var s1: i32 = a.tags.len() + a.n; var b: P = P { tags: ["z"], n: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.tags.len() + b.n; }`, 6, "call __fn___fern_alloc_reuse"},
+	{"strarr-field-self-overwrite", `struct P { tags: string[], n: i32 } function main(): i32 { var d: P = P { tags: ["x", "y"], n: 1 }; var c: P = P { ...d, tags: ["z", "w", "v"] }; if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n; }`, 4, "call __fn___fern_alloc_reuse"},
+	{"strarr-field-carried-copy", `struct P { tags: string[], n: i32 } function main(): i32 { var d: P = P { tags: ["x", "y"], n: 1 }; var c: P = P { ...d, n: 5 }; if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + c.tags[0].len() + c.tags[1].len(); }`, 9, "call __fn___fern_alloc_reuse"},
+	{"strarr-field-churn-detector", `struct P { tags: string[], n: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: P = P { tags: ["x", "y"], n: i }; var c: P = P { ...d, tags: ["z"] }; if (c.tags.len() + c.n != 1 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// ENUMRE — the in-place enum reassign upgrade (emit_enum_inplace_reassign),
 	// gated with the layer; reuse-off falls back to emit_enum_reclaim_store's
 	// free+alloc. No distinct call symbol, so no witness string — the asm
@@ -247,6 +258,54 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 			}
 			if gotOff != tc.want {
 				t.Errorf("%s: reuse-off exited %d, want %d", tc.name, gotOff, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostStrarrReuseExclusionX86_64 pins the string[] reuse admission's
+// NEGATIVE space: an ALIASED string[] value (a bare local ident as a donor
+// field / a self-overwrite override) fails the element-fresh-literal gate
+// (strarr_lit_all_elems_fresh), so no reuse fires — the emitted asm carries
+// no __fern_alloc_reuse call — and the alias stays readable after the second
+// construction (values cross-checked against native -interp: 10 / 4), with
+// the rc-underflow detector clean.
+func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"aliased-donor-field", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k", "m"]; var a: P = P { tags: xs, n: 1 }; var s1: i32 = a.tags.len() + a.n; var b: P = P { tags: ["z"], n: 2 }; var live: i32 = xs.len() + xs[0].len() + xs[1].len(); if (__rc_underflow() != 0) { return 99; } return s1 + b.tags.len() + b.n + live; }`, 10},
+		{"aliased-override", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k"]; var d: P = P { tags: ["x"], n: 1 }; var c: P = P { ...d, tags: xs, n: 2 }; var live: i32 = xs[0].len(); if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + live; }`, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if strings.Contains(string(asm), "call __fn___fern_alloc_reuse") {
+				t.Errorf("%s: asm contains an alloc_reuse call — the aliased string[] value was wrongly admitted to reuse", tc.name)
+			}
+			bin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(bin)
+			} else {
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s exited %d, want %d (99 = over-release)", tc.name, code, tc.want)
 			}
 		})
 	}

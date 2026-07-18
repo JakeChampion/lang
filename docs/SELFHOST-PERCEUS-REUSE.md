@@ -242,9 +242,19 @@ existing test scaffolding rather than gated off:
     the `k_str_arr` / `fr_str_arr` arms in both register backends'
     `__struct_drop` / `__field_reclaim` bodies deep-free the field via
     `__fern_str_arr_free` (pinned by the `strarr-field-*` cases in the
-    string-field reclaim suites, x86 + arm64). The REUSE admission for
-    rc-element arrays is still open (needs the reuse-arm release +
-    freshness branch in `cross_recipient_fields_fresh`).
+    string-field reclaim suites, x86 + arm64). The **string[] REUSE
+    admission is now closed** too: `struct_fields_reusable_cross` admits
+    string[] fields (the cross / cross-block / enum-donor / self-overwrite
+    families), gated on element-fresh array-literal values on BOTH sides
+    (`strarr_lit_all_elems_fresh` in `donor_enum_fields_fresh` — triggered
+    via the widened `struct_has_enum_field` — plus
+    `cross_recipient_fields_fresh` and the self-overwrite override walk);
+    the reuse arms deep-free the superseded field via `__fern_str_arr_free`
+    and the self-overwrite fresh arm rc-incs carried copies (pinned by the
+    `strarr-field-*` reuse-differential cases + the aliased-value exclusion
+    test). Struct[] / enum[] element arrays remain open (their element
+    freshness has no literal-shaped proof yet), as does the own-param
+    family (no bind literal to prove element freshness from).
   - **Own-param families** (`own_param_reuse_sites` /
     `own_param_self_overwrite_sites`): now on `struct_fields_reusable_param`
     (narrow ∪ Map / leak-safe tuple / leak-safe Option — the leak-only kinds,
