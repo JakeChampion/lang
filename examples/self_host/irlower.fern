@@ -28418,6 +28418,34 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// append_dyn_str_ret_fns folds trait-method entries into a str_ret_fns list so
+// a string-returning method chained on a `dyn Trait` dispatch result tracks as
+// a string. A `dyn Trait` receiver's tracked type is the coarse "dyn <Trait>"
+// string (mark_struct_type at the binding), so expr_is_str's method arm looks
+// up "dyn <Trait>.<method>" — the same "<recvType>.<method>" shape it uses for
+// a concrete struct receiver. Without an entry there the dispatch result is
+// mis-tracked (an i32), and `d.name().len()` lowers `.len()` as a plain deref
+// (reads [ptr+0], the string data) instead of the length read ([ptr-4]),
+// returning garbage (#5142). The trait's REQUIRED (abstract) method signatures
+// carry the declared return type — every impl of the trait returns it — so one
+// "dyn <Trait>.<method>" entry per string-returning required method makes the
+// chained lowering see a string receiver, exactly as materialising the result
+// into a `var s: string` (whose slot carries the string type) already does.
+pub function append_dyn_str_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
+    var out: string[] = base;
+    var t: i32 = 0;
+    while (t < trait_reqs.len()) {
+        var tr: parser.TraitReq = trait_reqs[t];
+        var m: i32 = 0;
+        while (m < tr.req_sigs.len()) {
+            if (tr.req_sigs[m].ret_type == "string") { out = out.append("dyn " + tr.trait_name + "." + tr.req_sigs[m].name); }
+            m = m + 1;
+        }
+        t = t + 1;
+    }
+    return out;
+}
+
 // str_ret_argref returns the argument index an erased-generic fn's return
 // mirrors ("name|$arg<i>" entries from str_ret_fns_of), or -1. The caller
 // re-types the call by the ACTUAL argument at that position.

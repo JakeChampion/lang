@@ -6085,7 +6085,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // recomputing them per function is O(n^2) and OOMs the bump heap on a large
     // module (parser, ~300 funcs). This mirrors bparams above and the wasm
     // backend's emit_module, which already hoists them.
-    var srf: string[] = irlower.str_ret_fns_of(all_funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
     var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
     var amf: string[] = irlower.arr_method_fns_of(all_funcs);
     var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
@@ -6239,7 +6239,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var arf: string[] = array_ret_fns_of(im.funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(im.funcs);
     var csparams: string[] = irlower.consume_safe_params_interproc(im.funcs, bparams);
-    var srf: string[] = irlower.str_ret_fns_of(im.funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(im.funcs), im.trait_reqs);
     var sarf: string[] = irlower.strarr_ret_fns_of(im.funcs);
     var amf: string[] = irlower.arr_method_fns_of(im.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(im.funcs);
