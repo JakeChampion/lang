@@ -17293,6 +17293,120 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// map_builder_scalar_kind: `t` is a by-value scalar Map key/value type a
+// shallow __fern_map_free covers completely (the column buffers hold no
+// pointers, so freeing them frees everything). i64/u64/f64 are excluded —
+// wide keys ride cell-pointer boxing on some paths — as is everything
+// pointer-shaped.
+function map_builder_scalar_kind(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "boolean";
+}
+
+// map_builder_body_ok: `fn`'s body is the STRICT cow-threaded map builder —
+// exactly one annotated `var <m>: Map[..] = map_new(..)` declaration, and
+// every other statement is either a sanctioned self-cow reassign of <m>
+// (is_map_selfcow_assign), a bare `return <m>;`, or mentions <m> nowhere at
+// all AND contains no nested return (astwalk.collect_idents_stmt +
+// body_has_return — so ANY other read, alias, call-arg, control-flow-nested
+// use, hidden `return p;`, or a param named <m> rejects). This is what makes
+// the caller-side fresh credit sound: the returned box was map_new'd inside
+// fn, only ever cow-mutated in place, and handed out exactly once.
+function map_builder_body_ok(fn: parser.FuncDecl): boolean {
+    // The single returned name: every return must be a bare ident, all the
+    // same name.
+    var m: string = "";
+    var ri: i32 = 0;
+    while (ri < fn.body.len()) {
+        match (fn.body[ri]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(rid) => {
+                        if (m == "") { m = rid.name; }
+                        else if (m != rid.name) { return false; }
+                    },
+                    _ => { return false; }
+                }
+            },
+            _ => {}
+        }
+        ri = ri + 1;
+    }
+    if (m == "") { return false; }
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        if (fn.params[pi].name == m) { return false; }
+        pi = pi + 1;
+    }
+    var decls: i32 = 0;
+    var i: i32 = 0;
+    while (i < fn.body.len()) {
+        var st: parser.Stmt = fn.body[i];
+        var handled: boolean = false;
+        match (st) {
+            parser.StmtVar(v) => {
+                if (v.name == m) {
+                    if (v.type_name.len() < 5 || v.type_name[0:4] != "Map[") { return false; }
+                    if (!is_fresh_map_init(v.init)) { return false; }
+                    decls = decls + 1;
+                    if (decls > 1) { return false; }
+                    handled = true;
+                }
+            },
+            parser.StmtReturn(_) => { handled = true; },
+            _ => {}
+        }
+        if (!handled && is_map_selfcow_assign(st, m)) { handled = true; }
+        if (!handled) {
+            // A NESTED return hides from the top-level return scan above and
+            // could hand out a non-fresh box (`if (..) { return p; }`), so any
+            // statement containing one disqualifies outright.
+            var one: parser.Stmt[] = [st];
+            if (body_has_return(one)) { return false; }
+            var none: string[] = [];
+            if (util.index_of_str(astwalk.collect_idents_stmt(st, none), m) >= 0) { return false; }
+        }
+        i = i + 1;
+    }
+    return decls == 1;
+}
+
+// map_fresh_ret_fns_of: "MAPF:<name>" entries for FREE functions returning a
+// scalar-K/V Map whose body is the strict cow-threaded builder
+// (map_builder_body_ok) — the map sibling of tuple_fresh_ret_fns_of, and the
+// self-host twin of #5096's returnsNoParamEscape map admission. A caller's
+// `var m: Map[..] = mk(i)` binding then earns the "MAP:" reclaim: the box is
+// provably fresh + sole-owned, the columns hold only scalars, so the shallow
+// __fern_map_free covers everything. Rides the tuple_fresh_ret_fns list (the
+// "ARRF:" precedent — ':' never appears in an identifier, so the entries
+// can't collide with bare-name membership checks).
+pub function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (funcs[k].receiver_type.len() == 0
+                && funcs[k].ret_type.len() >= 5 && funcs[k].ret_type[0:4] == "Map["
+                && map_builder_scalar_kind(map_key_of(funcs[k].ret_type))
+                && map_builder_scalar_kind(map_value_of(funcs[k].ret_type))
+                && map_builder_body_ok(funcs[k])) {
+            out = out.append("MAPF:" + funcs[k].name);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// tuple_and_map_fresh_ret_fns_of: the combined registry lower_func threads —
+// tuple entries (bare names + "ARRF:") plus the "MAPF:" map-builder entries,
+// one list so no signature changes ripple through the three lower_func call
+// sites.
+pub function tuple_and_map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = tuple_fresh_ret_fns_of(funcs);
+    var mf: string[] = map_fresh_ret_fns_of(funcs);
+    var i: i32 = 0;
+    while (i < mf.len()) { out = out.append(mf[i]); i = i + 1; }
+    return out;
+}
+
 // collect_tuple_ret_shapes: one shape string per `return (…)` tuple literal in
 // the body — 'a' at position k for a direct ExprArray element (a fresh buffer
 // the returned box sole-owns), 's' for anything else. Feeds the ARRF: flags.
@@ -17487,6 +17601,47 @@ function is_fresh_map_init(e: parser.Expr): boolean {
         },
         _ => { return false; }
     }
+}
+
+// collect_mapf_call_names: var-names bound as `var m: Map[..] = mk(..)` where
+// mk is in the "MAPF:" registry (map_fresh_ret_fns_of, riding the
+// tuple_fresh_ret list) — the callee provably returns a fresh sole-owned
+// scalar-column map, so the binding is as fresh as a local map_new. The
+// annotation is required (it is what marks the slot's map type for get_or
+// dispatch and the reclaim's key-kind selection). Recurses through nested
+// blocks like collect_fresh_map_names.
+function collect_mapf_call_names(stmts: parser.Stmt[], registry: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
+                    match (v.init) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(cid) => {
+                                    if (util.index_of_str(registry, "MAPF:" + cid.name) >= 0) { a = push_str_unique(a, v.name); }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(iff) => { a = collect_mapf_call_names(iff.then_body, registry, a); a = collect_mapf_call_names(iff.else_body, registry, a); },
+            parser.StmtWhile(w) => { a = collect_mapf_call_names(w.body, registry, a); },
+            parser.StmtFor(f) => { a = collect_mapf_call_names(f.body, registry, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_mapf_call_names(m.arms[mi].body, registry, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // collect_fresh_map_names gathers every var-name bound from a fresh map init,
@@ -19274,6 +19429,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // `m.iter()` (map_has_explicit_iter — its MapIter box can escape; `for (k,v) in m`
     // is fine, its iter is a scoped loop temp dead by the free).
     var maps: string[] = collect_fresh_map_names(body, []);
+    // Also collect annotated bindings from REGISTERED map builders
+    // (`var m: Map[..] = mk(i)`, mk in the "MAPF:" registry riding
+    // tup_fresh_ret — map_fresh_ret_fns_of): the callee provably returns a
+    // fresh, sole-owned, scalar-column map, so the binding earns the same
+    // "MAP:" credit as a local map_new — subject to every gate below
+    // (non-self-cow reassigns, aliasing, escapes, iteration, identity all
+    // still exclude). The self-host twin of #5096's bound-intermediate
+    // reclaim; #4357.
+    maps = collect_mapf_call_names(body, tup_fresh_ret, maps);
     var aliased_m: string[] = aliased_array_names_of(body);
     var mi: i32 = 0;
     while (mi < maps.len()) {
@@ -30823,7 +30987,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_and_map_fresh_ret_fns_of(funcs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -30848,7 +31012,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_and_map_fresh_ret_fns_of(funcs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -33195,7 +33359,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_and_map_fresh_ret_fns_of(funcs));
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
