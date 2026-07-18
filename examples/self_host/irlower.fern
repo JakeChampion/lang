@@ -13491,11 +13491,15 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         var ev_ty: string = decl_field_type(ms.structs, vname, fname);
                         ms = ms.add_local(bname);
                         var bslot: i32 = ms.slot_of(bname);
-                        // Read the payload at its width: an i64 payload uses
-                        // struct_get_i64 (i64.load), an f64 one struct_get
-                        // width 64 (f64.load), else the i32 read.
+                        // Read the payload at its width: an i64/u64 payload uses
+                        // struct_get_i64 (i64.load — u64 rides the i64 8-byte
+                        // domain), an f64 one struct_get width 64 (f64.load), else
+                        // the i32 read. The u64 read MUST match the binding's
+                        // mark_u64 below (is_i64_slot → 64-bit) or the wasm
+                        // backend, which has true 32/64 widths, sees the i32 read
+                        // feed an i64 use and fails to validate (type mismatch).
                         ms = ms.emit(ir.op_load_local(scrut_slot));
-                        if (ev_ty == "i64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
+                        if (ev_ty == "i64" || ev_ty == "u64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
                         else if (ev_ty == "f64") { ms = ms.emit(ir.op_struct_get(bidx, 64)); }
                         else { ms = ms.emit(ir.op_struct_get(bidx, 0)); }
                         ms = ms.emit(ir.op_store_local(bslot));
@@ -13513,6 +13517,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_str(bslot, true);
                         } else if (ev_ty == "i64") {
                             ms = ms.mark_i64(bslot, true);
+                        } else if (ev_ty == "u64") {
+                            // A u64 payload (`U(u64) => x`): mark_u64 sets both the
+                            // 64-bit width (is_i64_slot reads is_u64 too) AND the
+                            // unsigned flag, so a chained `x >> 1` / `x > y` on the
+                            // bound value selects shr_u / gt_u instead of the signed
+                            // form (which diverges once bit 63 is set).
+                            ms = ms.mark_u64(bslot, true);
                         } else if (ev_ty == "f64") {
                             ms = ms.mark_f64(bslot, true);
                         } else if (ev_ty == "fn") {
