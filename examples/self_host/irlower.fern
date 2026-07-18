@@ -15618,6 +15618,10 @@ function cross_recipient_fields_fresh(slit: parser.ExprStructLit, structs: parse
                 _ => { csf = str_local_binding_is_fresh(slit.field_values[fk]); }
             }
             if (!csf) { return false; }
+        } else if (fkt == "string[]") {
+            // Element-fresh array literal only (a bare-ident / call value may
+            // alias a live buffer the donor-release side would deep-free).
+            if (!strarr_lit_all_elems_fresh(slit.field_values[fk])) { return false; }
         }
         fk = fk + 1;
     }
@@ -17863,6 +17867,27 @@ function strarr_elem_store_ok(e: parser.Expr): boolean {
         _ => {}
     }
     return str_local_binding_is_fresh(e);
+}
+
+// strarr_lit_all_elems_fresh: `e` is a string[] ARRAY LITERAL whose every
+// element is strarr_elem_store_ok (a string literal or a fresh producer; an
+// empty `[]` qualifies). The value-freshness proof the reuse admission uses
+// for string[] fields on both the donor and recipient sides: such a literal
+// builds a sole-owned buffer of sole-owned element boxes, so the reuse-arm
+// __fern_str_arr_free of the OLD value can never free a live alias.
+function strarr_lit_all_elems_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(al) => {
+            var i: i32 = 0;
+            while (i < al.elements.len()) {
+                if (!strarr_elem_store_ok(al.elements[i])) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // collect_fresh_strarr_names: locals declared `var xs [: string[]] = [e0, ...]`
@@ -23685,7 +23710,12 @@ function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name:
                 // skip branch. (is_enum_like_name excludes bracketed generics
                 // and "(...)" spellings, so none of the three ever routes into
                 // the enum flat-dec release by accident.)
-                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
+                // string[] (#4356 Delta B, rc-element arrays): admitted with a
+                // DEEP __fern_str_arr_free release arm in emit_cross_struct_reuse
+                // and value-freshness gates on BOTH sides (donor_enum_fields_fresh
+                // / cross_recipient_fields_fresh require an element-fresh array
+                // literal), so the freed elements + buffer are provably sole-owned.
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && t != "string[]" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
                 fi = fi + 1;
             }
             return true;
@@ -23800,6 +23830,7 @@ function struct_has_enum_field(structs: parser.StructDecl[], name: string): bool
             while (fi < structs[i].fields.len()) {
                 if (is_enum_like_name(structs[i].fields[fi].type_name, structs)) { return true; }
                 if (structs[i].fields[fi].type_name == "string") { return true; }
+                if (structs[i].fields[fi].type_name == "string[]") { return true; }
                 fi = fi + 1;
             }
             return false;
@@ -23842,6 +23873,12 @@ function donor_enum_fields_fresh(body: parser.Stmt[], name: string, structs: par
                                         _ => { sfresh = str_local_binding_is_fresh(sl.field_values[fk]); }
                                     }
                                     if (!sfresh) { return false; }
+                                }
+                                if (fkt == "string[]") {
+                                    // A string[] field must be an element-fresh array
+                                    // literal, so the reuse-site __fern_str_arr_free
+                                    // (elements + buffer) is alias-free.
+                                    if (!strarr_lit_all_elems_fresh(sl.field_values[fk])) { return false; }
                                 }
                                 fk = fk + 1;
                             }
@@ -23980,6 +24017,11 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                                                     _ => { sof = str_local_binding_is_fresh(slit.field_values[fk]); }
                                                 }
                                                 if (!sof) { ok = false; }
+                                            } else if (fkt == "string[]") {
+                                                // A STRING[] override must be an element-fresh
+                                                // array literal, so the reused box solely owns
+                                                // the new elements + buffer.
+                                                if (!strarr_lit_all_elems_fresh(slit.field_values[fk])) { ok = false; }
                                             }
                                             fk = fk + 1;
                                         }
@@ -24155,6 +24197,15 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
                     st = st.emit(ir.op_call_direct("__fern_str_free", 1));
                     st = st.emit(ir.op_drop());
+                } else if (rfty == "string[]") {
+                    // STRING[] override: DEEP rc-guarded __fern_str_arr_free of
+                    // the OLD value (elements + buffer); the base's string[]
+                    // values are element-fresh gated (donor_enum_fields_fresh),
+                    // so never a live alias.
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
+                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                    st = st.emit(ir.op_drop());
                 }
                 rj = rj + 1;
             }
@@ -24185,7 +24236,7 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_load_local(dslot));
                     st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
-                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty) || is_enum_like_name(cfty, st.structs) || cfty == "string") {
+                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty) || is_enum_like_name(cfty, st.structs) || cfty == "string" || cfty == "string[]") {
                         st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
                     st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
@@ -24750,6 +24801,18 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
                     st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (rty == "string[]") {
+                    // STRING[] field (rc-element arrays): DEEP rc-guarded
+                    // __fern_str_arr_free of the OLD value (element boxes +
+                    // buffer at rc==1; a shared buffer just decs). Both sides'
+                    // values are gated element-fresh array literals
+                    // (donor_enum_fields_fresh / cross_recipient_fields_fresh),
+                    // so the freed elements can never be live aliases. wasm maps
+                    // the helper to $__fern_arr_dec_ptr (same deep shape).
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
+                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
                     st = st.emit(ir.op_drop());
                 }
                 ri = ri + 1;
