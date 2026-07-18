@@ -69,7 +69,7 @@ pub function heap_base(): i32 { return 40 + 65536 * 4; }
 pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var arf: string[] = asm_ir.array_ret_fns(mod);
     var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(mod.funcs), mod.trait_reqs, "string[]");
     var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
     var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
@@ -77,7 +77,7 @@ pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
@@ -2074,14 +2074,14 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
     mod = parser.infer_ret_types_module(mod);
     var str_vals: string[] = str_values(cache);
     var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(mod.funcs), mod.trait_reqs, "string[]");
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
     var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var ft: string[] = fn_value_table(cache);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);

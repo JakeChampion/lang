@@ -174,6 +174,23 @@ var dynTraitIRCases = []struct {
 	// IR-subset gap, not a miscompile — so those shapes aren't pinned here.)
 	{"dyn-array-len-chained",
 		`trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { var s: S = S { n: 1 }; var d: dyn Arr = s; return d.make().len(); }`, 3},
+
+	// --- DIRECTLY-INDEXED dyn-array dispatch results (`d.make()[i]`, no
+	// explicitly-typed intermediate `var xs: T[]`). The element WIDTH/type of the
+	// dispatch result must be tracked via the array registries keyed
+	// "dyn <Trait>.<method>" — without it a directly-indexed f64 element reads at
+	// the wrong width and a string element mis-lowers its chained `.len()`.
+	// (Binding through `var xs: T[] = d.make()` already types the slot, so only
+	// the direct-chain shape is affected. An i64[]/u64[] direct index of a dyn
+	// result routes to the AST fallback today — a legit IR-subset gap, not a
+	// miscompile — so it is not pinned here and the i64arr registry gets no dyn
+	// entry.)
+	// f64[] element: [2.5, 3.5][1] + 1.0 == 4.5.
+	{"dyn-arr-f64-direct-index",
+		`trait Arr { function make(self: Self): f64[]; } struct S { v: f64 } impl Arr for S { function make(self: Self): f64[] { return [self.v, self.v + 1.0]; } } function main(): i32 { var s: S = S { v: 2.5 }; var d: dyn Arr = s; var r: f64 = d.make()[1] + 1.0; if (r == 4.5) { return 1; } return 0; }`, 1},
+	// string[] element, chained `.len()`: ["ab","hello"][1].len() == 5.
+	{"dyn-arr-string-direct-index",
+		`trait Arr { function make(self: Self): string[]; } struct S { s: string } impl Arr for S { function make(self: Self): string[] { return [self.s, "hello"]; } } function main(): i32 { var s: S = S { s: "ab" }; var d: dyn Arr = s; return d.make()[1].len(); }`, 5},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64
