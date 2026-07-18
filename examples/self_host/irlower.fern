@@ -25336,6 +25336,10 @@ function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
                             // per-kind arms as a normally-constructed box (k_enum /
                             // k_struct release; Map / tuple / Option leak-only,
                             // exactly like the fresh-alloc path).
+                            var dbg_b: i32 = 0; if (slit.has_base) { dbg_b = 1; }
+                            var dbg_r: i32 = 0; if (struct_fields_reusable_cross(structs, slit.type_name)) { dbg_r = 1; }
+                            var dbg_f: i32 = 0; if (cross_recipient_fields_fresh(slit, structs)) { dbg_f = 1; }
+                            print("EDON-DBG type=" + slit.type_name + " base=" + util.i32_to_string(dbg_b) + " reusable=" + util.i32_to_string(dbg_r) + " fresh=" + util.i32_to_string(dbg_f));
                             if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)
                                     && cross_recipient_fields_fresh(slit, structs)) {
                                 var want: i32 = decl_field_count(structs, slit.type_name);
