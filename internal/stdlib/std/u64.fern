@@ -114,6 +114,17 @@ pub function (n: u64) checked_div(other: u64): Option[u64] {
     return Some(n / other);
 }
 
+// `(n: u64) checked_mul(other)` — Some(n * other) when the product fits u64,
+// else None. u64 has no wider type, so detect overflow with the inverse divide
+// (`p / n == other` iff the multiply didn't wrap). No signed MIN case to guard.
+// The u64 sibling of std/i32's `checked_mul`.
+pub function (n: u64) checked_mul(other: u64): Option[u64] {
+    if (n == (0 as u64) || other == (0 as u64)) { return Some(0 as u64); }
+    var p: u64 = n * other;
+    if (p / n != other) { return None; }
+    return Some(p);
+}
+
 // `(n: u64) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so there are no negative-input cases: `sqrt_floor(0)` is 0,
 // and the iteration converges in O(log n). Exact across the full u64 range,

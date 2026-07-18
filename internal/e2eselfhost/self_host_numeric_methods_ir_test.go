@@ -197,6 +197,55 @@ function main(): i32 {
     if (u32_cdiv(9 as u32, 3 as u32) == 3) { r = r + 12; }
     return r;
 }`},
+	// checked_mul (the std/i32 · i64 · u32 · u64 additions): overflow-guarded
+	// multiply — i32/u32 widen to the next type and range-check, i64/u64 use the
+	// inverse-divide (`p / n == other` iff no wrap) with the i64::MIN * -1 guard
+	// the divide can't see. Inlined with a -99 sentinel standing in for None;
+	// oracle-checked. Exercises widen casts + 64-bit/unsigned mul + divide across
+	// function calls on the IR path. Nine hits → 46.
+	{"int-checked-mul", `function i32_cmul(n: i32, other: i32): i64 {
+    var p: i64 = (n as i64) * (other as i64);
+    var max32: i64 = 2147483647 as i64;
+    var min32: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    if (p > max32 || p < min32) { return (0 as i64) - (99 as i64); }
+    return p;
+}
+function i64_cmul(n: i64, other: i64): i64 {
+    if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    var neg1: i64 = (0 as i64) - (1 as i64);
+    if (n == min64 && other == neg1) { return (0 as i64) - (99 as i64); }
+    if (other == min64 && n == neg1) { return (0 as i64) - (99 as i64); }
+    var p: i64 = n * other;
+    if (p / n != other) { return (0 as i64) - (99 as i64); }
+    return p;
+}
+function u32_cmul(n: u32, other: u32): i64 {
+    var p: u64 = (n as u64) * (other as u64);
+    if (p > (4294967295 as u64)) { return (0 as i64) - (99 as i64); }
+    return p as i64;
+}
+function u64_cmul(n: u64, other: u64): i64 {
+    if (n == (0 as u64) || other == (0 as u64)) { return 0 as i64; }
+    var p: u64 = n * other;
+    if (p / n != other) { return (0 as i64) - (99 as i64); }
+    return p as i64;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    var sent: i64 = (0 as i64) - (99 as i64);
+    if (i32_cmul(3, 4) == (12 as i64)) { r = r + 5; }
+    if (i32_cmul(2147483647, 2) == sent) { r = r + 5; }
+    if (i64_cmul(1000 as i64, 1000 as i64) == (1000000 as i64)) { r = r + 5; }
+    if (i64_cmul(5000000000 as i64, 5000000000 as i64) == sent) { r = r + 5; }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    if (i64_cmul(min64, (0 as i64) - (1 as i64)) == sent) { r = r + 5; }
+    if (u32_cmul(60000 as u32, 60000 as u32) == (3600000000 as i64)) { r = r + 6; }
+    if (u32_cmul(4294967295 as u32, 2 as u32) == sent) { r = r + 6; }
+    if (u64_cmul(1000000 as u64, 1000000 as u64) == (1000000000000 as i64)) { r = r + 6; }
+    if (u64_cmul(10000000000 as u64, 10000000000 as u64) == sent) { r = r + 3; }
+    return r;
+}`},
 	// log10_floor (the std/i32 · i64 · u32 additions): floor(log10 n) by
 	// counting divisions by ten, with the -1 sentinel for n <= 0 (n == 0
 	// unsigned). Exercises i32/i64/u32 divide + unsigned compare + branch

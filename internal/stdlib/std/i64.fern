@@ -312,6 +312,22 @@ pub function (n: i64) checked_div(other: i64): Option[i64] {
     return Some(n / other);
 }
 
+// `(n: i64) checked_mul(other)` — Some(n * other) when the product fits i64,
+// else None. i64 has no wider type, so detect overflow with the inverse divide
+// (`p / n == other` iff the multiply didn't wrap), guarding the one case that
+// check can't see — `i64::MIN * -1` (either order), which wraps to MIN while the
+// inverse `MIN / -1` itself overflows. The i64 sibling of std/i32's `checked_mul`.
+pub function (n: i64) checked_mul(other: i64): Option[i64] {
+    if (n == (0 as i64) || other == (0 as i64)) { return Some(0 as i64); }
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    var neg1: i64 = (0 as i64) - (1 as i64);
+    if (n == min64 && other == neg1) { return None; }
+    if (other == min64 && n == neg1) { return None; }
+    var p: i64 = n * other;
+    if (p / n != other) { return None; }
+    return Some(p);
+}
+
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
 // of std/i32's `sqrt_floor`. Newton's method on the wider type, so it stays
 // exact for magnitudes past the i32 range (e.g. `sqrt_floor(10000000000)` is

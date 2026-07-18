@@ -1,0 +1,29 @@
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+// checked_mul for i32/i64/u32/u64: Some(n*other) when the product fits, else
+// None on overflow. Distinct nonzero exit per failure; 42 = pass.
+// Runs interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    // i32 — widen-to-i64 range check
+    match ((3).checked_mul(4)) { Some(x) => { if (x != 12) { return 1; } }, None => { return 2; } }
+    match ((2147483647).checked_mul(2)) { Some(x) => { return 3; }, None => {} }             // MAX*2 overflow
+    var min32: i32 = 0 - 2147483647 - 1;
+    match (min32.checked_mul(0 - 1)) { Some(x) => { return 4; }, None => {} }                  // MIN*-1 overflow
+    match (min32.checked_mul(1)) { Some(x) => { if (x != min32) { return 5; } }, None => { return 6; } }  // MIN*1 fine
+    // i64 — inverse-divide + MIN guard
+    match ((1000 as i64).checked_mul(1000 as i64)) { Some(x) => { if (x != (1000000 as i64)) { return 11; } }, None => { return 12; } }
+    match ((5000000000 as i64).checked_mul(5000000000 as i64)) { Some(x) => { return 13; }, None => {} }  // 2.5e19 overflow
+    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    match (min64.checked_mul((0 as i64) - (1 as i64))) { Some(x) => { return 14; }, None => {} }           // MIN*-1 overflow
+    match (min64.checked_mul(1 as i64)) { Some(x) => { if (x != min64) { return 15; } }, None => { return 16; } }  // MIN*1 fine
+    match ((7 as i64).checked_mul(0 as i64)) { Some(x) => { if (x != (0 as i64)) { return 17; } }, None => { return 18; } }  // *0 fine
+    // u32 — widen-to-u64 range check
+    match ((60000 as u32).checked_mul(60000 as u32)) { Some(x) => { if (x != (3600000000 as u32)) { return 21; } }, None => { return 22; } }
+    match ((4294967295 as u32).checked_mul(2 as u32)) { Some(x) => { return 23; }, None => {} }            // overflow
+    // u64 — inverse-divide
+    match ((1000000 as u64).checked_mul(1000000 as u64)) { Some(x) => { if (x != (1000000000000 as u64)) { return 31; } }, None => { return 32; } }
+    match ((10000000000 as u64).checked_mul(10000000000 as u64)) { Some(x) => { return 33; }, None => {} } // 1e20 overflow
+    return 42;
+}

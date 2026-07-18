@@ -119,6 +119,15 @@ pub function (n: u32) checked_div(other: u32): Option[u32] {
     return Some(n / other);
 }
 
+// `(n: u32) checked_mul(other)` — Some(n * other) when the product fits u32,
+// else None. The full u32×u32 product fits u64 (< 2^64), so widen (zero-extend)
+// and range-check against u32::MAX. The u32 sibling of std/i32's `checked_mul`.
+pub function (n: u32) checked_mul(other: u32): Option[u32] {
+    var p: u64 = (n as u64) * (other as u64);
+    if (p > (4294967295 as u64)) { return None; }
+    return Some(p as u32);
+}
+
 // `(n: u32) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so no negative-input cases; `sqrt_floor(0)` is 0. Exact
 // across the u32 range, e.g. `sqrt_floor(4294836225)` (which is `(2^16 - 1)^2`)

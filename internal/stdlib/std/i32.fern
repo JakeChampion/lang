@@ -473,6 +473,17 @@ pub function (n: i32) checked_div(other: i32): Option[i32] {
     return Some(n / other);
 }
 
+// `(n: i32) checked_mul(other)` — Some(n * other) when the product fits i32,
+// else None. The full i32×i32 product always fits i64, so widen and range-check
+// exactly — no wrap to reason about (catches i32::MIN * -1 as 2^31 > i32::MAX).
+pub function (n: i32) checked_mul(other: i32): Option[i32] {
+    var p: i64 = (n as i64) * (other as i64);
+    var max32: i64 = 2147483647 as i64;
+    var min32: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    if (p > max32 || p < min32) { return None; }
+    return Some(p as i32);
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }
