@@ -102,6 +102,27 @@ type Label struct {
 	Kind    LabelKind
 }
 
+// Suggestion is a machine-applicable fix (docs/DIAGNOSTIC-UX-RESEARCH.md
+// Rec §3): replacing Length bytes of source at Pos with Replacement is
+// guaranteed BY THE EMITTER to produce a program that re-parses — an
+// unsound suggestion is worse than none, so only exact rewrites (e.g. an
+// identifier respelling) attach one. Title is the human-readable line the
+// renderer prints after `help:`; the span/replacement pair is the machine
+// half (the future LSP CodeAction seed).
+type Suggestion struct {
+	Pos         ast.Position
+	Length      int
+	Replacement string
+	Title       string
+}
+
+// Suggested is satisfied by errors carrying a machine-applicable fix.
+// A nil Suggestion means none.
+type Suggested interface {
+	error
+	Suggestion() *Suggestion
+}
+
 // Labeled is satisfied by errors that carry multiple source
 // annotations (typically primary-at-use plus secondary-at-decl).
 // The renderer falls back to the Positioned / Spanned single-
@@ -279,6 +300,14 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	if h, ok := err.(Hinted); ok {
 		if hint := h.Hint(); hint != "" {
 			out += "\n" + notePrefix + paint(ansiBlue, "note:") + " " + hint
+		}
+	}
+	// Machine-applicable fix (Rec §3): an actionable `help:` line. The
+	// structured span/replacement stays on the error for machine
+	// consumers; the emitter guarantees applying it re-parses.
+	if sg, ok := err.(Suggested); ok {
+		if fix := sg.Suggestion(); fix != nil && fix.Title != "" {
+			out += "\n" + notePrefix + paint(ansiBlue, "help:") + " " + fix.Title
 		}
 	}
 	// Multi-label diagnostic (docs/DIAGNOSTIC-UX-RESEARCH.md

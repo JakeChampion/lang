@@ -20,10 +20,14 @@ import (
 type Error struct {
 	Pos     ast.Position
 	Span    int    // optional: token length for `^~~~~` underline; 0 = caret only
-	Note    string // optional: "did you mean foo?" hint
+	Note    string // optional: free-text hint rendered as `note:`
 	Msg     string
 	Path    string // source file path; filled by errf from c.current.SourceModule
 	ErrCode string // optional: stable error code (E001…), surfaces in the header + `lang explain` output
+	// Fix is an optional machine-applicable suggestion rendered as a
+	// `help:` line (diag.Suggestion — span + replacement + title). Only
+	// attached when applying the replacement is guaranteed to re-parse.
+	Fix *diag.Suggestion
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
@@ -33,6 +37,8 @@ func (e *Error) Hint() string           { return e.Note }
 func (e *Error) File() string           { return e.Path }
 func (e *Error) setFile(p string)       { e.Path = p }
 func (e *Error) Code() string           { return e.ErrCode }
+
+func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
 
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
@@ -6866,9 +6872,12 @@ func (c *checker) needCoreMap(pos ast.Position) {
 }
 
 // errIdent reports an unresolved-name error and tries to attach a
-// "did you mean foo?" hint by scanning every name visible in scope
-// (locals, params, top-level functions). The error span covers the
-// whole identifier so the squiggle underlines the misspelt name.
+// near-miss fix by scanning every name visible in scope (locals,
+// params, top-level functions). The error span covers the whole
+// identifier so the squiggle underlines the misspelt name; the fix is
+// MACHINE-APPLICABLE (diag.Suggestion, Rec §3) — replacing the ident
+// with the candidate always re-parses, so the renderer's `help:` line
+// doubles as the future LSP CodeAction seed.
 func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	cands := c.collectNames(s)
 	suggestion := diag.Suggest(n.Name, cands)
@@ -6880,7 +6889,12 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 		ErrCode: "E001",
 	}
 	if suggestion != "" {
-		e.Note = fmt.Sprintf("did you mean %q?", suggestion)
+		e.Fix = &diag.Suggestion{
+			Pos:         n.P,
+			Length:      len(n.Name),
+			Replacement: suggestion,
+			Title:       fmt.Sprintf("replace `%s` with `%s`", n.Name, suggestion),
+		}
 	}
 	c.errors = append(c.errors, e)
 }
