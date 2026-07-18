@@ -341,25 +341,33 @@ pub function rt_src_random_bytes(): string {
 
 // rt_src_remove_file backs `remove_file(path)` (#2649, syscall-leaf) →
 // Option[IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0) (syscall
-// 263, 3-arg so __syscall3 suffices), return None on success / Some(NotFound(_))
-// on failure — the Some payload a FRESH string boxed from the raw path copy (the
-// hand-asm used a null payload; callers bind Some with a wildcard). x86-64-only.
+// 263, 3-arg so __syscall3 suffices), return None on success / on failure the
+// errno-mapped IoError variant (ENOENT→NotFound, EACCES→PermissionDenied,
+// EEXIST→AlreadyExists, EINTR→Interrupted, else Other) matching native's
+// __fern_io_error + the arm64 hand-asm — the Some payload a FRESH string boxed
+// from the raw path copy (not the borrowed `path`, so no RC double-free). The
+// initial migration flattened every failure to Some(NotFound(_)). x86-64-only.
 pub function rt_src_remove_file(): string {
-    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Some(NotFound(__raw_string(pathz, plen))); } return None; }";
+    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { var e: i32 = 0 - rc; if (e == 4) { return Some(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Some(NotFound(ep)); } if (e == 13) { return Some(PermissionDenied(ep)); } if (e == 17) { return Some(AlreadyExists(ep)); } return Some(Other(ep, \"\")); } return None; }";
 }
 
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
 // 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
 // (syscall 8), read the whole thing in ONE read into a sized buffer that BECOMES
-// the returned string (RC-managed, like random_bytes), close. Err(NotFound(_)) on
-// open/read failure — a FRESH string boxed from the raw path copy, not the
-// borrowed `path`. Single-read (no offset-into-buffer arithmetic, which the i32
-// raw-pointer floor can't do 64-bit-safely on a high heap buffer): correct for
-// regular files ≤ 2 GiB read without interruption, which covers the use (the
-// compiler reading source). x86-64-only (arch-specific syscall numbers).
+// the returned string (RC-managed, like random_bytes), close. On open/read
+// failure, the errno-mapped IoError variant (ENOENT→NotFound,
+// EACCES→PermissionDenied, EEXIST→AlreadyExists, EINTR→Interrupted, else Other)
+// matching native's __fern_io_error + the arm64 hand-asm — a FRESH string boxed
+// from the raw path copy, not the borrowed `path`. The initial migration
+// flattened both failure sites to Err(NotFound(_)). The success path is unchanged
+// (structurally identical), so the compiler's own read_file stays byte-for-byte.
+// Single-read (no offset-into-buffer arithmetic, which the i32 raw-pointer floor
+// can't do 64-bit-safely on a high heap buffer): correct for regular files ≤ 2 GiB
+// read without interruption, which covers the use (the compiler reading source).
+// x86-64-only (arch-specific syscall numbers).
 pub function rt_src_read_file(): string {
-    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { return Err(NotFound(__raw_string(pathz, plen))); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { return Err(NotFound(__raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
+    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { var e1: i32 = 0 - fd; if (e1 == 4) { return Err(Interrupted); } var p1: string = __raw_string(pathz, plen); if (e1 == 2) { return Err(NotFound(p1)); } if (e1 == 13) { return Err(PermissionDenied(p1)); } if (e1 == 17) { return Err(AlreadyExists(p1)); } return Err(Other(p1, \"\")); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { var e2: i32 = 0 - got; if (e2 == 4) { return Err(Interrupted); } var p2: string = __raw_string(pathz, plen); if (e2 == 2) { return Err(NotFound(p2)); } if (e2 == 13) { return Err(PermissionDenied(p2)); } if (e2 == 17) { return Err(AlreadyExists(p2)); } return Err(Other(p2, \"\")); } return Ok(__raw_string(buf, got)); }";
 }
 
 // rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`

@@ -56,6 +56,11 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		// errno→IoError mapping in the Fern __fern_stat (x86-64 IR); matches native
 		// interp + the arm64 hand-asm.
 		{"stat-notdir-is-other", `function main(): i32 { match (stat("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
+		// read_file / remove_file ENOTDIR → Other (Err / Some resp.), NOT NotFound —
+		// the same full-errno-mapping guard for those two Fern helpers, whose initial
+		// migration also flattened every failure to NotFound. Matches native interp.
+		{"readfile-notdir-is-other", `function main(): i32 { match (read_file("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
+		{"removefile-notdir-is-other", `function main(): i32 { match (remove_file("` + notDir + `")) { Some(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } }, None => { return 1; } } return 0; }`, 5},
 		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
 	}
 }
