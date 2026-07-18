@@ -33,6 +33,9 @@ function main(): i32 {
     // miscompile. Checked on a default-filled COPY (the emit input is
     // untouched; both emit paths fill defaults themselves).
     var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    // Bare-map_new chain gate (native E038/E003 parity) — same
+    // reject-don't-miscompile rationale as the arity gate.
+    arity_errs = arity_errs + asmcore.check_map_new_chain(mod);
     if (arity_errs.len() > 0) {
         eprint(arity_errs);
         return 1;

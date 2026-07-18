@@ -2783,6 +2783,157 @@ pub function check_module(mod: parser.Module, s: EmitState): string {
         errs = errs + check_func(mod.funcs[fi], s);
         fi = fi + 1;
     }
+    // Bare-map_new chain gate (native E038/E003 parity): without it the
+    // emitters MISCOMPILE the chain instead of rejecting (see
+    // check_map_new_chain).
+    errs = errs + check_map_new_chain(mod);
+    return errs;
+}
+
+// ==== bare-map_new chain key-kind gate (the native-E038 miscompile class) ====
+//
+// `map_new(8).insert(1, 10)` is NATIVE-INVALID (map_new's K/V are generic and
+// only a `var m: Map[K, V] = map_new(n)` annotation pins them — native
+// rejects the chain with E038 per argument + E003 at the binding). The
+// self-host inference instead KEY-KINDS a bare ctor result by its NAME
+// (map_new = string-keyed, map_new_i32 = i32-keyed), so a chain whose key
+// arguments DISAGREE with the ctor's key kind sailed through check and the
+// emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
+// map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
+// arg-taking map method (insert / get / get_or / has / without) whose chain
+// ROOT is a bare map_new [map_new_i32] call and whose KEY argument is a
+// number [string] literal. A KIND-CONSISTENT chain is deliberately admitted
+// (narrower than native): the parser's own `Map { … }` literal desugar IS
+// such a chain (ctor picked from the first key's form), and consistent
+// chains lower correctly here. Non-literal keys are unjudgeable cheaply and
+// stay admitted (a wrong-typed ident key still miscompiles — closing that
+// needs the full checker's key-type unification).
+//
+// map_chain_root_ctor descends through chained arg-taking map-method calls
+// to the root callee; "" when the root is not a bare map ctor call.
+function map_chain_root_ctor(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "map_new" || cid.name == "map_new_i32") { return cid.name; }
+                    return "";
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
+                            || fa.field == "has" || fa.field == "without") {
+                        return map_chain_root_ctor(fa.obj);
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+function map_chain_check_expr(e: parser.Expr, fname: string, errs: string): string {
+    var out: string = errs;
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if ((fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
+                            || fa.field == "has" || fa.field == "without") && c.args.len() > 0) {
+                        var mroot: string = map_chain_root_ctor(fa.obj);
+                        if (mroot.len() > 0) {
+                            var mism: boolean = false;
+                            match (c.args[0]) {
+                                parser.ExprNumber(_) => { if (mroot == "map_new") { mism = true; } },
+                                parser.ExprString(_) => { if (mroot == "map_new_i32") { mism = true; } },
+                                _ => {}
+                            }
+                            if (mism) {
+                                out = out + "error[E038]: in fn '" + fname
+                                    + "': '" + fa.field + "' key does not match the key kind of the"
+                                    + " unannotated " + mroot + "() chain it is called on — the"
+                                    + " ctor's key/value types are not inferable through a method"
+                                    + " chain; bind it first (var m: Map[K, V] = " + mroot + "(n))\n";
+                            }
+                        }
+                    }
+                    out = map_chain_check_expr(fa.obj, fname, out);
+                },
+                _ => { out = map_chain_check_expr(c.callee, fname, out); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = map_chain_check_expr(c.args[i], fname, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprBinary(b) => { return map_chain_check_expr(b.right, fname, map_chain_check_expr(b.left, fname, out)); },
+        parser.ExprUnary(u) => { return map_chain_check_expr(u.operand, fname, out); },
+        parser.ExprIndex(ix) => { return map_chain_check_expr(ix.index, fname, map_chain_check_expr(ix.array, fname, out)); },
+        parser.ExprSlice(sl) => { return map_chain_check_expr(sl.end, fname, map_chain_check_expr(sl.start, fname, map_chain_check_expr(sl.array, fname, out))); },
+        parser.ExprFieldAccess(fa2) => { return map_chain_check_expr(fa2.obj, fname, out); },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base) { out = map_chain_check_expr(sl2.base, fname, out); }
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { out = map_chain_check_expr(sl2.field_values[i], fname, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = map_chain_check_expr(a.elements[i], fname, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = map_chain_check_expr(t.elements[i], fname, out); i = i + 1; }
+            return out;
+        },
+        _ => { return out; }
+    }
+}
+function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: string): string {
+    var out: string = errs;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = map_chain_check_expr(v.init, fname, out); },
+            parser.StmtAssign(a) => { out = map_chain_check_expr(a.value, fname, out); },
+            parser.StmtExpr(ex) => { out = map_chain_check_expr(ex.value, fname, out); },
+            parser.StmtReturn(r) => { out = map_chain_check_expr(r.value, fname, out); },
+            parser.StmtIf(iff) => {
+                out = map_chain_check_expr(iff.cond, fname, out);
+                out = map_chain_check_stmts(iff.then_body, fname, out);
+                out = map_chain_check_stmts(iff.else_body, fname, out);
+            },
+            parser.StmtWhile(w) => {
+                out = map_chain_check_expr(w.cond, fname, out);
+                out = map_chain_check_stmts(w.body, fname, out);
+            },
+            parser.StmtFor(fo) => {
+                out = map_chain_check_expr(fo.iter, fname, out);
+                out = map_chain_check_stmts(fo.body, fname, out);
+            },
+            parser.StmtMatch(m) => {
+                out = map_chain_check_expr(m.scrutinee, fname, out);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { out = map_chain_check_expr(m.arms[ai].guard, fname, out); }
+                    out = map_chain_check_stmts(m.arms[ai].body, fname, out);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { out = map_chain_check_stmts([d.action], fname, out); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+pub function check_map_new_chain(mod: parser.Module): string {
+    var errs: string = "";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        errs = map_chain_check_stmts(mod.funcs[fi].body, mod.funcs[fi].name, errs);
+        fi = fi + 1;
+    }
     return errs;
 }
 
