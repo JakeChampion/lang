@@ -62,6 +62,18 @@ func toDiagnostic(err error) Diagnostic {
 	if c, ok := err.(diag.Coded); ok {
 		d.Code = c.Code()
 	}
+	// A machine-applicable fix (diag.Suggestion, Rec §3) rides the
+	// diagnostic's data field; textDocument/codeAction turns it into
+	// a quickfix WorkspaceEdit (codeaction.go).
+	if sg, ok := err.(diag.Suggested); ok {
+		if fix := sg.Suggestion(); fix != nil {
+			d.Data = fixData{
+				Range:   rangeOfFix(fix),
+				NewText: fix.Replacement,
+				Title:   fix.Title,
+			}
+		}
+	}
 	return d
 }
 

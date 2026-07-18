@@ -57,6 +57,12 @@ type Diagnostic struct {
 	Source   string `json:"source,omitempty"`
 	Code     string `json:"code,omitempty"` // stable error code (e.g. "E001") — see internal/diag/explanations/
 	Message  string `json:"message"`
+	// Data carries a machine-applicable fix (fixData) when the
+	// underlying error had a diag.Suggestion. Per the LSP spec the
+	// client round-trips it verbatim into codeAction requests'
+	// context.diagnostics, so textDocument/codeAction serves the
+	// quickfix from the request alone — no server-side fix cache.
+	Data any `json:"data,omitempty"`
 }
 
 const (
@@ -102,6 +108,7 @@ type serverCapabilities struct {
 	ReferencesProvider         bool                   `json:"referencesProvider,omitempty"`
 	RenameProvider             bool                   `json:"renameProvider,omitempty"`
 	DocumentFormattingProvider bool                   `json:"documentFormattingProvider,omitempty"`
+	CodeActionProvider         bool                   `json:"codeActionProvider,omitempty"`
 }
 
 // semanticTokensOptions advertises the legend the client uses to
