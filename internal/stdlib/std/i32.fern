@@ -528,6 +528,28 @@ pub function (n: i32) checked_pow(exp: i32): Option[i32] {
     return Some(result as i32);
 }
 
+// `(n: i32) overflowing_add(other)` / `overflowing_sub(other)` /
+// `overflowing_mul(other)` — the two's-complement wrapped result paired with a
+// boolean that is true iff the operation overflowed i32. The (result,
+// did_overflow) shape of Rust's overflowing_* family: the value is always the
+// wrapped result (identical to the bare operator), and the flag lets the caller
+// detect overflow without recomputing it. The overflow tests are the same ones
+// `checked_add` / `checked_sub` / `checked_mul` use.
+pub function (n: i32) overflowing_add(other: i32): (i32, boolean) {
+    var r: i32 = n + other;
+    return (r, (n > 0 && other > 0 && r < 0) || (n < 0 && other < 0 && r >= 0));
+}
+pub function (n: i32) overflowing_sub(other: i32): (i32, boolean) {
+    var r: i32 = n - other;
+    return (r, (n >= 0 && other < 0 && r < 0) || (n < 0 && other > 0 && r > 0));
+}
+pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
+    var p: i64 = (n as i64) * (other as i64);
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    var hi: i64 = 2147483647 as i64;
+    return (p as i32, p < lo || p > hi);
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }

@@ -393,6 +393,36 @@ function main(): i32 {
     if (i32_cpow(0 - 3, 3) == ((0 as i64) - 27)) { r = r + 9; }      // negative base
     return r;
 }`},
+	// overflowing_add / overflowing_mul (the std/i32 · i64 · u32 · u64
+	// additions): the (wrapped_result, did_overflow) pair. Exercises a
+	// tuple-returning function + tuple destructure of the call result on the
+	// IR path, plus i64-widened mul overflow detection. Oracle-checked, so
+	// both the wrapped value and the flag must match the interpreter. Four
+	// hits → 42.
+	{"int-overflowing", `function i32_oadd(n: i32, other: i32): (i32, boolean) {
+    var r: i32 = n + other;
+    return (r, (n > 0 && other > 0 && r < 0) || (n < 0 && other < 0 && r >= 0));
+}
+function i32_omul(n: i32, other: i32): (i32, boolean) {
+    var p: i64 = (n as i64) * (other as i64);
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    var hi: i64 = 2147483647 as i64;
+    return (p as i32, p < lo || p > hi);
+}
+function main(): i32 {
+    var max32: i32 = 2147483647;
+    var min32: i32 = 0 - 2147483647 - 1;
+    var r: i32 = 0;
+    var (a1, o1) = i32_oadd(2, 3);
+    if (a1 == 5 && !o1) { r = r + 10; }
+    var (a2, o2) = i32_oadd(max32, 1);
+    if (a2 == min32 && o2) { r = r + 11; }                          // MAX+1 wraps to MIN
+    var (a3, o3) = i32_omul(46340, 46340);
+    if (a3 == 2147395600 && !o3) { r = r + 10; }
+    var (a4, o4) = i32_omul(100000, 100000);
+    if (o4) { r = r + 11; }                                        // 10^10 overflows
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
