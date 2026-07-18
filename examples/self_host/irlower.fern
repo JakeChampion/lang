@@ -10797,6 +10797,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             var mnsb: LowerState = mns.add_local(v.name);
                             var mnslot: i32 = mnsb.slot_of(v.name);
                             mnsb = mnsb.mark_map_type(mnslot, v.type_name);
+                            // Loop-reinit reclaim (#4357): a re-declared reclaimable
+                            // map local reuses its slot, so free the PRIOR
+                            // iteration's keys/values buffers + mapbox before the
+                            // store — else one box leaks per iteration (the precise
+                            // drop is top-level-only and the exit sweep only sees
+                            // the final box). emit_map_buffers_free is stack-neutral
+                            // (the fresh op_map_new box underneath is untouched),
+                            // null-guards the zero-initialized first binding, and
+                            // zeroes the slot the store below overwrites.
+                            if (slot_is_reclaimable_map(mnsb, mnslot)) {
+                                mnsb = emit_map_buffers_free(mnsb, mnslot);
+                            }
                             return mnsb.emit(ir.op_store_local(mnslot));
                         }
                     }
@@ -11953,6 +11965,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // field-routing structs), so at most one of these two branches fires per slot.
     if (slot_is_reclaimable_structarr(sb, slot)) {
         return emit_structarr_reclaim_store(sb, slot);
+    }
+    // A reclaimable MAP loop-local (`while { var m = map_new(8); m =
+    // m.insert(..); … }`, #4357): free the prior iteration's keys/values
+    // buffers + mapbox BEFORE the store, else one box leaks per iteration —
+    // precise_drop_names is top-level-only so a loop-declared map never gets
+    // an early drop, and the exit sweep only sees the final iteration's box.
+    // emit_map_buffers_free is stack-neutral (the reinit RHS underneath is
+    // untouched), null-guards the first binding (slots are zero-initialized
+    // at entry), zeroes the slot (the store below then overwrites it), and
+    // internally selects the MAPVS/MAPKS deep-column variants — the same
+    // coexistence contract the precise drop and exit sweep already use. The
+    // store itself is the unchanged shared tail.
+    if (slot_is_reclaimable_map(sb, slot)) {
+        sb = emit_map_buffers_free(sb, slot);
     }
     return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
