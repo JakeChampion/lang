@@ -35048,8 +35048,35 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 if (tf.len() > 0) { return tf; }
             },
             parser.StmtMatch(m) => {
+                // A match-arm PAYLOAD BINDING (`match (o) { Some(v) => … }`):
+                // `v` is not a `var`, so the body walk below never resolves its
+                // type — a lambda capturing it declined the lift and the module
+                // fell to the AST path, where a fn-field-captured lambda
+                // miscompiles (the m1 probe: native 20, self-host 4). Resolve
+                // the MAIN binding of an Option/Result arm from the scrutinee's
+                // type spelling (opt_payload_type — no enum decls needed here).
+                // A USER-ENUM variant's payload needs the enum declaration
+                // (`decl_field_type(structs, Variant, "__ev")`), which this
+                // lift-side walker doesn't carry — tracked as a follow-up; such
+                // a capture keeps the prior declined-lift behaviour.
+                var scrut_ty: string = "";
+                match (m.scrutinee) {
+                    parser.ExprIdent(scid) => { scrut_ty = cap_type_at(scid.name, fd, depth); },
+                    _ => {}
+                }
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
+                    if (scrut_ty.len() >= 8 && (scrut_ty[0:7] == "Option[" || scrut_ty[0:7] == "Result[")) {
+                        match (m.arms[ai].pattern) {
+                            parser.PatVariant(pv) => {
+                                if (pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) {
+                                    var pt: string = opt_payload_type(scrut_ty, pv.type_name);
+                                    if (pt.len() > 0) { return pt; }
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
                     var tm: string = cap_type_in_stmts(m.arms[ai].body, name, fd, depth);
                     if (tm.len() > 0) { return tm; }
                     ai = ai + 1;
