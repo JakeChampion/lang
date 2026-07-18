@@ -11,6 +11,17 @@ name: Test e2e arm64
 # self-host on a single 10-minute box. Splitting it out lets the
 # arm64 lane finish in ~90 seconds and surface as its own status
 # check.
+#
+# The `cross-host` job below covers the OTHER half of the arm64 story:
+# the seven cross-compiler-on-host tests (x86 host binary emitting arm64
+# asm, the emitted binaries running under qemu-aarch64) that need BOTH a
+# native x86 host AND the aarch64 cross toolchain — a combination no
+# other lane provides, so before this job they ran NOWHERE: the x86
+# self-host shards skip them (no cross tools installed) and the aarch64
+# runners skip them (the stage-1 driver must exec natively on x86).
+# That blind spot let the arm64 stage-2 self-compile regress past its
+# arena limit unnoticed (fixed alongside this lane: MAP_NORESERVE +
+# the 16 GiB arm64 arena).
 
 on:
   pull_request:
@@ -61,3 +72,33 @@ jobs:
         # the top so it doesn't pick up `TestX86_64`-named tests
         # that happen to mention arm64 in subtest names.
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestArm64' ./internal/e2e/
+
+  # The seven cross-compiler-on-host tests — see the header comment. The
+  # heavyweights are the arm64 stage-2 fixed point (mmc2, an aarch64
+  # binary built from the self-host compiler's own arm64 output,
+  # recompiles the whole compiler under qemu — ~10-20 min emulated) and
+  # the native-mmc equivalence gate (the Go arm64 backend's full driver
+  # emit + in-process assemble, run under qemu against the x86 cross
+  # driver), so this lane gets a generous timeout rather than sharding.
+  # It shares the e2e-arm64 signoff gate; per docs/CI-SIGNOFF.md that
+  # signoff is discouraged unless the arm64 suites genuinely ran.
+  cross-host:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    name: test-e2e-arm64-cross-host
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - name: install aarch64 cross toolchain + qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-user
+      - name: go test (cross-host arm64)
+        run: >-
+          gotestsum --format pkgname-and-test-fails -- -timeout 50m
+          -run '^(TestSelfHostStage2FixedPointArm64|TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64StrForeachAST|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST)$'
+          ./internal/e2eselfhost/
