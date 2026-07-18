@@ -359,6 +359,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
 		}
+		// Release the function's IR as soon as it is emitted (mirrors the
+		// x86-64 backend): nothing after this loop reads ip.Funcs, and
+		// dropping each entry lets the GC reclaim the program's ops
+		// incrementally instead of holding all of them until the output
+		// buffer peaks. Output is unaffected (forward-only walk).
+		ip.Funcs[i] = nil
 	}
 	// The Reader/Writer runtime is emitted as a single bundle:
 	// every helper (open_*, read_line, read_chunk, close,

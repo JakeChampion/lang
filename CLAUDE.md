@@ -271,10 +271,13 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
     long-standing `rcInlineOK` mechanism, backported — behaviour-identical).
     That cut the `asm_ir_run` driver asm from ~1028 MB → ~470 MB.
   - The cold driver emit runs under a **refcounted soft heap cap**
-    (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 5120; `<= 0`
-    disables): at default GOGC the emit's ~4 GB live heap ballooned to
-    ~9 GB RSS of mostly-garbage; the cap holds it to ~6.3 GB **and** is
-    ~20% faster (fewer huge-heap GC pauses). Output is byte-identical.
+    (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 4300; `<= 0`
+    disables), and both native backends **release each function's IR as
+    it is emitted** (`ip.Funcs[i] = nil` in the emit loop) so the IR is
+    reclaimed incrementally instead of peaking alongside the output
+    buffer: at default GOGC the emit ballooned to ~9 GB RSS of mostly-
+    garbage in 134 s; capped + released it runs ~5.2 GB in ~74 s.
+    Output is byte-identical.
   - Driver binaries are **assembled + linked in-process** by the pure-Go
     native assembler (`internal/native/x86_64` + `internal/native/elf` —
     the same pipeline `cmd/fern -target x86-64` uses by default): ~25 s /
@@ -286,7 +289,7 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
     — while small program links stay on gcc/bfd unchanged.
   - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted
     semaphore around the cold emit+link: it reserves each heavy build's
-    estimated peak (`FERN_BUILD_HEAVY_MB`, default 6500) against a budget
+    estimated peak (`FERN_BUILD_HEAVY_MB`, default 5800) against a budget
     (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so two cold
     driver builds can't stack their peaks and OOM the run. On a 16 GB host it
     serialises the heavy builds; on a big host it parallelises up to the

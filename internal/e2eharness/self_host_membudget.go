@@ -111,27 +111,31 @@ func buildMemBudgetMB() int {
 
 // heavyBuildWeightMB is the per-cold-driver-build reservation.
 // FERN_BUILD_HEAVY_MB overrides it. The default matches the measured
-// per-driver peak under the soft emit memory limit (withEmitMemLimit):
-// the Go emit peaks ~6.3 GB RSS with the 5 GiB heap cap (down from ~8 GB
-// uncapped), and the in-process native assemble that follows it peaks
-// far lower (~2.6 GB), so ~6.5 GB covers the build's worst phase with
-// margin. On a 16 GB host at most one cold driver build runs at a time.
+// per-driver peak under the soft emit memory limit (withEmitMemLimit)
+// plus the backends' per-function IR release: the Go emit peaks ~5.2 GB
+// RSS (down from ~9 GB uncapped), and the in-process native assemble
+// that follows peaks far lower (~2.6 GB), so ~5.8 GB covers the build's
+// worst phase with margin. Two cold builds still cannot stack on a
+// 16 GB host (~13.6 GB budget), but the smaller weight admits more
+// concurrency on larger hosts.
 func heavyBuildWeightMB() int {
 	if n, ok := envPositiveInt("FERN_BUILD_HEAVY_MB"); ok {
 		return n
 	}
-	return 6500
+	return 5800
 }
 
 // The Go x86-64 emit of a self-host driver allocates hard: its LIVE heap
-// tops out just under ~4 GB, but at the default GOGC the runtime lets the
-// heap double between collections, so the process peaks ~9 GB RSS — over
-// half the emit's footprint is garbage awaiting collection. Capping the
-// runtime's soft memory limit (GOMEMLIMIT semantics) during a heavy build
-// makes the GC keep the heap near the cap instead: measured on the
-// asm_ir_run driver emit, a 5 GiB cap cuts peak RSS 9.0 GB → 6.3 GB and
-// is ~20% FASTER (110 s vs 134 s on a 4-core host — fewer huge-heap GC
-// pauses and less page pressure), with byte-identical output.
+// peaks ~3.4 GB (see emitMemLimitMB), but at the default GOGC the runtime
+// lets the heap double between collections, so the process peaked ~9 GB
+// RSS — over half the emit's footprint was garbage awaiting collection.
+// Capping the runtime's soft memory limit (GOMEMLIMIT semantics) during a
+// heavy build makes the GC keep the heap near the cap instead, and the
+// backends' per-function IR release keeps shrinking the live set as
+// emission proceeds: measured on the asm_ir_run driver emit, cap + release
+// run at ~5.2 GB peak RSS in ~74 s vs the original 9.0 GB / 134 s (4-core
+// host — fewer huge-heap GC pauses and less page pressure), with
+// byte-identical output.
 //
 // The limit is process-wide, so it is REFCOUNTED and scaled: while n
 // heavy builds are active the limit is n * per-build-cap, and when the
@@ -145,18 +149,23 @@ var (
 
 // emitMemLimitMB is the per-heavy-build soft heap cap in MB.
 // FERN_EMIT_MEMLIMIT_MB overrides it; <= 0 disables the cap entirely.
-// The default (5 GiB) sits comfortably above the emit's ~4 GB live-heap
-// peak — a cap below the live set would make the GC thrash, not save
-// memory (it is a soft limit; the process would still finish).
+// The emit's live heap peaks ~3.4 GB (AST + checker info + the full IR,
+// right as emission starts — the per-function IR release in the backends
+// then shrinks it as the output grows, ending ~1.1 GB). The default
+// leaves ~900 MB of headroom above that live peak; a cap below the live
+// set would make the GC thrash, not save memory (it is a soft limit; the
+// process would still finish). Measured on the asm_ir_run driver: this
+// cap + the IR release run the emit at 74 s / 5.2 GB RSS vs the original
+// 134 s / 9.0 GB, output byte-identical.
 func emitMemLimitMB() int {
 	if v := strings.TrimSpace(os.Getenv("FERN_EMIT_MEMLIMIT_MB")); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return 5120
+			return 4300
 		}
 		return n // <= 0 disables
 	}
-	return 5120
+	return 4300
 }
 
 // withEmitMemLimit runs fn with the Go runtime's soft memory limit capped
