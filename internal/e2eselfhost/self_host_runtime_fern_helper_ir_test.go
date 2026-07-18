@@ -224,6 +224,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_stat",
 			[]string{"\n__fern_stat:"},
 		},
+		{
+			// read_file — Result[string, IoError] leaf (#2649): the sized read
+			// buffer becomes the Ok(string). The old hand-asm IR body
+			// (__fern_read_file:) is gone; op_read_file calls __fn___fern_read_file.
+			"read_file",
+			`function main(): i32 { match (read_file("/nonexistent")) { Ok(s) => { return 1; }, Err(e) => { return 0; } } }`,
+			"__fn___fern_read_file",
+			[]string{"\n__fern_read_file:"},
+		},
 	}
 
 	for _, tc := range cases {

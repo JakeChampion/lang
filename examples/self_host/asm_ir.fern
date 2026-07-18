@@ -1832,96 +1832,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    jmp .Lioe_withpath\n" + ".Lioe_intr:\n" + "    movq $8, %rdi\n" + "    call __fern_alloc\n" + "    leaq " + sh_in.label + "(%rip), %rcx\n" + "    movq %rcx, (%rax)\n" + "    jmp .Lioe_done\n" + ".Lioe_withpath:\n" + "    movq $16, %rdi\n" + "    call __fern_alloc\n" + "    movq %rbx, (%rax)\n" + "    movq %r12, 8(%rax)\n" + ".Lioe_done:\n" + "    popq %r12\n" + "    popq %rbx\n" + "    popq %rbp\n" + "    ret\n" + "    .section .rodata\n");
         s = s.write(".Lioe_empty:\n" + "    .byte 0\n" + "    .text\n");
     }
-    // __fern_read_file: %rdi = path string box → Result[string, IoError] box
-    // [tag@0, payload@8] (tag=0 Ok(contents) / tag=1 Err(_)). NUL-terminates the
-    // path, openat(AT_FDCWD, path, O_RDONLY=0)=257, lseek-sizes the file (=8),
-    // reads to EOF (sys_read=0, up to 1 MiB per read), closes (=3), boxes the
-    // contents string and wraps it in Ok. Transcribed verbatim from asm.fern's
-    // emit_runtime (the per-module entry exports the symbol via
-    // emit_runtime_globls). Gated on the read_file need; calls __fern_alloc.
-    if (s.has_need("read_file")) {
-        s = s.write("__fern_read_file:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r15\n");
-        s = s.write("    leaq 1(%r15), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrdf_copy:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Lrdf_copydone\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrdf_copy\n");
-        s = s.write(".Lrdf_copydone:\n");
-        s = s.write("    movb $0, (%r13,%r15,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write("    movq $257, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lrdf_err\n");
-        s = s.write("    movq %rax, %r12\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $0, %rsi\n");
-        s = s.write("    movq $2, %rdx\n");
-        s = s.write("    movq $8, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq %rax, %r14\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $0, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $8, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq %rax, %rbx\n");
-        s = s.write("    movq $0, %r14\n");
-        s = s.write(".Lrdf_rdloop:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $1048576, %rdx\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jle .Lrdf_rddone\n");
-        s = s.write("    addq %rax, %r14\n");
-        s = s.write("    addq %rax, %rbx\n");
-        s = s.write("    jmp .Lrdf_rdloop\n");
-        s = s.write(".Lrdf_rddone:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $3, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r13, (%rax)\n");
-        s = s.write("    movq %r14, 8(%rax)\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq %r13, 8(%rax)\n");
-        s = s.write("    jmp .Lrdf_ret\n");
-        s = s.write(".Lrdf_err:\n");
-        // %rax = -errno from openat; %r13 = NUL-terminated path data copy,
-        // %r15 = path length (both still live — the error branch is taken
-        // before they're repurposed). Box the path, map errno → IoError via
-        // __fern_io_error, and wrap it as the Err payload — the old path
-        // stored a NULL payload here, so matching the error value segfaulted
-        // (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r15, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $1, (%rax)\n    movq %r13, 8(%rax)\n.Lrdf_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
+    // __fern_read_file is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on read_file) —
+    // returns Result[string, IoError]. openat/lseek/read/close via __syscall3;
+    // the sized read buffer becomes the Ok(string). The op_read_file handler
+    // calls the stack-ABI __fn___fern_read_file symbol.
     // __fern_write_file: %rdi = path box, %rsi = content box -> Option[IoError] box
     // [tag@0, payload@8] (tag=1 None on success / tag=0 Some(_) on error).
     // NUL-terminates the path, openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577,
@@ -4116,7 +4031,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
         "__fn___fern_str_ends_with", "__fn___fern_str_index_of", "__fern_print_str",
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
-        "__fern_read_int", "__fern_read_line", "__fern_read_file",
+        "__fern_read_int", "__fern_read_line", "__fern_read_file", "__fn___fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
         "__fern_remove_dir_all", "__fern_temp_dir", "__fern_read_dir", "__fern_remove_file",
         "__fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
@@ -4774,10 +4689,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fern_read_line\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("str_read_line");
         } else if (o.kind_tag == 169) {  // read_file
-            // [pathbox] -> read the whole named file, push a fresh Result[string,
-            // IoError] box (the AST path's __fern_read_file, which allocates). The
-            // path string box is the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_read_file\n    pushq %rax\n");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_read_file
+            // (#2649) via the stack ABI — pushes a fresh Result[string, IoError].
+            s = s.write("    call __fn___fern_read_file\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("read_file");
         } else if (o.kind_tag == 170) {  // write_file
             // [pathbox][contentbox] -> write content to the named file, push a
@@ -6545,6 +6459,13 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("stat")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_stat(), all_structs, s);
+    }
+    // read_file — now a Fern runtime function (#2649), lowered through the IR
+    // pipeline: openat/lseek/read/close via __syscall3, the sized read buffer
+    // becomes the Ok(string). Heap-dependent (present above); x86-64-only.
+    if (s.has_need("read_file")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_file(), all_structs, s);
     }
     if (s.has_need("poll")) { s = emit_ir_poll(s); }
     if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }

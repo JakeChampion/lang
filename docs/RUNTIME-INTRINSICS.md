@@ -34,7 +34,12 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > build `Ok(FileStat{...})` / `Err(NotFound(_))`. This proves a runtime helper
 > compiled via `emit_ir_runtime_fern_fn` can construct user structs/enums (it
 > receives `all_structs`), which is the capability `read_file` and the rest of
-> the fs family need.
+> the fs family need. **`read_file` followed** (`asmcore.rt_src_read_file` →
+> `Result[string, IoError]`): openat/lseek/read/close via `__syscall3`, the sized
+> read buffer becomes the `Ok(string)`. It reads the whole file in ONE `read`
+> (into an lseek-sized buffer, passed whole) rather than a read-loop, because the
+> i32 raw-pointer floor can't do 64-bit-safe `buf + offset` arithmetic on a high
+> heap buffer — correct for regular files ≤ 2 GiB read without interruption.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
