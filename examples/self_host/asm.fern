@@ -2345,6 +2345,27 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     match (c.callee) {
         parser.ExprIdent(id) => { name = id.name; },
         parser.ExprFieldAccess(fa) => {
+            // s.p.N() — a fn-valued TUPLE ELEMENT call (numeric field = tuple
+            // index), not a method. A method name is never all-digits, so route
+            // it to the generic closure-value call (evaluate the callee to its
+            // box ptr, invoke via the closure convention) instead of
+            // emit_method_call, which found no method "N" and returned the -1
+            // sentinel (exit 255). Reading the element (`var g = s.p.N; g()`)
+            // already works; this is the direct-call sibling.
+            if (util.is_all_digits(fa.field)) {
+                s = emit_expr(c.callee, s);          // push closure box
+                var tla: i32 = c.args.len() - 1;
+                while (tla >= 0) {
+                    s = emit_expr(c.args[tla], s);
+                    tla = tla - 1;
+                }
+                s = s.write("    movq " + util.i32_to_string(c.args.len() * 8) + "(%rsp), %r10\n");
+                s = s.write("    movq (%r10), %rdx\n");
+                s = s.write("    call *%rdx\n");
+                s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             return emit_method_call(c, fa, s);
         },
         _ => {
