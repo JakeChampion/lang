@@ -31106,6 +31106,70 @@ function detector_expr_type(e: parser.Expr, fn: parser.FuncDecl, structs: parser
     }
 }
 
+// variant_payload_field_type resolves the payload FIELD TYPE bound by `name` in a
+// PatVariant arm (`__ev` for the main binding, `__ev<k+1>` for the k-th extra),
+// using only `structs` — the LowerState-free view the closure-return detector has.
+// An enum variant desugars to a struct named after the variant carrying its payload
+// as field `__ev`; a qualified `Enum.Variant` spelling strips to the bare variant.
+// "" when `name` doesn't bind a payload of this variant. Structs-only sibling of
+// iife_variant_payload_field.
+function variant_payload_field_type(pv: parser.PatVariant, name: string, structs: parser.StructDecl[]): string {
+    var vname: string = pv.type_name;
+    var vld: i32 = 0;
+    while (vld < pv.type_name.len()) {
+        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
+        vld = vld + 1;
+    }
+    if (!decl_is_struct(structs, vname)) { return ""; }
+    if (pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) { return decl_field_type(structs, vname, "__ev"); }
+    var k: i32 = 0;
+    while (k < pv.extra_bindings.len()) {
+        if (pv.extra_bindings[k].len() > 0 && pv.extra_bindings[k] != "_" && pv.extra_bindings[k] == name) {
+            return decl_field_type(structs, vname, "__ev" + util.i32_to_string(k + 1));
+        }
+        k = k + 1;
+    }
+    return "";
+}
+
+// body_binds_fn_payload_via_match reports whether `body` binds local `name` via a
+// MATCH-ARM pattern `V(name)` whose enum variant payload is fn-typed (a `() => …`
+// field, coarsened to "fn"). #5202 case D: `match (b) { W(f) => { return f; } }`
+// returns a closure BOX the caller must dispatch env-first — but the binding is a
+// match arm, not a `var f = …`, so body_binds_closure_local (var-bindings only)
+// misses it. Recurses into nested if/while/for/match blocks, mirroring the
+// over-approximate scoping of body_binds_closure_local (the fn-return-type gate on
+// the sole caller keeps it to genuine higher-order factories).
+function body_binds_fn_payload_via_match(body: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtMatch(bmt) => {
+                var ai: i32 = 0;
+                while (ai < bmt.arms.len()) {
+                    match (bmt.arms[ai].pattern) {
+                        parser.PatVariant(pv) => {
+                            if (variant_payload_field_type(pv, name, structs) == "fn") { return true; }
+                        },
+                        _ => {}
+                    }
+                    if (body_binds_fn_payload_via_match(bmt.arms[ai].body, name, structs)) { return true; }
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtIf(bif) => {
+                if (body_binds_fn_payload_via_match(bif.then_body, name, structs)) { return true; }
+                if (body_binds_fn_payload_via_match(bif.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(bwh) => { if (body_binds_fn_payload_via_match(bwh.body, name, structs)) { return true; } },
+            parser.StmtFor(bfr) => { if (body_binds_fn_payload_via_match(bfr.body, name, structs)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var gfns: string[] = [];
     var gi: i32 = 0;
@@ -31147,6 +31211,10 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                             },
                             parser.ExprIdent(nrid) => {
                                 if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
+                                // (d') `return f` where f is a MATCH-ARM binding to a
+                                // fn-typed enum payload (`match (b) { W(f) => return f }`,
+                                // #5202 case D) — the box the caller must dispatch env-first.
+                                if (!hit && body_binds_fn_payload_via_match(b, nrid.name, structs)) { hit = true; }
                             },
                             // (c) `return <closure-returning call>` — a factory
                             // that forwards another factory's box, e.g.
