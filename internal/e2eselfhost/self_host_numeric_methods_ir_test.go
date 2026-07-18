@@ -357,6 +357,42 @@ function main(): i32 {
     if (i64_re((0 as i64) - 1000000000001, 7 as i64) == (5 as i64)) { r = r + 9; }  // past i32 range
     return r;
 }`},
+	// checked_pow (the std/i32 · i64 · u32 · u64 additions): overflow-checked
+	// exponentiation by squaring. The inlined i32 form widens to i64 and
+	// range-checks each product (a -2 sentinel stands in for None on overflow,
+	// -1 for a negative exponent). Exercises the pow loop — i64 multiply +
+	// compare + branch over an i32 exponent halving — on the IR path.
+	// Oracle-checked, so the exact / overflow verdict must match the
+	// interpreter. Five hits → 42.
+	{"int-checked-pow", `function i32_cpow(n: i32, exp: i32): i64 {
+    if (exp < 0) { return (0 as i64) - 1; }
+    var result: i64 = 1 as i64;
+    var base: i64 = n as i64;
+    var e: i32 = exp;
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    var hi: i64 = 2147483647 as i64;
+    while (e > 0) {
+        if (e % 2 == 1) {
+            result = result * base;
+            if (result < lo || result > hi) { return (0 as i64) - 2; }
+        }
+        e = e / 2;
+        if (e > 0) {
+            base = base * base;
+            if (base < lo || base > hi) { return (0 as i64) - 2; }
+        }
+    }
+    return result;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i32_cpow(2, 10) == (1024 as i64)) { r = r + 8; }
+    if (i32_cpow(2, 30) == (1073741824 as i64)) { r = r + 8; }       // exactly fits
+    if (i32_cpow(2, 31) == ((0 as i64) - 2)) { r = r + 8; }          // overflow sentinel
+    if (i32_cpow(10, 9) == (1000000000 as i64)) { r = r + 9; }
+    if (i32_cpow(0 - 3, 3) == ((0 as i64) - 27)) { r = r + 9; }      // negative base
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

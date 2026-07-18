@@ -148,6 +148,32 @@ pub function (n: u32) saturating_mul(other: u32): u32 {
     return p as u32;
 }
 
+// `(n: u32) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
+// or `None` on u32 overflow; the unsigned u32 sibling of std/i32's `checked_pow`.
+// The running result and squared base are accumulated in u64 and range-checked
+// against u32::MAX each step (the full u32×u32 product always fits u64). Negative
+// `exp` returns `None`; `exp == 0` is `Some(1)`. The final base squaring is
+// skipped once the exponent is exhausted, so an exact result never spuriously
+// overflows.
+pub function (n: u32) checked_pow(exp: i32): Option[u32] {
+    if (exp < 0) { return None; }
+    var result: u64 = 1 as u64;
+    var base: u64 = n as u64;
+    var e: i32 = exp;
+    while (e > 0) {
+        if (e % 2 == 1) {
+            result = result * base;
+            if (result > (4294967295 as u64)) { return None; }
+        }
+        e = e / 2;
+        if (e > 0) {
+            base = base * base;
+            if (base > (4294967295 as u64)) { return None; }
+        }
+    }
+    return Some(result as u32);
+}
+
 // `(n: u32) sqrt_floor()` — floor of the integer square root, via Newton's
 // method. Unsigned, so no negative-input cases; `sqrt_floor(0)` is 0. Exact
 // across the u32 range, e.g. `sqrt_floor(4294836225)` (which is `(2^16 - 1)^2`)
