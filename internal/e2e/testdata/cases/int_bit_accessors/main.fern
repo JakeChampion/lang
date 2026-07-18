@@ -1,0 +1,30 @@
+import "std/i64";
+import "std/u32";
+import "std/u64";
+// Single-bit accessors bit/set_bit/clear_bit/toggle_bit for i64/u32/u64,
+// mirroring std/i32. Distinct nonzero exit per failure; 42 = all pass.
+// Runs interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    // --- i64 ---
+    if ((0 as i64).bit(0)) { return 1; }
+    if (!(5 as i64).bit(0)) { return 2; }          // 101 bit0=1
+    if ((5 as i64).bit(1)) { return 3; }           // 101 bit1=0
+    if (!(5 as i64).bit(2)) { return 4; }
+    if ((0 as i64).set_bit(3) != (8 as i64)) { return 5; }
+    if ((15 as i64).clear_bit(1) != (13 as i64)) { return 6; }   // 1111 -> 1101
+    if ((0 as i64).toggle_bit(5).toggle_bit(5) != (0 as i64)) { return 7; }
+    if (!(1 as i64).set_bit(63).bit(63)) { return 8; }           // top bit
+    if ((5 as i64).bit(64)) { return 9; }          // out of range -> false
+    if ((5 as i64).set_bit(64) != (5 as i64)) { return 10; }     // no-op
+    // --- u32 ---
+    if (!(1 as u32).set_bit(31).bit(31)) { return 21; }
+    if ((7 as u32).clear_bit(0) != (6 as u32)) { return 22; }
+    if ((0 as u32).toggle_bit(4) != (16 as u32)) { return 23; }
+    if ((5 as u32).bit(32)) { return 24; }
+    // --- u64 ---
+    if (!(1 as u64).set_bit(63).bit(63)) { return 31; }
+    if ((0 as u64).set_bit(40) != ((1 as u64) << (40 as u64))) { return 32; }
+    if ((255 as u64).clear_bit(0).clear_bit(1) != (252 as u64)) { return 33; }
+    if ((0 as u64).toggle_bit(63).toggle_bit(63) != (0 as u64)) { return 34; }
+    return 42;
+}
