@@ -4126,6 +4126,17 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                     if (gui >= 0 && gui < c.args.len() && expr_is_u64(c.args[gui], s)) { return true; }
                     return false;
                 },
+                // A u64-returning METHOD call `recv.m()` chained in an unsigned op
+                // (`p.big() >> 1`) — the u64 sibling of expr_is_f64's method arm.
+                // Methods are keyed "<BaseType>.<method>" in i64_ret_fns, so
+                // resolve the receiver's struct / primitive type and look up the
+                // qualified key; the '2' return flag marks it u64 (is_u64_ret_fn).
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
+                    if (crty == "") { return false; }
+                    return s.is_u64_ret_fn(crty + "." + cfa.field);
+                },
                 _ => { return false; }
             }
         },
