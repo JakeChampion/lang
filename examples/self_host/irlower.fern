@@ -34844,7 +34844,47 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                     var ity: string = "";
                     match (fr.iter) {
                         parser.ExprIdent(itid) => { ity = cap_type_at(itid.name, fd, depth); },
+                        parser.ExprCall(itc) => {
+                            // `for k in m.keys()` / `for v in m.values()`: the
+                            // binder is the receiver Map's key resp. value type.
+                            match (itc.callee) {
+                                parser.ExprFieldAccess(itfa) => {
+                                    if ((itfa.field == "keys" || itfa.field == "values") && itc.args.len() == 0) {
+                                        match (itfa.obj) {
+                                            parser.ExprIdent(itmid) => {
+                                                var mty: string = cap_type_at(itmid.name, fd, depth);
+                                                if (mty.len() > 5 && mty[0:4] == "Map[") {
+                                                    var inner: string = mty[4 : mty.len() - 1] + "";
+                                                    var cdepth: i32 = 0;
+                                                    var ci2: i32 = 0;
+                                                    var cpos: i32 = 0 - 1;
+                                                    while (ci2 < inner.len()) {
+                                                        if (inner[ci2] == 91) { cdepth = cdepth + 1; }
+                                                        if (inner[ci2] == 93) { cdepth = cdepth - 1; }
+                                                        if (inner[ci2] == 44 && cdepth == 0 && cpos < 0) { cpos = ci2; }
+                                                        ci2 = ci2 + 1;
+                                                    }
+                                                    if (cpos > 0) {
+                                                        if (itfa.field == "keys") { ity = inner[0 : cpos] + ""; }
+                                                        else {
+                                                            var vstart: i32 = cpos + 1;
+                                                            while (vstart < inner.len() && inner[vstart] == 32) { vstart = vstart + 1; }
+                                                            ity = inner[vstart : inner.len()] + "";
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
                         _ => {}
+                    }
+                    if (ity == "i32" || ity == "string" || ity == "boolean" || ity == "i64" || ity == "u64" || ity == "f64" || ity == "u32") {
+                        return ity;
                     }
                     if (ity.len() > 2 && ity[ity.len() - 2 : ity.len()] == "[]") {
                         return ity[0 : ity.len() - 2] + "";
