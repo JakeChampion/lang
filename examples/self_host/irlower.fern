@@ -2557,6 +2557,10 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     // `t.N[i].len()` dispatched to a nonexistent i32 method
                     // (link failure / miscompile).
                     var mrrt: string = expr_struct_type(cfa.obj, s);
+                    // A `dyn Trait` receiver (#5142 sibling): resolve the
+                    // dispatch result name-based off the qualified registry
+                    // entries, like expr_is_str's dyn case.
+                    if (mrrt.len() > 4 && mrrt[0:4] == "dyn ") { return registry_has_method(s.strarr_ret_fns, cfa.field); }
                     if (mrrt != "" && s.is_strarr_ret_fn(mrrt + "." + cfa.field)) { return true; }
                     return false;
                 },
@@ -2621,6 +2625,7 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
                         && expr_is_f64arr(cfa.obj, s)) { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.f64arr_ret_fns, cfa.field); }
                     if (crty == "") { return false; }
                     return s.is_f64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3690,6 +3695,7 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.f64arr_ret_fns, cfa.field); }
                     if (crty == "") { return false; }
                     return s.is_f64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3762,6 +3768,7 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.i64arr_ret_fns, cfa.field); }
                     if (crty == "") { return false; }
                     return s.is_i64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3876,6 +3883,7 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
                         && expr_is_i64arr(cfa.obj, s)) { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.i64arr_ret_fns, cfa.field); }
                     if (crty == "") { return false; }
                     return s.is_i64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3944,6 +3952,7 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                     // method `<f64>.m` is recognised as an f64 value. Without this
                     // `a.m() as i32` masked the double's low 32 bits (→ garbage)
                     // instead of truncating via f64_to_i32.
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.f64_ret_fns, cfa.field); }
                     if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
                     if (crty == "") { return false; }
                     return s.is_f64_ret_fn(crty + "." + cfa.field);
@@ -4205,6 +4214,7 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
+                    if (crty.len() > 4 && crty[0:4] == "dyn " && registry_has_method(s.i64_ret_fns, cfa.field)) { return 64; }
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return 64; }
                 },
                 _ => {}
@@ -4394,6 +4404,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
+                    if (crty.len() > 4 && crty[0:4] == "dyn " && registry_has_method(s.i64_ret_fns, cfa.field)) { return lower_expr(e, s); }
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
                 },
                 _ => {}

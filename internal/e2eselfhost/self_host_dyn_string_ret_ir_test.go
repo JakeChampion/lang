@@ -42,6 +42,23 @@ var dynStringRetIRCases = []struct {
 	// correct (reaches the array path, not the string one).
 	{"arr-ret-regression",
 		`trait M { function make(self: Self): i32[]; } struct R { n: i32 } impl M for R { function make(self: Self): i32[] { return [self.n, self.n]; } } function main(): i32 { var r: R = R { n: 5 }; var d: dyn M = r; return d.make().len() + 70; }`, 72},
+	// The SIBLING classifiers had the same dyn hole (found by probing
+	// after the expr_is_str fix): a string[]-returning dyn method with a
+	// chained element read, an i64-returning one in 64-bit arithmetic,
+	// and an f64-returning one in float arithmetic.
+	// d.names()[1].len() = len("worlds!") = 7.
+	{"strarr-ret-chained",
+		`trait N { function names(self: Self): string[]; } struct P { a: string, b: string } impl N for P { function names(self: Self): string[] { return [self.a, self.b]; } } function main(): i32 { var p: P = P { a: "hello", b: "worlds!" }; var d: dyn N = p; return d.names()[1].len(); }`, 7},
+	// d.big() = 6e9 (needs 64-bit tracking); / 1e9 = 6.
+	{"i64-ret-chained",
+		`trait G { function big(self: Self): i64; } struct Q { n: i32 } impl G for Q { function big(self: Self): i64 { return (self.n as i64) * 3000000000; } } function main(): i32 { var q: Q = Q { n: 2 }; var d: dyn G = q; var v: i64 = d.big() / 1000000000; return v as i32; }`, 6},
+	// (d.ratio() * 2.0) as i32 = (2.5 * 2.0) = 5.
+	{"f64-ret-chained",
+		`trait F { function ratio(self: Self): f64; } struct Q { n: i32 } impl F for Q { function ratio(self: Self): f64 { return (self.n as f64) / 4.0; } } function main(): i32 { var q: Q = Q { n: 10 }; var d: dyn F = q; return (d.ratio() * 2.0) as i32; }`, 5},
+	// Struct-returning dyn method with chained field access — was
+	// already correct; regression guard.
+	{"struct-ret-chained",
+		`trait S { function mk(self: Self): P2; } struct P2 { x: i32, y: i32 } struct Q { n: i32 } impl S for Q { function mk(self: Self): P2 { return P2 { x: self.n, y: self.n + 1 }; } } function main(): i32 { var q: Q = Q { n: 20 }; var d: dyn S = q; return d.mk().y; }`, 21},
 }
 
 // TestSelfHostDynStringRetIRX86_64 routes each case through the
