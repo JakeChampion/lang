@@ -57,6 +57,11 @@ var u64IRCases = []struct {
 	// shift lowered SIGNED (arithmetic) and diverged: 0xF9CCD8A1C5080000 >> 57 is
 	// 124 unsigned but 252 (sign-extended low byte) signed. #5159.
 	{"concrete-u64-ret-shift", `var a: u64 = 18000000000000000000 as u64; return (u64_id(a) >> 57) as i32;`},
+	// A u64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits) chained
+	// in a shift, where the IIFE is the SOLE u64 operand. expr_is_u64 gained an
+	// IIFE arm (the u64 sibling of expr_is_f64's) so the shift stays unsigned —
+	// same 124-vs-252 distinction as the concrete-call case.
+	{"u64-iife-shift", `var c: boolean = true; var a: u64 = 18000000000000000000 as u64; return ((if (c) { a } else { 0 as u64 }) >> 57) as i32;`},
 }
 
 func u64IRSrc(mainBody string) string {
