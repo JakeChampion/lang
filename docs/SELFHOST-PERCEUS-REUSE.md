@@ -244,7 +244,13 @@ existing test scaffolding rather than gated off:
     `fn-field-*` reuse-differential cases + aliased-value exclusions); a
     donor whose own closure field is CALLED stays conservatively excluded
     by the general escape walk (method-shaped receiver use — same as
-    every field kind). Still open: wasm has no k_clo/fr_clo drop arms.
+    every field kind). The wasm k_clo / fr_clo drop arms landed too
+    (`emit_wasm_struct_drop_body`'s fn arm + the widened
+    `emit_wasm_field_reclaim_body` gate, clofld-admission-gated; pinned
+    by `TestSelfHostClofldDropWasmIR`) — and the old note claiming wasm
+    also lacked a k_str_arr arm was stale: string[] fields always rode
+    the generic array-kind arm's `$__fern_arr_dec_ptr`. No backend gap
+    remains for closure struct fields.
   - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
     admits only the leak-safe scalar arrays; native admits all. The
     **string[] EXIT-drop prerequisite is now closed**: the strarrfld scan
