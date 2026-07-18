@@ -220,8 +220,17 @@ existing test scaffolding rather than gated off:
   vs native (which admits every field kind except string via
   `structReuseEligible`/`arrElemIsRcTracked`, uniformly across families):
 
-  - **Closure fields — excluded everywhere.** No predicate admits them, no
-    `__struct_drop` closure arm exists; needs closure exit-reclaim first.
+  - **Closure fields.** The EXIT-drop prerequisite is now closed on the
+    register backends: the clofld scan (the "clo:"-tagged half of
+    `strfld_reclaim_ok_types_of` — fresh-lambda-only field values, no base
+    copies, call-only reads) routes admitted fn-fielded types, and the
+    `k_clo` / `fr_clo` arms shallow-free the field's env box (captures leak,
+    the k_struct model); the `moves_fields` NODEEP walk exempts calls
+    through a local's own fn fields. Pinned by
+    `TestSelfHostClofldDropIRX86_64`. Still open: the loop-REINIT release
+    stays box-only for fn fields, wasm has no arm, and the REUSE admission
+    (native's FuncType kind) still needs the reuse-arm release + freshness
+    branch.
   - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
     admits only the leak-safe scalar arrays; native admits all. The
     **string[] EXIT-drop prerequisite is now closed**: the strarrfld scan

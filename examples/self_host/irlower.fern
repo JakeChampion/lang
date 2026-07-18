@@ -18654,62 +18654,71 @@ function stmt_darr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[
 // reclaims. The recursion is exhaustive over every Expr variant (leaves return
 // false), so a receiver buried in a nested sub-expression / lambda body is
 // still found.
-function moves_fields_expr(e: parser.Expr, name: string): boolean {
+// `fnfields` lists the fn-typed FIELD names of `name`'s own struct type (the
+// clofld slice): `name.f(args)` where f is such a field is a FIELD-CLOSURE
+// CALL, not a user method — the closure sees only its args + captures (built
+// before `name` existed), so it cannot move `name`'s fields into its result.
+// Exempting it keeps a struct with a called fn field deep-drop-worthy. Pass []
+// when the receiver's type is unknown (every method receiver marks, as before).
+function moves_fields_expr(e: parser.Expr, name: string, fnfields: string[]): boolean {
     match (e) {
-        parser.ExprBinary(b) => { return moves_fields_expr(b.left, name) || moves_fields_expr(b.right, name); },
-        parser.ExprUnary(u) => { return moves_fields_expr(u.operand, name); },
-        parser.ExprIndex(ix) => { return moves_fields_expr(ix.array, name) || moves_fields_expr(ix.index, name); },
-        parser.ExprSlice(sl) => { return moves_fields_expr(sl.array, name) || moves_fields_expr(sl.start, name) || moves_fields_expr(sl.end, name); },
-        parser.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name); },
+        parser.ExprBinary(b) => { return moves_fields_expr(b.left, name, fnfields) || moves_fields_expr(b.right, name, fnfields); },
+        parser.ExprUnary(u) => { return moves_fields_expr(u.operand, name, fnfields); },
+        parser.ExprIndex(ix) => { return moves_fields_expr(ix.array, name, fnfields) || moves_fields_expr(ix.index, name, fnfields); },
+        parser.ExprSlice(sl) => { return moves_fields_expr(sl.array, name, fnfields) || moves_fields_expr(sl.start, name, fnfields) || moves_fields_expr(sl.end, name, fnfields); },
+        parser.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name, fnfields); },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     match (fa.obj) {
-                        parser.ExprIdent(rid) => { if (rid.name == name) { return true; } },   // method receiver — the hazard
-                        _ => { if (moves_fields_expr(fa.obj, name)) { return true; } }
+                        parser.ExprIdent(rid) => {
+                            // method receiver — the hazard (except a field-closure call)
+                            if (rid.name == name && util.index_of_str(fnfields, fa.field) < 0) { return true; }
+                        },
+                        _ => { if (moves_fields_expr(fa.obj, name, fnfields)) { return true; } }
                     }
                 },
-                _ => { if (moves_fields_expr(c.callee, name)) { return true; } }
+                _ => { if (moves_fields_expr(c.callee, name, fnfields)) { return true; } }
             }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                if (moves_fields_expr(c.args[ai], name)) { return true; }   // a receiver nested inside an arg
+                if (moves_fields_expr(c.args[ai], name, fnfields)) { return true; }   // a receiver nested inside an arg
                 ai = ai + 1;
             }
             return false;
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name, fnfields)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (moves_fields_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (moves_fields_expr(t.elements[i], name, fnfields)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && moves_fields_expr(sl.base, name)) { return true; }
+            if (sl.has_base && moves_fields_expr(sl.base, name, fnfields)) { return true; }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name, fnfields)) { return true; } i = i + 1; }
             return false;
         },
-        parser.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name); },   // a receiver used inside the closure body
+        parser.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name, fnfields); },   // a receiver used inside the closure body
         _ => { return false; }   // ExprIdent / ExprNumber / ExprString / ExprBool / ExprUnknown — leaves, no move
     }
     return false;
 }
 
-function moves_fields_stmts(stmts: parser.Stmt[], name: string): boolean {
+function moves_fields_stmts(stmts: parser.Stmt[], name: string, fnfields: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (moves_fields_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (moves_fields_stmt(stmts[i], name, fnfields)) { return true; } i = i + 1; }
     return false;
 }
-function moves_fields_stmt(st: parser.Stmt, name: string): boolean {
+function moves_fields_stmt(st: parser.Stmt, name: string, fnfields: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return moves_fields_expr(v.init, name); },
-        parser.StmtReturn(r) => { return moves_fields_expr(r.value, name); },
-        parser.StmtExpr(e) => { return moves_fields_expr(e.value, name); },
+        parser.StmtVar(v) => { return moves_fields_expr(v.init, name, fnfields); },
+        parser.StmtReturn(r) => { return moves_fields_expr(r.value, name, fnfields); },
+        parser.StmtExpr(e) => { return moves_fields_expr(e.value, name, fnfields); },
         parser.StmtAssign(a) => {
             // SELF-rebind exemption: `name = name.emit(op)` / `name = f(name)`
             // (the #3456 builder chain) keeps its per-rebind reclaim — the cow
@@ -18726,49 +18735,49 @@ function moves_fields_stmt(st: parser.Stmt, name: string): boolean {
                             parser.ExprFieldAccess(sfa) => {
                                 match (sfa.obj) {
                                     parser.ExprIdent(_) => {},
-                                    _ => { if (moves_fields_expr(sfa.obj, name)) { deep_move = true; } }
+                                    _ => { if (moves_fields_expr(sfa.obj, name, fnfields)) { deep_move = true; } }
                                 }
                             },
-                            _ => { if (moves_fields_expr(sc.callee, name)) { deep_move = true; } }
+                            _ => { if (moves_fields_expr(sc.callee, name, fnfields)) { deep_move = true; } }
                         }
                         var sai: i32 = 0;
                         while (sai < sc.args.len()) {
                             match (sc.args[sai]) {
                                 parser.ExprIdent(_) => {},
-                                _ => { if (moves_fields_expr(sc.args[sai], name)) { deep_move = true; } }
+                                _ => { if (moves_fields_expr(sc.args[sai], name, fnfields)) { deep_move = true; } }
                             }
                             sai = sai + 1;
                         }
                         return deep_move;
                     },
-                    _ => { return moves_fields_expr(a.value, name); }
+                    _ => { return moves_fields_expr(a.value, name, fnfields); }
                 }
             }
-            return moves_fields_expr(a.value, name);
+            return moves_fields_expr(a.value, name, fnfields);
         },
         parser.StmtIf(f) => {
-            if (moves_fields_expr(f.cond, name)) { return true; }
-            return moves_fields_stmts(f.then_body, name) || moves_fields_stmts(f.else_body, name);
+            if (moves_fields_expr(f.cond, name, fnfields)) { return true; }
+            return moves_fields_stmts(f.then_body, name, fnfields) || moves_fields_stmts(f.else_body, name, fnfields);
         },
         parser.StmtWhile(w) => {
-            if (moves_fields_expr(w.cond, name)) { return true; }
-            return moves_fields_stmts(w.body, name);
+            if (moves_fields_expr(w.cond, name, fnfields)) { return true; }
+            return moves_fields_stmts(w.body, name, fnfields);
         },
         parser.StmtFor(fo) => {
-            if (moves_fields_expr(fo.iter, name)) { return true; }
-            return moves_fields_stmts(fo.body, name);
+            if (moves_fields_expr(fo.iter, name, fnfields)) { return true; }
+            return moves_fields_stmts(fo.body, name, fnfields);
         },
         parser.StmtMatch(m) => {
-            if (moves_fields_expr(m.scrutinee, name)) { return true; }
+            if (moves_fields_expr(m.scrutinee, name, fnfields)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && moves_fields_expr(m.arms[ai].guard, name)) { return true; }
-                if (moves_fields_stmts(m.arms[ai].body, name)) { return true; }
+                if (m.arms[ai].has_guard && moves_fields_expr(m.arms[ai].guard, name, fnfields)) { return true; }
+                if (moves_fields_stmts(m.arms[ai].body, name, fnfields)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return moves_fields_stmt(d.action, name); },
+        parser.StmtDefer(d) => { return moves_fields_stmt(d.action, name, fnfields); },
         _ => { return false; }
     }
     return false;
@@ -18870,7 +18879,13 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var mvn: i32 = out.len();
     var mvi: i32 = 0;
     while (mvi < mvn) {
-        if (moves_fields_stmts(body, out[mvi])) { out = out.append("NODEEP:" + out[mvi]); }
+        // Exempt calls through the local's own fn-typed FIELDS from the
+        // method-receiver hazard (the clofld slice): `h.f(10)` on a field
+        // closure moves nothing — see moves_fields_expr's header.
+        var mvty: string = fresh_struct_lit_type(body, out[mvi]);
+        var mvff: string[] = [];
+        if (mvty != "") { mvff = clo_field_names_of(structs, mvty); }
+        if (moves_fields_stmts(body, out[mvi], mvff)) { out = out.append("NODEEP:" + out[mvi]); }
         mvi = mvi + 1;
     }
     // Fresh scalar-tuple locals (`var t = (3, 4)`): credited under a "TUP:" prefix
@@ -27014,7 +27029,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             // chain (`var st = se.emit(op); st = st.emit(..); return st`) stays
             // unmarked — self-rebinds are exempt and a bare `return st` is a
             // read — so its rebind field-reclaim and deep sweep both survive.
-            if (moves_fields_stmts(fn.body, snap_locals[sli])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
+            if (moves_fields_stmts(fn.body, snap_locals[sli], [])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
         }
         sli = sli + 1;
     }
@@ -28489,6 +28504,10 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
     // __struct_drop k_str_arr arm reaches the field.
     if (struct_has_strarr_field(s.structs, sty)
         && util.index_of_str(s.reclaimable_names, "STRFLDOK:arr:" + sty) >= 0) { return true; }
+    // fn-fielded (closure) type admitted by the clofld scan ("clo:"-tagged) —
+    // routes so the backend k_clo arm shallow-frees the field's env box.
+    if (struct_has_clo_field(s.structs, sty)
+        && util.index_of_str(s.reclaimable_names, "STRFLDOK:clo:" + sty) >= 0) { return true; }
     return struct_has_string_field(s.structs, sty)
         && util.index_of_str(s.reclaimable_names, "STRFLDOK:" + sty) >= 0;
 }
@@ -28567,6 +28586,34 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         }
         asi = asi + 1;
     }
+    // CLOSURE-field admissions ("clo:"-prefixed, threaded exactly like the
+    // "arr:" half): a type is admitted iff every fn-typed field name passes
+    // clofld_scan — fresh-lambda-only construction values (a lambda lifts to
+    // a sole-owned rc=1 `__mkclo$` box), no base-including construction of
+    // the type, and no read of the field outside a direct `b.f(x)` call.
+    // The k_clo drop arm then shallow-frees the field's closure box
+    // (captures leak — the k_struct one-level model).
+    var clo_unsafe: string[] = [];
+    var cki: i32 = 0;
+    while (cki < funcs.len()) {
+        clo_unsafe = clofld_scan_stmts(funcs[cki].body, structs, clo_unsafe);
+        cki = cki + 1;
+    }
+    var csi: i32 = 0;
+    while (csi < structs.len()) {
+        var ct: string = structs[csi].name;
+        if (struct_has_clo_field(structs, ct)) {
+            var cok: boolean = true;
+            var cfi: i32 = 0;
+            while (cfi < structs[csi].fields.len()) {
+                if (structs[csi].fields[cfi].type_name == "fn"
+                    && util.index_of_str(clo_unsafe, structs[csi].fields[cfi].name) >= 0) { cok = false; }
+                cfi = cfi + 1;
+            }
+            if (cok) { out = out.append("clo:" + ct); }
+        }
+        csi = csi + 1;
+    }
     return out;
 }
 
@@ -28585,6 +28632,185 @@ pub function struct_has_strarr_field(structs: parser.StructDecl[], sty: string):
         i = i + 1;
     }
     return false;
+}
+
+// struct_has_clo_field: does `sty` declare at least one fn-typed field (the
+// parser coarsens a `(T) => R` field spelling to "fn"; the struct-lit lift
+// wraps its value into a `__mkclo$…` env box, so the slot holds an
+// rc-headered closure box at runtime)?
+pub function struct_has_clo_field(structs: parser.StructDecl[], sty: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == sty) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].type_name == "fn") { return true; }
+                fi = fi + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// clo_field_names_of: the fn-typed field NAMES of `sty` (empty when none) —
+// the moves_fields exemption list for field-closure calls.
+function clo_field_names_of(structs: parser.StructDecl[], sty: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == sty) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].type_name == "fn") { out = out.append(structs[i].fields[fi].name); }
+                fi = fi + 1;
+            }
+            return out;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// clofld_scan / clofld_scan_stmts: the fn-field (closure-field) admission
+// walk, the closure sibling of strarrfld_scan. Marks a field NAME unsafe
+// (name-keyed over-approximation, like the string scans) when:
+//   - a struct-literal stores a NON-LAMBDA value into an fn-typed field —
+//     only a lambda literal lifts to a FRESH `__mkclo$` box (rc=1, solely
+//     the field's, so the k_clo shallow dec frees exactly once with no
+//     construction inc); a bare closure ident / field copy / call result
+//     may alias a box another owner also drops;
+//   - a struct-literal WITH A BASE constructs a type carrying fn fields —
+//     the base copy carries the field's box pointer into a second struct
+//     (two k_clo decs of one box);
+//   - the field is READ anywhere except as a direct CALL callee — `b.f(x)`
+//     borrows the box for the call, but `var g = b.f` binds an uncounted
+//     alias the drop would dangle.
+// Runs on the PRE-lift AST (fn-field values are still lambdas/idents there).
+function clofld_scan(e: parser.Expr, structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            a = push_str_unique(a, fa.field);
+            return clofld_scan(fa.obj, structs, a);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    // `b.f(args)` — the direct field CALL is the one tolerated
+                    // borrow: skip marking f, keep walking beneath it.
+                    match (cfa.obj) {
+                        parser.ExprFieldAccess(ffa) => { a = clofld_scan(ffa, structs, a); },
+                        _ => { a = clofld_scan(cfa.obj, structs, a); }
+                    }
+                },
+                _ => { a = clofld_scan(c.callee, structs, a); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = clofld_scan(c.args[i], structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprBinary(b) => { return clofld_scan(b.right, structs, clofld_scan(b.left, structs, a)); },
+        parser.ExprUnary(u) => { return clofld_scan(u.operand, structs, a); },
+        parser.ExprIndex(ix) => { return clofld_scan(ix.index, structs, clofld_scan(ix.array, structs, a)); },
+        parser.ExprSlice(sl) => { return clofld_scan(sl.end, structs, clofld_scan(sl.start, structs, clofld_scan(sl.array, structs, a))); },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base) {
+                a = clofld_scan(sl2.base, structs, a);
+                // A base copy of an fn-fielded type carries the closure box —
+                // mark every fn field of the type unsafe.
+                var bsi: i32 = 0;
+                while (bsi < structs.len()) {
+                    if (structs[bsi].name == sl2.type_name) {
+                        var bfi: i32 = 0;
+                        while (bfi < structs[bsi].fields.len()) {
+                            if (structs[bsi].fields[bfi].type_name == "fn") { a = push_str_unique(a, structs[bsi].fields[bfi].name); }
+                            bfi = bfi + 1;
+                        }
+                    }
+                    bsi = bsi + 1;
+                }
+            }
+            var i: i32 = 0;
+            while (i < sl2.field_names.len()) {
+                if (decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "fn") {
+                    // Fresh forms: a LAMBDA literal (pre-lift AST) or its
+                    // lifted spelling — a `__mkclo$…` constructor call (the
+                    // emit orchestrations scan the LIFTED module, where every
+                    // fn-field lambda has already been wrapped). Both build a
+                    // sole-owned rc=1 box at the construction site.
+                    var clo_ok: boolean = false;
+                    match (sl2.field_values[i]) {
+                        parser.ExprLambda(_) => { clo_ok = true; },
+                        parser.ExprCall(cv) => {
+                            match (cv.callee) {
+                                parser.ExprIdent(cvid) => {
+                                    if (cvid.name.len() > 8 && cvid.name[0:8] == "__mkclo$") { clo_ok = true; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (!clo_ok) { a = push_str_unique(a, sl2.field_names[i]); }
+                }
+                a = clofld_scan(sl2.field_values[i], structs, a);
+                i = i + 1;
+            }
+            return a;
+        },
+        parser.ExprArray(av2) => {
+            var i: i32 = 0;
+            while (i < av2.elements.len()) { a = clofld_scan(av2.elements[i], structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { a = clofld_scan(t.elements[i], structs, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprLambda(lm) => { return clofld_scan_stmts(lm.body, structs, a); },
+        _ => { return a; }
+    }
+}
+function clofld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { a = clofld_scan(v.init, structs, a); },
+            parser.StmtAssign(as2) => { a = clofld_scan(as2.value, structs, a); },
+            parser.StmtExpr(ex) => { a = clofld_scan(ex.value, structs, a); },
+            parser.StmtReturn(r) => { a = clofld_scan(r.value, structs, a); },
+            parser.StmtIf(iff) => {
+                a = clofld_scan(iff.cond, structs, a);
+                a = clofld_scan_stmts(iff.then_body, structs, a);
+                a = clofld_scan_stmts(iff.else_body, structs, a);
+            },
+            parser.StmtWhile(w) => {
+                a = clofld_scan(w.cond, structs, a);
+                a = clofld_scan_stmts(w.body, structs, a);
+            },
+            parser.StmtFor(fo) => {
+                a = clofld_scan(fo.iter, structs, a);
+                a = clofld_scan_stmts(fo.body, structs, a);
+            },
+            parser.StmtMatch(m) => {
+                a = clofld_scan(m.scrutinee, structs, a);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { a = clofld_scan(m.arms[ai].guard, structs, a); }
+                    a = clofld_scan_stmts(m.arms[ai].body, structs, a);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { a = clofld_scan_stmts([d.action], structs, a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk.
