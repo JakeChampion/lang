@@ -84,6 +84,17 @@ var closureArrayIRCases = []struct {
 	// append a non-capturing lambda onto a NON-empty capturing-lambda literal,
 	// then dispatch the appended element: 5 * 5 = 25.
 	{"mixed-append-noncap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base]; fs = fs.append((y: i32) => y * y); return fs[1](5); }`, 25},
+	// #5071 follow-up: a MIXED array of a NAMED function value and a capturing
+	// lambda. The capturing element env-first-dispatches the array, so the
+	// named-fn element must be boxed into a `$wrap` env trampoline too — else
+	// its bare fn pointer is deref'd as a box (or a box is called bare) →
+	// SIGSEGV. Both orderings + loop dispatch.
+	// named fn first, dispatch the capturing lambda: 5 + 3 = 8.
+	{"mixed-namedfn-then-cap", `function inc(x: i32): i32 { return x + 100; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [inc, (x: i32) => x + a]; return fs[1](5); }`, 8},
+	// capturing lambda first, dispatch the named fn: 5 + 100 = 105.
+	{"mixed-cap-then-namedfn", `function inc(x: i32): i32 { return x + 100; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [(x: i32) => x + a, inc]; return fs[1](5); }`, 105},
+	// named-fn + capturing lambda summed over a loop: (5+10) + (5+3) = 23.
+	{"mixed-namedfn-loop", `function inc(x: i32): i32 { return x + 10; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [inc, (x: i32) => x + a]; var s = 0; var i = 0; while (i < fs.len()) { s = s + fs[i](5); i = i + 1; } return s; }`, 23},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted
