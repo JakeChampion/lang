@@ -3799,8 +3799,9 @@ func (p *parser) parseDefer() (ast.Stmt, error) {
 // expression when a second argument is given (so the message can be any
 // runtime string, not just a literal). Building on the existing `!`,
 // string `+`, `eprint`, and `exit` primitives keeps `assert` codegen-free
-// — it runs identically on every backend and both self-host IR paths. A
-// later change can elide the whole `if` under an optimisation flag. #4416.
+// — it runs identically on every backend and both self-host IR paths. The
+// If carries IsAssert so `fern -O` can elide the whole check
+// (constfold.ElideAsserts, post-typecheck). #4416.
 func (p *parser) parseAssert() (ast.Stmt, error) {
 	kw := p.advance() // `assert`
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -3838,7 +3839,7 @@ func (p *parser) parseAssert() (ast.Stmt, error) {
 		&ast.ExprStmt{P: pos, Expr: eprintCall},
 		&ast.ExprStmt{P: pos, Expr: exitCall},
 	}}
-	return &ast.If{P: pos, Cond: notCond, Then: then}, nil
+	return &ast.If{P: pos, Cond: notCond, Then: then, IsAssert: true}, nil
 }
 
 // parseTodo desugars the `todo;` / `todo("msg");` stub statement to
