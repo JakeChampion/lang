@@ -17271,6 +17271,13 @@ function body_has_nonfresh_tuple_return(stmts: parser.Stmt[]): boolean {
 // The tuple sibling of str_fresh_ret_fns_of; closes the #4357 tuple-returning
 // dead-intermediate leak (`var t = mk(k); … t.0 …` leaked one box per call —
 // native reclaims the shape).
+//
+// The list is really the shared FRESH-RET registry: it also carries the
+// "ARRF:<name>|<flags>" tuple deep-drop entries and the "MAPF:<name>"
+// map-builder entries (map_fresh_ret_fns_of) — ':' can't appear in an
+// identifier, so prefixed entries never collide with the bare-name
+// membership checks, and every backend that threads this one list into
+// lower_func gets all three credits.
 pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -17290,6 +17297,9 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         }
         k = k + 1;
     }
+    var mf: string[] = map_fresh_ret_fns_of(funcs);
+    var mi: i32 = 0;
+    while (mi < mf.len()) { out = out.append(mf[mi]); mi = mi + 1; }
     return out;
 }
 
@@ -17378,8 +17388,9 @@ function map_builder_body_ok(fn: parser.FuncDecl): boolean {
 // provably fresh + sole-owned, the columns hold only scalars, so the shallow
 // __fern_map_free covers everything. Rides the tuple_fresh_ret_fns list (the
 // "ARRF:" precedent — ':' never appears in an identifier, so the entries
-// can't collide with bare-name membership checks).
-pub function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+// can't collide with bare-name membership checks); tuple_fresh_ret_fns_of
+// appends these itself so every backend's one threaded list carries them.
+function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
@@ -17392,18 +17403,6 @@ pub function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         }
         k = k + 1;
     }
-    return out;
-}
-
-// tuple_and_map_fresh_ret_fns_of: the combined registry lower_func threads —
-// tuple entries (bare names + "ARRF:") plus the "MAPF:" map-builder entries,
-// one list so no signature changes ripple through the three lower_func call
-// sites.
-pub function tuple_and_map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
-    var out: string[] = tuple_fresh_ret_fns_of(funcs);
-    var mf: string[] = map_fresh_ret_fns_of(funcs);
-    var i: i32 = 0;
-    while (i < mf.len()) { out = out.append(mf[i]); i = i + 1; }
     return out;
 }
 
@@ -30987,7 +30986,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_and_map_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -31012,7 +31011,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_and_map_fresh_ret_fns_of(funcs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs));
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -33359,7 +33358,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_and_map_fresh_ret_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), closurearr_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs));
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
