@@ -23,7 +23,10 @@
 //     `OpConstI32 (a == 0 ? 1 : 0)`.
 //  2. Constant-if pruning: if an OpIf is preceded by a constant
 //     condition, the entire `OpIf … OpElse … OpEnd` block is replaced
-//     with the surviving arm's ops.
+//     with the surviving arm's ops. The same decision applies to a
+//     constant-conditioned OpBrIf (the loop / break / continue shape):
+//     a nonzero condition becomes an unconditional OpBr, a zero one
+//     drops both ops.
 //
 // Division and remainder ARE folded when the divisor is a nonzero
 // constant — inlining a small `n / K` / `n % K` helper at a constant
@@ -77,6 +80,25 @@ func foldOnce(ops []Op) []Op {
 				i = endOfIfBlock(ops, i+1)
 				continue
 			}
+		}
+		// Constant-conditioned br_if: `OpConstI32 c; OpBrIf N`. When the
+		// condition is a compile-time constant the branch is decided —
+		// a nonzero c always branches (→ unconditional OpBr N, dropping
+		// the const), a zero c never branches (→ drop both ops, falling
+		// through). The sibling of the constant-if pruning above, for the
+		// loop / break / continue shape: `while (i < 3)` lowers the exit
+		// test to `<cond> ; OpNot ; OpBrIf breakD`, so a constant cond
+		// (`while (true)`, an inlined predicate, a constprop'd loop guard)
+		// leaves a constant feeding the br_if once `const ; OpNot` folds.
+		// br_if pops its i32 condition on both paths, so removing the
+		// const-push with it keeps the operand stack balanced whatever the
+		// target block's result type is.
+		if i+1 < len(ops) && ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpBrIf {
+			if ops[i].I32 != 0 {
+				out = append(out, Op{Kind: OpBr, I32: ops[i+1].I32, Pos: ops[i+1].Pos})
+			}
+			i++ // consume the OpBrIf; the const is dropped either way
+			continue
 		}
 		// Binary fold (i32): OpConstI32 a; OpConstI32 b; <binop>.
 		if i+2 < len(ops) &&
