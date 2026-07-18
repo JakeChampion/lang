@@ -171,6 +171,29 @@ func TestParseWorkspaceDepForm(t *testing.T) {
 	}
 }
 
+func TestParseExclude(t *testing.T) {
+	m, err := Parse("[package]\nname = \"app\"\n[dependencies]\nbar = \"1.0.0\"\n[exclude]\nbar = [\"1.9.0\", \"1.9.1\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Excludes["bar"]; len(got) != 2 || got[0] != "1.9.0" || got[1] != "1.9.1" {
+		t.Errorf("excludes = %v, want [1.9.0 1.9.1]", got)
+	}
+}
+
+func TestParseExcludeErrors(t *testing.T) {
+	cases := map[string]string{
+		"not an array":     "[package]\nname = \"a\"\n[exclude]\nbar = \"1.9.0\"\n",
+		"not a version":    "[package]\nname = \"a\"\n[exclude]\nbar = [\"1.9\"]\n",
+		"invalid pkg name": "[package]\nname = \"a\"\n[exclude]\n9bar = [\"1.9.0\"]\n",
+	}
+	for label, src := range cases {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected error", label)
+		}
+	}
+}
+
 func TestParseWorkspaceErrors(t *testing.T) {
 	cases := map[string]string{
 		"bad members type":    "[workspace]\nmembers = \"a\"\n",

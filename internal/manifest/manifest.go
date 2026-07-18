@@ -72,6 +72,13 @@ type Manifest struct {
 	// non-nil only when a [workspace] table is present. A manifest may be
 	// workspace-only (no [package]) or both a package and a workspace root.
 	Members []string
+	// Excludes is the [exclude] table: package name → versions banned from
+	// MVS ("1.9 is broken"). Go's answer to MVS's inexpressible upper
+	// bounds, copied per the SOTA research: a demand for an excluded
+	// version rounds up to the next higher non-excluded indexed version.
+	// Only the TOP-LEVEL manifest's excludes apply during `fern -resolve`
+	// (a dependency's [exclude] is ignored), preserving determinism.
+	Excludes map[string][]string
 }
 
 // VersionDeps returns the names→min-version of this manifest's versioned
@@ -198,13 +205,13 @@ func Parse(src string) (*Manifest, error) {
 			}
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			switch section {
-			case "package", "dependencies":
+			case "package", "dependencies", "exclude":
 			case "workspace":
 				if m.Members == nil {
 					m.Members = []string{}
 				}
 			default:
-				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace])", ln+1, section)
+				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude])", ln+1, section)
 			}
 			continue
 		}
@@ -248,6 +255,23 @@ func Parse(src string) (*Manifest, error) {
 				return nil, fmt.Errorf("line %d: members: %w", ln+1, err)
 			}
 			m.Members = ms
+		case "exclude":
+			if !validDepName(key) {
+				return nil, fmt.Errorf("line %d: invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
+			}
+			vs, err := parseStringArray(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: exclude %s: %w", ln+1, key, err)
+			}
+			for _, v := range vs {
+				if !isVersion(v) {
+					return nil, fmt.Errorf("line %d: exclude %s: version must be MAJOR.MINOR.PATCH digits, got %q", ln+1, key, v)
+				}
+			}
+			if m.Excludes == nil {
+				m.Excludes = map[string][]string{}
+			}
+			m.Excludes[key] = vs
 		default:
 			return nil, fmt.Errorf("line %d: %q outside a section (start with [package], [dependencies], or [workspace])", ln+1, key)
 		}

@@ -225,6 +225,21 @@ version absent from the index is a precise error, never a silent
 round-up. Example: root wants `foo >= 1.1.0` and `bar >= 1.0.0`, but
 `foo@1.1.0` requires `bar >= 2.0.0`, so the lock pins `bar = 2.0.0`.
 
+MVS's minimum-only constraint language cannot express "not 1.9, it's
+broken" — deliberately (an upper bound documents a bug instead of fixing
+it). The escape hatch is Go's: a top-level **`[exclude]`** table banning
+specific versions, applied **only from the manifest `fern -resolve` runs
+on** (a dependency's `[exclude]` is ignored, preserving determinism):
+
+```toml
+[exclude]
+bar = ["1.9.0", "1.9.1"]   # a demand for 1.9.0/1.9.1 rounds up to the
+                           # next non-excluded indexed version
+```
+
+Excluding every version at or above a demand is a precise error;
+excluding a version nothing demands is a no-op.
+
 The build reads only `fern.lock` — never the index or the network (the
 no-build-time-network constraint). A versioned dep whose lock is missing
 errors pointing at `fern -resolve`; a locked url version absent from the
