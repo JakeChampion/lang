@@ -119,11 +119,13 @@ name: Test e2e self-host
 # the aarch64 lane is always green because the x86-only self-host tests t.Skip
 # there for lack of cross-gcc / qemu-x86_64.
 #
-# STREAMING OUTPUT. The shards run the binary with `-test.v`, which streams
-# each test's RUN/PASS/FAIL as it happens, rather than gotestsum's
-# `pkgname-and-test-fails` (which prints nothing until the package ends).
-# This gives live progress and — when a shard IS preempted — shows exactly
-# which test was in flight at the moment of the kill.
+# STREAMING OUTPUT. Every test-running step here goes through gotestsum via
+# `--raw-command`, which runs the PREBUILT binary through `go tool test2json`
+# (no recompile) and formats the stream. The `standard-verbose` format is used
+# — NOT `pkgname-and-test-fails` (which prints nothing until the package ends)
+# — so each test's RUN/PASS/FAIL still streams as it happens: live progress,
+# and — when a shard IS preempted — exactly which test was in flight at the
+# moment of the kill, now with gotestsum's end-of-run summary on top.
 
 on:
   pull_request:
@@ -275,6 +277,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64
@@ -288,7 +292,8 @@ jobs:
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
-          "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       # Publish each warmed driver for the `test` shards to download.
       - uses: actions/upload-artifact@v4
@@ -317,6 +322,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the CLI tests' `-target wasm` sub-legs run wasmtime
+          gotestsum: "true"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64
@@ -330,7 +336,8 @@ jobs:
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
-          "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       - name: run isolated fern.fern driver tests (in-process, local cache)
         continue-on-error: true
@@ -342,7 +349,8 @@ jobs:
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
-          "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
 
   test:
     needs: [build, warm]
@@ -412,6 +420,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+          gotestsum: "true"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host }}
@@ -481,15 +490,19 @@ jobs:
           fi
           echo "shard $SHARD/$NSHARD: ${#SEL_SH[@]} selfhost-pkg + ${#SEL_RES[@]} residual tests"
           # Run from each package dir so the tests' ../../ relative paths
-          # (examples/self_host, internal/stdlib) resolve. -test.v streams each
-          # test's RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min
-          # job budget so a genuine hang fails cleanly; a preemption reclaim is
+          # (examples/self_host, internal/stdlib) resolve. gotestsum's
+          # `--raw-command` runs the prebuilt binary through `go tool test2json`
+          # (no recompile); the `standard-verbose` format streams each test's
+          # RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min job
+          # budget so a genuine hang fails cleanly; a preemption reclaim is
           # distinct and out of our control (see RUNNER PREEMPTION above).
           if [ ${#SEL_SH[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
-            ( cd internal/e2eselfhost && "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
+            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --raw-command -- \
+                go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi
           if [ ${#SEL_RES[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
-            ( cd internal/e2e && "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
+            ( cd internal/e2e && gotestsum --format standard-verbose --raw-command -- \
+                go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi

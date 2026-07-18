@@ -55,4 +55,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
-      - run: go test -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/fernsmith
+        with:
+          gotestsum: "true"
+      - run: gotestsum --format testname -- -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/fernsmith

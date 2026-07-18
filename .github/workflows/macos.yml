@@ -106,6 +106,12 @@ jobs:
       - name: go vet
         run: go vet ./internal/codegen/arm64/... ./internal/e2e/...
 
+      # This runner sets Go up directly (not via ./.github/actions/setup-fern,
+      # which is Linux-only), so gotestsum is installed here rather than through
+      # that action's `gotestsum` input. Pinned to the same v1.13.0 the action uses.
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@v1.13.0
+
       - name: go test (arm64-darwin native execution)
         # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
         # && GOARCH=="arm64" and switches from "verify Mach-O
@@ -113,8 +119,10 @@ jobs:
         # actually run the binary, asserting exit codes". The
         # other arm64 tests in this file SKIP cleanly when
         # qemu-aarch64 + aarch64-linux-gnu-gcc aren't present
-        # (which is always the case on macOS).
-        run: go test -v -run TestArm64Darwin ./internal/e2e/
+        # (which is always the case on macOS). `standard-verbose`
+        # keeps the streamed RUN/PASS/FAIL of the old `-v` run.
+        run: |
+          "$(go env GOPATH)/bin/gotestsum" --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
 
       - name: Compile + run every example for arm64-darwin (native, default)
         # Build each examples/*.fern via the driver's DEFAULT path — the
