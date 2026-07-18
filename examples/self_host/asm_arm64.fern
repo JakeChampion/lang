@@ -5159,7 +5159,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // live set outgrew every arena a 32-bit range can hold — the value
         // plumbing is 64-bit throughout, as arm64-darwin's high heap already
         // exercises). Matches the native arm64 backend's heapBytes
-        // (lockstep). The size (8 GiB = 1 << 33) is built in-asm via
+        // (lockstep). The size (16 GiB = 1 << 34) is built in-asm via
         // `mov #1; lsl #33` below, not a `ldr =N` literal — the in-process
         // assembler's literal parser is 32-bit and would sign-extend.
         s = s.write("    .bss\n");
@@ -5221,7 +5221,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x9, x0\n");                  // save rounded size
         s = s.write("    mov x0, #1\n");
         s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000 — keep in lockstep with the NATIVE arm64 backend, whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower base no-ops every native rc inc/dec)
-        // length = 8 GiB = 0x200000000 = 1 << 33. Built with mov+lsl, not a
+        // length = 16 GiB = 0x400000000 = 1 << 34. Built with mov+lsl, not a
         // `ldr =N` literal: the in-process assembler's literal parser is
         // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
         // mmap would fail with ENOMEM. Raised from 3.5 GiB when the arm64
@@ -5234,9 +5234,9 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // exercises >32-bit heap pointers through the same value plumbing),
         // and the stage-2 fixpoint + the arm64 e2e matrix gate the change.
         s = s.write("    mov x1, #1\n");
-        s = s.write("    lsl x1, x1, #33\n");             // length = 0x200000000 (8 GiB)
+        s = s.write("    lsl x1, x1, #34\n");             // length = 0x400000000 (16 GiB)
         s = s.write("    mov x2, #3\n");                  // PROT_READ | PROT_WRITE
-        s = s.write("    mov x3, #0x22\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    mov x3, #0x4022\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; see native arm64 heapBytes comment)
         s = s.write("    mov x4, #0\n");
         s = s.write("    sub x4, x4, #1\n");              // x4 = -1 (fd)
         s = s.write("    mov x5, #0\n");                  // offset
@@ -5251,7 +5251,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
         s = s.write("    str x0, [x1]\n");
         s = s.write("    mov x2, #1\n");
-        s = s.write("    lsl x2, x2, #33\n");             // 8 GiB
+        s = s.write("    lsl x2, x2, #34\n");             // 16 GiB
         s = s.write("    add x2, x0, x2\n");              // arena end
         s = s.write("    adrp x3, __fern_heap_end\n");
         s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");

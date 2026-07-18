@@ -948,7 +948,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl $0x10000000, %edi\n");          // addr hint
     s = s.write("    movabs $8589934592, %rsi\n");        // length = 0x200000000, 8 GiB (64-bit imm; lockstep with asm.fern + native x86-64 — see heap_size there)
     s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
-    s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+    s = s.write("    movl $0x4022, %r10d\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; lockstep with asm.fern + the native x86-64 backend)
     s = s.write("    movq $-1, %r8\n");                   // fd
     s = s.write("    xorl %r9d, %r9d\n");                 // offset
     s = s.write("    movl $9, %eax\n");                   // __NR_mmap

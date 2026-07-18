@@ -4700,7 +4700,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movl $0x10000000, %edi\n");          // addr hint
         s = s.write("    movabs $" + heap_size + ", %rsi\n"); // length (64-bit imm — 8 GiB exceeds u32)
         s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
-        s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    movl $0x4022, %r10d\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; lockstep with the native x86-64 backend)
         s = s.write("    movq $-1, %r8\n");                   // fd
         s = s.write("    xorl %r9d, %r9d\n");                 // offset
         s = s.write("    movl $9, %eax\n");                   // __NR_mmap

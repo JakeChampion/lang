@@ -984,8 +984,17 @@ func (g *generator) emitAllocRuntime() {
 	// heap already exercises >32-bit heap pointers). The hint stays at
 	// 0x10000000: the below-heap rc guards key on it (see the lsl below).
 	// Lazy-mapped via a literal-pool load, so the wider window costs
-	// nothing until touched and has no 32-bit-immediate limit.
-	const heapBytes = 8589934592 // 0x200000000, 8 GiB
+	// nothing until touched and has no 32-bit-immediate limit. Raised to
+	// 16 GiB when the arm64 stage-2 self-compile crossed the 8 GiB trap
+	// again (measured need ~8.2 GiB at tip; the compiler's live set grows
+	// with every compiler-source addition). MAP_NORESERVE makes the wider
+	// reservation free: without it Linux's overcommit heuristic refuses
+	// the single anonymous map outright on hosts with RAM+swap below the
+	// arena size (a 16 GiB map would fail AT STARTUP on a 16 GB host with
+	// no swap — and the old 8 GiB map already could not start on
+	// small-RAM boards like a 4 GB Raspberry Pi). The exit-137 bounds
+	// check in the allocator remains the real out-of-memory guard.
+	const heapBytes = 17179869184 // 0x400000000, 16 GiB
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -1064,9 +1073,14 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("ldr x1, =%d", heapBytes)
 	g.emit("mov x2, #3")
 	if g.darwin {
+		// Darwin: MAP_ANON|MAP_PRIVATE. No NORESERVE needed — macOS does
+		// not strictly account anonymous private reservations.
 		g.emit("mov x3, #0x1002")
 	} else {
-		g.emit("mov x3, #0x22")
+		// MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000) — see the
+		// heapBytes comment: exempts the big lazy arena from Linux's
+		// overcommit accounting so reservation size never blocks startup.
+		g.emit("mov x3, #0x4022")
 	}
 	g.emit("mov x4, #-1")
 	g.emit("mov x5, #0")
