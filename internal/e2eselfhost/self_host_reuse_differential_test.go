@@ -192,6 +192,17 @@ var reuseDifferentialCases = []struct {
 	{"fn-field-carried-copy", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var d: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var c: H = H { ...d, id: 7 }; if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id; }`, 15, "call __fn___fern_alloc_reuse"},
 	{"fn-field-churn-detector", `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: H = H { f: function (x: i32): i32 { return x + 1; }, id: i }; var c: H = H { ...d, f: function (x: i32): i32 { return x + 2; } }; if (c.f(10) + c.id != 12 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"enum-donor-fn-field-recipient", `enum D2 { P(i32, i32), Q } struct M { tag: i32, g: (i32) => i32 } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = M { tag: 2, g: function (q: i32): i32 { return q + 1; } }; return y.g(1) + y.tag + u; }`, 11, "call __fn___fern_alloc_reuse"},
+	// struct[] / enum[] box-element-array fields (#4356 Delta B, the last
+	// rc-element-array kind): admitted with element-fresh array-literal
+	// values on both sides (boxarr_lit_all_elems_fresh) and released
+	// per-element via __fern_arrarr_free; struct[] restricted to
+	// scalar-field element types (nothing under the box to leak). Exit
+	// codes cross-checked against native -interp (15 / 0 / 13 / 17 / 16).
+	{"boxarr-struct-cross", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var a: W = W { items: [In { k: 1, n: 2 }, In { k: 3, n: 4 }], id: 1 }; var s1: i32 = a.items.len() + a.items[1].k + a.id; var b: W = W { items: [In { k: 5, n: 6 }], id: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.items.len() + b.items[0].n + b.id; }`, 15, "call __fn___fern_alloc_reuse"},
+	{"boxarr-struct-churn-detector", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var a: W = W { items: [In { k: i, n: 2 }, In { k: 3, n: 4 }], id: i }; var t: i32 = a.items.len() + a.items[0].k + a.id; var b: W = W { items: [In { k: 5, n: i }], id: i + 1 }; if (t != 2 + i + i) { bad = 1; } if (b.items.len() + b.items[0].n + b.id != 2 + i + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(1000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"boxarr-enum-cross", `enum St { On(i32), Off } struct W { sts: St[], id: i32 } function main(): i32 { var a: W = W { sts: [On(3), Off], id: 1 }; var s1: i32 = a.sts.len() + a.id; var b: W = W { sts: [On(7)], id: 2 }; var s2: i32 = b.sts.len() + b.id; match (b.sts[0]) { On(v) => { s2 = s2 + v; }, Off => {} } if (__rc_underflow() != 0) { return 99; } return s1 + s2; }`, 13, "call __fn___fern_alloc_reuse"},
+	{"boxarr-self-overwrite", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var d: W = W { items: [In { k: 1, n: 2 }], id: 6 }; var c: W = W { ...d, items: [In { k: 7, n: 8 }, In { k: 9, n: 10 }] }; if (__rc_underflow() != 0) { return 99; } return c.items.len() + c.items[1].k + c.id; }`, 17, "call __fn___fern_alloc_reuse"},
+	{"boxarr-carried-copy", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var d: W = W { items: [In { k: 1, n: 2 }, In { k: 3, n: 4 }], id: 6 }; var c: W = W { ...d, id: 9 }; if (__rc_underflow() != 0) { return 99; } return c.items.len() + c.items[0].k + c.items[1].n + c.id; }`, 16, "call __fn___fern_alloc_reuse"},
 	// MIXED-field interaction shapes (the seams between the fn / string[] /
 	// string / enum / nested-struct admissions): one struct carrying several
 	// release-armed kinds at once, under cross reuse and a churn-scale
@@ -291,7 +302,7 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 // (strarr_lit_all_elems_fresh / fn_field_value_is_fresh), so no reuse fires —
 // the emitted asm carries no __fern_alloc_reuse call — and the alias stays
 // usable after the second construction (values cross-checked against native
-// -interp: 10 / 4 / 25 / 18), with the rc-underflow detector clean.
+// -interp: 10 / 4 / 25 / 18 / 8 / 12), with the rc-underflow detector clean.
 func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -313,6 +324,8 @@ func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 		{"aliased-override", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k"]; var d: P = P { tags: ["x"], n: 1 }; var c: P = P { ...d, tags: xs, n: 2 }; var live: i32 = xs[0].len(); if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + live; }`, 4},
 		{"aliased-fn-donor-field", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var a: H = H { f: g, id: 1 }; var s1: i32 = a.f(5) + a.id; var b: H = H { f: function (x: i32): i32 { return x + 1; }, id: 2 }; var live: i32 = g(3); if (__rc_underflow() != 0) { return 99; } return s1 + b.f(5) + b.id + live; }`, 25},
 		{"aliased-fn-override", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var d: H = H { f: function (x: i32): i32 { return x + 1; }, id: 1 }; var c: H = H { ...d, f: g, id: 2 }; var live: i32 = g(3); if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id + live; }`, 18},
+		{"aliased-boxarr-donor-field", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var xs: In[] = [In { k: 1, n: 2 }]; var a: W = W { items: xs, id: 1 }; var s1: i32 = a.items.len() + a.id; var b: W = W { items: [In { k: 5, n: 6 }], id: 2 }; var live: i32 = xs[0].k + xs[0].n; if (__rc_underflow() != 0) { return 99; } return s1 + b.items.len() + b.id + live; }`, 8},
+		{"rcfield-element-type-excluded", `struct In2 { xs: i32[], k: i32 } struct W { items: In2[], id: i32 } function main(): i32 { var a: W = W { items: [In2 { xs: [1, 2], k: 3 }], id: 1 }; var s1: i32 = a.items.len() + a.items[0].k + a.id; var b: W = W { items: [In2 { xs: [4], k: 5 }], id: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.items.len() + b.items[0].xs[0] + b.id; }`, 12},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -263,9 +263,16 @@ existing test scaffolding rather than gated off:
     the reuse arms deep-free the superseded field via `__fern_str_arr_free`
     and the self-overwrite fresh arm rc-incs carried copies (pinned by the
     `strarr-field-*` reuse-differential cases + the aliased-value exclusion
-    test). Struct[] / enum[] element arrays remain open (their element
-    freshness has no literal-shaped proof yet), as does the own-param
-    family (no bind literal to prove element freshness from).
+    test). **struct[] / enum[] element arrays are now closed too**: admitted
+    with element-fresh array-literal values on both sides
+    (`boxarr_lit_all_elems_fresh` — fresh no-base element literals /
+    variant ctors) and released per-element via `__fern_arrarr_free`;
+    struct[] is restricted to scalar-field element types so the shallow
+    element free leaks nothing, an enum[] element's payload stays on the
+    k_enum shallow-leak model (pinned by the `boxarr-*` differential
+    cases + the aliased/rc-fielded-element exclusions). Only the
+    own-param family remains (no bind literal to prove element freshness
+    from).
   - **Own-param families** (`own_param_reuse_sites` /
     `own_param_self_overwrite_sites`): now on `struct_fields_reusable_param`
     (narrow ∪ Map / leak-safe tuple / leak-safe Option — the leak-only kinds,
