@@ -93,6 +93,40 @@ function main(): i32 {
     if (rotr((1 as i64) << (63 as i64), 63) == (1 as i64)) { r = r + 1; }   // 65
     return r;
 }`},
+	// u32 bit-op family (the std/u32 additions): count_ones / leading_zeros /
+	// trailing_zeros / rotate over u32 shifts & masks. Only ==/!= compares
+	// (never signed </>) so the x86-64 IR path is exact for unsigned; oracle-
+	// checked. count_ones(255)=8, then four predicate hits → 12.
+	{"u32-bitops", `function count_ones(n: u32): i32 {
+    var u: u32 = n; var c: i32 = 0; var i: i32 = 0;
+    while (i < 32) { if ((u & (1 as u32)) != (0 as u32)) { c = c + 1; } u = u >> (1 as u32); i = i + 1; }
+    return c;
+}
+function leading_zeros(n: u32): i32 {
+    if (n == (0 as u32)) { return 32; }
+    var u: u32 = n; var top: u32 = (1 as u32) << (31 as u32); var c: i32 = 0;
+    while ((u & top) == (0 as u32)) { c = c + 1; u = u << (1 as u32); }
+    return c;
+}
+function trailing_zeros(n: u32): i32 {
+    if (n == (0 as u32)) { return 32; }
+    var u: u32 = n; var c: i32 = 0;
+    while ((u & (1 as u32)) == (0 as u32)) { c = c + 1; u = u >> (1 as u32); }
+    return c;
+}
+function rotl(n: u32, bits: i32): u32 {
+    var k: i32 = bits & 31; if (k == 0) { return n; }
+    var left: u32 = n << (k as u32); var right: u32 = n >> ((32 - k) as u32);
+    return left | right;
+}
+function main(): i32 {
+    var r: i32 = count_ones(255 as u32);                            // 8
+    if (leading_zeros(1 as u32) == 31) { r = r + 1; }             // 9
+    if (trailing_zeros(8 as u32) == 3) { r = r + 1; }            // 10
+    if (rotl(1 as u32, 1) == (2 as u32)) { r = r + 1; }         // 11
+    if (rotl((1 as u32) << (31 as u32), 1) == (1 as u32)) { r = r + 1; }   // 12
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

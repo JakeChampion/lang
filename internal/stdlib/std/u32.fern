@@ -157,3 +157,74 @@ pub function (n: u32) log2_floor(): i32 {
     while (m > (1 as u32)) { m = m / (2 as u32); r = r + 1; }
     return r;
 }
+
+// === u32 bit ops (the unsigned counterparts to std/i32's) ===
+// Software implementations over u32 shifts/masks (no intrinsics
+// surface in the language), O(32) per call — the same shape as the
+// std/i32 family, but simpler: unsigned shifts are logical, so there is
+// no sign bit to reason about.
+
+// `count_ones()` — the number of set bits in `n`.
+pub function (n: u32) count_ones(): i32 {
+    var u: u32 = n;
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < 32) {
+        if ((u & (1 as u32)) != (0 as u32)) { c = c + 1; }
+        u = u >> (1 as u32);
+        i = i + 1;
+    }
+    return c;
+}
+
+// `count_zeros()` — the number of clear bits (`32 - count_ones()`).
+pub function (n: u32) count_zeros(): i32 { return 32 - n.count_ones(); }
+
+// `leading_zeros()` — the number of zero bits above the highest set bit
+// (`0` → 32).
+pub function (n: u32) leading_zeros(): i32 {
+    if (n == (0 as u32)) { return 32; }
+    var u: u32 = n;
+    var top: u32 = (1 as u32) << (31 as u32);
+    var c: i32 = 0;
+    while ((u & top) == (0 as u32)) {
+        c = c + 1;
+        u = u << (1 as u32);
+    }
+    return c;
+}
+
+// `trailing_zeros()` — the number of zero bits below the lowest set bit
+// (`0` → 32).
+pub function (n: u32) trailing_zeros(): i32 {
+    if (n == (0 as u32)) { return 32; }
+    var u: u32 = n;
+    var c: i32 = 0;
+    while ((u & (1 as u32)) == (0 as u32)) {
+        c = c + 1;
+        u = u >> (1 as u32);
+    }
+    return c;
+}
+
+// `bit_length()` — the position of the highest set bit, plus one
+// (`32 - leading_zeros()`); `0` → 0. The unsigned sibling of i32's.
+pub function (n: u32) bit_length(): i32 { return 32 - n.leading_zeros(); }
+
+// `rotate_left(bits)` / `rotate_right(bits)` — cyclic bit rotation:
+// bits shifted off one end re-enter the other. `bits` is taken mod 32.
+pub function (n: u32) rotate_left(bits: i32): u32 {
+    var k: i32 = bits & 31;
+    if (k == 0) { return n; }
+    var left: u32 = n << (k as u32);
+    var right: u32 = n >> ((32 - k) as u32);
+    return left | right;
+}
+
+pub function (n: u32) rotate_right(bits: i32): u32 {
+    var k: i32 = bits & 31;
+    if (k == 0) { return n; }
+    var right: u32 = n >> (k as u32);
+    var left: u32 = n << ((32 - k) as u32);
+    return right | left;
+}
