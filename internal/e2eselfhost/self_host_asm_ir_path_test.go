@@ -1906,6 +1906,23 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-expr-payload-strmethod-len", `function f(o: Option[string]): i32 { return match (o) { Some(s) => s.trim().len(), None => 0 }; } function main(): i32 { return f(Some("hi ")); }`, 2},
 		{"match-expr-nested-call-arg", `enum L { C(i32, L), N } function id(l: L): L { return l; } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(id(t)), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 	}
+	// Erased-generic 64-bit shapes (#4451 goal-1 widening): a 64-bit (i64/u64)
+	// argument at a bare-typevar param lowers via lower_i64 (fn_param_sigs flag
+	// '5'), and an erased return mirroring that argument reads back full-width
+	// (the str_ret_fns argref resolution in infer_expr_width / lower_i64).
+	// Previously these bailed the module to the AST path; the exit codes pin
+	// the 8-byte round-trip (a truncation returns the 38 arm).
+	irOnly = append(irOnly, []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"erased-i64-arg-only", `function first[T](x: T, n: i32): i32 { return n; } function main(): i32 { var r: i32 = first[i64](4200000000 as i64, 7); return r; }`, 7},
+		{"erased-i64-roundtrip", `function ident[T](x: T): T { return x; } function main(): i32 { var big: i64 = ident[i64](4200000000 as i64); if (big == 4200000000 as i64) { return 42; } return 38; }`, 42},
+		{"erased-i64-tuple-elem", `function pair[K, V](k: K, v: V): (K, V) { return (k, v); } function main(): i32 { var t: (i32, i64) = pair[i32, i64](38, 4200000000 as i64); var big: i64 = t.1; if (big == 4200000000 as i64) { return 42; } return 38; }`, 42},
+		{"erased-i64-both-elems", `function pair[K, V](k: K, v: V): (K, V) { return (k, v); } function main(): i32 { var t: (i64, i64) = pair[i64, i64](5000000000 as i64, 6000000000 as i64); if (t.0 + t.1 == 11000000000 as i64) { return 42; } return 38; }`, 42},
+		{"erased-u64-roundtrip", `function ident[T](x: T): T { return x; } function main(): i32 { var u: u64 = ident[u64](18000000000000000000 as u64); if (u == 18000000000000000000 as u64) { return 42; } return 38; }`, 42},
+	}...)
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := emitAndRun(t, tc.src, true); got != tc.want {

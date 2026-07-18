@@ -4165,6 +4165,13 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // f64_bits reinterprets an f64 as its i64 bit pattern.
                     if (cid.name == "f64_bits") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
+                    // An erased-generic fn whose return mirrors argument i
+                    // ("name|$arg<i>" from str_ret_fns_of — kind-agnostic): the
+                    // call is 64-bit exactly when THAT argument is a (non-f64)
+                    // 64-bit value (`ident[i64](big)`).
+                    var gwi: i32 = str_ret_argref(s, cid.name);
+                    if (gwi >= 0 && gwi < c.args.len()
+                        && !expr_is_f64(c.args[gwi], s) && infer_expr_width(c.args[gwi], s) == 64) { return 64; }
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
@@ -4346,6 +4353,14 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // call path (lower_expr emits op_f64_bits + pushes the result).
                     if (cid.name == "f64_bits") { return lower_expr(e, s); }
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
+                    // An erased-generic call whose return mirrors a 64-bit
+                    // argument IS an i64 value: the callee passes the 8-byte
+                    // slot through untouched, so the normal call path (which
+                    // pushes the full-width result) is the correct lowering —
+                    // the width-32 sign-extend below would truncate it.
+                    var gli: i32 = str_ret_argref(s, cid.name);
+                    if (gli >= 0 && gli < c.args.len()
+                        && !expr_is_f64(c.args[gli], s) && infer_expr_width(c.args[gli], s) == 64) { return lower_expr(e, s); }
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
@@ -6508,6 +6523,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         } else if (sc.param_is_i64(cid.name, ai)) {
                             // An argument bound to an i64 param must be lowered as
                             // an i64 value (so an i64 literal / i32 source widens).
+                            sc = lower_i64(c.args[ai], sc);
+                        } else if (sc.callee_param_is_typevar(cid.name, ai)
+                                   && !expr_is_f64(c.args[ai], sc) && infer_expr_width(c.args[ai], sc) == 64) {
+                            // A 64-bit (i64/u64) argument at a BARE-TYPEVAR
+                            // (erased-generic) param: lower as an i64 value — the
+                            // erased slot is a full 8-byte cell on the register
+                            // backends and the value only ever MOVES through it
+                            // (no arithmetic can touch an opaque T), so the width
+                            // survives pass-through. Previously this bailed the
+                            // module to the AST path. wasm defers such modules
+                            // (erased_wide) — its erased param locals are i32.
                             sc = lower_i64(c.args[ai], sc);
                         } else {
                             sc = lower_expr(c.args[ai], sc);
@@ -15935,6 +15961,13 @@ pub struct LowerResult {
     ops: ir.Op[],
     n_locals: i32,
     n_params: i32,
+    // erased_wide: the body passes a 64-bit or f64 value to a BARE-TYPEVAR
+    // (erased-generic) param, or consumes such a call's mirrored 64-bit
+    // return. The register backends lower it (8-byte slots); the wasm
+    // backend types erased param locals i32, so wasm_ir_deferrals_ok defers
+    // the module to the AST path (an f64 through an erased param previously
+    // emitted type-INVALID WAT the wasmtime loader rejects).
+    erased_wide: boolean,
     // arr_slots: the local slots holding arrays — the backend zeroes these at
     // entry so the exit dec-sweep never decs an uninitialised (untaken-branch)
     // slot.
@@ -27276,7 +27309,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // scalar-only struct param / receiver constraint below.
     if (decl_is_struct(structs, fn.ret_type)) {
         if (!decl_is_leaksafe(structs, fn.ret_type)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
     }
     // A tuple-returning function IS lowered when every element is scalar (i32 /
@@ -27294,7 +27327,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // (else tuple_elem_tags chokes on the trailing "[]" and wrongly bails).
     if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40 && !is_array_type_name(fn.ret_type)) {   // 40 = '('
         if (!tuple_elems_lowerable(fn.ret_type, structs)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
     }
     // i64 params + returns ARE lowered now: an i64 param is marked i64 in the
@@ -27359,10 +27392,10 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         var r_is_opt: boolean = fn.receiver_type.len() >= 8 && (fn.receiver_type[0:7] == "Option[" || fn.receiver_type[0:7] == "Result[");
         if (r_is_struct) {
             if (!decl_is_leaksafe(structs, rbase)) {
-                return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+                return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
             }
         } else if (!r_is_prim && !r_is_enum && !r_is_opt && !r_is_map) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
         // A nominal receiver (struct or enum) carries its type name in
         // local_struct_type — a struct for field access, an enum for a
@@ -27394,7 +27427,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     while (i < fn.params.len()) {
         // A struct param must be a scalar-field struct; otherwise bail.
         if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_leaksafe(structs, fn.params[i].type_name)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
         names = names.append(fn.params[i].name);
         // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
@@ -27895,9 +27928,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     if (trmc_ctor != "") {
         var ts: LowerState = emit_trmc(fn, trmc_ctor, s);
         if (ts.ok) {
-            return LowerResult { ok: true, ops: ts.ops, n_locals: ts.locals.len(), n_params: ts.n_params, arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts) };
+            return LowerResult { ok: true, ops: ts.ops, n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts) };
         }
-        return LowerResult { ok: false, ops: [], n_locals: 0, n_params: 0, arr_slots: [], i64_slots: [], f64_slots: [] };
+        return LowerResult { ok: false, ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [] };
     }
     var j: i32 = 0;
     while (j < fn.body.len()) {
@@ -28028,7 +28061,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         } else {
             s = lower_stmt(fn.body[j], s);
         }
-        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots }; }
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots }; }
         var pi: i32 = 0;
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
@@ -28227,7 +28260,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // param-rebind so deep recursion is O(1) stack instead of a SIGSEGV. A no-op
     // for functions without an adjacent `call_direct self ; return` pair.
     var tco_ops: ir.Op[] = tco_self_tail(s.ops, fn.name, s.n_params);
-    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
+    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
 }
 
 // LoweredFn is one function's lowered form, tagged with its name + arity so
@@ -30643,6 +30676,19 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
             // '1'/'2'/'3' (an array param is never fn/dyn), so the existing
             // consumers are unaffected.
             else if (pj < gmask.len() && gmask[pj] == 49) { flags = flags + "4"; any = true; }
+            // A BARE-TYPEVAR (erased-generic) param (`x: T` — a standalone
+            // single-uppercase-letter type spelling, the same convention
+            // rewrite_typevars_to_argrefs keys on; unbounded type params are
+            // STRIPPED from the decl, so funcs[k].type_params can't be
+            // consulted): flag '5'. The call site width-dispatches a 64-bit
+            // argument through lower_i64 (the erased slot is 8 bytes on the
+            // register backends), and the wasm eligibility scan defers modules
+            // passing wide/f64 values here (a wasm erased param local is
+            // i32-typed — see erased_wide in LowerResult). Free functions only
+            // (methods are never erased generics). Distinct from '1'-'4', so
+            // the existing consumers are unaffected.
+            else if (funcs[k].receiver_type.len() == 0 && funcs[k].params[pj].type_name.len() == 1
+                     && funcs[k].params[pj].type_name[0] >= 65 && funcs[k].params[pj].type_name[0] <= 90) { flags = flags + "5"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -33051,6 +33097,117 @@ pub function (s: LowerState) callee_param_is_fn(name: string, idx: i32): boolean
         if (bar < e.len() && e[0:bar] == name) {
             var pos: i32 = bar + 1 + idx;
             return pos < e.len() && e[pos] == 49;   // 49 = '1'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// erased_wide_stmts / erased_wide_expr: the post-lowering scan behind
+// LowerResult.erased_wide — does the body pass a 64-bit (i64/u64) or f64
+// value to a BARE-TYPEVAR (erased-generic) param? Uses the FINAL LowerState
+// (every local's width mark is recorded), so infer_expr_width / expr_is_f64
+// judge argument expressions exactly as the lowering did. f64 is included
+// even though the register backends lower it fine: the wasm backend types an
+// erased param local i32, so both wide kinds must defer wasm to the AST path.
+pub function erased_wide_stmts(stmts: parser.Stmt[], s: LowerState): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (erased_wide_expr(v.init, s)) { return true; } },
+            parser.StmtAssign(a) => { if (erased_wide_expr(a.value, s)) { return true; } },
+            parser.StmtExpr(ex) => { if (erased_wide_expr(ex.value, s)) { return true; } },
+            parser.StmtReturn(r) => { if (erased_wide_expr(r.value, s)) { return true; } },
+            parser.StmtIf(iff) => {
+                if (erased_wide_expr(iff.cond, s)) { return true; }
+                if (erased_wide_stmts(iff.then_body, s)) { return true; }
+                if (erased_wide_stmts(iff.else_body, s)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (erased_wide_expr(w.cond, s)) { return true; }
+                if (erased_wide_stmts(w.body, s)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (erased_wide_expr(fo.iter, s)) { return true; }
+                if (erased_wide_stmts(fo.body, s)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (erased_wide_expr(m.scrutinee, s)) { return true; }
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard && erased_wide_expr(m.arms[ai].guard, s)) { return true; }
+                    if (erased_wide_stmts(m.arms[ai].body, s)) { return true; }
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { if (erased_wide_stmts([d.action], s)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var ai: i32 = 0;
+                    while (ai < c.args.len()) {
+                        if (s.callee_param_is_typevar(cid.name, ai)
+                            && (expr_is_f64(c.args[ai], s) || infer_expr_width(c.args[ai], s) == 64)) { return true; }
+                        ai = ai + 1;
+                    }
+                },
+                _ => {
+                    if (erased_wide_expr(c.callee, s)) { return true; }
+                }
+            }
+            var aj: i32 = 0;
+            while (aj < c.args.len()) { if (erased_wide_expr(c.args[aj], s)) { return true; } aj = aj + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return erased_wide_expr(b.left, s) || erased_wide_expr(b.right, s); },
+        parser.ExprUnary(u) => { return erased_wide_expr(u.operand, s); },
+        parser.ExprIndex(ix) => { return erased_wide_expr(ix.array, s) || erased_wide_expr(ix.index, s); },
+        parser.ExprSlice(sl) => { return erased_wide_expr(sl.array, s) || erased_wide_expr(sl.start, s) || erased_wide_expr(sl.end, s); },
+        parser.ExprFieldAccess(fa) => { return erased_wide_expr(fa.obj, s); },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base && erased_wide_expr(sl2.base, s)) { return true; }
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { if (erased_wide_expr(sl2.field_values[i], s)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprArray(av) => {
+            var i: i32 = 0;
+            while (i < av.elements.len()) { if (erased_wide_expr(av.elements[i], s)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (erased_wide_expr(t.elements[i], s)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return erased_wide_stmts(lm.body, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// callee_param_is_typevar reports whether callee `name`'s param `idx` is a
+// bare-typevar (erased-generic) param (flag '5' in fn_param_sigs) — so a
+// 64-bit argument there must be lowered via lower_i64 (the erased slot takes
+// the full 8-byte value on the register backends). Same registry/format as
+// callee_param_is_fn.
+pub function (s: LowerState) callee_param_is_typevar(name: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.fn_param_sigs.len()) {
+        var e: string = s.fn_param_sigs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0:bar] == name) {
+            var pos: i32 = bar + 1 + idx;
+            return pos < e.len() && e[pos] == 53;   // 53 = '5'
         }
         i = i + 1;
     }
