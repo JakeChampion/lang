@@ -179,6 +179,17 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_split",
 			[]string{"\n__fern_str_split:", ".Lir_split_cl"},
 		},
+		{
+			// random_bytes — the first syscall-leaf migrated to Fern (#2649),
+			// over the __syscall3 sub-floor. The old hand-written IR body
+			// (__fern_random_bytes:) must be gone; op_random_bytes now calls
+			// __fn___fern_random_bytes via the stack ABI, whose body does the
+			// getrandom syscall through the raw `syscall` the __syscall3 op emits.
+			"random_bytes",
+			`function main(): i32 { var b: string = random_bytes(8); return b.len(); }`,
+			"__fn___fern_random_bytes",
+			[]string{"\n__fern_random_bytes:"},
+		},
 	}
 
 	for _, tc := range cases {

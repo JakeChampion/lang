@@ -11,9 +11,16 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > migration is complete.** `chr`, `str_concat`, `i32_to_string`,
 > `str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
 > `string_from_bytes` and `str_split` all lower as Fern functions via these
-> raw-memory intrinsics. What remains hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the
-> syscalling leaves (`read_file`, the clocks, `random_bytes`),
+> raw-memory intrinsics.
+>
+> **Status update (2026-07, syscall sub-floor): started.** The `__syscall3`
+> intrinsic (below) landed and `random_bytes` is the first syscall leaf moved
+> to Fern — on the **x86-64 IR path** (`asmcore.rt_src_random_bytes`; the arm64
+> / AST backends keep their hand-asm because the getrandom syscall number is
+> arch-specific, and wasm has no generic syscall). What remains hand-written
+> (the residue tracked by
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the rest of the
+> syscalling leaves (`read_file`, the clocks; `random_bytes` on arm64/AST/wasm),
 > `__fern_alloc` itself, and the map/array mutator core.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
@@ -54,6 +61,7 @@ nominal.
 | `__raw_store_ptr(ptr: i32, off: i32, v: i32)` | `mov %v, (%ptr,%off*W)` | store a word-sized slot (W = pointer width); for writing box `{data,len}` fields and array slots |
 | `__raw_load_ptr(ptr: i32, off: i32): i32` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
 | `__raw_string(data: i32, len: i32): string` | alloc a 16-byte box `{data, len}` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface |
+| `__syscall3(nr: i32, a1: i32, a2: i32, a3: i32): i32` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
 
 `__raw_string` is the key: it lets a helper allocate a byte buffer with
 `__raw_alloc`, fill it with `__raw_store8`, and hand back a real `string` the
@@ -142,9 +150,15 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    **`str_replace`** — the remaining per-byte string builders, one slice each
    (or grouped by similarity), following the established four-backend +
    AST/IR-lock-in-test pattern.
-5. **The syscall leaves** (`read_file`, clocks, `random_bytes`) via a
-   `__syscall3`-style intrinsic — a separate sub-floor, deferred until the
-   string builders are done.
+5. **The syscall leaves** (`read_file`, clocks, `random_bytes`) via the
+   `__syscall3` intrinsic — a separate sub-floor. **Started:** `__syscall3`
+   landed and `random_bytes` moved to Fern on the x86-64 IR path
+   (`asmcore.rt_src_random_bytes`). The syscall *number* is arch-specific
+   (x86-64 getrandom = 318, arm64 = 278) and the `rt_src_*` sources are shared
+   between the register backends, so arm64/AST parity needs an arch-parameterised
+   source (or a `__sysno_*` constant); wasm keeps its `random_get` WASI bundle.
+   The clocks (2-word `timespec` read-back + i64 math) and `read_file`
+   (multi-syscall + Result) follow.
 
 Each slice ships with AST + IR lock-in tests (the helper compiles from Fern,
 the hand-asm label is gone) and reuses the existing behavioural coverage, and

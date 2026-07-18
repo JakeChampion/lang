@@ -2894,32 +2894,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_random_bytes(%rdi = n) → string box of n CSPRNG bytes via
-    // getrandom (syscall 318). Transcribed from asm.fern: alloc the n-byte
-    // data buffer, fill it, then wrap in a 16-byte string box [data@0, len@8].
-    if (s.has_need("random_bytes")) {
-        s = s.write("__fern_random_bytes:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");           // n
-        s = s.write("    pushq %r12\n");           // buf
-        s = s.write("    movq %rdi, %rbx\n");       // n
-        s = s.write("    call __fern_alloc\n");     // alloc n bytes (rdi = n)
-        s = s.write("    movq %rax, %r12\n");       // buf
-        s = s.write("    movq %r12, %rdi\n");       // getrandom(buf, n, 0)
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $318, %rax\n");       // sys_getrandom
-        s = s.write("    syscall\n");
-        s = s.write("    movq $16, %rdi\n");        // string box
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r12, (%rax)\n");      // data@0
-        s = s.write("    movq %rbx, 8(%rax)\n");     // len@8
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_random_bytes is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
+    // random_bytes) — it allocs n bytes, fills them from getrandom via the
+    // __syscall3 sub-floor, and boxes them with __raw_string. The op_random_bytes
+    // handler calls the stack-arg __fn___fern_random_bytes symbol.
     // __fern_str_bytes was hand-written here through #2649; it is now a Fern
     // runtime function (asmcore.rt_src_str_bytes) lowered through the IR pipeline
     // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it builds
@@ -4267,7 +4246,12 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_env", "__fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
-        "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
+        // __fern_random_bytes: register-ABI symbol kept for the arm64 / AST
+        // backends (still hand-asm); the x86-64 IR path defines the Fern-compiled
+        // __fn___fern_random_bytes (#2649). Both listed during the transition —
+        // a .globl of an undefined symbol is a harmless no-op per backend.
+        "__fern_random_bytes", "__fn___fern_random_bytes",
+        "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
         "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
@@ -4696,6 +4680,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // (#2649 Option A). len -> %rsi, data -> %rdi, call, push the box.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box\n    pushq %rax\n");
             s = s.mark_heap();
+        } else if (o.kind_tag == 204) {  // syscall3
+            // Syscall sub-floor (#2649): operand stack [nr, a1, a2, a3] (a3 on
+            // top). System V syscall convention — nr→%rax, a1→%rdi, a2→%rsi,
+            // a3→%rdx, `syscall`, result in %rax. No runtime symbol.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    popq %rax\n    syscall\n    pushq %rax\n");
         } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern the bytes in .rodata, build an rc-headered box
             // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
@@ -4719,8 +4708,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_arr_slice\n    pushq %rax\n");
             s = s.mark_arr_slice();
         } else if (o.kind_tag == 185) {  // random_bytes
-            // operand stack [n]; __fern_random_bytes(%rdi=n) -> string box in %rax.
-            s = s.write("    popq %rdi\n    call __fern_random_bytes\n    pushq %rax\n");
+            // [n] IS param[0] (+16); call the Fern-compiled __fn___fern_random_bytes
+            // (asmcore.rt_src_random_bytes, #2649) via the stack ABI. Mirrors the
+            // str_from_bytes / str_split handlers.
+            s = s.write("    call __fn___fern_random_bytes\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("random_bytes");
         } else if (o.kind_tag == 186) {  // random_i32
             // no operands; __fern_random_i32() -> i32 in %rax.
@@ -6574,6 +6565,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("str_from_bytes")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), all_structs, s);
+    }
+    // random_bytes — now a Fern runtime function (#2649), lowered through the IR
+    // pipeline: alloc n bytes, fill from getrandom via the __syscall3 sub-floor,
+    // box with __raw_string. Heap-dependent (present above); x86-64-only (the
+    // getrandom syscall number is arch-specific — arm64/wasm keep their bundle).
+    if (s.has_need("random_bytes")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(), all_structs, s);
     }
     // str_split — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: scan for `sep`, append each segment slice (.append() ->

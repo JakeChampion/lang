@@ -6556,6 +6556,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!rst1.ok) { return rst1; }
                         return rst1.emit(ir.op_raw_string());
                     }
+                    // __syscall3(nr, a1, a2, a3) — the syscall sub-floor (#2649).
+                    // Lower the four args left-to-right, then the single-instruction
+                    // syscall op. Only the audited syscall-leaf helpers use it.
+                    if (cid.name == "__syscall3" && c.args.len() == 4) {
+                        var sc0: LowerState = lower_expr(c.args[0], s);
+                        if (!sc0.ok) { return sc0; }
+                        var sc1: LowerState = lower_expr(c.args[1], sc0);
+                        if (!sc1.ok) { return sc1; }
+                        var sc2: LowerState = lower_expr(c.args[2], sc1);
+                        if (!sc2.ok) { return sc2; }
+                        var sc3: LowerState = lower_expr(c.args[3], sc2);
+                        if (!sc3.ok) { return sc3; }
+                        return sc3.emit(ir.op_syscall3());
+                    }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).
                     if (cid.name == "exit" && c.args.len() == 1) {
