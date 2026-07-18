@@ -105,6 +105,54 @@ function main(): i32 {
     return g / 8;
 }`
 	}},
+	// Bound-from-call: `var m: Map[..] = mk(i)` where mk is a registered
+	// builder ("MAPF:" — map_fresh_ret_fns_of) earns the same reclaim credit
+	// as a local map_new, so the loop-reinit drop and end-of-scope free fire
+	// on the binding. Previously each mk() box leaked (the collector only
+	// credited literal map_new inits).
+	{name: "mkcall-loop-getor", src: func(n string) string {
+		return `import "core/map";
+function mk(k: i32): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(k, k * 2);
+    return m;
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) {
+        var m: Map[i32, i32] = mk(i);
+        acc = acc + m.get_or(i, 0);
+        i = i + 1;
+    }
+    if (acc != ` + n + ` * (` + n + ` - 1)) { return 121; }
+    var g: i32 = __heap_bump_bytes() - before;
+    if (g > 900) { return 119; }
+    return g / 8;
+}`
+	}},
+	{name: "mkcall-straightline", src: func(n string) string {
+		return `import "core/map";
+function mk2(k: i32): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(k, k * 2);
+    m = m.insert(k + 1, k * 3);
+    return m;
+}
+function step(k: i32): i32 {
+    var m: Map[i32, i32] = mk2(k);
+    return m.get_or(k, 0) + m.get_or(k + 1, 0);
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
+    if (acc < 0) { return 121; }
+    var g: i32 = __heap_bump_bytes() - before;
+    if (g > 900) { return 119; }
+    return g / 8;
+}`
+	}},
 	{name: "value-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -127,6 +175,60 @@ function main(): i32 {
     var x: Map[i32, i32] = m.insert(1, 11);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < 200) { acc = acc + x.get_or(1, 0) + m.get_or(1, 0); i = i + 1; }
+    if (acc != 200 * 22) { return 121; }
+    return 0;
+}`
+	}},
+	// Param-shaped "builders" must stay OFF the "MAPF:" registry: feed
+	// returns its param (rejected — the returned name is a param, not a
+	// fresh local decl), grow's binding init is a method call on a param
+	// (rejected — not is_fresh_map_init). If either were credited, the
+	// caller's reclaim would free base's live buffers → value corruption.
+	{name: "mkcall-param-negative", fixed: true, want: 0, src: func(string) string {
+		return `import "core/map";
+function feed(m: Map[i32, i32]): Map[i32, i32] {
+    return m;
+}
+function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
+    var t: Map[i32, i32] = m.insert(k, k * 2);
+    return t;
+}
+function main(): i32 {
+    var base: Map[i32, i32] = map_new(8);
+    base = base.insert(1, 11);
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        var x: Map[i32, i32] = feed(base);
+        var y: Map[i32, i32] = grow(base, i + 2);
+        acc = acc + x.get_or(1, 0) + y.get_or(1, 0);
+        i = i + 1;
+    }
+    if (acc != 200 * 22) { return 121; }
+    return 0;
+}`
+	}},
+	// A NESTED `return p;` hides from a top-level-only return scan: pick's
+	// only top-level return is the bare fresh local, but the k<0 arm hands
+	// out the param. map_builder_body_ok rejects any statement containing a
+	// nested return (body_has_return), so pick stays uncredited — otherwise
+	// the caller's loop-reinit drop would free base every iteration.
+	{name: "mkcall-nested-return-negative", fixed: true, want: 0, src: func(string) string {
+		return `import "core/map";
+function pick(p: Map[i32, i32], k: i32): Map[i32, i32] {
+    if (k < 0) { return p; }
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(k, k * 2);
+    return m;
+}
+function main(): i32 {
+    var base: Map[i32, i32] = map_new(8);
+    base = base.insert(1, 11);
+    var i: i32 = 0; var acc: i32 = 0;
+    while (i < 200) {
+        var m: Map[i32, i32] = pick(base, 0 - 1);
+        acc = acc + m.get_or(1, 0) + base.get_or(1, 0);
+        i = i + 1;
+    }
     if (acc != 200 * 22) { return 121; }
     return 0;
 }`
