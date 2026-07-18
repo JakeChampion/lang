@@ -156,6 +156,15 @@ pub function (n: u32) saturating_mul(other: u32): u32 {
     return p as u32;
 }
 
+// `(n: u32) saturating_div(other)` — the unsigned u32 sibling of std/i32's,
+// completing the saturating_ family for `/`. Unsigned division can never
+// overflow, so this equals `n / other`; provided for API parity with the signed
+// types and Rust's u32. Divide-by-zero is the caller's responsibility, as for
+// the bare `/` operator.
+pub function (n: u32) saturating_div(other: u32): u32 {
+    return n / other;
+}
+
 // `(n: u32) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
 // or `None` on u32 overflow; the unsigned u32 sibling of std/i32's `checked_pow`.
 // The running result and squared base are accumulated in u64 and range-checked

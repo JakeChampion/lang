@@ -154,6 +154,15 @@ pub function (n: u64) saturating_mul(other: u64): u64 {
     return p;
 }
 
+// `(n: u64) saturating_div(other)` — the unsigned u64 sibling of std/i32's,
+// completing the saturating_ family for `/`. Unsigned division can never
+// overflow, so this equals `n / other`; provided for API parity with the signed
+// types and Rust's u64. Divide-by-zero is the caller's responsibility, as for
+// the bare `/` operator.
+pub function (n: u64) saturating_div(other: u64): u64 {
+    return n / other;
+}
+
 // `(n: u64) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
 // or `None` on u64 overflow; the unsigned u64 sibling of std/i32's `checked_pow`.
 // u64 has no wider type, so each intermediate product is overflow-tested inline
