@@ -615,6 +615,35 @@ pub function (n: i32) ceil_div(d: i32): i32 {
     return (n + d - 1) / d;
 }
 
+// `(n: i32) div_euclid(rhs)` — Euclidean division: the quotient `q` for which
+// the remainder `n - rhs*q` is always in `[0, |rhs|)` (unlike `/`, which
+// truncates toward zero and leaves a sign-of-`n` remainder). For `n >= 0` it
+// equals `n / rhs`; for negative `n` it rounds the truncating quotient one step
+// further from zero so the remainder stays non-negative. `rhs` must be non-zero
+// (same contract as `/`).
+pub function (n: i32) div_euclid(rhs: i32): i32 {
+    var q: i32 = n / rhs;
+    if (n % rhs < 0) {
+        if (rhs > 0) { return q - 1; }
+        return q + 1;
+    }
+    return q;
+}
+
+// `(n: i32) rem_euclid(rhs)` — the non-negative Euclidean remainder, always in
+// `[0, |rhs|)` — the "true modulo" for wrap-around indexing where `n % rhs`
+// would go negative for negative `n` (e.g. `(-1).rem_euclid(3) == 2`). Pairs
+// with `div_euclid`: `n == rhs * n.div_euclid(rhs) + n.rem_euclid(rhs)`. `rhs`
+// must be non-zero.
+pub function (n: i32) rem_euclid(rhs: i32): i32 {
+    var r: i32 = n % rhs;
+    if (r < 0) {
+        if (rhs < 0) { return r - rhs; }
+        return r + rhs;
+    }
+    return r;
+}
+
 // `(n: i32) round_up_to(m)` — round n up to the nearest
 // multiple of m (m > 0). For n already a multiple, returns
 // n unchanged. m <= 0 returns n.

@@ -114,6 +114,14 @@ pub function (n: u64) checked_div(other: u64): Option[u64] {
     return Some(n / other);
 }
 
+// `(n: u64) div_euclid(rhs)` / `rem_euclid(rhs)` — the unsigned counterparts of
+// std/i32's Euclidean division. For an unsigned type the remainder of `/`/`%`
+// is already non-negative, so these coincide exactly with `/` and `%`; they
+// exist so generic code can call `div_euclid` / `rem_euclid` uniformly across
+// the signed and unsigned integer types. `rhs` must be non-zero.
+pub function (n: u64) div_euclid(rhs: u64): u64 { return n / rhs; }
+pub function (n: u64) rem_euclid(rhs: u64): u64 { return n % rhs; }
+
 // `(n: u64) checked_mul(other)` — `Some(n * other)`, or `None` on u64 overflow.
 // The unsigned u64 sibling of std/i32's `checked_mul`. u64 has no wider type, so
 // it detects overflow with the inverse (unsigned) division: a non-overflowing
