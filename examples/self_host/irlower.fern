@@ -2560,7 +2560,7 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     // A `dyn Trait` receiver (#5142 sibling): resolve the
                     // dispatch result name-based off the qualified registry
                     // entries, like expr_is_str's dyn case.
-                    if (mrrt.len() > 4 && mrrt[0:4] == "dyn ") { return registry_has_method(s.strarr_ret_fns, cfa.field); }
+                    if (mrrt.len() > 4 && mrrt[0:4] == "dyn ") { var dmk: string = dyn_method_key(s.strarr_ret_fns, cfa.field); return dmk != "" && s.is_strarr_ret_fn(dmk); }
                     if (mrrt != "" && s.is_strarr_ret_fn(mrrt + "." + cfa.field)) { return true; }
                     return false;
                 },
@@ -2625,7 +2625,7 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
                         && expr_is_f64arr(cfa.obj, s)) { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
-                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.f64arr_ret_fns, cfa.field); }
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { var dmk: string = dyn_method_key(s.f64arr_ret_fns, cfa.field); return dmk != "" && s.is_f64arr_ret_fn(dmk); }
                     if (crty == "") { return false; }
                     return s.is_f64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -2709,21 +2709,32 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
-// registry_has_method reports whether a return-type registry holds a
-// QUALIFIED "<Type>.<method>" entry for `method` — the name-based
-// resolution a `dyn Trait` dispatch result's type falls back to
-// (#5142). Registries hold bare free-function names and qualified
-// method entries; only the qualified form (the "." separator, which
-// bare names never contain) identifies a method.
-function registry_has_method(registry: string[], method: string): boolean {
+// dyn_method_key returns the qualified "<Type>.<method>" NAME of the
+// first registry entry for `method`, or "" when none exists — the
+// name-based resolution a `dyn Trait` dispatch result's type falls
+// back to (#5142). Registries hold bare free-function names and
+// qualified method entries (only the qualified form contains "."),
+// and an entry may carry a "|…" payload after the name (i64_ret_fns'
+// ret/param flags, the "$arg<i>" generic-mirror markers) — so the
+// caller must re-check the returned key through the registry's OWN
+// predicate (is_*_ret_fn), which parses that payload; a bare suffix
+// match would false-positive on e.g. an i64-PARAM method whose
+// return is i32. Any impl's entry is authoritative for the result
+// type: impls share the trait's declared signature.
+function dyn_method_key(registry: string[], method: string): string {
     var suffix: string = "." + method;
     var i: i32 = 0;
     while (i < registry.len()) {
         var e: string = registry[i];
-        if (e.len() > suffix.len() && e[e.len() - suffix.len() : e.len()] == suffix) { return true; }
+        var pipe: i32 = e.len();
+        var p: i32 = 0;
+        while (p < e.len()) {
+            if (e[p] == 124) { pipe = p; p = e.len(); } else { p = p + 1; }
+        }
+        if (pipe > suffix.len() && e[pipe - suffix.len() : pipe] == suffix) { return e[0:pipe] + ""; }
         i = i + 1;
     }
-    return false;
+    return "";
 }
 
 pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
@@ -2891,7 +2902,8 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // generic-deref lowering and read the string DATA word as the
                     // length.
                     if (mrty.len() > 4 && mrty[0:4] == "dyn ") {
-                        return registry_has_method(s.str_ret_fns, cfa.field);
+                        var dmk: string = dyn_method_key(s.str_ret_fns, cfa.field);
+                        return dmk != "" && s.is_str_ret_fn(dmk);
                     }
                     // Qualified lookup "<recvType>.<method>" (str_ret_fns_of keys
                     // methods that way) so a string-returning method on THIS
@@ -3695,7 +3707,7 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
-                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.f64arr_ret_fns, cfa.field); }
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { var dmk: string = dyn_method_key(s.f64arr_ret_fns, cfa.field); return dmk != "" && s.is_f64arr_ret_fn(dmk); }
                     if (crty == "") { return false; }
                     return s.is_f64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3768,7 +3780,7 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
-                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.i64arr_ret_fns, cfa.field); }
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { var dmk: string = dyn_method_key(s.i64arr_ret_fns, cfa.field); return dmk != "" && s.is_i64arr_ret_fn(dmk); }
                     if (crty == "") { return false; }
                     return s.is_i64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3883,7 +3895,7 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
                         && expr_is_i64arr(cfa.obj, s)) { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
-                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.i64arr_ret_fns, cfa.field); }
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { var dmk: string = dyn_method_key(s.i64arr_ret_fns, cfa.field); return dmk != "" && s.is_i64arr_ret_fn(dmk); }
                     if (crty == "") { return false; }
                     return s.is_i64arr_ret_fn(crty + "." + cfa.field);
                 },
@@ -3952,7 +3964,7 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                     // method `<f64>.m` is recognised as an f64 value. Without this
                     // `a.m() as i32` masked the double's low 32 bits (→ garbage)
                     // instead of truncating via f64_to_i32.
-                    if (crty.len() > 4 && crty[0:4] == "dyn ") { return registry_has_method(s.f64_ret_fns, cfa.field); }
+                    if (crty.len() > 4 && crty[0:4] == "dyn ") { var dmk: string = dyn_method_key(s.f64_ret_fns, cfa.field); return dmk != "" && s.is_f64_ret_fn(dmk); }
                     if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
                     if (crty == "") { return false; }
                     return s.is_f64_ret_fn(crty + "." + cfa.field);
@@ -4214,7 +4226,8 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
-                    if (crty.len() > 4 && crty[0:4] == "dyn " && registry_has_method(s.i64_ret_fns, cfa.field)) { return 64; }
+                    var dmk: string = dyn_method_key(s.i64_ret_fns, cfa.field);
+                    if (crty.len() > 4 && crty[0:4] == "dyn " && dmk != "" && s.is_i64_ret_fn(dmk)) { return 64; }
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return 64; }
                 },
                 _ => {}
@@ -4404,7 +4417,8 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
-                    if (crty.len() > 4 && crty[0:4] == "dyn " && registry_has_method(s.i64_ret_fns, cfa.field)) { return lower_expr(e, s); }
+                    var dmk: string = dyn_method_key(s.i64_ret_fns, cfa.field);
+                    if (crty.len() > 4 && crty[0:4] == "dyn " && dmk != "" && s.is_i64_ret_fn(dmk)) { return lower_expr(e, s); }
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
                 },
                 _ => {}
