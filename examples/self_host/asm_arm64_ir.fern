@@ -1385,8 +1385,8 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs, mod.structs);
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(mod.funcs, mod.structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(mod.funcs, mod.structs);
@@ -1396,7 +1396,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(mod.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         fi = fi + 1;
     }
     s = s.write("_start:\n");
