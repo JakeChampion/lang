@@ -1017,8 +1017,17 @@ func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *Error, got %T", es[0])
 	}
-	if ce.Note != `did you mean "counter"?` {
-		t.Errorf("hint = %q, want suggestion of \"counter\"", ce.Note)
+	if ce.Fix == nil {
+		t.Fatal("expected a machine-applicable fix")
+	}
+	if ce.Fix.Replacement != "counter" {
+		t.Errorf("fix replacement = %q, want %q", ce.Fix.Replacement, "counter")
+	}
+	if ce.Fix.Title != "replace `countr` with `counter`" {
+		t.Errorf("fix title = %q", ce.Fix.Title)
+	}
+	if ce.Fix.Length != len("countr") || ce.Fix.Pos != ce.Pos {
+		t.Errorf("fix span = (%v, %d), want the error's own (%v, %d)", ce.Fix.Pos, ce.Fix.Length, ce.Pos, len("countr"))
 	}
 	if ce.Span != len("countr") {
 		t.Errorf("span = %d, want %d", ce.Span, len("countr"))
@@ -1039,8 +1048,45 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 	}
 	es := err.(diag.Errors)
 	ce := es[0].(*Error)
-	if ce.Note != "" {
-		t.Errorf("expected no hint, got %q", ce.Note)
+	if ce.Fix != nil {
+		t.Errorf("expected no fix, got %+v", ce.Fix)
+	}
+}
+
+// The E001 near-miss fix is MACHINE-APPLICABLE (#4413 Rec §3): applying
+// the suggested replacement over its span must yield a program that
+// parses AND checks cleanly — the soundness bar for attaching one.
+func TestUndefinedIdentifierFixApplies(t *testing.T) {
+	src := `function f(): i32 {
+	var counter: i32 = 0;
+	return countr;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("expected diag.Errors, got %v", err)
+	}
+	ce := es[0].(*Error)
+	if ce.Fix == nil {
+		t.Fatal("expected a fix")
+	}
+	// Apply: replace Length bytes at (Line, Col) with Replacement.
+	lines := strings.Split(src, "\n")
+	ln := lines[ce.Fix.Pos.Line-1]
+	col := ce.Fix.Pos.Col - 1
+	fixed := ln[:col] + ce.Fix.Replacement + ln[col+ce.Fix.Length:]
+	lines[ce.Fix.Pos.Line-1] = fixed
+	applied := strings.Join(lines, "\n")
+	prog2, err := parser.Parse(applied)
+	if err != nil {
+		t.Fatalf("applied fix does not re-parse: %v\n%s", err, applied)
+	}
+	if _, err := Check(prog2); err != nil {
+		t.Fatalf("applied fix does not check: %v\n%s", err, applied)
 	}
 }
 
