@@ -328,6 +328,35 @@ function main(): i32 {
     if (i64_rev(i64_rev(987654321 as i64)) == (987654321 as i64)) { r = r + 9; }
     return r;
 }`},
+	// div_euclid / rem_euclid (the std/i32 · i64 additions): Euclidean division
+	// with a remainder always in [0, |rhs|). Exercises i32/i64 divide + remainder
+	// + signed compare + branch across function calls on the IR path (i64 / is
+	// already covered by int-checked-div; this adds i64 %). Oracle-checked, so
+	// the negative-dividend rounding must be right. Five hits → 42.
+	{"int-euclid", `function i32_de(n: i32, rhs: i32): i32 {
+    var q: i32 = n / rhs;
+    if (n % rhs < 0) { if (rhs > 0) { return q - 1; } return q + 1; }
+    return q;
+}
+function i32_re(n: i32, rhs: i32): i32 {
+    var r: i32 = n % rhs;
+    if (r < 0) { if (rhs < 0) { return r - rhs; } return r + rhs; }
+    return r;
+}
+function i64_re(n: i64, rhs: i64): i64 {
+    var r: i64 = n % rhs;
+    if (r < (0 as i64)) { if (rhs < (0 as i64)) { return r - rhs; } return r + rhs; }
+    return r;
+}
+function main(): i32 {
+    var r: i32 = 0;
+    if (i32_de(0 - 7, 3) == (0 - 3)) { r = r + 8; }                  // rounds away from zero
+    if (i32_re(0 - 7, 3) == 2) { r = r + 8; }                        // non-negative remainder
+    if (i32_re(0 - 1, 3) == 2) { r = r + 8; }                        // wrap-around
+    if (i64_re((0 as i64) - 7, 3 as i64) == (2 as i64)) { r = r + 9; }
+    if (i64_re((0 as i64) - 1000000000001, 7 as i64) == (5 as i64)) { r = r + 9; }  // past i32 range
+    return r;
+}`},
 }
 
 // TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted

@@ -412,6 +412,32 @@ pub function (n: i64) ceil_div(d: i64): i64 {
     return (n + d - (1 as i64)) / d;
 }
 
+// `(n: i64) div_euclid(rhs)` — Euclidean division, the i64 sibling of std/i32's
+// `div_euclid`: the quotient whose remainder `n - rhs*q` lands in `[0, |rhs|)`.
+// For `n >= 0` it equals `n / rhs`; for negative `n` it rounds one step further
+// from zero. `rhs` must be non-zero (same contract as `/`).
+pub function (n: i64) div_euclid(rhs: i64): i64 {
+    var q: i64 = n / rhs;
+    if (n % rhs < (0 as i64)) {
+        if (rhs > (0 as i64)) { return q - (1 as i64); }
+        return q + (1 as i64);
+    }
+    return q;
+}
+
+// `(n: i64) rem_euclid(rhs)` — the non-negative Euclidean remainder in
+// `[0, |rhs|)`, the i64 sibling of std/i32's `rem_euclid`. Pairs with
+// `div_euclid`: `n == rhs * n.div_euclid(rhs) + n.rem_euclid(rhs)`. `rhs` must
+// be non-zero.
+pub function (n: i64) rem_euclid(rhs: i64): i64 {
+    var r: i64 = n % rhs;
+    if (r < (0 as i64)) {
+        if (rhs < (0 as i64)) { return r - rhs; }
+        return r + rhs;
+    }
+    return r;
+}
+
 // `(n: i64) log2_floor()` — `floor(log2(n))` for `n >= 1`; `-1` for `n <= 0`
 // (no real log; the sentinel lets callers test `>= 0` for "valid"). Counts
 // halvings rather than leaning on `leading_zeros` (which i64 doesn't expose),
