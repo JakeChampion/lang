@@ -1491,6 +1491,20 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `.len()` on the result mis-dispatched to the array path — a silent
 		// miscompile (returned 56, not 4). These assert the IR value directly (the
 		// AST==IR differential is blind to a both-paths-wrong case).
+		// A map-RETURNING call as a TUPLE-LITERAL element (`(mk(), 3)`): the
+		// element tag now recovers the full Map[K, V] from the map_ret_fns
+		// registry (#3317's missing arm in expr_map_type_tag), so a later
+		// `t.0.get_or(…)` / `t.0.len()` dispatches as a map op. Before, the
+		// element fell through to the scalar "i32" tag and the map method
+		// silently returned the -1 unknown-method shim (10 read back as 2,
+		// 4 as 2). Pinned to the absolute IR value (the AST==IR differential
+		// is blind to a both-paths-wrong case).
+		{"map-ret-tuple-elem-getor", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		{"map-ret-tuple-elem-len", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.len(); }`, 4},
+		{"map-ret-tuple-elem-unannotated", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		// The METHOD-call sibling (`(f.mk(), 3)`): the registry keys methods
+		// "<BaseType>.<method>", resolved via the receiver's struct type.
+		{"map-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, f.base); return m; } function main(): i32 { var f: Fac = Fac { base: 7 }; var t: (Map[i32, i32], i32) = (f.mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
 		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},

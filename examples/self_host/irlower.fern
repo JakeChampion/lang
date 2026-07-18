@@ -1221,6 +1221,38 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
         },
         _ => {}
     }
+    // A call to a map-RETURNING function (`(mk(), 3)` / `(f.mk(), 3)` — the
+    // tuple-element sibling of the unannotated `var m = f()` inference):
+    // recover the full Map[K, V] from the map_ret_fns registry
+    // ("name|Map[K,V]" for free fns, "<BaseType>.<method>|Map[K,V]" for
+    // methods, the receiver type resolved via expr_struct_type). This was
+    // #3317's missing arm — without it a call-built map element fell through
+    // to the scalar "i32" tag and a later `t.N.get_or(…)` / `t.N.len()`
+    // mis-dispatched (silently returning the -1 unknown-method shim).
+    var mrkey: string = "";
+    match (e) {
+        parser.ExprCall(mrc) => {
+            match (mrc.callee) {
+                parser.ExprIdent(mrcid) => { mrkey = mrcid.name; },
+                parser.ExprFieldAccess(mrfa) => {
+                    var mrrt: string = expr_struct_type(mrfa.obj, s);
+                    if (mrrt != "") { mrkey = mrrt + "." + mrfa.field; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (mrkey != "") {
+        var mri: i32 = 0;
+        while (mri < s.map_ret_fns.len()) {
+            var mre: string = s.map_ret_fns[mri];
+            var mrb: i32 = 0;
+            while (mrb < mre.len() && mre[mrb] != 124) { mrb = mrb + 1; }   // '|'
+            if (mrb < mre.len() && mre[0:mrb] == mrkey) { return mre[mrb + 1 : mre.len()] + ""; }
+            mri = mri + 1;
+        }
+    }
     var kk: i32 = expr_map_kind(e, s);
     if (kk < 0) { return ""; }
     var ktag: string = "string";
