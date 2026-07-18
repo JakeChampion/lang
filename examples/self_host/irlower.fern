@@ -30280,14 +30280,19 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
             // '1'/'2'/'3' (an array param is never fn/dyn), so the existing
             // consumers are unaffected.
             else if (pj < gmask.len() && gmask[pj] == 49) { flags = flags + "4"; any = true; }
-            // A BARE-TYPEVAR (erased-generic) param (`x: T` with T in the fn's
-            // type params): flag '5'. The call site width-dispatches a 64-bit
+            // A BARE-TYPEVAR (erased-generic) param (`x: T` — a standalone
+            // single-uppercase-letter type spelling, the same convention
+            // rewrite_typevars_to_argrefs keys on; unbounded type params are
+            // STRIPPED from the decl, so funcs[k].type_params can't be
+            // consulted): flag '5'. The call site width-dispatches a 64-bit
             // argument through lower_i64 (the erased slot is 8 bytes on the
             // register backends), and the wasm eligibility scan defers modules
             // passing wide/f64 values here (a wasm erased param local is
-            // i32-typed — see erased_wide in LowerResult). Distinct from
-            // '1'-'4', so the existing consumers are unaffected.
-            else if (util.index_of_str(funcs[k].type_params, funcs[k].params[pj].type_name) >= 0) { flags = flags + "5"; any = true; }
+            // i32-typed — see erased_wide in LowerResult). Free functions only
+            // (methods are never erased generics). Distinct from '1'-'4', so
+            // the existing consumers are unaffected.
+            else if (funcs[k].receiver_type.len() == 0 && funcs[k].params[pj].type_name.len() == 1
+                     && funcs[k].params[pj].type_name[0] >= 65 && funcs[k].params[pj].type_name[0] <= 90) { flags = flags + "5"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
