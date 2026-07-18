@@ -2076,52 +2076,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // NULL (#4370).
         s = s.write("    negq %rax\n    movq %rax, %r12\n    movq $16, %rdi\n    call __fern_alloc\n    movq %rbx, (%rax)\n    movq %r13, 8(%rax)\n    movq %rax, %rsi\n    movq %r12, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $0, (%rax)\n    movq %r13, 8(%rax)\n.Lrda_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
     }
-    // __fern_remove_file: %rdi = path box -> Option[IoError] box. NUL-terminates
-    // the path, unlinkat(AT_FDCWD, pathz, 0). Transcribed verbatim from asm.fern's
-    // emit_runtime (the same body the AST path calls); gated on the remove_file
-    // need; calls __fern_alloc.
-    if (s.has_need("remove_file")) {
-        s = s.write("__fern_remove_file:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r12\n");
-        s = s.write("    leaq 1(%r12), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrf_copy:\n");
-        s = s.write("    cmpq %r12, %rcx\n");
-        s = s.write("    jge .Lrf_cpd\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrf_copy\n");
-        s = s.write(".Lrf_cpd:\n");
-        s = s.write("    movb $0, (%r13,%r12,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $263, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lrf_err\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
-        s = s.write("    jmp .Lrf_ret\n");
-        s = s.write(".Lrf_err:\n");
-        // %rax = -errno from unlinkat; %r13/%r12 = NUL-terminated path copy +
-        // length (both live). Box the path and build the real Some(IoError)
-        // payload — this used to be NULL (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r12, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $0, (%rax)\n    movq %r13, 8(%rax)\n.Lrf_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
+    // __fern_remove_file is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on remove_file) —
+    // unlinkat via __syscall3, returns Option[IoError]. The op_remove_file handler
+    // calls the stack-ABI __fn___fern_remove_file symbol.
     // __fern_temp_dir: %rdi = prefix box -> Result[string, IoError] box. Makes a
     // uniquely-named /tmp/<prefix>-<monotonic_ns> directory (mkdirat). Transcribed
     // verbatim from asm.fern's emit_runtime (the same body the AST path calls);
@@ -4033,7 +3991,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
         "__fern_read_int", "__fern_read_line", "__fern_read_file", "__fn___fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
-        "__fern_remove_dir_all", "__fern_temp_dir", "__fern_read_dir", "__fern_remove_file",
+        "__fern_remove_dir_all", "__fern_temp_dir", "__fern_read_dir", "__fern_remove_file", "__fn___fern_remove_file",
         "__fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
@@ -4706,10 +4664,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rdi\n    call __fern_remove_dir_all\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("remove_dir_all");
         } else if (o.kind_tag == 173) {  // remove_file
-            // [pathbox] -> unlink the named file, push a fresh Option[IoError] box
-            // (the AST path's __fern_remove_file, which allocates). The path string
-            // box is the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_remove_file\n    pushq %rax\n");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_remove_file
+            // (#2649) via the stack ABI — pushes a fresh Option[IoError].
+            s = s.write("    call __fn___fern_remove_file\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("remove_file");
         } else if (o.kind_tag == 174) {  // temp_dir
             // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
@@ -6466,6 +6423,12 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("read_file")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_file(), all_structs, s);
+    }
+    // remove_file — now a Fern runtime function (#2649): unlinkat via __syscall3,
+    // returns Option[IoError]. Heap-dependent (present above); x86-64-only.
+    if (s.has_need("remove_file")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_remove_file(), all_structs, s);
     }
     if (s.has_need("poll")) { s = emit_ir_poll(s); }
     if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }
