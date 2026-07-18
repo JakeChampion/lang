@@ -13,15 +13,19 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `string_from_bytes` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
 >
-> **Status update (2026-07, syscall sub-floor): started.** The `__syscall3`
-> intrinsic (below) landed and `random_bytes` is the first syscall leaf moved
-> to Fern — on the **x86-64 IR path** (`asmcore.rt_src_random_bytes`; the arm64
-> / AST backends keep their hand-asm because the getrandom syscall number is
-> arch-specific, and wasm has no generic syscall). What remains hand-written
-> (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the rest of the
-> syscalling leaves (`read_file`, the clocks; `random_bytes` on arm64/AST/wasm),
-> `__fern_alloc` itself, and the map/array mutator core.
+> **Status update (2026-07, syscall sub-floor): in progress.** The `__syscall3`
+> intrinsic (below) landed; `random_bytes` and the three clocks (`monotonic_ns`
+> / `now_unix_ms` / `now_ns`) are the syscall leaves moved to Fern so far — on
+> the **x86-64 IR path** (`asmcore.rt_src_random_bytes` / `_monotonic_ns` / …;
+> the arm64 / AST backends keep their hand-asm because the syscall numbers are
+> arch-specific, and wasm has no generic syscall). The clocks slice added one
+> more floor primitive — `__raw_scratch` (a fixed static buffer for the kernel
+> to write `timespec`/`stat` into — no per-call heap leak) — and reuses the
+> existing `__load_i64` for the i64 `tv_sec`/`tv_nsec` read-back. What remains
+> hand-written (the residue tracked by
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is `read_file` + the
+> fs family, the syscall leaves on arm64/AST/wasm, `__fern_alloc` itself, and the
+> map/array mutator core.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
@@ -62,6 +66,11 @@ nominal.
 | `__raw_load_ptr(ptr: i32, off: i32): i32` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
 | `__raw_string(data: i32, len: i32): string` | alloc a 16-byte box `{data, len}` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface |
 | `__syscall3(nr: i32, a1: i32, a2: i32, a3: i32): i32` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
+| `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
+
+Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64
+math reuses the **existing** `__load_i64(addr): i64` intrinsic (#4375) — no new
+op was added for that.
 
 `__raw_string` is the key: it lets a helper allocate a byte buffer with
 `__raw_alloc`, fill it with `__raw_store8`, and hand back a real `string` the
@@ -151,14 +160,15 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    (or grouped by similarity), following the established four-backend +
    AST/IR-lock-in-test pattern.
 5. **The syscall leaves** (`read_file`, clocks, `random_bytes`) via the
-   `__syscall3` intrinsic — a separate sub-floor. **Started:** `__syscall3`
-   landed and `random_bytes` moved to Fern on the x86-64 IR path
-   (`asmcore.rt_src_random_bytes`). The syscall *number* is arch-specific
-   (x86-64 getrandom = 318, arm64 = 278) and the `rt_src_*` sources are shared
-   between the register backends, so arm64/AST parity needs an arch-parameterised
-   source (or a `__sysno_*` constant); wasm keeps its `random_get` WASI bundle.
-   The clocks (2-word `timespec` read-back + i64 math) and `read_file`
-   (multi-syscall + Result) follow.
+   `__syscall3` intrinsic — a separate sub-floor. **In progress:** `__syscall3`
+   landed; `random_bytes` (`rt_src_random_bytes`) and the three clocks
+   (`rt_src_monotonic_ns` / `_now_unix_ms` / `_now_ns`, which also needed
+   `__raw_scratch` + reused `__load_i64`) moved to Fern on the x86-64 IR path. The
+   syscall *number* is arch-specific (x86-64 getrandom = 318 / clock_gettime =
+   228, arm64 = 278 / 113) and the `rt_src_*` sources are shared between the
+   register backends, so arm64/AST parity needs an arch-parameterised source (or
+   a `__sysno_*` constant); wasm keeps its WASI bundles. `read_file` + the fs
+   family (multi-syscall + `stat` scratch + Result) follow.
 
 Each slice ships with AST + IR lock-in tests (the helper compiles from Fern,
 the hand-asm label is gone) and reuses the existing behavioural coverage, and
