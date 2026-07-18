@@ -15609,6 +15609,13 @@ function cross_recipient_fields_fresh(slit: parser.ExprStructLit, structs: parse
                 parser.ExprStructLit(isl) => { if (isl.has_base) { return false; } },
                 _ => { return false; }
             }
+        } else if (fkt == "fn") {
+            // Fresh lambda / __mkclo$ env box only (a bare closure ident may
+            // alias a live box the donor-release side would free). MUST be
+            // tested BEFORE is_enum_like_name: the coarse "fn" spelling reads
+            // as enum-like (see is_enum_like_name's header), and the enum
+            // arm's variant-ctor demand would reject every closure value.
+            if (!fn_field_value_is_fresh(slit.field_values[fk])) { return false; }
         } else if (is_enum_like_name(fkt, structs)) {
             if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { return false; }
         } else if (fkt == "string") {
@@ -17867,6 +17874,30 @@ function strarr_elem_store_ok(e: parser.Expr): boolean {
         _ => {}
     }
     return str_local_binding_is_fresh(e);
+}
+
+// fn_field_value_is_fresh: `e` is a FRESH closure value for an fn-typed
+// struct field — a lambda literal (pre-lift AST) or its lifted spelling, a
+// `__mkclo$…` env-box constructor call (the reuse-site walkers run on the
+// LIFTED module, where every fn-field lambda is already wrapped). Both build
+// a sole-owned rc=1 env box at the construction site, so the reuse arm's
+// shallow arr_dec of the OLD box can never free a live alias. The same dual
+// accept as the clofld admission scan (see clofld_scan's struct-lit arm).
+function fn_field_value_is_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprLambda(_) => { return true; },
+        parser.ExprCall(cv) => {
+            match (cv.callee) {
+                parser.ExprIdent(cvid) => {
+                    if (cvid.name.len() > 8 && cvid.name[0:8] == "__mkclo$") { return true; }
+                },
+                _ => {}
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // strarr_lit_all_elems_fresh: `e` is a string[] ARRAY LITERAL whose every
@@ -23715,6 +23746,14 @@ function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name:
                 // and value-freshness gates on BOTH sides (donor_enum_fields_fresh
                 // / cross_recipient_fields_fresh require an element-fresh array
                 // literal), so the freed elements + buffer are provably sole-owned.
+                // fn (closure) fields (#4356 Delta B, native's FuncType kind):
+                // admitted via the enum-like read of the coarse "fn" spelling
+                // (is_enum_like_name("fn") is true — see its header), with the
+                // enum arm's shallow rc-guarded dec as the env-box release (the
+                // k_clo model, captures leak) and fresh-lambda value gates on
+                // BOTH sides (fn_field_value_is_fresh in donor_enum_fields_fresh
+                // / cross_recipient_fields_fresh, each tested BEFORE their enum
+                // arm), so the freed box is provably sole-owned.
                 if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && t != "string[]" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
                 fi = fi + 1;
             }
@@ -23831,6 +23870,7 @@ function struct_has_enum_field(structs: parser.StructDecl[], name: string): bool
                 if (is_enum_like_name(structs[i].fields[fi].type_name, structs)) { return true; }
                 if (structs[i].fields[fi].type_name == "string") { return true; }
                 if (structs[i].fields[fi].type_name == "string[]") { return true; }
+                if (structs[i].fields[fi].type_name == "fn") { return true; }
                 fi = fi + 1;
             }
             return false;
@@ -23859,7 +23899,10 @@ function donor_enum_fields_fresh(body: parser.Stmt[], name: string, structs: par
                             var fk: i32 = 0;
                             while (fk < sl.field_names.len()) {
                                 var fkt: string = decl_field_type(structs, sl.type_name, sl.field_names[fk]);
-                                if (is_enum_like_name(fkt, structs)) {
+                                if (fkt != "fn" && is_enum_like_name(fkt, structs)) {
+                                    // "fn" reads as enum-like (see is_enum_like_name's
+                                    // header) but is gated by its own fresh-closure arm
+                                    // below, not the variant-ctor demand.
                                     if (variant_ctor_enum_owner(sl.field_values[fk], structs) != fkt) { return false; }
                                 }
                                 if (fkt == "string") {
@@ -23879,6 +23922,11 @@ function donor_enum_fields_fresh(body: parser.Stmt[], name: string, structs: par
                                     // literal, so the reuse-site __fern_str_arr_free
                                     // (elements + buffer) is alias-free.
                                     if (!strarr_lit_all_elems_fresh(sl.field_values[fk])) { return false; }
+                                }
+                                if (fkt == "fn") {
+                                    // An fn field must be a fresh lambda / __mkclo$
+                                    // box, so the reuse-site arr_dec is alias-free.
+                                    if (!fn_field_value_is_fresh(sl.field_values[fk])) { return false; }
                                 }
                                 fk = fk + 1;
                             }
@@ -24003,6 +24051,12 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                                                     parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
                                                     _ => { ok = false; }
                                                 }
+                                            } else if (fkt == "fn") {
+                                                // An fn override must be a fresh lambda /
+                                                // __mkclo$ box (tested BEFORE the enum arm:
+                                                // "fn" reads as enum-like), so the reused
+                                                // box solely owns the new env box.
+                                                if (!fn_field_value_is_fresh(slit.field_values[fk])) { ok = false; }
                                             } else if (is_enum_like_name(fkt, structs)) {
                                                 // An ENUM override value must be a fresh
                                                 // variant ctor of that enum (#4356), so the
@@ -24185,6 +24239,9 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                     // sweep's safe-leak model), aliased box just decs. The base's
                     // enum values are fresh-ctor gated (donor_enum_fields_fresh),
                     // so the freed box can never be a still-live alias.
+                    // "fn" overrides ALSO land here (enum-like spelling): the
+                    // shallow dec IS the k_clo env-box release; the base's fn
+                    // values are fresh-lambda gated (donor_enum_fields_fresh).
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -24788,6 +24845,10 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     // Admission gates both sides' enum values to fresh variant
                     // ctors (donor_enum_fields_fresh / the recipient walk), so
                     // the freed box can never be a still-live alias.
+                    // "fn" fields ALSO land here (the coarse spelling reads as
+                    // enum-like) — the same shallow rc-guarded dec IS the k_clo
+                    // env-box release (captures leak), and the admission walks
+                    // gate both sides' values to fresh lambdas / __mkclo$ boxes.
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(ri, struct_field_width(st.structs, donor_type, ri)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
