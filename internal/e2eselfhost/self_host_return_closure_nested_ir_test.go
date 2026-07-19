@@ -29,6 +29,13 @@ var returnClosureNestedIRCases = []struct {
 	{"inner-arith", "function pick(n: i32): () => (() => i32) { return () => () => n + 1; } function main(): i32 { var g = pick(10); var h = g(); return h(); }", 11},
 	// Innermost closure takes an argument.
 	{"inner-arg", "function pick(n: i32): () => ((i32) => i32) { return () => (x: i32) => x + n; } function main(): i32 { var g = pick(5); var h = g(); return h(10); }", 15},
+	// Chained call on a var-bound RETCLO local: `g()()` — the inner g() result
+	// is called directly (expression position), no intermediate `var h`.
+	{"chain-local", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { var g = pick(9); return g()(); }", 9},
+	// Fully chained on the factory call: `pick(9)()()` — no var at all.
+	{"chain-full", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { return pick(9)()(); }", 9},
+	// Fully chained with an argument-taking innermost closure.
+	{"chain-arg", "function pick(n: i32): () => ((i32) => i32) { return () => (x: i32) => x + n; } function main(): i32 { return pick(5)()(10); }", 15},
 }
 
 // TestSelfHostReturnClosureNestedIRX86_64 — the x86-64 irlower fix, through the

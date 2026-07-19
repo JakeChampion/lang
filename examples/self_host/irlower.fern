@@ -8246,7 +8246,24 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 parser.ExprCall(cocall) => {
                     var coc_is_closure: boolean = false;
                     match (cocall.callee) {
-                        parser.ExprIdent(cocid) => { if (util.index_of_str(s.closure_fns, cocid.name) >= 0) { coc_is_closure = true; } },
+                        parser.ExprIdent(cocid) => {
+                            // `mk()(args)` — inner call to a closure-returning
+                            // module fn — OR `g()(args)` where g is a RETCLO
+                            // closure LOCAL (g() returns a closure box), #5281.
+                            if (util.index_of_str(s.closure_fns, cocid.name) >= 0) { coc_is_closure = true; }
+                            else if (s.is_closure_local("RETCLO$" + cocid.name)) { coc_is_closure = true; }
+                        },
+                        // `pick(9)()(args)` — the inner callee is ITSELF a call to a
+                        // RETCLO2 factory (its result's OWN call returns a closure),
+                        // so `pick(9)()` returns a closure box; dispatch env-first (#5281).
+                        parser.ExprCall(cocinner) => {
+                            match (cocinner.callee) {
+                                parser.ExprIdent(cociid) => {
+                                    if (util.index_of_str(s.closure_fns, "RETCLO2:" + cociid.name) >= 0) { coc_is_closure = true; }
+                                },
+                                _ => {}
+                            }
+                        },
                         _ => {}
                     }
                     // A callee that returns a CLOSURE box [funcval, caps…] (a
