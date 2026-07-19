@@ -34,6 +34,19 @@ var structTupleFieldIRCases = []struct {
 	{"tuple-result", `struct P { t: (Result[i32, string], i32) } function main(): i32 { var p = P{t: (Ok(5), 3)}; match (p.t.0) { Ok(n) => { return n + p.t.1; }, Err(e) => { return 0; } } }`},
 	// Flat-tuple struct field regression (must stay on the IR path).
 	{"flat-regress", `struct P { t: (i32, i32) } function main(): i32 { var p = P{t: (5, 6)}; return p.t.0 + p.t.1; }`},
+	// A tuple struct field carrying a STRING-ARRAY element `(i32, string[])`: the
+	// array is a heap pointer in one tuple slot, leaking with the (leak-only) tuple
+	// field — the set tuple_elems_lowerable already admits for tuple construction /
+	// return, now aligned in the struct-field admission gate. `p.t.1.len()` reads
+	// the array length → 5 + 2 = 7.
+	{"tuple-strarr", `struct P { t: (i32, string[]) } function main(): i32 { var p = P{t: (5, ["a", "bb"])}; return p.t.0 + p.t.1.len(); }`},
+	// A SCALAR-array element `(i32, i32[])`, indexing an element too → 5 + 3 + 30 = 38.
+	{"tuple-i32arr", `struct P { t: (i32, i32[]) } function main(): i32 { var p = P{t: (5, [10, 20, 30])}; return p.t.0 + p.t.1.len() + p.t.1[2]; }`},
+	// Reading a STRING element OUT of the tuple field's string array — `p.t.1[1]`
+	// is a string whose `.len()` must resolve → 5 + 3 = 8.
+	{"tuple-strarr-elem", `struct P { t: (i32, string[]) } function main(): i32 { var p = P{t: (5, ["a", "bbb"])}; return p.t.0 + p.t.1[1].len(); }`},
+	// An 8-byte f64-array element alongside a plain scalar field → 3 + 5 + 2 = 10.
+	{"tuple-f64arr", `struct P { n: i32, t: (i32, f64[]) } function main(): i32 { var p = P{n: 3, t: (5, [1.0, 2.0])}; return p.n + p.t.0 + p.t.1.len(); }`},
 }
 
 // TestSelfHostStructTupleFieldIRX86_64 routes each case through the self-hosted
