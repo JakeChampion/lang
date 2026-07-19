@@ -78,6 +78,19 @@ Rules:
    not declared). Zero enforcement, immediately useful for auditing,
    and it hardens the builtin→capability table before any error
    exists.
+
+   **Status: shipped (#5361).** `internal/caps` holds the table
+   (`BuiltinCaps` + the `Ungated` allowlist; completeness tests
+   enumerate the checker and interp builtin registries and fail on an
+   unclassified addition) and the reachability walk; `fern
+   -capabilities FILE.fern` prints one sorted line per package —
+   `app  fs,net  (example: main → lib__save → write_file)` — with
+   stdlib usage folded into the calling package's row (the
+   entry-point-altitude answer to the open question below). Phase 1
+   reports *declared* reachability (every declared function is a
+   root, uncalled or not), counts closures at their definition
+   package, and follows calls into deeper packages, mirroring the
+   enforcement rule above.
 2. **Enforcement.** `capabilities` key honoured; violations are
    checker errors (new E-code) when the key is present; absent key =
    warn-and-allow for one release, then default-deny.
