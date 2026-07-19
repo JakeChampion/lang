@@ -1924,6 +1924,20 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 // pre-IR check gate (#4327) rejected valid Option returns.
                 return ty_from_name(ct);
             }
+            // `expr?` (parsed as unary `try_`) HAS the operand's Ok/Some payload
+            // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
+            // the `?` result fell through to i32 below, so `var o: Option[i32] =
+            // f()?` (f: Result[Option[i32], i32]) was rejected E003 "initializer
+            // has type i32". Only bit the Option/struct payload case — a string /
+            // array / scalar payload slipped through the lenient assignable check.
+            if (u.op == "try_") {
+                var ot: Ty = infer_expr_type(u.operand, s);
+                match (ot) {
+                    TyResult(_) => { return result_inner(ot); },
+                    TyOption(_) => { return option_inner(ot); },
+                    _ => { return ty_i32(); }
+                }
+            }
             return ty_i32();
         },
         parser.ExprCall(c) => {
