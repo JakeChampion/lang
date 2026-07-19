@@ -8,22 +8,24 @@ import (
 	"testing"
 )
 
-// Self-host RC: a heap enum payload extracted via `match` is freed prematurely.
+// Self-host RC: a heap array payload of Ok()/Some()/Err() must be alias-inc'd.
 //
-// When a `match (result) { Ok(names) => ... }` arm binds a HEAP payload (here a
-// `string[]`), the self-host x86-64 IR RC drops the enum wrapper in a way that
-// frees the extracted payload too — a missing ownership transfer (the native
-// Perceus increments the moved-out binding / suppresses the wrapper's recursive
-// dec of it; the self-host does not). It's a use-after-free: benign while the
-// freed backing store is untouched, but corrupted the moment a later allocation
-// reuses it — so it only bites when the payload is held live ACROSS an allocating
-// call. gdb shows `names[j]` coming back as the allocator's filler bytes
-// (0x7979...) and faulting at the element's `movq 8(%rax)`.
+// Regression guard for a self-host-only UAF (#2649): `Ok(r)` / `Some(r)` where
+// `r` is a local array stored the buffer into the enum box WITHOUT the Perceus
+// alias-inc that the enum-variant construction already performs, so the box's
+// payload aliased the local `r` at refcount 1. The match arm that extracts the
+// payload reclaims it at arm exit (an arr_dec), and the constructing function's
+// own exit-sweep decremented `r` too — a double owner over one +1, freeing the
+// buffer out from under the returned box. Benign until a later allocation reuses
+// the freed store, so it only bit when the extracted array was held live ACROSS
+// an allocating call (gdb: `names[j]` came back as the allocator's 0x7979... filler,
+// faulting at the element's `movq 8(%rax)`).
 //
-// The native compiler (interp + compiled) handles both shapes correctly, so this
-// is a self-host-only gap — goal-2 (Perceus port) convergence work. Tracked on
-// #2649; see rcMatchPayloadWorks / rcMatchPayloadUAF below for the isolating
-// pair (var-binding vs match-extraction of the SAME append-built array).
+// Fixed by adding the array alias-inc to lower_opt_make_payload (mirroring the
+// enum-variant construction, irlower.fern). The native compiler always handled
+// both shapes; this closes the self-host gap. rcMatchPayloadWorks /
+// rcMatchPayloadUAF are the isolating pair (var-binding vs match-extraction of the
+// SAME append-built array) — both must return 17.
 //
 // rcMatchPayloadWorks: the array is returned directly and bound to a `var` (no
 // enum wrapper). Held across the same allocating `eat` loop, it stays intact.
@@ -135,10 +137,10 @@ func TestSelfHostMatchPayloadRC(t *testing.T) {
 		}
 	})
 
-	// Known bug (#2649): the match-extracted shape is a self-host UAF. Remove the
-	// Skip when the self-host match-arm RC gains the payload ownership transfer.
+	// Fixed (#2649): the Option/Result construction now emits the Perceus
+	// array alias-inc (lower_opt_make_payload), balancing the match-arm's reclaim
+	// so the extracted array survives an intervening allocation.
 	t.Run("match_payload_across_alloc", func(t *testing.T) {
-		t.Skip("known self-host RC bug (#2649): match-extracted heap payload freed prematurely; native returns 17")
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_uaf", rcMatchPayloadUAF); code != 17 {
 			t.Errorf("match-extracted array across an allocating call exited %d, want 17", code)
 		}
