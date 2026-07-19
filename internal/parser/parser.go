@@ -3945,24 +3945,19 @@ func (p *parser) parseArmPatterns() ([]matchPattern, ast.Expr, error) {
 		}
 		pats = append(pats, nxt)
 	}
-	// Or-patterns are restricted to variant / `_` patterns. A `|`
-	// joining literal patterns (`1 | 2 =>`) is disallowed because the
-	// bare `|` is the bitwise-or operator: a literal arm is parsed as
-	// a full expression on the self-host path, so `1 | 2` there means
-	// the value 3, not "1 or 2". Rejecting it keeps both compilers in
-	// agreement and avoids the silent footgun. Use separate arms.
+	// Literal or-patterns (`1 | 2 | 3 =>`) are allowed: each alternative
+	// is its own literal pattern (they bind no names), so the shared
+	// per-alternative clone-desugar expands them to independent literal
+	// arms — and the self-host literal-match arm loop splits on `|` at a
+	// precedence above bitwise-or, so both compilers agree `1 | 2` means
+	// "1 or 2", not the value 3. Tuple patterns, however, bind names
+	// per-alternative and carry per-element literals, so `(0, y) | (x, 0)`
+	// has no coherent binding set — still restricted to separate arms.
 	if len(pats) > 1 {
 		for _, pt := range pats {
-			if pt.Literal != nil {
-				return nil, nil, p.errorfCode(pt.P, "P001",
-					"or-patterns (`|`) are only supported between variant patterns, not literals — use separate arms")
-			}
-			// Tuple patterns bind names per-alternative and carry per-element
-			// literals, so `(0, y) | (x, 0)` has no coherent binding set —
-			// same restriction as literals.
 			if pt.TupleElems != nil {
 				return nil, nil, p.errorfCode(pt.P, "P001",
-					"or-patterns (`|`) are only supported between variant patterns, not tuple patterns — use separate arms")
+					"or-patterns (`|`) are only supported between variant or literal patterns, not tuple patterns — use separate arms")
 			}
 		}
 	}

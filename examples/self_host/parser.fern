@@ -1850,22 +1850,52 @@ function if_expr_rt(e: Expr): string {
 // `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
 struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean }
 
-// parse_lit_or_range parses a scalar-pattern low bound (with parse_binary,
-// which stops before `..` — byte-identical to the old parse_expr for a plain
-// literal) and, when a `..` / `..=` follows, the high bound of a range
-// pattern. Returns (low, high, has_range, inclusive, par); high is a dummy
-// when has_range is false.
+// parse_lit_or_range parses a scalar-pattern low bound and, when a `..` /
+// `..=` follows, the high bound of a range pattern. Returns (low, high,
+// has_range, inclusive, par); high is a dummy when has_range is false.
+//
+// Bounds parse with parse_binary(p, 4) — min-precedence 4 (just above `|`,
+// precedence 3), so a bare `|` is left for the or-pattern splitter
+// (parse_lit_alts) rather than being consumed as bitwise-or. A plain literal
+// is a primary, so this is byte-identical to the previous min-prec 1 for
+// every scalar pattern that doesn't top-level a `|` / `&&` / `||` (none do).
 function parse_lit_or_range(p: Par): (Expr, Expr, boolean, boolean, Par) {
-    var (lo_expr, lo_p) = parse_binary(p, 1);
+    var (lo_expr, lo_p) = parse_binary(p, 4);
     p = lo_p;
     var pk: string = p.peek_punct();
     if (pk == ".." || pk == "..=") {
         p = p.advance();
-        var (hi_expr, hi_p) = parse_binary(p, 1);
+        var (hi_expr, hi_p) = parse_binary(p, 4);
         p = hi_p;
         return (lo_expr, hi_expr, true, pk == "..=", p);
     }
     return (lo_expr, e_bool(true), false, false, p);
+}
+
+// parse_lit_alts parses one-or-more `|`-separated scalar patterns
+// (`1 | 2 | 3`, or ranges) sharing a guard + body. Each alternative becomes
+// its own LitArm; the parallel arrays run in alternative order.
+function parse_lit_alts(p: Par): (Expr[], Expr[], boolean[], boolean[], Par) {
+    var lits: Expr[] = [];
+    var his: Expr[] = [];
+    var hrs: boolean[] = [];
+    var incs: boolean[] = [];
+    var (l0, h0, hr0, inc0, p0) = parse_lit_or_range(p);
+    p = p0;
+    lits = lits.append(l0);
+    his = his.append(h0);
+    hrs = hrs.append(hr0);
+    incs = incs.append(inc0);
+    while (p.peek_punct() == "|") {
+        p = p.advance();
+        var (ln, hn, hrn, incn, pn) = parse_lit_or_range(p);
+        p = pn;
+        lits = lits.append(ln);
+        his = his.append(hn);
+        hrs = hrs.append(hrn);
+        incs = incs.append(incn);
+    }
+    return (lits, his, hrs, incs, p);
 }
 
 // build_literal_match lowers a match on a non-enum scrutinee to a nested
@@ -2305,18 +2335,18 @@ function parse_match_expr(p: Par): IfChain {
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
             var lacol: i32 = p.peek_col();
-            var llit: Expr = e_bool(true);
             var lwild: boolean = false;
-            var lrange_hi: Expr = e_bool(true);
-            var lhas_range: boolean = false;
-            var lrange_incl: boolean = false;
+            var lalt_lits: Expr[] = [];
+            var lalt_his: Expr[] = [];
+            var lalt_hrs: boolean[] = [];
+            var lalt_incs: boolean[] = [];
             if (p.peek_is_literal()) {
-                var (llo, lhi, lhr, linc, llr_p) = parse_lit_or_range(p);
-                p = llr_p;
-                llit = llo;
-                lrange_hi = lhi;
-                lhas_range = lhr;
-                lrange_incl = linc;
+                var (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
+                p = la_p;
+                lalt_lits = la_lits;
+                lalt_his = la_his;
+                lalt_hrs = la_hrs;
+                lalt_incs = la_incs;
             } else {
                 var (lpr_pattern, lpr_p) = parse_pattern(p);
                 p = lpr_p;
@@ -2349,7 +2379,16 @@ function parse_match_expr(p: Par): IfChain {
                 lrt = if_expr_rt(ler_expr);
             }
             if (lfirst) { rt = lrt; lfirst = false; }
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lrange_hi, has_range: lhas_range, range_inclusive: lrange_incl });
+            if (lwild) {
+                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false });
+            } else {
+                // One LitArm per `|` alternative, sharing the guard + body.
+                var lai: i32 = 0;
+                while (lai < lalt_lits.len()) {
+                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai] });
+                    lai = lai + 1;
+                }
+            }
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -2916,18 +2955,18 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
             var lacol: i32 = p.peek_col();
-            var llit: Expr = e_bool(true);
             var lwild: boolean = false;
-            var lrange_hi: Expr = e_bool(true);
-            var lhas_range: boolean = false;
-            var lrange_incl: boolean = false;
+            var lalt_lits: Expr[] = [];
+            var lalt_his: Expr[] = [];
+            var lalt_hrs: boolean[] = [];
+            var lalt_incs: boolean[] = [];
             if (p.peek_is_literal()) {
-                var (llo, lhi, lhr, linc, llr_p) = parse_lit_or_range(p);
-                p = llr_p;
-                llit = llo;
-                lrange_hi = lhi;
-                lhas_range = lhr;
-                lrange_incl = linc;
+                var (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
+                p = la_p;
+                lalt_lits = la_lits;
+                lalt_his = la_his;
+                lalt_hrs = la_hrs;
+                lalt_incs = la_incs;
             } else {
                 var (lpr_pattern, lpr_p) = parse_pattern(p);
                 p = lpr_p;
@@ -2945,7 +2984,16 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             if (p.peek_punct() == "=>") { p = p.advance(); }
             var (lbb_body, lbb_p) = parse_block(p);
             p = lbb_p;
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lrange_hi, has_range: lhas_range, range_inclusive: lrange_incl });
+            if (lwild) {
+                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false });
+            } else {
+                // One LitArm per `|` alternative, sharing the guard + body.
+                var lai: i32 = 0;
+                while (lai < lalt_lits.len()) {
+                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai] });
+                    lai = lai + 1;
+                }
+            }
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
