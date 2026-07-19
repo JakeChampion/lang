@@ -54,12 +54,22 @@ function main(): i32 {
     return sum;
 }`},
 	// A boolean field extracts through json_get_bool on the from_json (parse)
-	// side (the to_json render of a boolean is a separate self-host dispatch
-	// limitation, so this parses a literal rather than round-tripping) → 14.
+	// side → 14.
 	{"json-from-bool", `import "std/json";
 @derive(json.Json) struct Flag { id: i32, on: boolean }
 function main(): i32 {
     match (Flag.from_json("{\"id\":4,\"on\":true}")) { Ok(f) => { if (f.on) { return f.id + 10; } return f.id; }, Err(e) => { return 1; } }
+}`},
+	// A full round-trip over boolean fields: to_json now renders a bool as
+	// `true`/`false` (its Json impl) rather than the i32 `1`/`0` fallback, so
+	// the serialised text parses straight back. Both a true and a false field
+	// → 5 + 10 (on) + 100 (!off) = 115. Fails without the boolean-dispatch fix
+	// (to_json would emit `"on":1`, which json_get_bool then rejects → Err).
+	{"json-roundtrip-bool", `import "std/json";
+@derive(json.Json) struct Flag { id: i32, on: boolean, off: boolean }
+function main(): i32 {
+    var f = Flag { id: 5, on: true, off: false };
+    match (Flag.from_json(f.to_json())) { Ok(g) => { var r = g.id; if (g.on) { r = r + 10; } if (!g.off) { r = r + 100; } return r; }, Err(e) => { return 1; } }
 }`},
 	// The `var r = User.from_json(...)` binding form AND `?`-propagation of an
 	// associated-call Result through a helper → 8 + 3 = 11.

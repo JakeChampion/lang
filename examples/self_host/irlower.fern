@@ -2483,15 +2483,41 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// expr_is_bool reports whether `e` is a statically-boolean value, so a method
+// call on it dispatches "boolean.<m>" (its own Display / Json impl) instead of
+// falling through to "i32.<m>" — which renders a bool as 1/0 (a `@derive(Json)`
+// struct's boolean field serialised `"ok":1` instead of `"ok":true`). Covers a
+// boolean literal, a boolean-typed struct field (the derived `self.field.to_json()`
+// path), a comparison / logical result, and a `!` negation. A boolean LOCAL is
+// not tracked (no per-slot bool flag), so it still dispatches as i32 — matching
+// the pre-existing behaviour for those; the field-access case is what the
+// derive synthesiser emits.
+function expr_is_bool(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprBool(_) => { return true; },
+        parser.ExprUnary(u) => { return u.op == "!"; },
+        parser.ExprBinary(b) => {
+            return b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||";
+        },
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) { return false; }
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "boolean";
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_recv_prim_type returns the PRIMITIVE receiver type name of a method
-// call's receiver `e` (for `impl Trait for i32/string/i64/f64` dispatch), or
-// "" if `e` is a struct (handled by expr_struct_type) or otherwise not a
-// dispatchable primitive receiver. Strings / i64 / f64 are detected precisely
-// via the existing predicates; any other scalar defaults to "i32" (so a
-// boolean receiver dispatches as "i32" — see the limitation note). This only
-// drives the call-site label: a label naming a non-existent method bails the
-// whole module to the AST path (calls_only_known), so an over-broad "i32"
-// guess is safe, never a miscompile.
+// call's receiver `e` (for `impl Trait for i32/string/i64/f64/boolean`
+// dispatch), or "" if `e` is a struct (handled by expr_struct_type) or
+// otherwise not a dispatchable primitive receiver. Strings / i64 / f64 / a
+// statically-boolean value are detected precisely via the existing predicates;
+// any other scalar defaults to "i32". This only drives the call-site label: a
+// label naming a non-existent method bails the whole module to the AST path
+// (calls_only_known), so an over-broad "i32" guess is safe, never a miscompile.
 pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // A struct receiver is NOT a primitive — let the struct path handle it.
     if (expr_struct_type(e, s) != "") { return ""; }
@@ -2534,6 +2560,12 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // (arithmetic) `>>`. Both diverge from the unsigned answer once bit 31 is set.
     // Mirrors the expr_is_u64 branch just above.
     if (expr_is_u32(e, s)) { return "u32"; }
+    // A boolean value dispatches "boolean.<m>" (its Display / Json impl), not
+    // the "i32.<m>" fallback that would render it as 1/0. Placed last: the
+    // width/unsigned checks above never match a boolean, and "boolean.<m>"
+    // resolves for the methods a bool actually has (to_string / to_json /
+    // to_debug / eq) — any other keys an absent label and bails to AST, safe.
+    if (expr_is_bool(e, s)) { return "boolean"; }
     return "i32";
 }
 
