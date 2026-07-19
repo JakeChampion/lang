@@ -5,13 +5,15 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
-// BoxMutatedScalarCaptures rewrites captured mutable scalar locals
-// (i32-family / bool / f64) into 1-element heap array cells so a captured outer
-// scalar is shared BY REFERENCE — matching the interpreter, which defines
-// closures-as-counters semantics (#2896). The native pipeline otherwise
-// captures scalars by value, so mutation on either side of the capture was
-// lost: a closure's `x = 42` did not escape, and an outer-scope `i = i + 1` was
-// invisible to a closure that read `i`.
+// BoxMutatedCaptures rewrites captured mutable locals — scalars (i32-family /
+// bool / f64, #2896) and pointer-shaped values (string / array / struct / …,
+// #5301) — into 1-element heap array cells so a captured outer local is shared
+// BY REFERENCE, matching the interpreter, which defines the semantics. The
+// native pipeline otherwise captures by value, so mutation on either side of
+// the capture was lost: a closure's `x = 42` did not escape, an outer-scope
+// `i = i + 1` was invisible to a closure that read `i`, and an outer-scope
+// pointer reassignment (`a = [42, 1]`) left the closure reading the stale
+// make-time buffer.
 //
 // A local is boxed iff it is captured by some closure AND assigned somewhere in
 // the function — inside the closure OR in an enclosing scope. Making the box
@@ -34,13 +36,13 @@ import (
 // the boxed cell). It must run after shadowrename so every local name is
 // unique — a closure body's reference to a boxed name then unambiguously names
 // the captured outer cell, never a same-named inner local. Functions with no
-// captured-and-mutated scalar are left byte-identical.
-func BoxMutatedScalarCaptures(prog *ast.Program, info *checker.Info) {
+// captured-and-mutated local are left byte-identical.
+func BoxMutatedCaptures(prog *ast.Program, info *checker.Info) {
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
 		}
-		boxed := collectBoxedScalars(fn.Body)
+		boxed := collectBoxedCaptures(fn.Body)
 		if len(boxed) == 0 {
 			continue
 		}
@@ -62,16 +64,24 @@ func BoxMutatedScalarCaptures(prog *ast.Program, info *checker.Info) {
 	}
 }
 
-// boxableScalar reports whether a captured scalar's static type is one we box
-// into a 1-element cell: any fixed-width integer, a boolean, or a float. Pointer
-// captures (string / array / struct / …) stay read-only by E049 and are not
-// boxed; types in this AST are value-typed, so the cases match on value kinds.
-func boxableScalar(t ast.Type) bool {
+// boxableCapture reports whether a captured local's static type is one we box
+// into a 1-element cell: any fixed-width integer, a boolean, a float, or a
+// pointer-shaped value (string / array / struct / …). Pointer captures are
+// E049-read-only INSIDE the closure, but the ENCLOSING scope can still
+// reassign them after the closure is created — the interpreter (the oracle,
+// #2896) sees that new binding, so a compiled capture must share the cell by
+// reference too (#5301). The boxed pointer rides one cell slot exactly like a
+// scalar: `x = v` becomes an in-place `x[0] = v` raw store through the shared
+// cell. The superseded element is deliberately NOT released there — a captured
+// value is reclaim-ineligible (rc.freeEligible=false skips it at overwrite AND
+// exit, keeping the two balanced), so the store safe-leaks the old pointer
+// rather than risking an over-release of a value the outer scope still holds.
+func boxableCapture(t ast.Type) bool {
 	switch t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType:
 		return true
 	}
-	return false
+	return ast.IsPointerType(t)
 }
 
 // closureParts returns a closure node's captures + body block, or (nil, nil)
@@ -89,8 +99,8 @@ func closureParts(n ast.Node) ([]ast.Param, *ast.Block) {
 	return nil, nil
 }
 
-// collectBoxedScalars finds the boxed set for one function body: a name maps to
-// its scalar element type iff some closure captures it (as a boxable scalar),
+// collectBoxedCaptures finds the boxed set for one function body: a name maps
+// to its cell element type iff some closure captures it (as a boxable type),
 // it is assigned SOMEWHERE in the function (inside the closure OR in an
 // enclosing scope), and it is a `var`-declared local. Returns nil when there is
 // nothing to box.
@@ -109,7 +119,7 @@ func closureParts(n ast.Node) ([]ast.Param, *ast.Block) {
 // language but have no `var` decl for boxDecls to turn into a cell; boxing one
 // would rewrite its reads/writes to `p[0]` against a scalar slot. Only locals
 // with a real declaration are boxable.
-func collectBoxedScalars(body *ast.Block) map[string]ast.Type {
+func collectBoxedCaptures(body *ast.Block) map[string]ast.Type {
 	var boxed map[string]ast.Type
 	writes := assignTargetNames(body)
 	declared := varDeclaredNames(body)
@@ -118,7 +128,7 @@ func collectBoxedScalars(body *ast.Block) map[string]ast.Type {
 			return
 		}
 		for _, cap := range caps {
-			if !writes[cap.Name] || !declared[cap.Name] || !boxableScalar(cap.Type) {
+			if !writes[cap.Name] || !declared[cap.Name] || !boxableCapture(cap.Type) {
 				continue
 			}
 			if boxed == nil {
@@ -132,7 +142,7 @@ func collectBoxedScalars(body *ast.Block) map[string]ast.Type {
 
 // varDeclaredNames collects the names introduced by a `var` declaration
 // anywhere in the function (the outer body and every closure body), so
-// collectBoxedScalars can restrict boxing to locals that boxDecls can actually
+// collectBoxedCaptures can restrict boxing to locals that boxDecls can actually
 // turn into a cell — never a parameter.
 func varDeclaredNames(body *ast.Block) map[string]bool {
 	names := map[string]bool{}
