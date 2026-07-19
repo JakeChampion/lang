@@ -5010,6 +5010,25 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     var so: LowerState = s;
     if (ptag == "i64") { so = lower_i64(arg, so); } else { so = lower_expr(arg, so); }
     if (!so.ok) { return so; }
+    // Perceus alias-inc for an ARRAY payload that aliases a local array: the
+    // Option/Result box references the buffer, so retain it (rc_inc) so the exit
+    // dec-sweep doesn't free the source local out from under the returned box.
+    // Without it `Ok(names)` / `Some(items)` over-releases the array — a UAF that
+    // only bites once a later allocation reuses the freed buffer (the match-arm
+    // that extracts the payload already reclaims it at arm exit, so construction
+    // must balance that with an inc). Mirrors the enum-variant construction's
+    // alias-inc (#3720); only a bare ident on an array slot (a fresh-literal
+    // payload isn't a local, so the sweep never frees it). The inc pops + re-pushes
+    // the same pointer, leaving op_opt_make's operand on top. i64/f64 payloads
+    // aren't array slots, so this never fires before the op_opt_make_w paths.
+    match (arg) {
+        parser.ExprIdent(paid) => {
+            if (so.is_arr_slot(so.slot_of(paid.name))) {
+                so = so.emit(ir.op_call_direct("__fern_rc_inc", 1));
+            }
+        },
+        _ => {}
+    }
     if (ptag == "i64") { return so.emit(ir.op_opt_make_w(tag, 64, true)); }
     if (ptag == "f64") { return so.emit(ir.op_opt_make_w(tag, 64, false)); }
     return so.emit(ir.op_opt_make(tag));
