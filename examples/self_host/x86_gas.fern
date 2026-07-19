@@ -146,7 +146,12 @@ function x86_gas_reg32(tok: string): i32 {
 // x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
 // reg->mem (store), all 32-bit.
 function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
+        if (dst.contains("(")) { // `movl $imm, disp(%base)` (C7 /0 m32 id)
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            a = X86Asm { ...a, code: x86_movl_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
+            return a;
+        }
         a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) };
         return a;
     }
@@ -158,6 +163,9 @@ function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
     }
     if (src_mem && !dst_mem) { // mem -> reg (load)
         var m: GasMem = x86_gas_parse_mem(src);
+        if (m.is_rip) { // `movl sym(%rip), %reg32` — rip-relative + fixup
+            return x86_movl_load_rip_label(a, x86_gas_reg32(dst), m.label);
+        }
         a = X86Asm { ...a, code: x86_movl_load(a.code, x86_gas_reg32(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
@@ -493,6 +501,14 @@ function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
         a = X86Asm { ...a, code: x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
+    if (dst.contains("(")) { // reg -> mem (store-form ALU: add 0x01 / sub 0x29 / cmp 0x39)
+        var sm: GasMem = x86_gas_parse_mem(dst);
+        var sop: i32 = 1; // add 0x01
+        if (slash == 5) { sop = 41; } // sub 0x29
+        if (slash == 7) { sop = 57; } // cmp 0x39
+        a = X86Asm { ...a, code: x86_alu_store_r64(a.code, sop, x86_gas_reg(src), sm.base, sm.has_index, sm.index, sm.scale, sm.disp) };
+        return a;
+    }
     var d: i32 = x86_gas_reg(dst);
     var s: i32 = x86_gas_reg(src);
     if (slash == 0) {
@@ -606,7 +622,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "jl") { return x86_jcc_label(a, x86_cc_l(), rest); }
     if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
     if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
-    if (mnem == "jb") { return x86_jcc_label(a, x86_cc_b(), rest); }
+    if (mnem == "jb" || mnem == "jc") { return x86_jcc_label(a, x86_cc_b(), rest); }
     if (mnem == "jae" || mnem == "jnc") { return x86_jcc_label(a, x86_cc_ae(), rest); }
     if (mnem == "jbe") { return x86_jcc_label(a, x86_cc_be(), rest); }
     if (mnem == "ja") { return x86_jcc_label(a, x86_cc_a(), rest); }
@@ -664,6 +680,14 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         return a;
     }
     if (mnem == "incq") { a = X86Asm { ...a, code: x86_inc_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    // incl sym(%rip) — the 32-bit rip-relative memory increment asm.fern emits
+    // for the __fern_rc_underflow diagnostic counter. Register/other-memory
+    // incl forms don't arise in the emitted runtime.
+    if (mnem == "incl") {
+        var im: GasMem = x86_gas_parse_mem(rest);
+        if (im.is_rip) { return x86_incl_rip_label(a, im.label); }
+        return a;
+    }
     if (mnem == "decq") { a = X86Asm { ...a, code: x86_dec_r64(a.code, x86_gas_reg(rest)) }; return a; }
     if (mnem == "negq") { a = X86Asm { ...a, code: x86_neg_r64(a.code, x86_gas_reg(rest)) }; return a; }
     if (mnem == "divq") { a = X86Asm { ...a, code: x86_div_r64(a.code, x86_gas_reg(rest)) }; return a; }
@@ -691,7 +715,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         return a;
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
-    if (mnem == "movabsq") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
+    if (mnem == "movabsq" || mnem == "movabs") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
     if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
@@ -704,6 +728,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // testq gives the same ZF; route to it (as movzbl routes to movzbq).
     if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     if (mnem == "shlq") { a = X86Asm { ...a, code: x86_shl_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
+    if (mnem == "shrq") { a = X86Asm { ...a, code: x86_shr_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
+    if (mnem == "btq") { a = X86Asm { ...a, code: x86_bt_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
     if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
     if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
     if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
