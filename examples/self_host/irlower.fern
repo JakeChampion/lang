@@ -11557,14 +11557,6 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // type (like an enum local/param) so `match (c)` / `c.method()`
             // on the bound slot dispatches to `<Enum>.<variant/method>`.
             else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
-            // A nested TUPLE element (`var (p, c) = t` with t : ((string,i32),
-            // i32), so p : (string, i32)): op_tuple_get read the inner tuple
-            // box pointer into p's slot; record p's element tags so a SECOND
-            // destructure `var (s, b) = p` (or a `p.N` read) resolves each
-            // element's type. Without this p carried no tuple_elems, the nested
-            // read fell to the untyped op_tuple_get with no string/i64/… mark,
-            // and a pointer element (string) came through empty (#5306 gap 1).
-            else if (dtag.len() >= 2 && dtag[0] == 40) { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
             dk = dk + 1;
         }
         return dt;

@@ -7545,6 +7545,13 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: Expr[], expecte
         key = key + b;
         j = j + 1;
     }
+    // A single-param fn instantiation (`Has(f)` with f: (i32) => i32, the
+    // binding carrying the full spelling): sanitise to the same symbol-safe
+    // token ge_targ_mangle produces for the annotated path, so the inferred
+    // and annotated spellings of one instantiation share a clone (#5298
+    // follow-up). The caller recovers the raw spelling for iargs by re-running
+    // mono_infer on the payload arg.
+    if (ed.type_params.len() == 1 && pk_is_fn_spelling(key)) { return fn_key_sanitize(key); }
     if (!is_simple_key(key)) { return ""; }
     return key;
 }
@@ -7643,9 +7650,15 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                     var key: string = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
                     if (key.len() > 0) {
                         // The original single-arg spelling (for a fn-keyed clone's
-                        // field type). From the annotation when present; else the
-                        // key IS the arg spelling (a nominal/nested inferred key).
+                        // field type). From the annotation when present; else for
+                        // an INFERRED fn key the payload arg's full spelling
+                        // (phase-2 coarsens it to the "fn" + fn_ret field shape);
+                        // else the key IS the arg spelling (a nominal key).
                         var carg: string = genum_single_arg(expected);
+                        if (carg.len() == 0 && enums[owner].type_params.len() == 1 && c.args.len() > 0) {
+                            var raw0: string = mono_infer(c.args[0], env, funcs);
+                            if (pk_is_fn_spelling(raw0)) { carg = raw0; }
+                        }
                         if (carg.len() == 0) { carg = key; }
                         cur = cur.iadd_arg(enums[owner].name, key, carg);
                         var mv: string = vname + "__" + key;
@@ -7875,13 +7888,31 @@ function me_tuple_elem_type(ty: string, field: string): string {
     return "";
 }
 
-function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: FuncDecl[]): string {
+function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[]): string {
     match (e) {
         ExprIdent(id) => { return env.elook(id.name); },
         ExprStructLit(s) => { return s.type_name; },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
+                    // An INLINE variant construction as the scrutinee
+                    // (`match (Has(f))`): infer its instantiation from the
+                    // payload args and return the original-spelling type
+                    // (`Opt[(i32) => i32]`), so ge_inst_of derives the same
+                    // mangled key the construction rewrite used and the arms
+                    // rewrite to the mangled variants (#5298 follow-up).
+                    var vgo: i32 = genum_owner_of_variant(enums, funcs, cid.name);
+                    if (vgo >= 0) {
+                        var vgk: string = me_infer_variant_key(enums[vgo], cid.name, c.args, "", env, enums, structs, funcs);
+                        if (vgk.len() > 0) {
+                            var vga: string = vgk;
+                            if (enums[vgo].type_params.len() == 1 && c.args.len() > 0) {
+                                var vgr: string = mono_infer(c.args[0], env, funcs);
+                                if (pk_is_fn_spelling(vgr)) { vga = vgr; }
+                            }
+                            return enums[vgo].name + "[" + vga + "]";
+                        }
+                    }
                     // A match-bound fn payload (`cont`, bound by me_bind_pat_vars
                     // to `fn => Fut[i32]`): calling it yields that return type, so
                     // a nested `match (cont(tok))` over a recursive generic enum
@@ -7900,7 +7931,7 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
                     // function's return was recovered), so the arms stayed
                     // un-mangled against the concrete enum and the match read the
                     // wrong variant.
-                    var rt: string = me_scrutinee_type(cfa.obj, env, structs, funcs);
+                    var rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs);
                     if (rt.len() > 0) {
                         var rbase: string = strip_struct_base(rt);
                         var mi: i32 = 0;
@@ -7919,12 +7950,12 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
             return "";
         },
         ExprIndex(ix) => {
-            var at: string = me_scrutinee_type(ix.array, env, structs, funcs);
+            var at: string = me_scrutinee_type(ix.array, env, enums, structs, funcs);
             if (type_ends_arr(at)) { return at[0 : at.len() - 2] + ""; }
             return "";
         },
         ExprFieldAccess(fa) => {
-            var ot: string = me_scrutinee_type(fa.obj, env, structs, funcs);
+            var ot: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
             if (ot.len() == 0) { return ""; }
             // A tuple-element access `t.N`: the element's type, so `match (t.0)`
             // over a generic-enum element recovers its instantiation. Falls
@@ -8002,16 +8033,37 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
             var vty: string = v.type_name;
             // A fn-typed local coarsens to "fn" (its return type is dropped
-            // from the annotation); recover it from the init lambda's declared
-            // return type and encode "fn => <ret>", so `match (f(x))` over a
-            // generic-enum-returning fn-value local recovers its instantiation.
+            // from the annotation); recover the FULL spelling from the init
+            // lambda's declared params + return type ("(i32) => i32"), so
+            // `match (f(x))` recovers a generic-enum return (me_fn_ret_spelling
+            // splits on the LAST " => ", so the full spelling parses the same
+            // as the old "fn => <ret>" encoding) AND a variant construction
+            // `Has(f)` can infer + sanitise an fn instantiation key (#5298
+            // follow-up — the coarse encoding was rejected by is_simple_key,
+            // so the inline construct-and-match shape stayed generic and
+            // SIGSEGV'd). Falls back to the old encoding when a param type is
+            // unrecoverable.
             if (vty == "fn") {
                 match (v.init) {
-                    ExprLambda(lm) => { if (lm.ret_type.len() > 0) { vty = "fn => " + lm.ret_type; } },
+                    ExprLambda(lm) => {
+                        if (lm.ret_type.len() > 0) {
+                            var lfs: string = "";
+                            var lfok: boolean = true;
+                            var lfi: i32 = 0;
+                            while (lfi < lm.params.len()) {
+                                if (lm.params[lfi].type_name.len() == 0) { lfok = false; }
+                                if (lfi > 0) { lfs = lfs + ", "; }
+                                lfs = lfs + lm.params[lfi].type_name;
+                                lfi = lfi + 1;
+                            }
+                            if (lfok) { vty = "(" + lfs + ") => " + lm.ret_type; }
+                            else { vty = "fn => " + lm.ret_type; }
+                        }
+                    },
                     _ => { }
                 }
             }
-            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, structs, funcs); }
+            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, enums, structs, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         StmtReturn(r) => {
@@ -8043,7 +8095,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // in the body recovers a generic-enum element's instantiation
             // (`for o in xs` over `Opt[i32][]` → o: `Opt[i32]`). Strip one `[]`
             // off the iterable's tracked type.
-            var itty: string = me_scrutinee_type(fr.iter, env, structs, funcs);
+            var itty: string = me_scrutinee_type(fr.iter, env, enums, structs, funcs);
             var elty: string = "";
             if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2] + ""; }
             var benv: MEnv = env.ebind(fr.var_name, elty);
@@ -8056,7 +8108,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // Recover the scrutinee's generic-enum instantiation: an annotated
             // ident / param / for-loop var, a call result (the callee's return
             // type), or an index into a generic-enum array.
-            var sty: string = me_scrutinee_type(m.scrutinee, env, structs, funcs);
+            var sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs);
             var gi: GEInst = ge_inst_of(sty, enums, funcs);
             var arms: MatchArm[] = [];
             var i: i32 = 0;
