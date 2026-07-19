@@ -86,3 +86,56 @@ func TestSelfHostArrayBoundsIR(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostArrayBoundsIRArm64 — CI-gated arm64 counterpart of
+// TestSelfHostArrayBoundsIR. The self-host arm64 IR emitter (asm_arm64_ir.fern
+// kind_tag 88/89) now bounds-checks arr_get / arr_set the same way as x86-64:
+// an unsigned cmp of the index against the length prefix (`ldr x2, [x0]`) and a
+// `b.hs __fern_oob_abort` (exit 134). Verified end-to-end under qemu.
+func TestSelfHostArrayBoundsIRArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"read-past-end",
+			`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
+		{"read-negative",
+			`function main(): i32 { var a: i32[] = [1, 2, 3]; var i: i32 = 0 - 1; return a[i]; }`, 134},
+		{"write-past-end",
+			`function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
+		{"in-range-ok",
+			`function main(): i32 { var a: i32[] = [10, 20, 30]; a = a.with(1, 20); var s: i32 = 0; var i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64")
+			if len(asm) == 0 {
+				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
+			}
+			if tc.want == 134 && !strings.Contains(string(asm), "__fern_oob_abort") {
+				t.Fatalf("%s: no __fern_oob_abort in emitted arm64 asm — bounds check missing", tc.name)
+			}
+			progBin := buildBin(t, arm64gcc, dir, "arr_bounds_"+tc.name, string(asm))
+			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}
