@@ -35630,6 +35630,70 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
     return LiftExpr { expr: e, acc: acc };
 }
 
+// desugar_lambda_returns rewrites every `return <lambda>` in `body` (capturing OR
+// not, at any depth — inside if/while/for blocks and match arms) to a two-statement
+// `var $lamret$N = <lambda>; return $lamret$N;`. Run as a per-function PRE-pass
+// (before every closure/lift pass), so the returned lambda is treated exactly like a
+// hand-written closure local: box_mutated_scalar_captures + lift_inline_closures give
+// it a UNIQUE `<fd>$cloN` name and the env-first make_closure box, and the caller's
+// `var g = f()` binds g a closure local (via body_binds_closure_local) so `g()`
+// dispatches env-first. This replaces the old inline-return handling — no-capture
+// returns hoisted to a bare `__lam_N` fn-value the caller called env-first (SIGSEGV),
+// and capturing returns hoisted to a bare `<fd>$clo` that COLLIDED across multiple
+// returns (the wrong closure body ran) or bailed the whole module to the AST emitter
+// (#5266). `$lamret$N` names are function-local slots (the `$` prefix can't collide
+// with user idents); the counter is function-local. The self-host sources contain no
+// bare lambda returns, so this fires on none of them and leaves the self-compile
+// byte-identical.
+struct DesugarRet { body: parser.Stmt[], counter: i32 }
+function desugar_lambda_returns(body: parser.Stmt[], counter: i32): DesugarRet {
+    var out: parser.Stmt[] = [];
+    var c: i32 = counter;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtReturn(r) => {
+                var islam: boolean = false;
+                match (r.value) { parser.ExprLambda(_) => { islam = true; }, _ => {} }
+                if (islam) {
+                    var rn: string = "$lamret$" + util.i32_to_string(c);
+                    c = c + 1;
+                    out = out.append(parser.StmtVar { name: rn, type_name: "", init: r.value, line: r.line, col: r.col, is_str: false });
+                    out = out.append(parser.StmtReturn { value: parser.ExprIdent { name: rn, line: r.line, col: r.col }, line: r.line, col: r.col });
+                } else {
+                    out = out.append(body[i]);
+                }
+            },
+            parser.StmtIf(f) => {
+                var td: DesugarRet = desugar_lambda_returns(f.then_body, c); c = td.counter;
+                var ed: DesugarRet = desugar_lambda_returns(f.else_body, c); c = ed.counter;
+                out = out.append(parser.StmtIf { cond: f.cond, then_body: td.body, else_body: ed.body });
+            },
+            parser.StmtWhile(w) => {
+                var wd: DesugarRet = desugar_lambda_returns(w.body, c); c = wd.counter;
+                out = out.append(parser.StmtWhile { cond: w.cond, body: wd.body, label: w.label });
+            },
+            parser.StmtFor(fo) => {
+                var fod: DesugarRet = desugar_lambda_returns(fo.body, c); c = fod.counter;
+                out = out.append(parser.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fod.body, label: fo.label });
+            },
+            parser.StmtMatch(m) => {
+                var narms: parser.MatchArm[] = [];
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    var ad: DesugarRet = desugar_lambda_returns(m.arms[ai].body, c); c = ad.counter;
+                    narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ad.body, line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                    ai = ai + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: m.scrutinee, arms: narms, line: m.line, col: m.col, origin: m.origin });
+            },
+            _ => { out = out.append(body[i]); }
+        }
+        i = i + 1;
+    }
+    return DesugarRet { body: out, counter: c };
+}
+
 // lift_stmt rewrites a single statement, recursing into nested bodies + the
 // call-bearing expression positions (return / var-init / expr-stmt / control
 // conditions). Other statements pass through.
@@ -35652,7 +35716,10 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
             // return becomes a bare fn-name -> const_func, riding the existing
             // "return a named function value" path. A capturing lambda is left in
             // place (keeps the module on the AST path); a non-lambda value recurses
-            // through lift_expr_walk unchanged.
+            // through lift_expr_walk unchanged. (Inline `return <lambda>` returns are
+            // pre-desugared to a `var $lamret$N = <lambda>; return $lamret$N;` local
+            // binding before this pass runs — see desugar_lambda_returns — so a bare
+            // ExprLambda no longer reaches here in practice.)
             var e: LiftExpr = lift_call_arg(r.value, acc, gfns);
             var ns: parser.Stmt = parser.StmtReturn { value: e.expr, line: r.line, col: r.col };
             return LiftStmts { stmts: [ns], acc: e.acc };
@@ -37499,9 +37566,25 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     // so aliasing here leaks lifted `$wrap`/`$clo` trampolines back into the
     // input module — which the AST emit path (`emit_module` loops `mod.funcs`)
     // then emits, diverging the byte-identical self-host fixpoint. (#3445)
+    // Desugar every inline `return <lambda>` in the ORIGINAL module functions to
+    // `var $lamret$N = <lambda>; return $lamret$N;` (recursing into if/while/for/
+    // match arms) as they enter the worklist, so the closure-lift pipeline treats a
+    // returned lambda as an ordinary closure local — unique `$cloN` naming +
+    // env-first dispatch — fixing the mis-dispatched / colliding / AST-bailing inline
+    // lambda returns (#5266). Applied ONLY to source functions, not to the lifted
+    // `__lam_N` / `$cloN` bodies drained onto the worklist later: a lifted body's own
+    // `return <lambda>` is a lambda-returning-lambda (#5281), which the existing hoist
+    // handles and this desugar must not perturb (it regressed the `curry` shape).
     var worklist: parser.FuncDecl[] = [];
     var wlcp: i32 = 0;
-    while (wlcp < mod.funcs.len()) { worklist = worklist.append(mod.funcs[wlcp]); wlcp = wlcp + 1; }
+    while (wlcp < mod.funcs.len()) {
+        var wf: parser.FuncDecl = mod.funcs[wlcp];
+        var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0);
+        if (wdlr.counter != 0) {
+            wf = parser.FuncDecl { name: wf.name, receiver_name: wf.receiver_name, receiver_type: wf.receiver_type, type_params: wf.type_params, params: wf.params, ret_type: wf.ret_type, body: wdlr.body, line: wf.line, col: wf.col, import_iface: wf.import_iface, import_wit: wf.import_wit, type_param_count: wf.type_param_count, bound_traits: wf.bound_traits, fip: wf.fip, ret_str: wf.ret_str };
+        }
+        worklist = worklist.append(wf); wlcp = wlcp + 1;
+    }
     var wi: i32 = 0;
     while (wi < worklist.len()) {
         var fd: parser.FuncDecl = worklist[wi];
