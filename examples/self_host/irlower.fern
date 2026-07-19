@@ -11055,7 +11055,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // (slice #3445 follow-up). Its lowering (the ExprCall →
                 // __mkclo$ arm) builds the env box, so bind g a closure
                 // local: `g(args)` / passing g dispatch env-first.
-                parser.ExprIdent(cid) => { if ((cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") || util.index_of_str(s.closure_fns, cid.name) >= 0) { clo_init = true; } },
+                parser.ExprIdent(cid) => {
+                    if ((cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") || util.index_of_str(s.closure_fns, cid.name) >= 0) { clo_init = true; }
+                    // `var inner = outer()` where `outer` is itself a closure
+                    // LOCAL whose return type is a fn (a closure factory
+                    // returning a closure): the returned value is a closure BOX,
+                    // so inner must dispatch env-first. Without this inner stayed
+                    // a plain slot and `inner(x)` called the box pointer as code
+                    // — SIGSEGV on the nested closure-of-closure factory.
+                    else if (s.is_closure_local(cid.name) && (v.type_name == "fn" || is_fn_payload_spelling(v.type_name))) { clo_init = true; }
+                },
                 _ => { }
             }
         },
