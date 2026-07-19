@@ -3917,6 +3917,13 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 var fn_ret_ty: string = "";
                 if (!r_is_arr && is_struct_ret_name(rr_name)) { fn_ret_ty = rr_name; }
                 else if (!r_is_arr && is_nominal_ret_name(rr_name)) { fn_ret_ty = rr_name; }
+                // Also preserve a plain `string` return (`(i32) => string`): the
+                // StructFieldDecl.fn_ret consumer needs it so a chained string
+                // op on an fn-FIELD call result (`h.f(1).len()`) dispatches as
+                // a string (#5306 gap 2). The struct_ret_fns param consumer
+                // filters "string" out (a string is not a struct), so this adds
+                // no spurious struct-return entry.
+                else if (!r_is_arr && rr_name == "string") { fn_ret_ty = "string"; }
                 return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
             }
             // Tuple type — return the reconstructed precise spelling
@@ -4428,7 +4435,7 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
     }
     p = p.advance();
     var (sftr_name, sftr_ret_arr, sftr_fn_ret, sftr_p) = parse_type_name(p);
-    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: "" }, sftr_p);
+    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: sftr_fn_ret }, sftr_p);
 }
 
 // parse_struct_decl consumes `struct Name { field, field, … }`
