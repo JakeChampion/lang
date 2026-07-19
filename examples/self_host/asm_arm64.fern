@@ -5333,6 +5333,19 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    svc #0\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
+        // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set on
+        // the IR path (asm_arm64_ir.fern kind_tag 88/89). Aborts with exit 134,
+        // matching the x86-64 backend + docs/ARRAY-BOUNDS.md ("an out-of-bounds
+        // index aborts before producing a value; never returns a garbage
+        // value"). A single shared routine keeps each access to a cmp + a b.hs.
+        s = s.write(".globl __fern_oob_abort\n");
+        s = s.write(".type __fern_oob_abort, %function\n");
+        s = s.write("__fern_oob_abort:\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    mov x0, #134\n");
+        s = s.write("    svc #0\n");
+        s = s.write(".size __fern_oob_abort, .-__fern_oob_abort\n");
+
         // __fern_arr_box(x0 = cap element count) -> x0 = array data
         // pointer. Centralises the array box layout (mirrors the x86-64
         // backend; docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 0a/0b).
