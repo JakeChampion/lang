@@ -1743,94 +1743,10 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
     return Some(acc);
 }
 
-// `sort_by(xs, cmp)` — fresh `T[]` sorted by the comparator `cmp`, where
-// `cmp(a, b)` returns negative if `a` should sort before `b`, positive if
-// after, zero if equal (the Ordering-as-i32 convention shared with
-// `core/cmp`). Stable bottom-up merge sort (equal elements keep their input
-// order — the merge only takes from the right run on a STRICT less), O(n log n)
-// (#4387 item 3). The comparator form is what lets ANY element type be sorted
-// without a built-in `Ord`
-// — `sort_by(people, function (a: Person, b: Person): i32 { return a.age - b.age; })`.
-pub function sort_by[T](xs: T[], cmp: (T, T) => i32): T[] {
-    var n: i32 = xs.len();
-    if (n < 2) { return xs; }
-    var src: T[] = xs;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: T[] = src;
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (cmp(src[j], src[i]) < 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-// `sort(xs)` — ascending sort by the element type's `Ord` ordering: the
-// no-comparator companion to `sort_by(xs, cmp)`. The `T: cmp.Ord` bound supplies
-// the ordering (`a.cmp(b)`) and is what monomorphises it per element type on the
-// self-host IR path — an `i32` instance lowers `.cmp` to the scalar three-way
-// compare, a `string` instance to the lexicographic byte compare — where an
-// unbounded `[T]` would erase to one clone and mis-order strings. Stable (equal
-// elements keep input order): the same merge sort `sort_by` uses, with the
-// comparator inlined as the `Ord` method, so the right run is taken only on a
-// STRICT less — a tie leaves the earlier element in front. Empty / singleton → as-is.
-pub function sort[T: cmp.Ord](xs: T[]): T[] {
-    var n: i32 = xs.len();
-    if (n < 2) { return xs; }
-    var src: T[] = xs;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: T[] = src;
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j].cmp(src[i]) < 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
+// (Generic `sort_by(xs, cmp)` lives in std/sort; generic `sort(xs)` for a
+// `T: cmp.Ord` element type lives in core/cmp. The method forms
+// `xs.sort_by(cmp)` below delegate to std/sort — #5348 removed the duplicate
+// free-function copies that used to live here.)
 
 // `binary_search(xs, target)` — `Some(i)` for an index where `xs[i] == target`,
 // or `None` if absent, assuming `xs` is sorted ASCENDING by the element type's
@@ -1853,11 +1769,10 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
     return None;
 }
 
-// =================== EQ-DRIVEN GENERIC VERBS ===================
+// =================== EQ-DRIVEN ARRAY VERBS ===================
 //
-// `contains` / `index_of` / `distinct` over an arbitrary `T[]`, driven by
-// structural equality. Unlike the structural verbs above (reverse / take /
-// drop / concat / zip), these compare elements, so the element type is bound
+// `all_equal` / `dedup` (below) and the set-algebra verbs (further down) over
+// an arbitrary `T[]`, driven by structural equality: the element type is bound
 // `T: cmp.Eq` — `i32` / `string` / the other primitives satisfy it out of the
 // box (their `impl Eq` lives in core/cmp), and a `@derive(Eq)` struct or enum
 // qualifies too. The `Eq` bound is also what lets these monomorphise (and so
@@ -1865,34 +1780,12 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // UNBOUNDED `[T]` would erase to a single pointer-compare clone and silently
 // miscompare strings.
 //
-// Free functions (not `.contains()` / `.index_of()` / `.distinct()` receiver
-// methods) because the string[]-specific `__method_Array_contains` /
-// `index_of` / `distinct` already claim those method names and array method
-// dispatch keys on the name only. Use `contains(xs, t)` / `index_of(xs, t)` /
-// `distinct(xs)` for non-string element types until the type-specific methods
-// are unified with the generic ones (the same deferral as reverse/take/drop).
-
-// `index_of(xs, target)` — `Some(i)` for the first index whose element equals
-// `target`, else `None`. The Option return keeps "not found" out of band,
-// matching `find` / the string[] `position` method rather than the `-1`
-// sentinel the string[] `index_of` method uses.
-pub function index_of[T: cmp.Eq](xs: T[], target: T): Option[i32] {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == target) { return Some(i); }
-        i = i + 1;
-    }
-    return None;
-}
-
-// `contains(xs, target)` — true if any element equals `target`. The boolean
-// companion to `index_of`; short-circuits on the first match. Empty → false.
-pub function contains[T: cmp.Eq](xs: T[], target: T): boolean {
-    for x in xs {
-        if (x == target) { return true; }
-    }
-    return false;
-}
+// The element-generic `contains` / `index_of` / `distinct` / `eq_arrays` verbs
+// live in core/cmp with the `Eq` trait they depend on (#5348 removed the
+// duplicate copies that used to live here); `import "core/cmp"` for those. The
+// string[]-specific `.contains()` / `.index_of()` / `.distinct()` receiver
+// methods above are a separate surface — array method dispatch keys on the
+// name only, so they can't fan out on element type.
 
 // `all_equal(xs)` — true iff every element equals the first (i.e. the array has
 // at most one DISTINCT value). Vacuously true for an empty or single-element
@@ -1908,18 +1801,6 @@ pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
         i = i + 1;
     }
     return true;
-}
-
-// `distinct(xs)` — fresh `T[]` with duplicates removed (first occurrence wins,
-// input order preserved). O(n²) membership scan via `contains` — fine for the
-// small-n CLI / edge-handler workloads; reach for a Map-backed dedup at larger
-// N. Empty → empty.
-pub function distinct[T: cmp.Eq](xs: T[]): T[] {
-    var out: T[] = [];
-    for x in xs {
-        if (!contains(out, x)) { out = out.append(x); }
-    }
-    return out;
 }
 
 // `dedup(xs)` — fresh `T[]` with each run of CONSECUTIVE equal elements
@@ -1942,12 +1823,13 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
 //
 // `count` / `union` / `intersection` / `difference` over an arbitrary `T[]`,
 // driven by the same `T: cmp.Eq` bound (and the same per-element-type
-// monomorphisation on the self-host IR path) as `contains` / `distinct`. The
+// monomorphisation on the self-host IR path) as core/cmp's `contains`. The
 // three set operations treat the inputs as multisets but return SET results —
-// each element appears at most once, in first-seen order — built on `contains`,
-// so the `==` they perform is the type's structural equality (`str_eq` for
-// strings, the scalar compare for `i32`). O(n·m) membership scans; fine for the
-// small-n CLI / edge-handler workloads, reach for a Map/Set at larger N.
+// each element appears at most once, in first-seen order — built on
+// `cmp.contains`, so the `==` they perform is the type's structural equality
+// (`str_eq` for strings, the scalar compare for `i32`). O(n·m) membership
+// scans; fine for the small-n CLI / edge-handler workloads, reach for a
+// Map/Set at larger N.
 
 // `count(xs, target)` — how many elements equal `target`. The Eq-bounded
 // generic companion to the element-type-specific `.count()` / `.count_str()`
@@ -1967,10 +1849,10 @@ pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
 pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
     var out: T[] = [];
     for x in a {
-        if (!contains(out, x)) { out = out.append(x); }
+        if (!cmp.contains(out, x)) { out = out.append(x); }
     }
     for y in b {
-        if (!contains(out, y)) { out = out.append(y); }
+        if (!cmp.contains(out, y)) { out = out.append(y); }
     }
     return out;
 }
@@ -1980,7 +1862,7 @@ pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
 pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
     var out: T[] = [];
     for x in a {
-        if (contains(b, x) && !contains(out, x)) { out = out.append(x); }
+        if (cmp.contains(b, x) && !cmp.contains(out, x)) { out = out.append(x); }
     }
     return out;
 }
@@ -1990,25 +1872,14 @@ pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
     var out: T[] = [];
     for x in a {
-        if (!contains(b, x) && !contains(out, x)) { out = out.append(x); }
+        if (!cmp.contains(b, x) && !cmp.contains(out, x)) { out = out.append(x); }
     }
     return out;
 }
 
-// `equal(a, b)` — structural array equality: true iff `a` and `b` have the
-// same length and equal elements at every index (element `==`). The
-// `Eq`-bounded generic companion to comparing two `T[]` element-wise — there
-// is no `==` on arrays themselves. Short-circuits on the first mismatch.
-// `equal([], [])` is true.
-pub function equal[T: cmp.Eq](a: T[], b: T[]): boolean {
-    if (a.len() != b.len()) { return false; }
-    var i: i32 = 0;
-    while (i < a.len()) {
-        if (a[i] != b[i]) { return false; }
-        i = i + 1;
-    }
-    return true;
-}
+// (Structural array equality lives in core/cmp as `eq_arrays[T: Eq]`; the
+// method form `xs.equal(other)` below delegates to it — #5348 removed the
+// duplicate free-function copy that used to live here.)
 
 // `index_of_last(xs, target)` — `Some(i)` for the LAST index whose element
 // equals `target`, else `None`. The reverse-scan companion to `index_of`
@@ -2133,8 +2004,9 @@ pub function (xs: T[]) rotate_right(n: i32): T[] { return rotate_right(xs, n); }
 // `xs.reduce(f)` — seedless left fold; `None` on an empty array.
 pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f); }
 
-// `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array).
-pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] { return sort_by(xs, cmp); }
+// `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array); delegates
+// to std/sort's generic `sort_by`.
+pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] { return sort.sort_by(xs, cmp); }
 
 // `xs.max_by(cmp)` / `xs.min_by(cmp)` — extremal element under the comparator
 // (first on a tie); `None` when empty.
@@ -2170,8 +2042,8 @@ pub function (xs: T[]) max_index[T: cmp.Ord](): Option[i32] { return max_index(x
 pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] { return min_index(xs); }
 
 // `xs.equal(other)` — structural element-wise equality (same length and
-// equal elements at every index). The method form of array.equal.
-pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean { return equal(xs, other); }
+// equal elements at every index); delegates to core/cmp's `eq_arrays`.
+pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean { return cmp.eq_arrays(xs, other); }
 
 // `xs.dedup()` — collapse each run of consecutive equal elements to one.
 pub function (xs: T[]) dedup[T: cmp.Eq](): T[] { return dedup(xs); }

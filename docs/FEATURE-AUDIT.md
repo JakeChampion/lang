@@ -237,7 +237,7 @@ per-function bugs in the audit log.
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
-| `core/cmp` (traits) | ✅ | ✅ | | | ✅ | 🔧 | Trait foundation (`Display`/`Eq`/`Ord`/`Hash`/`Default`/`Debug`) + primitive impls, used by `std/test`. **Generic `Ord` helpers** added — `min`/`max`/`clamp`/`lt`/`lte`/`gt`/`gte`/`cmp`, plus `sort[T: Ord](arr): T[]` (stable bottom-up merge sort, O(n log n) — #4387 item 3) and `is_sorted[T: Ord](arr): boolean` — and **`Eq` helpers** `contains`/`index_of`/`distinct[T: Eq]` (#3699) + `eq_arrays[T: Eq](a, b)`, all derived from the single `cmp`/`eq` primitives — work over the primitive impls AND any user/`@derive` type, on native (interp/x86-64/wasm) AND the self-host **IR path** (`TestNativeCmpHelpers{,Arm64}` + `TestNativeCmpModule` + `TestSelfHostCmpHelpersIR{X86_64,Wasm}`, routing-pinned to `ir`). Full trait/derive audit of the rest is a follow-up |
+| `core/cmp` (traits) | ✅ | ✅ | | | ✅ | 🔧 | Trait foundation (`Display`/`Eq`/`Ord`/`Hash`/`Default`/`Debug`) + primitive impls, used by `std/test`. **Generic `Ord` helpers** added — `min`/`max`/`clamp`/`lt`/`lte`/`gt`/`gte`/`cmp`, plus `sort[T: Ord](arr): T[]` (stable bottom-up merge sort, O(n log n) — #4387 item 3) and `is_sorted[T: Ord](arr): boolean` — and **`Eq` helpers** `contains`/`index_of`/`distinct[T: Eq]` (#3699) + `eq_arrays[T: Eq](a, b)`, all derived from the single `cmp`/`eq` primitives — work over the primitive impls AND any user/`@derive` type, on native (interp/x86-64/wasm) AND the self-host **IR path** (`TestNativeCmpHelpers{,Arm64}` + `TestNativeCmpModule` + `TestSelfHostCmpHelpersIR{X86_64,Wasm}`, routing-pinned to `ir`). **#5348** made `core/cmp` the single home for these generic verbs — the duplicate `sort`/`contains`/`index_of`/`distinct`/`equal` copies that had grown up in `std/array` were removed, and `index_of` now returns `Option[i32]` (the modern out-of-band shape) rather than a `-1` sentinel; `std/array`'s method forms (`xs.equal`, `xs.sort_by`) delegate to `core/cmp`/`std/sort`. Full trait/derive audit of the rest is a follow-up |
 | `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]` (+ the `collect[T, I: Iterator[T]]: T[]` chain-terminal alias, #2709), and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth`/`last[T, I: Iterator[T]]: Option[T]`, `min`/`max`/`product[I: Iterator[i32]]`, `position`/`count_value[I: Iterator[i32]](it, target)`, and `contains[I: Iterator[i32]](it, target): boolean` round out the set (the i32-bound ones need `+`/`*`/`<`/`==`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
@@ -250,6 +250,30 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-07-19 — de-duplicate the Eq/Ord generic verbs: `core/cmp` is the single home ([#5348](https://github.com/JakeChampion/lang/issues/5348))
+
+The same generic verbs had grown up in BOTH `core/cmp` and `std/array`, with a
+live return-shape conflict (`std/array`'s `index_of` → `Option[i32]` vs
+`core/cmp`'s → `-1`). Consolidated per the issue: the generic verbs live in
+`core/cmp` and `index_of` now returns `Option[i32]` (the modern out-of-band
+shape). Deleted the `std/array` free-function duplicates — `sort_by` (its home
+is `std/sort`), `sort[T: cmp.Ord]`, `contains`/`index_of`/`distinct[T: cmp.Eq]`,
+and `equal` — and repointed `std/array`'s internals: the set-algebra verbs
+(`union`/`intersection`/`difference`) call `cmp.contains`, `xs.sort_by`
+delegates to `std/sort`'s `sort_by`, and `xs.equal` delegates to
+`cmp.eq_arrays`. Also removed the now-false import-cycle justification comment in
+`cmp.fern` (`std/array` already imports `core/cmp`, so the cited
+`std/array → core/cmp → std/string → std/array` cycle no longer exists). The
+`std/array`-specific string[]/i32[] receiver *methods* (`.contains`/`.index_of`/
+`.distinct`, returning `i32`/`-1`) are a separate name-keyed surface and are
+unchanged. Tests: `cmp.index_of` callers migrated to the `Option[i32]` shape
+(`TestNativeCmpModule`, `TestNativeEqVerbsModule`, `cmp_helpers_test.fern`);
+`TestNativeOrdSortModule` and the self-host stdlib-modules IR case repointed to
+`cmp.sort`/`cmp.*`; the redundant `std_array_eq_verbs_test.go` was deleted and
+`std_array_equal_test.go` now pins `cmp.eq_arrays` + the `xs.equal` method
+delegation + `array.index_of_last`. Self-host fixpoint re-verified
+byte-identical.
 
 ### 2026-06-29 — `map_verbs` flips to IR — the last non-async AST-router is retired 🎉
 
