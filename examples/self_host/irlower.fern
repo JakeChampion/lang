@@ -2204,6 +2204,25 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
     return "";
 }
 
+// decl_field_fn_ret returns the closure return-type spelling recorded on a
+// fn-typed field (StructFieldDecl.fn_ret) — e.g. "string" for `f: (T) => string`
+// — or "". Lets a call through the field `obj.f(args)` recover its result type.
+pub function decl_field_fn_ret(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].name == field) { return structs[i].fields[fi].fn_ret; }
+                fi = fi + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // field_access_is_closurearr returns true when `e` is a struct-field read
 // `obj.field` whose field is a closure/fn ARRAY — spelled "fn[]"
 // (parse_type_name coarsens `(() => T)[]` to "fn[]"). Its element is a closure
@@ -2997,6 +3016,16 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                 // so the str_ret_fn path below can't reach it). Either way the
                 // result feeds `+` concat / `.len()` as a string.
                 parser.ExprFieldAccess(cfa) => {
+                    // A call THROUGH a fn-typed struct FIELD `obj.f(args)` whose
+                    // declared closure return type is `string` (recorded on
+                    // StructFieldDecl.fn_ret): the call yields a string, so
+                    // `obj.f(args).len()` dispatches op_str_len instead of
+                    // op_arr_len (which read the string box's data-ptr slot as a
+                    // length — the captured string box is intact, only the CALL
+                    // RESULT's type was lost). #5306 gap 2.
+                    var cffty: string = expr_struct_type(cfa.obj, s);
+                    if (cffty != "" && decl_field_type(s.structs, cffty, cfa.field) == "fn"
+                        && decl_field_fn_ret(s.structs, cffty, cfa.field) == "string") { return true; }
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return true; }
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
@@ -28534,6 +28563,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // here so this registration is byte-identical to before (they are read
         // only via the StructFieldDecl.fn_ret path in the monomorphiser).
         if (fn.params[pri].type_name == "fn" && fn.params[pri].fn_ret.len() > 0
+            && fn.params[pri].fn_ret != "string"
             && !util.contains(fn.params[pri].fn_ret, "[")) {
             struct_ret_fns_aug = struct_ret_fns_aug.append(fn.params[pri].name + "|" + fn.params[pri].fn_ret);
         }

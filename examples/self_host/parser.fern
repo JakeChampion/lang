@@ -3917,6 +3917,12 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 var fn_ret_ty: string = "";
                 if (!r_is_arr && is_struct_ret_name(rr_name)) { fn_ret_ty = rr_name; }
                 else if (!r_is_arr && is_nominal_ret_name(rr_name)) { fn_ret_ty = rr_name; }
+                // Also preserve a bare `string` return, so a fn-typed STRUCT FIELD
+                // `f: (T) => string` retains it (StructFieldDecl.fn_ret). A call
+                // through the field `obj.f(args)` then str-tracks (expr_is_str →
+                // op_str_len) instead of `.len()` mis-dispatching to op_arr_len,
+                // which read the string box's data-ptr slot as a length (#5306 gap 2).
+                else if (!r_is_arr && rr_name == "string") { fn_ret_ty = "string"; }
                 return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
             }
             // Tuple type — return the reconstructed precise spelling
@@ -4428,7 +4434,7 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
     }
     p = p.advance();
     var (sftr_name, sftr_ret_arr, sftr_fn_ret, sftr_p) = parse_type_name(p);
-    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: "" }, sftr_p);
+    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: sftr_fn_ret }, sftr_p);
 }
 
 // parse_struct_decl consumes `struct Name { field, field, … }`
