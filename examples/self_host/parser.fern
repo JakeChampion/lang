@@ -134,7 +134,12 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // further bindings written in `Variant(a, b, …)`. The self-host's variants are
 // single-payload, so a multi-binding pattern is a payload-arity error (E015) —
 // extra_bindings lets the checker count them; codegen still uses `binding`.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[] }
+// `nested`, when non-empty (a single element), holds a sub-pattern for the
+// payload position — `Some(Ok(n))` parses `Some` with nested = [Ok(n)]. The
+// parser desugars a nested arm into a flat outer arm whose body re-matches the
+// payload on an inner `match` (desugar_nested_arms), so the checker / codegen
+// only ever see flat arms; empty (the common case) means a plain binder.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[] }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -631,7 +636,8 @@ function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, 
 }
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
-    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra };
+    var no_nested: Pattern[] = [];
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested };
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
@@ -2361,6 +2367,7 @@ function parse_match_expr(p: Par): IfChain {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    arms = desugar_nested_arms(arms, 0);
     return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt };
 }
 
@@ -2619,27 +2626,173 @@ function parse_pattern(p: Par): (Pattern, Par) {
     }
     var binding: string = "";
     var extra_bindings: string[] = [];
+    var nested: Pattern[] = [];
     if (p.peek_punct() == "(") {
         p = p.advance();
         // Parse comma-separated payload bindings: `Variant(a, b, …)`. The
         // first is `binding`; the rest go to `extra_bindings` so the checker
         // can flag a payload-arity mismatch (E015). Single-payload variants
         // (all the self-host supports) use only `binding`.
+        //
+        // A single-payload slot that itself begins a variant pattern
+        // (`Some(Ok(n))` — an ident followed by `(` / `{` / `.`) is a NESTED
+        // sub-pattern: recurse and record it in `nested`; desugar_nested_arms
+        // later rewrites the arm to a flat outer arm + inner match. A bare
+        // ident stays a plain binder, so `Some(x)` is unchanged.
         var bn: i32 = 0;
         while (p.peek_punct() != ")" && !p.at_end()) {
-            var inner: string = p.peek_ident();
-            if (inner.len() > 0) {
-                if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.append(inner); }
+            if (bn == 0 && p.peek_ident().len() > 0
+                && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
+                var (sub_pat, sub_p) = parse_pattern(p);
+                p = sub_p;
+                nested = nested.append(sub_pat);
                 bn = bn + 1;
-                p = p.advance();
             } else {
-                p = p.advance();
+                var inner: string = p.peek_ident();
+                if (inner.len() > 0) {
+                    if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.append(inner); }
+                    bn = bn + 1;
+                    p = p.advance();
+                } else {
+                    p = p.advance();
+                }
             }
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings }, p);
+    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested }, p);
+}
+
+// prepend_stmt returns a fresh statement list with `s` in front of `body`.
+// Isolating the concat in a helper (rather than an inline `var xs: Stmt[] =
+// []` + appends of field-derived elements) keeps the element type canonical
+// through the parameter, so the imported-module type mangling stays
+// consistent.
+function prepend_stmt(s: Stmt, body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    out = out.append(s);
+    var i: i32 = 0;
+    while (i < body.len()) {
+        out = out.append(body[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// pv_name returns a pattern's variant type-name, or "" for a wildcard.
+function pv_name(pat: Pattern): string {
+    match (pat) {
+        PatVariant(v) => { return v.type_name; },
+        PatWildcard(w) => { return ""; }
+    }
+    return "";
+}
+
+// arm_is_nested reports whether an arm's pattern carries a nested sub-pattern.
+function arm_is_nested(arm: MatchArm): boolean {
+    match (arm.pattern) {
+        PatVariant(v) => { return v.nested.len() > 0; },
+        PatWildcard(w) => { return false; }
+    }
+    return false;
+}
+
+// desugar_nested_arms rewrites arms carrying nested sub-patterns
+// (`Some(Ok(n))`) into flat arms whose body re-matches the payload on an
+// inner match, grouping contiguous same-variant arms into one merged arm
+// `V(__nest…) => match __nest… { … }`. A no-op returning the arms unchanged
+// when no arm nests — so every existing match (the whole self-host source
+// among them) parses byte-identically. `depth` keeps the synthesised payload
+// temp unique across nesting levels. Recurses so `Some(Ok(Some(x)))` desugars
+// at every depth.
+function desugar_nested_arms(arms: MatchArm[], depth: i32): MatchArm[] {
+    // Any-nested short-circuit: leaves the common (flat) case allocation-free
+    // and, more importantly, byte-identical to the pre-feature output.
+    var seen_nested: boolean = false;
+    var s: i32 = 0;
+    while (s < arms.len()) {
+        if (arm_is_nested(arms[s])) { seen_nested = true; }
+        s = s + 1;
+    }
+    if (!seen_nested) { return arms; }
+    // An unguarded trailing `_` is the outer fallthrough: copied into each
+    // merged inner match so a payload matching no inner pattern runs it.
+    var fall: Stmt[] = [];
+    var has_fall: boolean = false;
+    if (arms.len() > 0) {
+        var last: MatchArm = arms[arms.len() - 1];
+        if (pv_name(last.pattern) == "" && !last.has_guard) {
+            fall = last.body;
+            has_fall = true;
+        }
+    }
+    var out: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        var vn: string = pv_name(arms[i].pattern);
+        if (vn == "") {
+            out = out.append(arms[i]);
+            i = i + 1;
+        } else {
+            var j: i32 = i;
+            while (j < arms.len() && pv_name(arms[j].pattern) == vn) { j = j + 1; }
+            var any_nested: boolean = false;
+            var k: i32 = i;
+            while (k < j) { if (arm_is_nested(arms[k])) { any_nested = true; } k = k + 1; }
+            if (!any_nested) {
+                var c: i32 = i;
+                while (c < j) { out = out.append(arms[c]); c = c + 1; }
+            } else {
+                out = out.append(build_merged_arm(vn, arms, i, j, fall, has_fall, depth));
+            }
+            i = j;
+        }
+    }
+    return out;
+}
+
+// build_merged_arm collapses one contiguous run of same-variant arms
+// (arms[lo..hi], at least one nested) into a single flat arm
+// `V(__nest) => match __nest { <inner arms> }`. A flat sibling arm rebinds
+// the whole payload to its binder; a trailing outer `_` becomes the inner
+// wildcard so unmatched payloads fall through.
+function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: Stmt[], has_fall: boolean, depth: i32): MatchArm {
+    var gp_line: i32 = arms[lo].line;
+    var gp_col: i32 = arms[lo].col;
+    var tmp: string = "__nest_" + util.i32_to_string(gp_line) + "_" + util.i32_to_string(gp_col) + "_" + util.i32_to_string(depth);
+    var inner: MatchArm[] = [];
+    var has_inner_wild: boolean = false;
+    var k: i32 = lo;
+    while (k < hi) {
+        var g: MatchArm = arms[k];
+        var inner_pat: Pattern = p_wildcard();
+        var inner_body: Stmt[] = g.body;
+        match (g.pattern) {
+            PatVariant(gv) => {
+                if (gv.nested.len() > 0) {
+                    inner_pat = gv.nested[0];
+                } else if (gv.binding.len() > 0 && gv.binding != "_") {
+                    // A flat sibling (`Some(x)`): rebind the whole payload.
+                    inner_body = prepend_stmt(s_var(gv.binding, "", e_ident(tmp)), g.body);
+                }
+            },
+            PatWildcard(w) => {}
+        }
+        if (pv_name(inner_pat) == "" && !g.has_guard) { has_inner_wild = true; }
+        inner = inner.append(MatchArm { pattern: inner_pat, body: inner_body, line: g.line, col: g.col, guard: g.guard, has_guard: g.has_guard });
+        k = k + 1;
+    }
+    if (!has_inner_wild && has_fall) {
+        inner = inner.append(MatchArm { pattern: p_wildcard(), body: fall, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false });
+    }
+    var inner_desugared: MatchArm[] = desugar_nested_arms(inner, depth + 1);
+    var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
+    var no_extra: string[] = [];
+    var no_nested: Pattern[] = [];
+    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested };
+    var body: Stmt[] = [inner_match];
+    return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
 }
 
 // parse_match_stmt consumes `match (scrutinee) { arm, arm, … }`
@@ -2799,6 +2952,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    arms = desugar_nested_arms(arms, 0);
     return (s_match_at(sr_expr, arms, mkline, mkcol), p);
 }
 
@@ -3401,7 +3555,8 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 p = rr_p;
                 rest = rest.append(rr_stmt);
             }
-            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra };
+            var le_no_nested: Pattern[] = [];
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
@@ -7861,7 +8016,7 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
             var j: i32 = 0;
             while (j < vn.len()) {
                 if (vn[j] == simple) {
-                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings };
+                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested };
                 }
                 j = j + 1;
             }
