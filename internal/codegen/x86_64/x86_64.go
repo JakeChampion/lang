@@ -7002,8 +7002,13 @@ func (g *generator) emitStrSliceRuntime() {
 	// [rbp - 48] for the inline output buffer.
 	g.emit("sub rsp, 16")
 	g.emit("mov rbx, rdi")      // base (possibly inline-tagged)
-	g.emit("mov r12, rsi")      // low
-	g.emit("mov r13, rdx")      // high
+	// Sign-extend the i32 bounds from their low 32 bits (#5294): a negative
+	// i32 constant materialises zero-extended (mov eax, N), so `len + (-2)`
+	// reaches here as 0x1_0000_0003 and the (partly-unsigned) 64-bit bounds
+	// compares below miss the trap — the slice then reads out of bounds.
+	// movsxd is a no-op for a clean bound, so a correct slice is unchanged.
+	g.emit("movsxd r12, esi")   // low (sign-extended from i32)
+	g.emit("movsxd r13, edx")   // high (sign-extended from i32)
 	g.emitStrLen("r14d", "rbx") // src_len
 	// Bounds checks: low < 0 OR high > src_len OR low > high → trap.
 	g.emit("test r12, r12")

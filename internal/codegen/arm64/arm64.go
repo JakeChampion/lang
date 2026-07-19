@@ -3227,8 +3227,12 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("str x23, [sp, #48]")
 	g.emit("mov x19, x0")      // x19 = base (may be inline-tagged)
-	g.emit("mov x20, x1")      // x20 = low
-	g.emit("mov x21, x2")      // x21 = high
+	// Sign-extend the i32 bounds from their low 32 bits (#5294) — the
+	// arm64 twin of x86-64's movsxd: a negative i32 constant materialises
+	// zero-extended (mov w0, N), so a dirty-high-bits bound slips past the
+	// bounds compares. sxtw is a no-op for a clean bound.
+	g.emit("sxtw x20, w1")     // x20 = low (sign-extended from i32)
+	g.emit("sxtw x21, w2")     // x21 = high (sign-extended from i32)
 	g.emitStrLen("w22", "x19") // x22 = src_len
 	// low < 0 → trap
 	g.emit("cmp x20, #0")
@@ -3313,8 +3317,9 @@ func (g *generator) emitStrSliceRuntime2W() {
 	g.emit("stp x23, x24, [sp, #48]")
 	g.emit("mov x19, x0") // base_data
 	g.emit("mov x20, x1") // base_len
-	g.emit("mov x21, x2") // low
-	g.emit("mov x22, x3") // high
+	// Sign-extend the i32 bounds (#5294), as in the 1W variant above.
+	g.emit("sxtw x21, w2") // low (sign-extended from i32)
+	g.emit("sxtw x22, w3") // high (sign-extended from i32)
 	// Get base byte length.
 	g.emitStrLen2W("w23", "x20") // x23 = src_byteLen
 	// Bounds checks: low ≥ 0, high ≤ src_byteLen, low ≤ high.
