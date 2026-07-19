@@ -3819,6 +3819,25 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // loop spins (OOM). std/string's split_at / split_once use
         // `(string, string)` and `Option[(string, string)]`.
         if (p.peek_punct() == "(") {
+            // A parenthesized SINGLE trait-object type — `(dyn T)`,
+            // `(dyn A + B)`, optionally arrayed `(dyn T)[]`. The parens are
+            // redundant grouping (source needs them so a trailing `[]` binds to
+            // the whole `dyn T`, not to a trait generic-arg). Unwrap to the
+            // paren-free `dyn T` / `dyn T[]` spelling the `dyn` branch above
+            // produces — otherwise the tuple char-collect loop below mashes
+            // `dyn Shape` into `(dynShape)` (space dropped, parens kept) and
+            // every `type_name[0:4] == "dyn "` consumer misses, so a
+            // `(dyn Trait)[]` PARAM's element dispatch declines the IR path
+            // (#5203). A genuine tuple whose first element is `dyn`
+            // (`(dyn A, i32)`) is NOT a single-type wrap: the `)`-follows check
+            // fails and the untouched cursor runs the unchanged tuple path.
+            var dpa: Par = p.advance();   // peek past `(`
+            if (dpa.peek_keyword() == "dyn") {
+                var (dpw_name, dpw_ret_arr, dpw_fn_ret, dpw_p) = parse_type_name(dpa);
+                if (dpw_p.peek_punct() == ")") {
+                    return consume_array_suffix(dpw_p.advance(), dpw_name);
+                }
+            }
             var tbuf: string = "";
             var td: i32 = 0;
             var is_fn: boolean = false;
@@ -7603,6 +7622,29 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
                     var fr: string = me_fn_ret_spelling(env.elook(cid.name));
                     if (fr.len() > 0) { return fr; }
                     return func_ret_of(funcs, cid.name);
+                },
+                ExprFieldAccess(cfa) => {
+                    // A METHOD call `recv.method(args)` as the scrutinee: resolve
+                    // the receiver's type and return the method's declared return
+                    // type, so `match (s.find(k))` over a generic-enum-returning
+                    // method recovers its instantiation and rewrites its arms.
+                    // Without this the method scrutinee resolved "" (only a free
+                    // function's return was recovered), so the arms stayed
+                    // un-mangled against the concrete enum and the match read the
+                    // wrong variant.
+                    var rt: string = me_scrutinee_type(cfa.obj, env, structs, funcs);
+                    if (rt.len() > 0) {
+                        var rbase: string = strip_struct_base(rt);
+                        var mi: i32 = 0;
+                        while (mi < funcs.len()) {
+                            if (funcs[mi].name == cfa.field && funcs[mi].receiver_type.len() > 0
+                                && strip_struct_base(funcs[mi].receiver_type) == rbase) {
+                                return funcs[mi].ret_type;
+                            }
+                            mi = mi + 1;
+                        }
+                    }
+                    return "";
                 },
                 _ => { return ""; }
             }

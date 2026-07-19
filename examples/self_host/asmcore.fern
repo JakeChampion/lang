@@ -339,16 +339,27 @@ pub function rt_src_random_bytes(): string {
     return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); __syscall3(318, p, n, 0); return __raw_string(p, n); }";
 }
 
+// rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
+// (#2649) — the single definition of the mapping native's __fern_io_error + the
+// arm64 hand-asm carry, so stat / read_file / remove_file / write_file stop
+// INLINING the five-way branch and just call it. `path` is consumed (moved into
+// the path-carrying variant, or dropped by RC on the payload-less Interrupted
+// branch), so callers hand it a FRESH string. Emitted once and bundled with the
+// fs helpers that call it (asm_ir's fs-helper bundle), so the standard
+// inter-procedural RC analysis threads the call-graph edge — this IS the #2649
+// "dependencies are the call graph" end-state, in miniature. x86-64 IR only; the
+// arm64 / AST backends keep the hand-asm __fern_io_error.
+pub function rt_src_io_error(): string {
+    return "function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; } return Other(path, \"\"); }";
+}
+
 // rt_src_remove_file backs `remove_file(path)` (#2649, syscall-leaf) →
 // Option[IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0) (syscall
 // 263, 3-arg so __syscall3 suffices), return None on success / on failure the
-// errno-mapped IoError variant (ENOENT→NotFound, EACCES→PermissionDenied,
-// EEXIST→AlreadyExists, EINTR→Interrupted, else Other) matching native's
-// __fern_io_error + the arm64 hand-asm — the Some payload a FRESH string boxed
-// from the raw path copy (not the borrowed `path`, so no RC double-free). The
-// initial migration flattened every failure to Some(NotFound(_)). x86-64-only.
+// errno classified by the shared __fern_io_error (bundled with this helper) —
+// handed a FRESH path string, so the borrowed `path` param is never stored.
 pub function rt_src_remove_file(): string {
-    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { var e: i32 = 0 - rc; if (e == 4) { return Some(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Some(NotFound(ep)); } if (e == 13) { return Some(PermissionDenied(ep)); } if (e == 17) { return Some(AlreadyExists(ep)); } return Some(Other(ep, \"\")); } return None; }";
+    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return None; }";
 }
 
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
@@ -356,12 +367,23 @@ pub function rt_src_remove_file(): string {
 // O_WRONLY|O_CREAT|O_TRUNC=577, mode=420=0644) — the mode arg is meaningful, so
 // this is the first __syscall4 user. Copy the contents bytes into a buffer and
 // write them in ONE write (single write, no offset-loop, like read_file's single
-// read — regular-file writes complete in one call), close. None on success;
-// on openat failure the errno-mapped IoError variant (matching stat / native's
-// __fern_io_error), the path-carrying variants boxing a FRESH path string.
-// x86-64-only (arch-specific syscall numbers).
+// read — regular-file writes complete in one call), close. None on success; on
+// openat failure the errno classified by the shared __fern_io_error (bundled with
+// this helper), handed a FRESH path string. x86-64-only (arch-specific syscalls).
 pub function rt_src_write_file(): string {
-    return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { var e: i32 = 0 - fd; if (e == 4) { return Some(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Some(NotFound(ep)); } if (e == 13) { return Some(PermissionDenied(ep)); } if (e == 17) { return Some(AlreadyExists(ep)); } return Some(Other(ep, \"\")); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
+    return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { return Some(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
+}
+
+// rt_src_temp_dir backs `temp_dir(prefix)` (#2649, syscall-leaf) → Result[string,
+// IoError]. Builds a uniquely-named /tmp/<prefix>-<monotonic_ns> path with the
+// raw-memory intrinsics (inline i64→digits, like the hand-asm — avoids pulling in
+// str_concat / i64_to_string helper deps; monotonic_ns is a builtin callee, marked
+// by the op handler), mkdirat(AT_FDCWD, path, 0700=448) via __syscall3, returns
+// Ok(path) — the built buffer becomes the string — or, on failure, the errno
+// classified by the shared __fern_io_error (bundled with this helper), handed a
+// FRESH copy of the built path. x86-64-only (arch-specific syscall number).
+pub function rt_src_temp_dir(): string {
+    return "function __fern_temp_dir(prefix: string): Result[string, IoError] { var t: i64 = monotonic_ns(); var plen: i32 = prefix.len(); var ndig: i32 = 1; var tt: i64 = t; while (tt >= (10 as i64)) { ndig = ndig + 1; tt = tt / (10 as i64); } var total: i32 = 5 + plen + 1 + ndig; var buf: i32 = __raw_alloc(total + 1); __raw_store8(buf, 0, 47); __raw_store8(buf, 1, 116); __raw_store8(buf, 2, 109); __raw_store8(buf, 3, 112); __raw_store8(buf, 4, 47); var i: i32 = 0; while (i < plen) { __raw_store8(buf, 5 + i, prefix[i]); i = i + 1; } __raw_store8(buf, 5 + plen, 45); var pos: i32 = total - 1; var v: i64 = t; if (v == (0 as i64)) { __raw_store8(buf, pos, 48); } else { while (v > (0 as i64)) { __raw_store8(buf, pos, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); pos = pos - 1; } } __raw_store8(buf, total, 0); var rc: i32 = __syscall3(258, -100, buf, 448); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(buf, total))); } return Ok(__raw_string(buf, total)); }";
 }
 
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
@@ -369,18 +391,15 @@ pub function rt_src_write_file(): string {
 // 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
 // (syscall 8), read the whole thing in ONE read into a sized buffer that BECOMES
 // the returned string (RC-managed, like random_bytes), close. On open/read
-// failure, the errno-mapped IoError variant (ENOENT→NotFound,
-// EACCES→PermissionDenied, EEXIST→AlreadyExists, EINTR→Interrupted, else Other)
-// matching native's __fern_io_error + the arm64 hand-asm — a FRESH string boxed
-// from the raw path copy, not the borrowed `path`. The initial migration
-// flattened both failure sites to Err(NotFound(_)). The success path is unchanged
-// (structurally identical), so the compiler's own read_file stays byte-for-byte.
-// Single-read (no offset-into-buffer arithmetic, which the i32 raw-pointer floor
-// can't do 64-bit-safely on a high heap buffer): correct for regular files ≤ 2 GiB
-// read without interruption, which covers the use (the compiler reading source).
-// x86-64-only (arch-specific syscall numbers).
+// failure, the errno is classified by the shared __fern_io_error (bundled with
+// this helper), handed a FRESH path string, so the borrowed `path` param is never
+// stored. The success path is unchanged, so the compiler's own read_file stays
+// byte-for-byte. Single-read (no offset-into-buffer arithmetic, which the i32
+// raw-pointer floor can't do 64-bit-safely on a high heap buffer): correct for
+// regular files ≤ 2 GiB read without interruption, which covers the use (the
+// compiler reading source). x86-64-only (arch-specific syscall numbers).
 pub function rt_src_read_file(): string {
-    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { var e1: i32 = 0 - fd; if (e1 == 4) { return Err(Interrupted); } var p1: string = __raw_string(pathz, plen); if (e1 == 2) { return Err(NotFound(p1)); } if (e1 == 13) { return Err(PermissionDenied(p1)); } if (e1 == 17) { return Err(AlreadyExists(p1)); } return Err(Other(p1, \"\")); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { var e2: i32 = 0 - got; if (e2 == 4) { return Err(Interrupted); } var p2: string = __raw_string(pathz, plen); if (e2 == 2) { return Err(NotFound(p2)); } if (e2 == 13) { return Err(PermissionDenied(p2)); } if (e2 == 17) { return Err(AlreadyExists(p2)); } return Err(Other(p2, \"\")); } return Ok(__raw_string(buf, got)); }";
+    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { return Err(__fern_io_error(0 - got, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
 }
 
 // rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
@@ -408,18 +427,13 @@ pub function rt_src_clock(which: string): string {
 // 4, follows symlinks — 2-arg, so __syscall3 suffices) into the fixed static
 // scratch buffer, read st_mode (offset 24, 4 bytes) + st_size (offset 48, 8
 // bytes) via __load_i32/__load_i64, classify by S_IFMT, and build
-// Ok(FileStat{...}) — or, on failure, the IoError variant native's __fern_io_error
-// (and the retired hand-asm __fern_stat) map the errno to: ENOENT(2) → NotFound,
-// EACCES(13) → PermissionDenied, EEXIST(17) → AlreadyExists, EINTR(4) →
-// Interrupted, else → Other(path, ""). This restores the full mapping the initial
-// migration (#5243) had flattened to NotFound-only. The path-carrying variants
-// box a FRESH string from the raw NUL-term copy (not the borrowed `path`), so the
-// Ok path never stores `path` either and it stays a borrowed read-only param —
-// no RC double-free. The FileStat struct + Result/variant construction lower
-// through the normal IR path (emit_ir_runtime_fern_fn receives all_structs).
+// Ok(FileStat{...}) — or, on failure, the errno classified by the shared
+// __fern_io_error (bundled with this helper), handed a FRESH path string so the
+// borrowed `path` param is never stored. The FileStat struct + Result construction
+// lower through the normal IR path (emit_ir_runtime_fern_fn receives all_structs).
 // x86-64-only (arch-specific syscall number); arm64/AST keep their hand-asm.
 pub function rt_src_stat(): string {
-    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { var e: i32 = 0 - rc; if (e == 4) { return Err(Interrupted); } var ep: string = __raw_string(pathz, plen); if (e == 2) { return Err(NotFound(ep)); } if (e == 13) { return Err(PermissionDenied(ep)); } if (e == 17) { return Err(AlreadyExists(ep)); } return Err(Other(ep, \"\")); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {

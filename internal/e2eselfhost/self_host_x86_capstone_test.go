@@ -77,9 +77,10 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42, ""},
 		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42, ""},
 		{"string", "function main(): i32 { write(\"hi!\"); return 0; }\n", 0, "hi!"},
-		// Heap programs: their asm is the whole alloc/memcpy runtime (~32 KB)
-		// with a `.bss` heap (`__fern_heap: .skip 1.75 GB`) accessed via
-		// rip-relative movq — the full instruction + data-section surface.
+		// Heap programs: their asm is the whole alloc/RC/memcpy runtime — the
+		// mmap'd bump heap whose pointers live in `.bss` `.quad`s accessed via
+		// rip-relative movq, plus the `.skip` freelist — the full instruction
+		// + data-section surface.
 		{"struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }\n", 42, ""},
 		{"array", "function main(): i32 { var a = [10, 20, 12]; var s = 0; var i = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }\n", 42, ""},
 		// String length + indexing exercise movslq reg-reg (the .len() widen)
