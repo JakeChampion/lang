@@ -36258,6 +36258,31 @@ function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: par
     return cap_type_in_stmts(fd.body, name, fd, depth, structs, mfuncs);
 }
 
+// tuple_tag_i32_only reports whether a tuple tag `(t0, t1, …)` (as produced by
+// tuple_elem_tags) is composed ENTIRELY of i32 elements, recursively. It gates
+// the nested tuple-destructure capture lift (#5201) to the shape whose element
+// reads lower correctly: an i32 destructure element captures via the 32-bit env
+// slot with the right value, so a nested `var (p, c) = t; var (a, b) = p` over
+// an all-i32 tuple lifts soundly. A POINTER (string / struct / array) element of
+// a destructure binding is a SEPARATE pre-existing capture-materialisation gap
+// (a captured string from a destructure comes through empty on the IR path,
+// with or without nesting), so enabling its lift would turn a correct AST
+// fallback into a wrong IR build — those stay declined here.
+function tuple_tag_i32_only(t: string): boolean {
+    if (t.len() < 2 || t[0] != 40) { return false; }
+    var elems: string[] = rc_fe_split_csv(tuple_elem_tags(t));
+    if (elems.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        var e: string = elems[i];
+        if (e == "i32") {}
+        else if (e.len() >= 2 && e[0] == 40 && tuple_tag_i32_only(e)) {}
+        else { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // cap_type_in_stmts finds `var name` anywhere in `body` (recursing into
 // if/while/for/match blocks) and resolves its type: the annotation when
 // present, else the inferable init. First match wins — shadowing across
@@ -36279,9 +36304,14 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 // or inferred from the init) and read the element tag at that
                 // index (#5173). Without this a lambda capturing a destructure
                 // binding resolved "" and declined to the miscompiling AST
-                // path. Only scalar/string element tags are returned (a
-                // pointer-element tag would need env-box handling the capture
-                // path doesn't do) — a miss stays a declined lift.
+                // path. Scalar/string element tags are returned, AND an all-i32
+                // nested-tuple element tag `(…)` (tuple_tag_i32_only) — that tag
+                // is what a SECOND-level destructure `var (a, b) = p` indexes
+                // `p`'s element into, and cap_slot_ok admits the tuple itself as
+                // a pointer riding the 32-bit env slot, so the nested-destructure
+                // capture lifts instead of declining (#5201). A pointer-element
+                // tuple stays declined: a captured string from a destructure is a
+                // separate pre-existing IR gap, so keep it on the AST fallback.
                 if (rc_fe_is_destructure(v.name)) {
                     var dnames: string[] = rc_fe_split_csv(v.name);
                     var didx: i32 = util.index_of_str(dnames, name);
@@ -36293,6 +36323,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                             if (didx < etags.len()) {
                                 var et: string = etags[didx];
                                 if (et == "i32" || et == "string" || et == "boolean" || et == "i64" || et == "u64" || et == "f64" || et == "u32") { return et; }
+                                if (et.len() >= 2 && et[0] == 40 && tuple_tag_i32_only(et)) { return et; }
                             }
                         }
                     }
