@@ -928,6 +928,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $60, %rax\n");
     s = s.write("    movq $137, %rdi\n");
     s = s.write("    syscall\n");
+    // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set.
+    // Aborts with exit 134, matching the native backends + docs/ARRAY-BOUNDS.md
+    // ("an out-of-bounds index aborts before producing a value; never returns a
+    // garbage value"). A single shared routine keeps the per-access check to a
+    // compare + a jae to here, with no per-site label churn.
+    s = s.write("__fern_oob_abort:\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    movq $134, %rdi\n");
+    s = s.write("    syscall\n");
     // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
     // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
     s = s.write("__fern_arr_box:\n");
@@ -3900,11 +3909,15 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             }
             s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 88) {  // arr_get
-            // pop idx (top), base; element at data+(idx+1)*8.
-            s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            // pop idx (top), base; element at data+(idx+1)*8. Bounds check first
+            // (docs/ARRAY-BOUNDS.md): idx vs the length prefix at data[0]. The
+            // UNSIGNED compare catches both idx >= len and a negative idx (which
+            // reads as a huge unsigned) with one branch to the shared abort.
+            s = s.write("    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 89) {  // arr_set
-            // pop val (top), idx, base; store at data+(idx+1)*8.
-            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
+            // pop val (top), idx, base; store at data+(idx+1)*8. Same bounds
+            // check as arr_get: an out-of-range write aborts, never corrupts.
+            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
         } else if (o.kind_tag == 90) {  // arr_len
             // pop base; length header at data+0.
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
