@@ -132,9 +132,7 @@ function main(): i32 {
 	// #5394: ESCAPING closures (returned — the make_closure env-box path).
 	// The env used to snapshot the capture at creation; the capture now boxes
 	// into a shared cell (any type), so the outer reassignment stores through
-	// the cell and the escaped closure reads the live value. (Closures stored
-	// in ARRAY containers are excluded here — that shape hits the pre-existing
-	// closure-array + array-capture crash #5405, unrelated to reassignment.)
+	// the cell and the escaped closure reads the live value.
 	{"escape-array-reassign",
 		`function mk(): () => i32 {
     var a: i32[] = [10, 1];
@@ -195,6 +193,29 @@ function main(): i32 {
     var r1: i32 = g();
     return g();
 }`, 42},
+	// Escape via an ARRAY CONTAINER (`[f]`), capture reassigned after: needs
+	// BOTH the #5394 cell boxing (container storage is an escape) and the
+	// #5405 closure-local array-literal classification (else `fs[0]()`
+	// bare-calls the env box and SIGSEGVs).
+	{"escape-container-reassign",
+		`function main(): i32 {
+    var a: i32[] = [10, 1];
+    var f: () => i32 = function (): i32 { return a[0]; };
+    var fs: (() => i32)[] = [f];
+    a = [42, 1];
+    return fs[0]();
+}`, 42},
+	// One capture shared by a direct-called closure AND a container-escaped
+	// one; both read the post-reassignment buffer: 20 + 21 = 41.
+	{"escape-two-closures-shared-capture",
+		`function main(): i32 {
+    var a: i32[] = [10, 1];
+    var direct: () => i32 = function (): i32 { return a[0]; };
+    var esc: () => i32 = function (): i32 { return a[0] + 1; };
+    var keep: (() => i32)[] = [esc];
+    a = [20, 1];
+    return direct() + keep[0]();
+}`, 41},
 }
 
 // TestSelfHostOuterMutCaptureIRX86_64 cross-checks native (now oracle-

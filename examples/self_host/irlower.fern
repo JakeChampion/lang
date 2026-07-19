@@ -12336,6 +12336,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             _ => { }
                         }
                     },
+                    // A bare CLOSURE-LOCAL ident element (`var fs = [f]` where
+                    // f binds a capturing lambda): the element is the env-box
+                    // POINTER, so the array is a closure array — without this
+                    // arm the slot stayed unclassified and `fs[i]()` bare-
+                    // called the box pointer as code (SIGSEGV, #5405). The
+                    // `.append(f)` site already had this arm (#3556); this is
+                    // its array-LITERAL sibling. A bare NAMED-fn element is
+                    // NOT matched here — is_closure_local is false for it, so
+                    // the #3574 fn-pointer-array classification still wins.
+                    parser.ExprIdent(ceid) => { if (se.is_closure_local(ceid.name)) { is_closurearr = true; } },
                     _ => { }
                 }
             }

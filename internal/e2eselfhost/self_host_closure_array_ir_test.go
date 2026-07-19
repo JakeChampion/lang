@@ -142,6 +142,23 @@ var closureArrayIRCases = []struct {
 	// regression: a BARE named-fn array forwarded through the same shape must
 	// STAY plain-dispatched (the fixpoint must not over-mark). inc(5) = 6.
 	{"param-forward-namedfn-plain", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { return apply(fs, 5); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; return chain(fs); }`, 6},
+	// #5405: a bare CLOSURE-LOCAL ident element in an array LITERAL
+	// (`var f = <lambda>; var fs = [f]`). The element is the env-box pointer,
+	// but the literal classifier only recognized lambda / `__mkclo$` /
+	// closure-call elements, so the slot stayed unclassified and `fs[0]()`
+	// bare-called the box pointer as code — SIGSEGV. The `.append(f)` site
+	// already classified closure locals (#3556); these pin its array-literal
+	// sibling. Scalar capture: 42.
+	{"local-elem-scalar-cap", `function main(): i32 { var n = 42; var f: () => i32 = function (): i32 { return n; }; var fs: (() => i32)[] = [f]; return fs[0](); }`, 42},
+	// ARRAY capture through the same shape (the capture is itself a pointer).
+	{"local-elem-array-cap", `function main(): i32 { var a: i32[] = [42, 1]; var f: () => i32 = function (): i32 { return a[0]; }; var fs: (() => i32)[] = [f]; return fs[0](); }`, 42},
+	// The shared env box called through BOTH names: 20 + 20 + 2 = 42.
+	{"local-elem-both-names", `function main(): i32 { var n = 20; var f: () => i32 = function (): i32 { return n; }; var fs: (() => i32)[] = [f]; var x = f(); return x + fs[0]() + 2; }`, 42},
+	// Two closure locals in one literal: 20 + 21 + 1 = 42.
+	{"local-elem-two", `function main(): i32 { var n = 20; var f: () => i32 = function (): i32 { return n; }; var g: () => i32 = function (): i32 { return n + 1; }; var fs: (() => i32)[] = [f, g]; return fs[0]() + fs[1]() + 1; }`, 42},
+	// regression: a bare NAMED-fn literal element stays on the #3574
+	// fn-pointer path (is_closure_local is false for it): 42.
+	{"local-elem-namedfn-plain", `function h(): i32 { return 42; } function main(): i32 { var fs: (() => i32)[] = [h]; return fs[0](); }`, 42},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted
