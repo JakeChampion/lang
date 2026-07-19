@@ -1259,6 +1259,17 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// the bundle harness's reason for existing. `substr` isn't a std/string
 		// method, so both checkers report E043.
 		{"string-unknown-method-e043", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; var t = s.substr(0, 1); return 0; }\n"},
+		// #5205: a bundled helper that `match`es on an Option returned by a
+		// method call (`result.checked_mul(base)` → Option[i32]) binding
+		// `Some(v)` and assigning the payload to a concrete-typed local
+		// (`result = v`). A built-in payload variant has no struct sig, so the
+		// self-host used to bind `v` as the wrapper struct `Some` and spuriously
+		// draw E003 on `result = v` — poisoning the whole bundle's code set for
+		// every program that transitively imports the helper's module. The
+		// helper's payload type is now bound unknown (unrecoverable in the
+		// name-only type system), so both checkers agree the bundle is clean.
+		{"match-method-option-payload-assign-ok", "import \"std/string\";\nfunction trig(base: i32): i32 { var result: i32 = 1; match (result.checked_mul(base)) { Some(v) => { result = v; }, None => { return 0; } } return result; }\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
+		{"match-method-option-payload-assign-array-ok", "import \"std/array\";\nfunction trig(base: i32): i32 { var result: i32 = 1; match (result.checked_mul(base)) { Some(v) => { result = v; }, None => { return 0; } } return result; }\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
 	}
 
 	for _, tc := range progs {

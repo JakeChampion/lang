@@ -949,10 +949,21 @@ function field_index(ssig: StructSig, name: string): i32 {
 // false-positived E038 when the payload was passed to a typed function,
 // and E003 on assignment to it.) A struct-union member `type U = A | B` is
 // a genuine user struct with no `__ev` marker, so its binding is the whole
-// struct — `t_struct(name)`, matching the Go checker. A variant whose
-// struct sig is unknown falls back to the membership name too.
+// struct — `t_struct(name)`, matching the Go checker.
+//
+// A built-in payload variant (`Some` / `Ok` / `Err` and the payload
+// `JsonValue` variants) has NO struct sig at all: its inner type isn't
+// recoverable here because a built-in generic enum resolves name-only
+// (`Option[i32]` → the bare union `Option`, dropping the i32 — see
+// type_from_ref_su). Binding such a payload as `t_struct("Some")` mis-typed
+// it as the variant WRAPPER, which spuriously tripped E003 on a downstream
+// `x = <payload>` (e.g. `match (n.checked_mul(b)) { Some(v) => { r = v; } }`
+// where `r` is i32) — #5205. With the payload type unknowable, bind it as
+// unknown so those walks skip it, matching the Go checker's practical
+// outcome (no spurious diagnostic).
 function variant_binding_type(s: Scope, type_name: string): Type {
     var ss: StructSig = s.lookup_struct(type_name);
+    if (ss.name.len() == 0) { return t_unknown("built-in variant payload `" + type_name + "`"); }
     var i: i32 = 0;
     while (i < ss.field_names.len()) {
         if (ss.field_names[i] == "__ev") { return ss.field_types[i]; }
@@ -968,6 +979,7 @@ function variant_binding_type(s: Scope, type_name: string): Type {
 // variant_binding_type (which is the idx==0 case).
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
     var ss: StructSig = s.lookup_struct(type_name);
+    if (ss.name.len() == 0) { return t_unknown("built-in variant payload `" + type_name + "`"); }
     var want: string = "__ev";
     if (idx > 0) { want = "__ev" + util.i32_to_string(idx); }
     var i: i32 = 0;
