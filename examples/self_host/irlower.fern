@@ -1860,10 +1860,10 @@ pub function tuple_type_elem_tag(t: string, n: i32): string {
 }
 
 // is_leaksafe_tuple_field: a tuple field "(t0, …)" whose elements are each a
-// leak-safe scalar / string, an Option[T] / Result[T,E] (leak-only box), or a
-// NESTED tuple of such elements. Tuples are leak-only on the IR path (the exit
-// sweep never frees them), so such a field leaks with the struct — no RC, no
-// aliasing bail. Array elements are still deferred (they would need RC).
+// leak-safe scalar / string, an Option[T] / Result[T,E] (leak-only box), a
+// leak-safe ARRAY (a heap pointer in one tuple slot), or a NESTED tuple of such
+// elements. Tuples are leak-only on the IR path (the exit sweep never frees
+// them), so such a field leaks with the struct — no RC, no aliasing bail.
 pub function is_leaksafe_tuple_field(t: string): boolean {
     var len: i32 = t.len();
     if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return false; }
@@ -1875,8 +1875,14 @@ pub function is_leaksafe_tuple_field(t: string): boolean {
         var elem_ok: boolean = is_leaksafe_payload(tag);
         // An Option[T]/Result[T,E] element is a leak-only box (one pointer slot).
         if (!elem_ok) { elem_ok = is_leaksafe_opt_field(tag); }
-        // A NESTED tuple element is itself a leak-only heap-tuple pointer; recurse
-        // so an inner array still bails (matching the construction guard).
+        // A leak-safe ARRAY element — a scalar / string / 8-byte array — is a
+        // heap pointer in one tuple slot, leaking with the (leak-only) tuple
+        // field, exactly the set tuple_elems_lowerable already admits for tuple
+        // construction / return. (Struct- / enum-array elements need the
+        // `structs` view to classify, so a tuple field carrying one still
+        // bails — rarer, a later increment.)
+        if (!elem_ok && (tag == "string[]" || tag == "f64[]" || tag == "i64[]" || is_leaksafe_array_field(tag))) { elem_ok = true; }
+        // A NESTED tuple element is itself a leak-only heap-tuple pointer; recurse.
         if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field(tag); }
         if (!elem_ok) { return false; }
         any = true;
