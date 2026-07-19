@@ -20,10 +20,12 @@ import (
 // shape), and the IR match-arm binding marks it a closure local — so the chain
 // computes the native value on the IR path (`.Lir_` asserted).
 //
-// Scope: the ANNOTATED scrutinee shape (`var o: Opt[fn] = Has(f); match (o)` and
-// a fn-value param/field). An inline construct-and-match (`match (Has(f))`) with
-// no annotation stays open — it needs me_scrutinee_type to type a variant
-// construction — and is tracked as a follow-up on #5298.
+// The INLINE construct-and-match shape (`match (Has(f))`, no annotation) is
+// covered too (#5298 follow-up): the StmtVar lambda encoding carries the full
+// fn spelling, me_infer_variant_key sanitises an inferred fn key to the same
+// token the annotated path uses (shared clone), and me_scrutinee_type types
+// the variant construction so the arms rewrite and the payload binds as a
+// closure.
 func TestSelfHostFnKeyEnumIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -60,6 +62,22 @@ func TestSelfHostFnKeyEnumIRX86_64(t *testing.T) {
 		// Non branch taken (unit variant of the fn-keyed enum still resolves).
 		{"fnkey-enum-non-branch",
 			`enum Opt[T] { Non, Has(T) } function pick(b: boolean): Opt[(i32) => i32] { if (b) { return Has(function (x: i32): i32 { return x + 40; }); } return Non; } function main(): i32 { var o: Opt[(i32) => i32] = pick(false); match (o) { Has(g) => { return g(2); }, Non => { return 42; } } }`,
+			42},
+		// INLINE construct-and-match, no annotation anywhere on the enum value
+		// (#5298 follow-up): the instantiation is inferred from the payload
+		// arg's full fn spelling and the match arms rewrite to the same clone
+		// the annotated path uses. Was a SIGSEGV.
+		{"fnkey-enum-inline-match",
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => i32 = function (x: i32): i32 { return x + 40; }; match (Has(f)) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			42},
+		// Inline shape with a CAPTURING closure payload.
+		{"fnkey-enum-inline-capturing",
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var base: i32 = 40; var f: (i32) => i32 = function (x: i32): i32 { return x + base; }; match (Has(f)) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			42},
+		// The i32 inline sibling stays correct (the inferred-key path is
+		// shared; a nominal key must not regress).
+		{"fnkey-enum-inline-i32-regress",
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { match (Has(42)) { Has(n) => { return n; }, Non => { return 0; } } }`,
 			42},
 	}
 	for _, tc := range cases {
