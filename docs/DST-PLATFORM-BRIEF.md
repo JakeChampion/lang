@@ -105,6 +105,21 @@ results.
 - **Fault injection**: seed-driven timeout/error/partial-read
   schedules; the failure report prints the seed; a `--seed` rerun
   replays it.
+
+  **Status: shipped (#5360 slice 3).** Per-endpoint fault modes on
+  `sim.Net`, value-returning like `serve`: `fault_fail` (immediate
+  `""`, the real connect failure), `fault_stall` (never resolves — a
+  never-ready token, dropped by `with_deadline_on` at the exact
+  virtual deadline), `fault_partial(k)` (the first `min(k, #chunks)`
+  chunks arrive on schedule, then silence — never resolves), and
+  `fault_flaky(p)` (wraps the endpoint's fault mode, default fail;
+  each fetch consumes exactly one sim-PRNG draw in program order, the
+  fault firing on `draw < p`). `sim.sweep_seeds(n, prop)` is the
+  seed-replay workflow in miniature (first failing seed, 0 if all
+  pass) and `Sim.rng_state()` supports lockstep assertions. Suite:
+  `examples/tests/sim_fault_test.fern` (incl. a pinned cross-backend
+  flaky(50) golden) with interp/native/wasm gates in
+  `internal/e2e/sim_fault_test.go`.
 - **fernsmith integration**: random combinator programs × random
   seeds, differential across backends — extends the existing
   numeric-property harness pattern to concurrency.

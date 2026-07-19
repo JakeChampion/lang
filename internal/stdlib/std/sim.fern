@@ -40,6 +40,28 @@ function __roll(drv: Sim, n: i32): i32 {
     return (x % (n as i64)) as i32;
 }
 
+// rng_state() — the current PRNG state. Two sims constructed from the
+// same seed have equal states exactly while they have made the same
+// draws in the same order, so a test can assert two runs stayed in
+// lockstep (same-seed reproducibility) without comparing outcomes.
+pub function (s: Sim) rng_state(): i64 {
+    return s.rng.get();
+}
+
+// sweep_seeds(n, prop) — run `prop(seed)` for seeds 1..n and return the
+// FIRST seed for which it returned false, or 0 when every seed passed.
+// The DST replay workflow in miniature: a failing property is a seed you
+// rerun under a debugger, not a flake you shrug at. Deliberately free of
+// std/test so any harness (or plain `main`) can call it.
+pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
+    var s: i64 = 1;
+    while (s <= n) {
+        if (!prop(s)) { return s; }
+        s = s + 1;
+    }
+    return 0;
+}
+
 impl async.Driver for Sim {
     // poll_ready — the virtual wait, honouring the real `poll`
     // contract (internal/codegen/x86_64/x86_64.go emitPollRuntime):
@@ -133,7 +155,13 @@ pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32
 
 // Endpoint — one scripted upstream. A registered `path` of "" matches any
 // path on its host:port. `hits` is a shared Cell (struct fields are frozen —
-// E048 — but a Cell[i64] mutates through), counting fetches routed here.
+// E048 — but a Cell[i64] mutates through), counting fetches routed here
+// (faulted fetches included — the request still reached the upstream).
+// `fault` is the injected fault mode (0 none / 1 fail / 2 stall / 3
+// partial), `fault_k` the partial-mode chunk count, and `flaky_pct` the
+// per-call fault probability: -1 = deterministic (the fault always fires),
+// 0..100 = each fetch draws once from the sim PRNG and the fault fires
+// when the draw lands below it.
 pub struct Endpoint {
     host_be: i32,
     port: i32,
@@ -143,6 +171,9 @@ pub struct Endpoint {
     chunk_ns: i64,
     chunk_lens: i32[],
     hits: Cell[i64],
+    fault: i32,
+    fault_k: i32,
+    flaky_pct: i32,
 }
 
 // Net — a Sim plus its scripted endpoints. Registration is value-returning
@@ -175,6 +206,7 @@ pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body:
         host_be: host_be, port: port, path: path, body: body,
         first_ns: first_byte_ns, chunk_ns: chunk_ns, chunk_lens: chunk_lens,
         hits: cell_new(0 as i64),
+        fault: 0, fault_k: 0, flaky_pct: -1,
     };
     return Net { drv: n.drv, eps: n.eps.append(ep) };
 }
@@ -217,6 +249,93 @@ pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64 {
     return n.eps[i].hits.get();
 }
 
+// ---------------------------------------------------------------------------
+// Fault injection (docs/DST-PLATFORM-BRIEF.md, slice 3) — seed-driven fault
+// schedules on registered endpoints, so fan-out code is testable against
+// flaky upstreams with every failure reproducible from the seed. Faults are
+// registered value-returning like `serve` (`n = n.fault_fail(...)`) on an
+// ALREADY-registered endpoint and compose with its scripted latency /
+// chunking; a fault registration for an unknown endpoint is a no-op (that
+// endpoint is already a dead upstream). Faulted fetches still count as hits.
+
+// __with_fault(n, host_be, port, path, mode, k, pct) — Net with the first
+// matching endpoint's fault fields replaced (the shared `hits` Cell carries
+// over), or `n` unchanged when nothing matches.
+function __with_fault(n: Net, host_be: i32, port: i32, path: string, mode: i32, k: i32, pct: i32): Net {
+    var idx: i32 = __find(n, host_be, port, path);
+    if (idx < 0) { return n; }
+    var e: Endpoint = n.eps[idx];
+    var ne: Endpoint = Endpoint {
+        host_be: e.host_be, port: e.port, path: e.path, body: e.body,
+        first_ns: e.first_ns, chunk_ns: e.chunk_ns, chunk_lens: e.chunk_lens,
+        hits: e.hits,
+        fault: mode, fault_k: k, flaky_pct: pct,
+    };
+    return Net { drv: n.drv, eps: n.eps.with(idx, ne) };
+}
+
+// fault_fail(host_be, port, path) — every fetch of the matching endpoint
+// resolves immediately to Ready("") — the real fetch_future's connect/send
+// failure, so a failed upstream never stalls a fan-out.
+pub function (n: Net) fault_fail(host_be: i32, port: i32, path: string): Net {
+    return __with_fault(n, host_be, port, path, 1, 0, -1);
+}
+
+// fault_stall(host_be, port, path) — every fetch of the matching endpoint
+// suspends on a never-ready token and NEVER resolves: the accepted-then-
+// silent upstream. `gather_on` fills its slot with `on_incomplete`;
+// `with_deadline_on` drops it with None at exactly the virtual deadline.
+pub function (n: Net) fault_stall(host_be: i32, port: i32, path: string): Net {
+    return __with_fault(n, host_be, port, path, 2, 0, -1);
+}
+
+// fault_partial(host_be, port, path, k) — the half-dead connection: the
+// first min(k, #chunks) scheduled chunks arrive at their normal virtual
+// times, then the upstream goes silent and the future NEVER resolves (the
+// terminating close never happens — even `k >= #chunks` withholds it, and
+// `k <= 0` is a stall before the first byte). Partial NEVER errors; the
+// withheld prefix is only observable by draining the future by hand or by
+// bounding the fan-out with `with_deadline_on`.
+pub function (n: Net) fault_partial(host_be: i32, port: i32, path: string, k: i32): Net {
+    return __with_fault(n, host_be, port, path, 3, k, -1);
+}
+
+// fault_flaky(host_be, port, path, p_percent) — probabilistic wrapper over
+// the endpoint's fault mode (defaulting it to fail if none was registered):
+// EVERY fetch of a flaky endpoint consumes exactly one draw from the sim
+// PRNG — shared with `poll_ready`'s tie-breaks, in program order — and the
+// fault fires when `draw < p_percent` (so 0 never faults, 100 always
+// faults, both still draw). Same seed + same call order = same outcomes.
+pub function (n: Net) fault_flaky(host_be: i32, port: i32, path: string, p_percent: i32): Net {
+    var idx: i32 = __find(n, host_be, port, path);
+    if (idx < 0) { return n; }
+    var e: Endpoint = n.eps[idx];
+    var mode: i32 = e.fault;
+    if (mode == 0) { mode = 1; }
+    return __with_fault(n, host_be, port, path, mode, e.fault_k, p_percent);
+}
+
+// __net_stall() — a future on a never-ready token (negative tokens never
+// fire in the sim, mirroring poll(2) on negative fds); its resume is
+// unreachable.
+function __net_stall(): async.Future[string] {
+    function resume(woken: i32): async.Future[string] {
+        return __net_stall();
+    }
+    return Pending(-1, resume);
+}
+
+// __net_drain_stall(at_ms, chunks, i, k, acc) — the partial-mode read:
+// deliver chunks `i..k` at their scheduled times, then suspend forever
+// instead of resolving.
+function __net_drain_stall(at_ms: i32[], chunks: string[], i: i32, k: i32, acc: string): async.Future[string] {
+    if (i >= k) { return __net_stall(); }
+    function resume(woken: i32): async.Future[string] {
+        return __net_drain_stall(at_ms, chunks, i + 1, k, acc + chunks[i]);
+    }
+    return Pending(at_ms[i], resume);
+}
+
 // __net_drain(at_ms, chunks, i, acc) — one step of the scripted read, the
 // sim twin of fetch's __fetch_drain: a Pending ready at chunk i's scheduled
 // time whose resume appends the chunk and either resolves (last chunk) or
@@ -236,12 +355,19 @@ function __net_drain(at_ms: i32[], chunks: string[], i: i32, acc: string): async
 // resolves immediately to "" (a Ready future — it never stalls a fan-out);
 // a registered one re-suspends once per scheduled chunk and resolves to the
 // full body at the last chunk's virtual time. Each call bumps the
-// endpoint's `hits` counter.
+// endpoint's `hits` counter (faults included), then applies its fault mode
+// — via one PRNG draw when flaky — before the scripted read is built.
 pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string] {
     var idx: i32 = __find(n, host_be, port, path);
     if (idx < 0) { return Ready(""); }
     var e: Endpoint = n.eps[idx];
     e.hits.set(e.hits.get() + (1 as i64));
+    var mode: i32 = e.fault;
+    if (mode != 0 && e.flaky_pct >= 0) {
+        if (__roll(n.drv, 100) >= e.flaky_pct) { mode = 0; }
+    }
+    if (mode == 1) { return Ready(""); }
+    if (mode == 2) { return __net_stall(); }
     var chunks: string[] = [];
     var pos: i32 = 0;
     var k: i32 = 0;
@@ -263,6 +389,12 @@ pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async
     while (c < chunks.len()) {
         at_ms = at_ms.append(((now + e.first_ns + (c as i64) * e.chunk_ns) / 1000000) as i32);
         c = c + 1;
+    }
+    if (mode == 3) {
+        var keep: i32 = e.fault_k;
+        if (keep < 0) { keep = 0; }
+        if (keep > chunks.len()) { keep = chunks.len(); }
+        return __net_drain_stall(at_ms, chunks, 0, keep, "");
     }
     return __net_drain(at_ms, chunks, 0, "");
 }

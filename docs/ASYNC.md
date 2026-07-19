@@ -215,6 +215,37 @@ var got: string[] = async.gather_on(d, fs, "");
 
 See `examples/tests/sim_net_test.fern`.
 
+### Fault injection — seed-driven flaky upstreams
+
+Registered endpoints take injected faults, value-returning like `serve`
+(a fault registration for an unknown endpoint is a no-op; faulted
+fetches still count as hits):
+
+- `n.fault_fail(host, port, path)` — every fetch resolves immediately to
+  `""`, the real fetch's connect/send failure.
+- `n.fault_stall(host, port, path)` — every fetch suspends on a
+  never-ready token and never resolves: `gather_on` fills the slot with
+  `on_incomplete`, `with_deadline_on` drops it with `None` at exactly
+  the virtual deadline.
+- `n.fault_partial(host, port, path, k)` — the half-dead connection:
+  the first `min(k, #chunks)` scheduled chunks arrive at their normal
+  virtual times, then the upstream goes silent and the future never
+  resolves (even `k >= #chunks` withholds the terminating close;
+  `k <= 0` stalls before the first byte).
+- `n.fault_flaky(host, port, path, p_percent)` — probabilistic wrapper
+  over the endpoint's fault mode (defaulting it to fail): every fetch
+  of a flaky endpoint consumes exactly one draw from the sim PRNG, in
+  program order, and the fault fires when the draw lands below
+  `p_percent`.
+
+Because the flaky draws come from the same seeded PRNG as `poll_ready`'s
+tie-breaks, a whole flaky fan-out is a pure function of `sim.new(seed)`
+and the call order — a failure is a seed you replay, not a flake.
+`sim.sweep_seeds(n, prop)` is that workflow in miniature: run
+`prop(seed)` over seeds `1..n` and return the first failing seed (0 if
+all pass), with `Sim.rng_state()` available for lockstep assertions.
+See `examples/tests/sim_fault_test.fern`.
+
 ## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern
