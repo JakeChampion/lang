@@ -246,6 +246,18 @@ and the call order — a failure is a seed you replay, not a flake.
 all pass), with `Sim.rng_state()` available for lockstep assertions.
 See `examples/tests/sim_fault_test.fern`.
 
+That purity claim is itself property-tested: the harness in
+`internal/e2e/sim_property_test.go` generates random sim programs —
+scripted endpoints with random latencies, chunk schedules, and fault
+modes, driven through random `gather_on` / `race_on` /
+`with_deadline_on` pipelines — and requires interp, native x86-64,
+and wasm to print byte-identical digests (results, winners, `None`
+slots, `now_ns`, `rng_state`, hits). Any backend divergence on a sim
+program is a real bug, never a flake; a failure prints the whole
+program and its generator seed for replay
+(`TestSimProperty` / `TestSimProperty_Regressions` /
+`FuzzSimProperty`).
+
 ## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern

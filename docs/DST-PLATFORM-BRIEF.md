@@ -123,6 +123,23 @@ results.
 - **fernsmith integration**: random combinator programs × random
   seeds, differential across backends — extends the existing
   numeric-property harness pattern to concurrency.
+
+  **Status: shipped (#5360 slice 4).** Like the numeric-property
+  harness (and unlike `internal/fernsmith`, which generates scalar
+  control-flow programs with no stdlib surface), the generator is a
+  dedicated one in `internal/e2e/sim_property_test.go`: each program
+  builds a seeded `Sim` + `Net` with 1–3 scripted endpoints (random
+  latencies / chunk schedules, ~half faulted incl. flaky with random
+  p), runs 1–3 random `gather_on` / `race_on` / `with_deadline_on`
+  stages over mixes of `future_at` / `future_chain` / `fetch_future`,
+  and prints a digest of everything observable (results, winner
+  indices, `None` slots, final `now_ns`, `rng_state`, per-endpoint
+  hits). Interp, native x86-64, and wasm must produce byte-identical
+  stdout — any divergence is a miscompile or a nondeterminism leak,
+  and the failing subtest prints the whole program for replay.
+  `TestSimProperty` is the bounded 25-seed CI sweep,
+  `TestSimProperty_Regressions` pins four generated programs
+  verbatim, `FuzzSimProperty` is the deeper search entry point.
 - **Platform alignment**: when `PLATFORM-RESEARCH.md` Rec §1 lands a
   `Platform` capability bag, the sim driver becomes the async face of
   the mock platform (Rec §6) rather than a standalone object.
