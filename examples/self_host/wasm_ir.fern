@@ -1933,15 +1933,24 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
             else if (o.width == 64) { out = out + "    f64.load\n"; }
             else { out = out + "    i32.load\n"; }
-        } else if (o.kind_tag == 149 && (o.str == "__fern_arr_share_inc" || o.str == "__fern_arr_share_dec")) {  // call_direct
-            // #4873 grow-bracket share helpers: NO-OP on wasm. Wasm-IR arrays
-            // carry no rc header ([len@0, cap@4, elems@8]) — an rc touch at
-            // base-4 would corrupt the neighbouring allocation — and the wasm
-            // $__fern_arr_push has no uniqueness gate to read one anyway (its
-            // borrowed-param growth gap is tracked separately on #4873). The
-            // op sequence is load → call → drop, so emitting nothing leaves
-            // the loaded value on the stack for the following drop:
-            // stack-neutral, same as the identity the register aliases return.
+        } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_inc") {  // call_direct
+            // #4873/#5325 grow-bracket: retain the survivor across a may-grow
+            // call. Wasm-IR arrays ARE rc-headered ($__fern_arr_box block
+            // [rc@0][bsz@4][len@8][cap@12], data = base+8 → rc@[a-8] — the
+            // same [data-8] convention as the register backends), so the
+            // bracket maps to the exact pair the register backends alias:
+            // inc = the plain retain, dec = the freeing $__fern_arr_dec
+            // (frees at rc==1, defensively gated on null/low/tagged/immortal
+            // — matching __fn___fern_arr_dec on x86/arm64). The gated
+            // $__fern_arr_push (arr_push_helper) reads the raised rc and
+            // copies instead of mutating the shared buffer in place. Both
+            // helpers live in heap_alloc_helpers, gated on module_allocates —
+            // co-resident with $__fern_arr_box wherever an append (and hence
+            // a bracket) can appear. The op sequence is load → call → drop;
+            // the helpers return the pointer, so the stack stays balanced.
+            out = out + "    call $__fern_rc_inc\n";
+        } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {  // call_direct
+            out = out + "    call $__fern_arr_dec\n";
         } else if (o.kind_tag == 149 && asm_ir.is_fern_helper(o.str)) {  // call_direct
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.

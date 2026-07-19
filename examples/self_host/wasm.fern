@@ -9270,15 +9270,31 @@ pub function str_reverse_helper(): string {
 pub function arr_push_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push (param $a i32) (param $v i32) (result i32)\n";
-    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32)\n";
+    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32) (local $rc i32)\n";
     o = o + "    (local.set $len (i32.load (local.get $a)))\n";
     o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
-    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    // #4873/#5325 containment gate (the wasm mirror of asm_ir's
+    // .Larr_push_rc_ok): in-place append only for a SOLE-OWNER (rc == 1) or
+    // immortal (bit-31, rc < 0 signed) receiver with spare capacity. A shared
+    // (rc >= 2) receiver — the caller-side grow bracket inc'd it, or a counted
+    // alias exists — takes the copy path even when capacity fits, leaving the
+    // shared buffer untouched. Wasm-IR arrays are rc-headered via
+    // $__fern_arr_box ([rc@0][bsz@4][len@8][cap@12], data = base+8), so the
+    // rc word sits at [a-8]. An unheadered/garbage rc word fails the test and
+    // merely takes the copy path — safe, never an in-place mutation.
+    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
+    o = o + "    (if (i32.and (i32.or (i32.eq (local.get $rc) (i32.const 1)) (i32.lt_s (local.get $rc) (i32.const 0))) (i32.lt_s (local.get $len) (local.get $cap))) (then\n";
     o = o + "      (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
     o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
     o = o + "      (return (local.get $a))))\n";
-    o = o + "    (local.set $ncap (i32.const 4))\n";
-    o = o + "    (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))\n";
+    // Copy path: a shared receiver with spare capacity (len < cap) is an
+    // UN-SHARE copy — keep the SAME cap instead of doubling (the #3425
+    // arena-footprint lesson from the register port). True growth
+    // (len >= cap) doubles (or starts at 4).
+    o = o + "    (local.set $ncap (local.get $cap))\n";
+    o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (local.set $ncap (i32.const 4))\n";
+    o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
     o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $ncap) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
     o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
@@ -9302,13 +9318,26 @@ pub function arr_push_helper(): string {
 // site proved the slot unaliased (no surviving reference to the superseded buffer).
 // wasm analog of asm_ir's __fern_arr_push_owned. Depends on $__fern_arr_push +
 // $__fern_arr_dec, both co-present whenever arr_push_owned is (module_allocates).
-pub function arr_push_owned_helper(): string {
+pub function arr_push_owned_helper(heap_base: i32): string {
+    var hb: string = util.i32_to_string(heap_base);
     var o: string = "";
     o = o + "  (func $__fern_arr_push_owned (param $a i32) (param $v i32) (result i32)\n";
-    o = o + "    (local $na i32)\n";
+    o = o + "    (local $na i32) (local $rc i32)\n";
     o = o + "    (local.set $na (call $__fern_arr_push (local.get $a) (local.get $v)))\n";
-    o = o + "    (if (i32.ne (local.get $na) (local.get $a)) (then\n";
-    o = o + "      (drop (call $__fern_arr_dec (local.get $a)))))\n";
+    // Superseded-old release, REGISTER PARITY (#5325): free the dead old
+    // buffer ONLY when it was the sole owner (rc == 1) — and no-op for any
+    // shared (rc >= 2) old, exactly like asm_ir's .Lapo_ret "not sole owner —
+    // leave (defensive)" gate. Delegating unconditionally to $__fern_arr_dec
+    // DECREMENTED a shared old, eating the caller-side grow bracket's +1: the
+    // bracket's own $__fern_arr_dec then freed the caller's still-referenced
+    // buffer (the WIT-codec SIGABRT that blocked #5138 — outer's
+    // `out = out.append(k)` on a bracketed param, chained tx shape). At
+    // rc == 1 the shared $__fern_arr_dec takes its free path, so the sole-
+    // owner behaviour is unchanged; guards (null/tagged/low/immortal) ride
+    // along inside it.
+    o = o + "    (if (i32.and (i32.ne (local.get $na) (local.get $a)) (i32.and (i32.ge_u (local.get $a) (i32.const " + hb + ")) (i32.eqz (i32.and (local.get $a) (i32.const 1))))) (then\n";
+    o = o + "      (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "        (drop (call $__fern_arr_dec (local.get $a)))))))\n";
     o = o + "    (local.get $na))\n";
     return o;
 }
@@ -12494,7 +12523,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // and $__fern_arr_dec (heap_alloc_helpers, gated on module_allocates which
         // the append implies) are co-present.
         if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) {
-            ir_out = ir_out + arr_push_owned_helper();
+            ir_out = ir_out + arr_push_owned_helper(wasm_ir.heap_base_for(ir_cache));
         }
         // 8-byte i64[]/u64[] push — its own helper ($__fern_arr_push_i64), no
         // str_split entanglement (str_split builds 4-byte arrays).
