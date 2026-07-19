@@ -2204,6 +2204,26 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
     return "";
 }
 
+// decl_field_fn_ret returns the recorded fn RETURN tag of struct_name.field
+// (StructFieldDecl.fn_ret — set by the parser for an fn-typed field whose
+// `(…) => R` return is a struct/nominal/string spelling), or "". The string
+// case drives expr_is_str's fn-field-call arm (#5306 gap 2).
+pub function decl_field_fn_ret(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].name == field) { return structs[i].fields[fi].fn_ret; }
+                fi = fi + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // field_access_is_closurearr returns true when `e` is a struct-field read
 // `obj.field` whose field is a closure/fn ARRAY — spelled "fn[]"
 // (parse_type_name coarsens `(() => T)[]` to "fn[]"). Its element is a closure
@@ -3044,6 +3064,17 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                             _ => {}
                         }
                     }
+                    // A call THROUGH a string-returning fn-typed struct FIELD
+                    // (`h.f(1)` where H.f: (i32) => string): the field's declared
+                    // type coarsens to "fn" but its fn_ret keeps the string
+                    // return, so the call result feeds `.len()` / concat as a
+                    // string. Without this the chained `h.f(1).len()` mis-
+                    // dispatched and read 0 even though the closure returned the
+                    // string correctly (#5306 gap 2 — an annotated rebind
+                    // `var r: string = h.f(1)` already worked).
+                    var ffrty: string = expr_struct_type(cfa.obj, s);
+                    if (ffrty != "" && decl_field_type(s.structs, ffrty, cfa.field) == "fn"
+                        && decl_field_fn_ret(s.structs, ffrty, cfa.field) == "string") { return true; }
                     // `it.key()` / `it.value()` on a `MapIter[K, V]` receiver returns
                     // the key / value box; when that side is `string` the result
                     // feeds `.len()` / concat as a string. Without this `.len()`
@@ -4979,6 +5010,25 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     var so: LowerState = s;
     if (ptag == "i64") { so = lower_i64(arg, so); } else { so = lower_expr(arg, so); }
     if (!so.ok) { return so; }
+    // Perceus alias-inc for an ARRAY payload that aliases a local array: the
+    // Option/Result box references the buffer, so retain it (rc_inc) so the exit
+    // dec-sweep doesn't free the source local out from under the returned box.
+    // Without it `Ok(names)` / `Some(items)` over-releases the array — a UAF that
+    // only bites once a later allocation reuses the freed buffer (the match-arm
+    // that extracts the payload already reclaims it at arm exit, so construction
+    // must balance that with an inc). Mirrors the enum-variant construction's
+    // alias-inc (#3720); only a bare ident on an array slot (a fresh-literal
+    // payload isn't a local, so the sweep never frees it). The inc pops + re-pushes
+    // the same pointer, leaving op_opt_make's operand on top. i64/f64 payloads
+    // aren't array slots, so this never fires before the op_opt_make_w paths.
+    match (arg) {
+        parser.ExprIdent(paid) => {
+            if (so.is_arr_slot(so.slot_of(paid.name))) {
+                so = so.emit(ir.op_call_direct("__fern_rc_inc", 1));
+            }
+        },
+        _ => {}
+    }
     if (ptag == "i64") { return so.emit(ir.op_opt_make_w(tag, 64, true)); }
     if (ptag == "f64") { return so.emit(ir.op_opt_make_w(tag, 64, false)); }
     return so.emit(ir.op_opt_make(tag));
@@ -11469,6 +11519,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
             else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
             else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
+            // A TUPLE element (`var (p, c) = t` over ((string, i32), i32): p's
+            // tag is the nested tuple's spelling): record p's element tags so a
+            // SECOND-level destructure `var (s, b) = p` (and `p.N` reads)
+            // resolve their element types. Without this the nested tuple bound
+            // untyped and its STRING element read as an unmarked i32 — empty
+            // (#5306 gap 1; the all-i32 shape only worked because the untyped
+            // fallback happens to be i32).
+            else if (dtag.len() >= 2 && dtag[0:1] == "(") { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
             // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
             // slot as an array (the op_tuple_get above read its pointer) so
             // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
@@ -11499,6 +11557,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // type (like an enum local/param) so `match (c)` / `c.method()`
             // on the bound slot dispatches to `<Enum>.<variant/method>`.
             else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
+            // A nested TUPLE element (`var (p, c) = t` with t : ((string,i32),
+            // i32), so p : (string, i32)): op_tuple_get read the inner tuple
+            // box pointer into p's slot; record p's element tags so a SECOND
+            // destructure `var (s, b) = p` (or a `p.N` read) resolves each
+            // element's type. Without this p carried no tuple_elems, the nested
+            // read fell to the untyped op_tuple_get with no string/i64/… mark,
+            // and a pointer element (string) came through empty (#5306 gap 1).
+            else if (dtag.len() >= 2 && dtag[0] == 40) { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
             dk = dk + 1;
         }
         return dt;
@@ -14173,7 +14239,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_u32(bslot, true);
                         } else if (ev_ty == "f64") {
                             ms = ms.mark_f64(bslot, true);
-                        } else if (ev_ty == "fn") {
+                        } else if (ev_ty == "fn" || is_fn_payload_spelling(ev_ty) || ev_ty == "clo") {
                             // A function-typed payload (`Pending(i32,
                             // (i32) => Future)`): the i32 read above is the
                             // closure ENV box the constructor side wrapped
@@ -14185,6 +14251,11 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // the enum/struct branch below: is_enum_like_name
                             // ("fn") is true, so it would otherwise claim the
                             // payload as a struct type and emit a bare call.
+                            // A monomorphised GENERIC enum (`Opt[(i32) => i32]`,
+                            // #5298) keeps the payload's FULL fn spelling
+                            // `(i32) => i32` rather than the coarse "fn", so
+                            // accept is_fn_payload_spelling here too (the
+                            // built-in Option/Result fn-payload arm's sibling).
                             ms = ms.mark_closure_local(bname);
                         } else if (decl_is_struct(ms.structs, ev_ty) || is_enum_like_name(ev_ty, ms.structs)) {
                             ms = ms.mark_struct_type(bslot, ev_ty);
@@ -16337,6 +16408,22 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
                             out = returned_moved_arr_slots(c.args[ai], s, out);
                             ai = ai + 1;
                         }
+                    }
+                    // Built-in payload constructors `Ok(a)/Err(a)/Some(a)`: the
+                    // Result/Option box stores the payload pointer with NO alias-inc
+                    // and is leak-mode (never deep-dropped), exactly like a user enum
+                    // variant — so `return Ok(names)` over a local array MOVES `names`
+                    // into the box and must keep it from the exit sweep. Without this
+                    // the sweep frees the array while the returned box still holds it;
+                    // harmless for a grown array (its buffer sits in a different
+                    // freelist size-class) but a use-after-free for an EMPTY array
+                    // (`var names: string[] = []` — freelist class 3), which the
+                    // caller's next 24-byte string box recycles. Surfaced by the
+                    // read_dir→Fern migration (#2649/#5290): `__fern_read_dir` on an
+                    // empty directory returns `Ok([])`, whose block the caller's next
+                    // string allocation aliased.
+                    if ((cid.name == "Ok" || cid.name == "Err" || cid.name == "Some") && c.args.len() == 1) {
+                        out = returned_moved_arr_slots(c.args[0], s, out);
                     }
                 },
                 parser.ExprFieldAccess(fa) => {
@@ -28522,6 +28609,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // here so this registration is byte-identical to before (they are read
         // only via the StructFieldDecl.fn_ret path in the monomorphiser).
         if (fn.params[pri].type_name == "fn" && fn.params[pri].fn_ret.len() > 0
+            && fn.params[pri].fn_ret != "string"
             && !util.contains(fn.params[pri].fn_ret, "[")) {
             struct_ret_fns_aug = struct_ret_fns_aug.append(fn.params[pri].name + "|" + fn.params[pri].fn_ret);
         }

@@ -2,11 +2,95 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+// TestSelfHostRemoveDirAllIR pins `remove_dir_all(path)` lowering on the self-host
+// x86-64 IR path (#2649). remove_dir_all is now a Fern runtime function
+// (rt_src_remove_dir_all): a best-effort recursive rm -rf that probes the target
+// with openat to classify it, delegates directory enumeration to the (Fern)
+// read_dir, recurses into each child, then rmdirs. This test stages a nested tree
+// on disk (two subdir levels), has the compiled program remove_dir_all it
+// (asserting None), then remove_dir_all a missing path (asserting None — rm -rf
+// ignores a missing target), and exits 0 only if both resolve. The Go side then
+// confirms the whole tree is gone (the recursion really removed it) and that the
+// IR path was taken (`call __fn___fern_remove_dir_all` in the asm).
+func TestSelfHostRemoveDirAllIR(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	// Stage a nested tree: rda/{f1.txt, f2.txt, sub/{g.txt, sub2/{h.txt}}}.
+	// remove_dir_all must recurse through both subdir levels.
+	rda := filepath.Join(dir, "rda")
+	for _, d := range []string{filepath.Join(rda, "sub", "sub2")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	for _, f := range []string{
+		filepath.Join(rda, "f1.txt"), filepath.Join(rda, "f2.txt"),
+		filepath.Join(rda, "sub", "g.txt"), filepath.Join(rda, "sub", "sub2", "h.txt"),
+	} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", f, err)
+		}
+	}
+
+	src := fmt.Sprintf(`function main(): i32 {
+    match (remove_dir_all(%q)) {
+        Some(_) => { return 1; },
+        None => {
+            match (remove_dir_all(%q)) {
+                Some(_) => { return 2; },
+                None => { return 0; },
+            }
+        },
+    }
+}`, rda, rda+"-missing")
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, "-ir")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	asm, err := cmd.Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if !bytes.Contains(asm, []byte("call __fn___fern_remove_dir_all")) {
+		t.Fatal("remove_dir_all did not reach the Fern IR runtime (no call __fn___fern_remove_dir_all in asm)")
+	}
+	progBin := buildBin(t, gcc, dir, "rda_prog", string(asm))
+	var run *exec.Cmd
+	if len(runner) == 0 {
+		run = exec.Command(progBin)
+	} else {
+		run = exec.Command(runner[0], append(runner[1:], progBin)...)
+	}
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("remove_dir_all IR program exited %d, want 0 (nested tree removed -> None, missing -> None)", code)
+	}
+	if _, err := os.Stat(rda); !os.IsNotExist(err) {
+		t.Errorf("rda still present after remove_dir_all (stat err = %v)", err)
+	}
+}
 
 // TestSelfHostRemoveDirAllIRWasm pins `remove_dir_all(path)` lowering on the wasm
 // IR path. remove_dir_all is a recursive rm -rf returning Option[IoError] (None on
