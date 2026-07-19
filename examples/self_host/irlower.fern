@@ -13536,42 +13536,53 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     if (!for_var_comma) {
         var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[], 3 Option/Result[], 4 tuple[]
         var fld_elem_ty: string = "";
+        // The iterable's array-TYPE string, when it is a borrowable array we don't
+        // own — either a struct FIELD (`r.cells`) or a leak-only tuple ELEMENT
+        // (`t.1` / `r.pair.1`, where the tuple leaks with its owner). Both are
+        // leak-only pointer-element arrays iterated read-only, so the same borrow +
+        // counted-loop (below) handles them; only the type SOURCE differs.
+        var fft: string = "";
         match (fr.iter) {
             parser.ExprFieldAccess(ffa) => {
-                var foty: string = expr_struct_type(ffa.obj, s);
-                if (foty != "") {
-                    var fft: string = decl_field_type(s.structs, foty, ffa.field);
-                    if (fft == "string[]") { fld_elem_kind = 1; }
-                    else if (is_struct_array_field_type(s.structs, fft) || is_enum_array_field_type(s.structs, fft)) {
-                        fld_elem_kind = 2;
-                        fld_elem_ty = fft[0 : fft.len() - 2] + "";
-                    }
-                    // An Option/Result-array field (`xs: Option[i32][]`):
-                    // the element is a leak-only opt box — carry its
-                    // Option/Result type so `match (o)` in the body
-                    // recovers the payload (#3054, the field-foreach analog
-                    // of the Option-array local case).
-                    else if (fft.len() >= 5 && fft[fft.len() - 2 : fft.len()] == "[]") {
-                        var fel: str = fft[0 : fft.len() - 2];
-                        if (fel.len() >= 8 && (fel[0:7] == "Option[" || fel[0:7] == "Result[")) {
-                            fld_elem_kind = 3;
-                            fld_elem_ty = fel + "";
-                        }
-                        // A tuple-array field (`pairs: (i32, string)[]`): each
-                        // element is a tuple box — carry its element tuple type so
-                        // `p.N` resolves in the loop body. The field-foreach analog
-                        // of the #5305 local-array case; without it a pointer
-                        // element (`p.1` of a `(i32, string)`) has no tag, so the
-                        // body's `p.1.len()` fails to lower and the whole module
-                        // drops to the legacy AST emitter (which miscompiles it).
-                        else if (fel.len() >= 2 && fel[0:1] == "(") {
-                            fld_elem_kind = 4;
-                            fld_elem_ty = fel + "";
-                        }
-                    }
+                // A numeric field is a tuple-element access (`t.N`): resolve the
+                // element type from the tuple, not a struct field decl. The tuple
+                // is leak-only (never freed), so its array element is a safe borrow.
+                if (util.is_all_digits(ffa.field)) {
+                    fft = expr_tuple_elem_tag(ffa.obj, util.digits_to_i32(ffa.field), s);
+                } else {
+                    var foty: string = expr_struct_type(ffa.obj, s);
+                    if (foty != "") { fft = decl_field_type(s.structs, foty, ffa.field); }
                 }
             },
             _ => {}
+        }
+        if (fft != "") {
+            if (fft == "string[]") { fld_elem_kind = 1; }
+            else if (is_struct_array_field_type(s.structs, fft) || is_enum_array_field_type(s.structs, fft)) {
+                fld_elem_kind = 2;
+                fld_elem_ty = fft[0 : fft.len() - 2] + "";
+            }
+            // An Option/Result-array field (`xs: Option[i32][]`): the element is a
+            // leak-only opt box — carry its Option/Result type so `match (o)` in
+            // the body recovers the payload (#3054, the field-foreach analog of the
+            // Option-array local case).
+            else if (fft.len() >= 5 && fft[fft.len() - 2 : fft.len()] == "[]") {
+                var fel: str = fft[0 : fft.len() - 2];
+                if (fel.len() >= 8 && (fel[0:7] == "Option[" || fel[0:7] == "Result[")) {
+                    fld_elem_kind = 3;
+                    fld_elem_ty = fel + "";
+                }
+                // A tuple-array field (`pairs: (i32, string)[]`): each element is a
+                // tuple box — carry its element tuple type so `p.N` resolves in the
+                // loop body. The field-foreach analog of the #5305 local-array case;
+                // without it a pointer element (`p.1` of a `(i32, string)`) has no
+                // tag, so the body's `p.1.len()` fails to lower and the whole module
+                // drops to the legacy AST emitter (which miscompiles it).
+                else if (fel.len() >= 2 && fel[0:1] == "(") {
+                    fld_elem_kind = 4;
+                    fld_elem_ty = fel + "";
+                }
+            }
         }
         if (fld_elem_kind != 0) {
             // snapshot field access -> hidden borrow local (NOT array-marked)
