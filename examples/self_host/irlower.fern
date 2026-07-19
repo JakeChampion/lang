@@ -3061,6 +3061,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "replace" && c.args.len() == 2 && expr_is_str(cfa.obj, s)) { return true; }
+                    // `xs.join(sep)` on a string[] receiver yields a fresh joined
+                    // string (the __fern_arr_str_join runtime helper), so the result
+                    // feeds `.len()` / concat as a string. #5328.
+                    if (cfa.field == "join" && c.args.len() == 1 && expr_is_strarr(cfa.obj, s)) { return true; }
                     // `m.get_or(k, d)` on a string-VALUE map (`Map[K, string]`)
                     // returns the stored string value, so the result feeds
                     // `.len()` / concat as a string. Without this the result is
@@ -5035,6 +5039,33 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     p = p.emit(ir.op_str_index_of());
     p = p.emit(ir.op_const_i32(0));
     return p.emit(ir.op_bin("ge_s", 0, false));
+}
+
+// lower_arr_str_join lowers `xs.join(sep)` on a string[] receiver to a call of the
+// __fern_arr_str_join runtime helper (asmcore.rt_src_arr_str_join — a real Fern
+// function the AST emitters call the same way). It takes the __fn_ stack ABI
+// (param0=xs on TOP, param1=sep below): xs is evaluated FIRST (receiver-before-arg,
+// matching the AST path + native) but must be pushed LAST so it lands on top, so
+// both operands spill to scratch locals and reload in ABI order. The helper is in
+// is_fern_helper, so the call_direct routes through the emitters' runtime-helper
+// arm, which marks the arr_str_join / str_concat / heap needs and cleans the two
+// stack args. Result is a fresh owned string (expr_is_str recognises `.join`). #5328.
+pub function lower_arr_str_join(recv: parser.Expr, sep: parser.Expr, s: LowerState): LowerState {
+    var xtmp: string = "$jxs" + util.i32_to_string(s.locals.len());
+    var p: LowerState = s.add_local(xtmp);
+    var xslot: i32 = p.slot_of(xtmp);
+    p = lower_expr(recv, p);
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(xslot));
+    var stmp: string = "$jsep" + util.i32_to_string(p.locals.len());
+    p = p.add_local(stmp);
+    var sslot: i32 = p.slot_of(stmp);
+    p = lower_expr(sep, p);
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(sslot));
+    p = p.emit(ir.op_load_local(sslot));   // param1 = sep (pushed first, sits below)
+    p = p.emit(ir.op_load_local(xslot));   // param0 = xs  (pushed last, on top)
+    return p.emit(ir.op_call_direct("__fern_arr_str_join", 2));
 }
 
 // lower_opt_make_payload lowers `arg` (widening an i64 / f64 payload to its full
@@ -7981,6 +8012,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sb: LowerState = lower_expr(fa.obj, s);
                         if (!sb.ok) { return sb; }
                         return sb.emit(ir.op_str_bytes());
+                    }
+                    // `xs.join(sep)` on a string[] receiver → a fresh joined
+                    // string, via the __fern_arr_str_join runtime helper (the same
+                    // Fern function the AST emitters call — asmcore.rt_src_arr_str_join).
+                    // Kept out of line (lower_arr_str_join) so this arm stays under
+                    // the self-host oversized-function threshold (#2720). #5328.
+                    if (fa.field == "join" && c.args.len() == 1 && expr_is_strarr(fa.obj, s)) {
+                        return lower_arr_str_join(fa.obj, c.args[0], s);
                     }
                     // String builtin methods on a string receiver: the 0-arg
                     // transforms `to_upper` / `to_lower` (→ fresh string),

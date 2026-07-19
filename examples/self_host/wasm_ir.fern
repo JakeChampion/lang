@@ -656,6 +656,26 @@ pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
     return false;
 }
 
+// module_calls_arr_str_join reports whether any function emits the xs.join(sep)
+// runtime call (a call_direct to __fern_arr_str_join). The register backends
+// lower it (#5328); on wasm it stays deferred to the AST path, which has its own
+// $__fern_str_join runtime (a distinct symbol from the register helper), so a
+// join module keeps the AST wasm backend. (module_emits_op keys on op.kind, not
+// the call_direct symbol, so this needs its own scan.)
+pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_arr_str_join") { return true; }  // call_direct
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // module_uses_str_to_i32 reports whether any function emits the str_to_i32(s)
 // runtime call (a call_direct to __fern_str_to_i32) — so wasm.str_to_i32_helper
 // is emitted. Allocation-free, so it has no heap dependency. (module_emits_op
@@ -884,6 +904,12 @@ function module_erased_wide(cache: irlower.LowerResult[]): boolean {
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
     return true
         && !module_erased_wide(cache)
+        // xs.join(sep) lowers on the register IR backends (#5328) but not wasm:
+        // the register helper (__fern_arr_str_join) has no wasm runtime — wasm's
+        // AST path uses a different symbol ($__fern_str_join) — so a join module
+        // stays on the wasm AST path (where join already works). Same deferral
+        // shape as the socket/poll set below.
+        && !module_calls_arr_str_join(cache)
         // An i64/u64-VALUE map stays on the wasm AST path: the wasm map runtime
         // takes an i32 value, so the 8-byte value irlower now threads (valwide)
         // would fail wasm validation. The register backends store it 8-byte and
