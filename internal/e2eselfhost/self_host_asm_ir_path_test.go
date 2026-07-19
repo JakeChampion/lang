@@ -1429,7 +1429,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `arr[i]` index read on a u64[] producing a u64 value (param or local):
 		// reads 8-byte (arr_index_is_i64 now accepts u64[]) and the use compares
 		// it unsigned (expr_is_u64). The max over a u64[] PARAM whose middle
-		// element is 2^63+1 — the shape std/array's max_u64 uses — would pick the
+		// element is 2^63+1 — the shape cmp.max_of over a u64[] uses — would pick the
 		// wrong element under a signed compare; both paths must return 0.
 		{"u64-param-idx-sum", "function s(arr: u64[]): u64 { var t: u64 = 0u64; var i = 0; while (i < arr.len()) { t = t + arr[i]; i = i + 1; } return t; } function main(): i32 { return s([10u64, 20u64, 5u64]) as i32; }"},
 		{"u64-param-idx-max-big", "function mx(arr: u64[]): u64 { var m: u64 = arr[0]; var i = 1; while (i < arr.len()) { if (arr[i] > m) { m = arr[i]; } i = i + 1; } return m; } function main(): i32 { if (mx([5u64, 9223372036854775809u64, 7u64]) == 9223372036854775809u64) { return 0; } return 1; }"},

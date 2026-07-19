@@ -10,6 +10,7 @@ import "testing"
 // when its toolchain is absent.
 const arrayProductCumsumProg = `
 import "std/array" as array;
+import "std/num" as num;
 function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
@@ -23,7 +24,7 @@ function main(): i32 {
     if (!approx(cs[3], 10.0)) { return 7; }
     if (cs.len() != 4) { return 8; }
     // last prefix sum equals the total
-    if (!approx(cs[3], array.sum_f64(xs))) { return 9; }
+    if (!approx(cs[3], num.sum(xs))) { return 9; }
     // empty in -> empty out
     if (array.cumsum_f64([]).len() != 0) { return 10; }
     // running total with a negative step
