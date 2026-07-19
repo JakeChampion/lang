@@ -2076,10 +2076,12 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                     // An array-of-ARRAY field `T[][]` whose element `T[]` is
                     // itself a leaf-safe array (scalar / struct / enum array), or
                     // an array-of-Option/Result field `Option[T][]` whose element
-                    // `Option[T]` is a leak-safe Option/Result: the whole nested
-                    // structure leaks with the struct. Covers the common 2-D
-                    // field; deeper nesting still bails.
-                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt)) {
+                    // `Option[T]` is a leak-safe Option/Result, or an array-of-
+                    // TUPLE field `(i32, string)[]` whose element tuple is a
+                    // leak-safe tuple: the whole nested structure leaks with the
+                    // struct. Covers the common 2-D field; deeper nesting still
+                    // bails.
+                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field(elt)) {
                         fi = fi + 1;
                         continue;
                     }
@@ -12534,6 +12536,23 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         if (ctaet.len() >= 2 && ctaet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
                     }
                 },
+                // `var p = r.pairs[0]` — indexing a tuple-ARRAY struct FIELD
+                // (`pairs: (i32, string)[]`). The field access has no slot to read
+                // arrarr_elem from, so resolve the element tuple type from the
+                // field's declared type and transfer its tags onto p, so `p.N`
+                // reads (the struct-field sibling of the ExprIdent arm above).
+                parser.ExprFieldAccess(ctafa) => {
+                    if (!util.is_all_digits(ctafa.field)) {
+                        var ctaoty: string = expr_struct_type(ctafa.obj, sb);
+                        if (ctaoty != "") {
+                            var ctaft: string = decl_field_type(sb.structs, ctaoty, ctafa.field);
+                            if (ctaft.len() >= 4 && ctaft[ctaft.len() - 2 : ctaft.len()] == "[]") {
+                                var ctael: str = ctaft[0 : ctaft.len() - 2];
+                                if (ctael.len() >= 2 && ctael[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
+                            }
+                        }
+                    }
+                },
                 _ => {}
             }
         },
@@ -13389,7 +13408,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // handled here — aliasing them needs the reclamation analysis to
     // borrow-track the field, left to the Perceus self-host port (#3003).
     if (!for_var_comma) {
-        var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[], 3 Option/Result[]
+        var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[], 3 Option/Result[], 4 tuple[]
         var fld_elem_ty: string = "";
         match (fr.iter) {
             parser.ExprFieldAccess(ffa) => {
@@ -13410,6 +13429,17 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
                         var fel: str = fft[0 : fft.len() - 2];
                         if (fel.len() >= 8 && (fel[0:7] == "Option[" || fel[0:7] == "Result[")) {
                             fld_elem_kind = 3;
+                            fld_elem_ty = fel + "";
+                        }
+                        // A tuple-array field (`pairs: (i32, string)[]`): each
+                        // element is a tuple box — carry its element tuple type so
+                        // `p.N` resolves in the loop body. The field-foreach analog
+                        // of the #5305 local-array case; without it a pointer
+                        // element (`p.1` of a `(i32, string)`) has no tag, so the
+                        // body's `p.1.len()` fails to lower and the whole module
+                        // drops to the legacy AST emitter (which miscompiles it).
+                        else if (fel.len() >= 2 && fel[0:1] == "(") {
+                            fld_elem_kind = 4;
                             fld_elem_ty = fel + "";
                         }
                     }
@@ -13438,6 +13468,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             var fldvslot: i32 = lf.slot_of(fr.var_name);
             if (fld_elem_kind == 1) { lf = lf.mark_str(fldvslot, true); }
             else if (fld_elem_kind == 3) { lf = lf.mark_opt_type(fldvslot, fld_elem_ty); }
+            else if (fld_elem_kind == 4) { lf = lf.mark_tuple_elems(fldvslot, tuple_elem_tags(fld_elem_ty)); }
             else { lf = lf.mark_struct_type(fldvslot, fld_elem_ty); }
             // counted loop using explicit arr_len/arr_get on the borrow.
             lf = lf.emit(ir.op_block(0)).enter_loop();
