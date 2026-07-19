@@ -473,6 +473,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
+	if g.usesRemoveDirAll {
+		g.emitRemoveDirAllRuntime()
+	}
 	if g.usesReaderWriter {
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
@@ -766,7 +769,13 @@ type generator struct {
 	// `__fern_io_error(errno, path) → IoError box` helper.
 	usesReadFile  bool
 	usesWriteFile bool
-	usesIoError   bool
+	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
+	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
+	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
+	// what std/test's TestRunner.finish() needs to clean up its
+	// temp dirs when a TAP program links through the native CLI.
+	usesRemoveDirAll bool
+	usesIoError      bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1024,6 +1033,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "write_file":
 		g.usesWriteFile = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "remove_dir_all":
+		g.usesRemoveDirAll = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	}
@@ -2292,6 +2305,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_file"
 		case "write_file":
 			target = "__fern_write_file"
+		case "remove_dir_all":
+			target = "__fern_remove_dir_all"
 		case "random_bytes":
 			target = "__fern_random_bytes"
 		case "random_i32":
@@ -3753,7 +3768,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.quad 0")
 		}
 	}
-	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes
+	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
 	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty {
 		g.line("")
@@ -7494,6 +7509,231 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_write_file, .-__fern_write_file")
+}
+
+// emitRemoveDirAllRuntime emits
+// `__fern_remove_dir_all(path) → Option[IoError]` — a recursive
+// `rm -rf`. It's the x86-64 sibling of arm64-ssa's
+// emitRemoveDirAllHelper: syscalls are inlined and the helper
+// self-recurses per directory entry, so it pulls in no separate
+// read_dir/stat helpers. Pipeline:
+//
+//	openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
+//	  fd >= 0        → it's a directory: drain entries, recurse
+//	                   on each non-dot child, close, rmdir → None
+//	  -ENOENT (-2)   → already gone → None
+//	  -ENOTDIR (-20) → it's a file: unlinkat(file) → None
+//	  else           → Some(IoError) via __fern_io_error
+//
+// Option[IoError] layout matches write_file: None = 8-byte box
+// tag=1; Some = 16-byte box tag=0 with the IoError box @+8.
+//
+// The path is copied into a NUL-terminated heap buffer (pathz,
+// rbx) once at entry — handling both inline-SSO and heap string
+// inputs — and every syscall + child-path build reads from pathz.
+// Child paths "pathz/name" are freshly-allocated single-word rc
+// strings passed to the recursion (leaked one-level, same as the
+// arm64 helper and the other drop paths). Callee-saved across the
+// recursion: rbx=pathz, r12=dir fd, r13=dirent buf, r14=total,
+// r15=offset. System V: rdi = path string value.
+func (g *generator) emitRemoveDirAllRuntime() {
+	g.line("")
+	g.line(".globl __fern_remove_dir_all")
+	g.line(".type __fern_remove_dir_all, @function")
+	g.label("__fern_remove_dir_all")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz (NUL-terminated path buffer)
+	g.emit("push r12") // dir fd
+	g.emit("push r13") // dirent buffer base
+	g.emit("push r14") // total bytes drained
+	g.emit("push r15") // iteration offset
+	// Frame (5 pushes ⇒ rsp≡8 mod 16; sub 40 realigns to 0). The
+	// scratch slots live BELOW the saved registers (which occupy
+	// rbp-8..rbp-40), so they start at rbp-48:
+	//   [rbp-48] emitStrDataPtr inline-spill scratch
+	//   [rbp-56] child name ptr    (across __fern_alloc_rc1)
+	//   [rbp-64] plen = strlen(pathz)
+	//   [rbp-72] nlen = strlen(name)
+	g.emit("sub rsp, 40")
+
+	// Materialise the incoming path into pathz (NUL-terminated).
+	// r12/r13 are callee-saved so they survive the __fern_alloc.
+	g.emitStrLen("r13d", "rdi")                  // r13 = path len
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]") // r12 = path byte ptr
+	g.emit("lea edi, [r13 + 1]")                 // len + NUL
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax") // rbx = pathz
+	g.emit("xor ecx, ecx")
+	g.label(".Lrda_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lrda_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrda_cp")
+	g.label(".Lrda_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0") // NUL-terminate
+
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=0x10000, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, 0x10000")
+	g.emit("xor r10d, r10d")
+	g.emit("mov eax, 257")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jns .Lrda_dir")  // fd >= 0 → directory
+	g.emit("cmp rax, -2")    // -ENOENT → already gone
+	g.emit("je .Lrda_none")
+	g.emit("cmp rax, -20")   // -ENOTDIR → it's a file
+	g.emit("jne .Lrda_some")
+	// unlinkat(AT_FDCWD, pathz, 0) — remove the file.
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("xor edx, edx")
+	g.emit("mov eax, 263")
+	g.emit("syscall")
+	g.emit("jmp .Lrda_none")
+
+	g.label(".Lrda_dir")
+	g.emit("mov r12, rax") // r12 = dir fd
+	// Allocate a 1 KiB dirent buffer (r13) and drain the directory.
+	g.emit("mov edi, 1024")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")
+	g.emit("xor r14, r14") // total
+	g.label(".Lrda_g")
+	g.emit("mov edx, 1024")
+	g.emit("sub rdx, r14")
+	g.emit("jz .Lrda_gd") // buffer full → stop (small-tree cap)
+	g.emit("mov edi, r12d")
+	g.emit("lea rsi, [r13 + r14]")
+	g.emit("mov eax, 217") // getdents64
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jle .Lrda_gd") // 0 (end) or <0 (error) → stop draining
+	g.emit("add r14, rax")
+	g.emit("jmp .Lrda_g")
+
+	g.label(".Lrda_gd")
+	g.emit("xor r15, r15") // offset
+	g.label(".Lrda_it")
+	g.emit("cmp r15, r14")
+	g.emit("jae .Lrda_itd")
+	g.emit("lea rax, [r13 + r15]")
+	g.emit("lea rsi, [rax + 19]") // d_name ptr
+	g.emit("movzx ecx, byte ptr [rsi]")
+	g.emit("cmp cl, 46") // '.'
+	g.emit("jne .Lrda_ch")
+	g.emit("movzx ecx, byte ptr [rsi + 1]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrda_adv") // "."
+	g.emit("cmp cl, 46")
+	g.emit("jne .Lrda_ch")
+	g.emit("movzx ecx, byte ptr [rsi + 2]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrda_adv") // ".."
+	g.label(".Lrda_ch")
+	g.emit("mov [rbp - 56], rsi") // name ptr (survives __fern_alloc_rc1)
+	// plen = strlen(pathz)
+	g.emit("xor rcx, rcx")
+	g.label(".Lrda_pl")
+	g.emit("cmp byte ptr [rbx + rcx], 0")
+	g.emit("je .Lrda_pld")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrda_pl")
+	g.label(".Lrda_pld")
+	g.emit("mov [rbp - 64], rcx") // plen
+	// nlen = strlen(name)
+	g.emit("xor rdx, rdx")
+	g.label(".Lrda_nl")
+	g.emit("cmp byte ptr [rsi + rdx], 0")
+	g.emit("je .Lrda_nld")
+	g.emit("add rdx, 1")
+	g.emit("jmp .Lrda_nl")
+	g.label(".Lrda_nld")
+	g.emit("mov [rbp - 72], rdx") // nlen
+	// childlen = plen + 1 + nlen; alloc single-word rc string (childlen+NUL).
+	g.emit("lea edi, [rcx + rdx + 2]") // childlen + 1
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r8, rax") // child data ptr (r8 caller-saved, dead by recursion)
+	g.emit("mov rcx, [rbp - 64]") // plen
+	g.emit("mov rdx, [rbp - 72]") // nlen
+	g.emit("lea eax, [rcx + rdx + 1]") // childlen
+	g.emitStrLenStore("eax", "r8")
+	// copy pathz[0..plen]
+	g.emit("xor r9, r9")
+	g.label(".Lrda_c1")
+	g.emit("cmp r9, rcx")
+	g.emit("jae .Lrda_c1d")
+	g.emit("mov al, [rbx + r9]")
+	g.emit("mov [r8 + r9], al")
+	g.emit("add r9, 1")
+	g.emit("jmp .Lrda_c1")
+	g.label(".Lrda_c1d")
+	g.emit("mov byte ptr [r8 + rcx], 47") // '/'
+	// copy name at plen+1
+	g.emit("mov rsi, [rbp - 56]") // name ptr
+	g.emit("xor r9, r9")
+	g.label(".Lrda_c2")
+	g.emit("cmp r9, rdx")
+	g.emit("jae .Lrda_c2d")
+	g.emit("mov al, [rsi + r9]")
+	g.emit("lea r10, [rcx + r9 + 1]")
+	g.emit("mov [r8 + r10], al")
+	g.emit("add r9, 1")
+	g.emit("jmp .Lrda_c2")
+	g.label(".Lrda_c2d")
+	g.emit("lea r10, [rcx + rdx + 1]") // childlen
+	g.emit("mov byte ptr [r8 + r10], 0")
+	// recurse: remove_dir_all(child).
+	g.emit("mov rdi, r8")
+	g.emit("call __fern_remove_dir_all")
+	g.label(".Lrda_adv")
+	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
+	g.emit("add r15, rax")
+	g.emit("jmp .Lrda_it")
+
+	g.label(".Lrda_itd")
+	// close(fd), then rmdir the now-empty directory.
+	g.emit("mov edi, r12d")
+	g.emit("mov eax, 3") // close
+	g.emit("syscall")
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, 512") // AT_REMOVEDIR
+	g.emit("mov eax, 263") // unlinkat
+	g.emit("syscall")
+
+	g.label(".Lrda_none")
+	g.emit("mov edi, 8")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Option.None
+	g.emit("jmp .Lrda_return")
+
+	g.label(".Lrda_some")
+	g.emit("neg rax")
+	g.emit("mov r12, rax") // errno (r12 free — never opened a fd on this path)
+	g.emit("mov edi, r12d")
+	g.emitStrEmpty("rsi") // io_error path arg (empty, as arm64 does)
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax") // stash IoError box across the alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Option.Some
+	g.emit("mov [rax + 8], r12")
+
+	g.label(".Lrda_return")
+	g.emit("add rsp, 40")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_remove_dir_all, .-__fern_remove_dir_all")
 }
 
 // emitReaderWriterRuntime emits the full Reader / Writer
