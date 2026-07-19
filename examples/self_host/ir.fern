@@ -593,12 +593,20 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind_tag: 1
 // (__fern_arr_push_owned) instead of leaking it. String/pointer/i64/f64
 // columns keep owncols=0 (their keys()/values() still alias, slice 3). wasm
 // ignores bit 2 (its map already frees old buffers on grow).
-pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, eqfn: string): Op {
+// `valwide` (carried in i64_imm as 1) marks an 8-byte i64/u64 VALUE. The x86-64
+// and arm64 runtimes store the value 8-byte unconditionally (movq / str x), so
+// they ignore it; it exists so the wasm IR deferral gate can keep an i64/u64-VALUE
+// map OFF the wasm path (its $__fern_map_set takes an i32 value — an i64 on the
+// typed stack would fail validation), routing it to the AST backend where full
+// i64 maps already work. #5253.
+pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, eqfn: string, valwide: boolean): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }
     if (kconsume) { w = w + 2; }
     if (owncols) { w = w + 4; }
-    return Op { kind_tag: 125, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 125, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
 }
 pub function op_map_len(): Op { return op0("map_len"); }
 // `print_int` pops an i32 and writes its decimal text to stdout (no newline),
@@ -752,7 +760,14 @@ pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
 pub function op_map_get(keykind: i32, eqfn: string): Op { return Op { kind_tag: 127, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { kind_tag: 128, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
-pub function op_map_get_or(keykind: i32, eqfn: string): Op { return Op { kind_tag: 129, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
+// `valwide` (i64_imm 1) marks an 8-byte i64/u64 result — the wasm-guard twin of
+// op_map_set's flag (register backends return the value full-width regardless;
+// wasm keeps such a map off its path). #5253.
+pub function op_map_get_or(keykind: i32, eqfn: string, valwide: boolean): Op {
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 129, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
+}
 // `map_delete` pops [map, key] → the map with that key removed (Fern's functional
 // `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
 // Key kind in i32_imm.

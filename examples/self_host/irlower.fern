@@ -1335,6 +1335,20 @@ function insert_value_is_ptr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// map_insert_val_is_i64: should a map insert/set VALUE (or a get_or DEFAULT) be
+// lowered as an 8-byte i64/u64? The map's declared value type (map_value_of)
+// answers when the receiver's tag is known, but the FIRST insert of a `Map { … }`
+// literal chain has a receiver whose value type isn't inferred yet (bare
+// map_new → i32 default — see insert_value_is_ptr's note), so also treat a
+// 64-bit-width value EXPRESSION (`5000000007`, an i64/u64 local) as i64. Without
+// this the value lowered as op_const_i32 and TRUNCATED to 32 bits before the
+// 8-byte store (#5253 symptom 1). f64 values ride their own path, not this one.
+function map_insert_val_is_i64(mtype: string, e: parser.Expr, s: LowerState): boolean {
+    var vt: string = map_value_of(mtype);
+    if (vt == "i64" || vt == "u64") { return true; }
+    return infer_expr_width(e, s) == 64 && !expr_is_f64(e, s);
+}
+
 pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, locals: s.locals.with(i, li_set_is_i64(s.locals[i], v)), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
@@ -4374,6 +4388,9 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                 // resolve the receiver's struct / primitive type and look up the
                 // qualified key; the '2' return flag marks it u64 (is_u64_ret_fn).
                 parser.ExprFieldAccess(cfa) => {
+                    // `m.get_or(k, d)` on a u64-VALUED map is an unsigned 64-bit
+                    // value, so a chained `m.get_or(...) >> 1` selects shr_u (#5253).
+                    if (cfa.field == "get_or" && c.args.len() == 2 && map_value_of(expr_map_type_tag(cfa.obj, s)) == "u64") { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
                     if (crty == "") { return false; }
@@ -4516,6 +4533,14 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return 64; }
+                    // `m.get_or(k, d)` on an i64/u64-valued map is a 64-bit value —
+                    // the map stores its values 8-byte and the get returns full
+                    // width, so an unannotated `var g = m.get_or(...)` (and any
+                    // chained arithmetic) must width-track i64 (#5253).
+                    if (cfa.field == "get_or" && c.args.len() == 2) {
+                        var gvt: string = map_value_of(expr_map_type_tag(cfa.obj, s));
+                        if (gvt == "i64" || gvt == "u64") { return 64; }
+                    }
                 },
                 _ => {}
             }
@@ -4705,6 +4730,14 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
+                    // `m.get_or(k, d)` on an i64/u64 map IS an i64 value: the get
+                    // returns the 8-byte value full-width in the pushed word, so the
+                    // normal call path is correct (the width-32 extend below would be
+                    // a no-op-then-truncate). #5253.
+                    if (cfa.field == "get_or" && c.args.len() == 2) {
+                        var glvt: string = map_value_of(expr_map_type_tag(cfa.obj, s));
+                        if (glvt == "i64" || glvt == "u64") { return lower_expr(e, s); }
+                    }
                 },
                 _ => {}
             }
@@ -7382,9 +7415,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[0], mset);
                             if (!mset.ok) { return mset; }
-                            mset = lower_expr(c.args[1], mset);
+                            // An i64/u64 VALUE must reach the 8-byte store full-width
+                            // (lower_i64) — a plain lower_expr emits op_const_i32 and
+                            // truncates a > 2^31 value to 32 bits (#5253 symptom 1).
+                            var msvw: boolean = map_insert_val_is_i64(mtype, c.args[1], s);
+                            if (msvw) { mset = lower_i64(c.args[1], mset); }
+                            else { mset = lower_expr(c.args[1], mset); }
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn));
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn, msvw));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -7410,9 +7448,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             mgo = lower_expr(c.args[0], mgo);
                             if (!mgo.ok) { return mgo; }
-                            mgo = lower_expr(c.args[1], mgo);
+                            // The DEFAULT must match the value width: an i64/u64 map's
+                            // default lowers 8-byte too, else a > 2^31 default (or an
+                            // i64 default local) truncates on the miss path (#5253).
+                            var govw: boolean = map_insert_val_is_i64(mtype, c.args[1], s);
+                            if (govw) { mgo = lower_i64(c.args[1], mgo); }
+                            else { mgo = lower_expr(c.args[1], mgo); }
                             if (!mgo.ok) { return mgo; }
-                            return mgo.emit(ir.op_map_get_or(mkk2, meqfn));
+                            return mgo.emit(ir.op_map_get_or(mkk2, meqfn, govw));
                         }
                         if (fa.field == "without" && c.args.len() == 1) {
                             // Functional delete: `m.without(k)` -> the map with k
@@ -7500,10 +7543,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!emset.ok) { return emset; }
                             emset = lower_expr(c.args[0], emset);
                             if (!emset.ok) { return emset; }
-                            emset = lower_expr(c.args[1], emset);
-                            if (!emset.ok) { return emset; }
                             var emtt: string = expr_map_type_tag(fa.obj, s);
-                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_key_eqfn(emtt)));
+                            // Same 8-byte i64/u64 value handling as the map-local
+                            // insert path above (#5253) — the map-LITERAL chain
+                            // (`Map { … }` → map_new.insert…) lowers here.
+                            var emvw: boolean = map_insert_val_is_i64(emtt, c.args[1], s);
+                            if (emvw) { emset = lower_i64(c.args[1], emset); }
+                            else { emset = lower_expr(c.args[1], emset); }
+                            if (!emset.ok) { return emset; }
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_key_eqfn(emtt), emvw));
                         }
                     }
                     // Qualified built-in Option/Result construction:
