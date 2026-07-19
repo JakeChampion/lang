@@ -3511,7 +3511,8 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 	return &ast.MatchArm{
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
-		Literal: pat.Literal, TupleElems: pat.TupleElems, Guard: guard, Body: body,
+		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
+		TupleElems: pat.TupleElems, Guard: guard, Body: body,
 	}
 }
 
@@ -3735,7 +3736,11 @@ type matchPattern struct {
 	NamedFields   bool
 	IsWildcard    bool
 	Literal       ast.Expr
-	TupleElems    []ast.TuplePatElem // tuple pattern `(p0, p1, …)`; nil otherwise
+	// RangeHi / RangeInclusive carry a range pattern `lo..hi` / `lo..=hi`
+	// (Literal is the low bound). See ast.MatchArm.RangeHi.
+	RangeHi        ast.Expr
+	RangeInclusive bool
+	TupleElems     []ast.TuplePatElem // tuple pattern `(p0, p1, …)`; nil otherwise
 	// subPats runs parallel to Bindings: a non-nil entry at position i
 	// means that payload slot is itself a nested pattern (`Some(Ok(n))`)
 	// rather than a plain binder. Bindings[i] then holds a synthetic
@@ -3841,6 +3846,21 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			return pat, err
 		}
 		pat.Literal = lit
+		// Range pattern: `lo..hi` (exclusive hi) / `lo..=hi` (inclusive hi)
+		// on a scalar scrutinee. The high bound is a second literal; the
+		// arm matches when `lo <= scrutinee <op> hi`.
+		if p.match(lexer.Punct, "..") || p.match(lexer.Punct, "..=") {
+			_, inclusive := p.accept(lexer.Punct, "..=")
+			if !inclusive {
+				p.advance() // consume `..`
+			}
+			hi, err := p.parsePrimary()
+			if err != nil {
+				return pat, err
+			}
+			pat.RangeHi = hi
+			pat.RangeInclusive = inclusive
+		}
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		pat.VariantName = t.Text
@@ -4074,7 +4094,8 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 	return &ast.MatchExprArm{
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
-		Literal: pat.Literal, TupleElems: pat.TupleElems, Guard: guard, Body: body,
+		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
+		TupleElems: pat.TupleElems, Guard: guard, Body: body,
 	}
 }
 

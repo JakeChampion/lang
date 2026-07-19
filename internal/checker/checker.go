@@ -8795,6 +8795,28 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
 		}
+		if arm.RangeHi != nil {
+			// Range pattern `lo..hi`: the low bound is `Literal`, validated
+			// above; the high bound needs the same type + settle. Ranges are
+			// numeric-only — an ordered scalar scrutinee. Unsigned scrutinees
+			// are deferred (the interpreter oracle compares signed), so they
+			// are rejected here to keep native + interp in agreement.
+			tagNum, tagIsNum := tagT.(ast.NumberType)
+			_, tagIsFloat := tagT.(ast.FloatType)
+			if !tagIsNum && !tagIsFloat {
+				c.errfCode(arm.P, "E035", "range patterns require a numeric scrutinee, got %s", tagT)
+			} else if tagIsNum && !tagNum.IsSigned() {
+				c.errfCode(arm.P, "E035", "range patterns are not yet supported on an unsigned scrutinee (%s)", tagT)
+			}
+			hiT := c.checkExpr(arm.RangeHi, s)
+			if hiT != nil {
+				c.settleNumeric(arm.RangeHi, tagT)
+				hiT = c.postSettleType(arm.RangeHi, hiT)
+				if !c.assignable(hiT, tagT) {
+					c.errfCode(arm.P, "E035", "range pattern bound of type %s does not match scrutinee type %s", hiT, tagT)
+				}
+			}
+		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, s)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
@@ -8953,6 +8975,28 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			litT = c.postSettleType(arm.Literal, litT)
 			if !c.assignable(litT, tagT) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+			}
+		}
+		if arm.RangeHi != nil {
+			// Range pattern `lo..hi`: the low bound is `Literal`, validated
+			// above; the high bound needs the same type + settle. Ranges are
+			// numeric-only — an ordered scalar scrutinee. Unsigned scrutinees
+			// are deferred (the interpreter oracle compares signed), so they
+			// are rejected here to keep native + interp in agreement.
+			tagNum, tagIsNum := tagT.(ast.NumberType)
+			_, tagIsFloat := tagT.(ast.FloatType)
+			if !tagIsNum && !tagIsFloat {
+				c.errfCode(arm.P, "E035", "range patterns require a numeric scrutinee, got %s", tagT)
+			} else if tagIsNum && !tagNum.IsSigned() {
+				c.errfCode(arm.P, "E035", "range patterns are not yet supported on an unsigned scrutinee (%s)", tagT)
+			}
+			hiT := c.checkExpr(arm.RangeHi, s)
+			if hiT != nil {
+				c.settleNumeric(arm.RangeHi, tagT)
+				hiT = c.postSettleType(arm.RangeHi, hiT)
+				if !c.assignable(hiT, tagT) {
+					c.errfCode(arm.P, "E035", "range pattern bound of type %s does not match scrutinee type %s", hiT, tagT)
+				}
 			}
 		}
 		if arm.Guard != nil {
