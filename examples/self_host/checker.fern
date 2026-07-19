@@ -7612,6 +7612,122 @@ function e021_diags(mod: parser.Module): Diag[] {
     return out;
 }
 
+// e021_derive_field_known reports whether a derive-field type name is
+// one the conformance pre-check can reason about: a primitive scalar or
+// a declared struct / enum name. Composite shapes (`i32[]`, tuples,
+// maps, closures) and unknown names stay silent — matching the native
+// pre-check, which skips any type it cannot name.
+function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
+    if (fty == "i32" || fty == "i64" || fty == "u32" || fty == "u64"
+        || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "string") { return true; }
+    var i: i32 = 0;
+    while (i < mod.structs.len()) { if (mod.structs[i].name == fty) { return true; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < mod.enums.len()) { if (mod.enums[j].name == fty) { return true; } j = j + 1; }
+    return false;
+}
+
+// e021_derive_conforms reports whether derive-field type `fty` satisfies
+// trait `tr` (requirement record at `treq_idx`): an explicit `impl tr
+// for fty`, or fty providing every required trait method as a receiver
+// method — which captures both an inherent method set and a field type
+// whose OWN @derive already synthesised the methods at parse time.
+// Mirrors e021_conforms' bias: a trait with no required methods
+// conforms only via the explicit impl.
+function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty: string): boolean {
+    if (e021_has_impl(mod, tr, fty)) { return true; }
+    var reqs: string[] = mod.trait_reqs[treq_idx].methods;
+    if (reqs.len() == 0) { return false; }
+    var mi: i32 = 0;
+    while (mi < reqs.len()) {
+        if (e021_recv_method_idx(mod, fty, reqs[mi]) < 0) { return false; }
+        mi = mi + 1;
+    }
+    return true;
+}
+
+// e021_derive_one_diag returns the E021 for ONE @derive(tr) on type
+// `tname` (struct fields or flattened enum variant payloads: labels[i]
+// names types[i] in the message), or none. Gates mirror the native
+// pre-check (#5392): only the field-wise-comparing kinds Eq / Ord /
+// Hash, only a trait declared in this module, only known non-generic
+// field types; the first non-conforming field draws the single
+// diagnostic at the deriving decl.
+function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): Diag[] {
+    var kind: string = parser.derive_simple_name(tr);
+    if (kind != "Eq" && kind != "Ord" && kind != "Hash") { return []; }
+    var tidx: i32 = e021_trait_idx(tr, mod.trait_reqs);
+    if (tidx < 0) { return []; }
+    var fi: i32 = 0;
+    while (fi < ftys.len()) {
+        var fty: string = ftys[fi];
+        if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
+            if (!e021_derive_conforms(mod, tr, tidx, fty)) {
+                return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
+            }
+        }
+        fi = fi + 1;
+    }
+    return [];
+}
+
+// e021_derive_field_diags reports E021 (#5392) for a struct/enum
+// @derive(Eq/Ord/Hash) whose field (variant payload) type does not
+// implement the derived trait — the self-host mirror of the native
+// checker's preCheckDeriveFields. One diagnostic per (type, trait),
+// at the deriving declaration.
+function e021_derive_field_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        var sd: parser.StructDecl = mod.structs[si];
+        if (sd.enum_owner.len() == 0 && sd.derives.len() > 0) {
+            var labels: string[] = [];
+            var ftys: string[] = [];
+            var fj: i32 = 0;
+            while (fj < sd.fields.len()) {
+                labels = labels.append("field " + sd.fields[fj].name);
+                ftys = ftys.append(sd.fields[fj].type_name);
+                fj = fj + 1;
+            }
+            var di: i32 = 0;
+            while (di < sd.derives.len()) {
+                out = append_diags(out, e021_derive_one_diag(mod, sd.derives[di], sd.name, labels, ftys, sd.type_params, sd.line, sd.col));
+                di = di + 1;
+            }
+        }
+        si = si + 1;
+    }
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        var ed: parser.EnumDecl = mod.enums[ei];
+        var elabels: string[] = [];
+        var eftys: string[] = [];
+        var ederives: string[] = [];
+        var vi: i32 = 0;
+        while (vi < mod.structs.len()) {
+            var vs: parser.StructDecl = mod.structs[vi];
+            if (vs.enum_owner == ed.name) {
+                if (ederives.len() == 0) { ederives = vs.derives; }
+                var pk: i32 = 0;
+                while (pk < vs.fields.len()) {
+                    elabels = elabels.append("variant " + vs.name + " payload");
+                    eftys = eftys.append(vs.fields[pk].type_name);
+                    pk = pk + 1;
+                }
+            }
+            vi = vi + 1;
+        }
+        var edi: i32 = 0;
+        while (edi < ederives.len()) {
+            out = append_diags(out, e021_derive_one_diag(mod, ederives[edi], ed.name, elabels, eftys, ed.type_params, ed.line, ed.col));
+            edi = edi + 1;
+        }
+        ei = ei + 1;
+    }
+    return out;
+}
+
 // e021_object_unsafe_method returns the name of a required method that makes
 // `trait_name` NOT object-safe (so it can't be used as `dyn T`), or "" when the
 // trait is object-safe or unknown. A trait method breaks object-safety when it
@@ -8248,7 +8364,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis.
-    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_derive_field_diags(mod)), e021_object_safety_diags(mod)), e060_e062_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

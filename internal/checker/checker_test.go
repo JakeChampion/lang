@@ -3357,6 +3357,66 @@ function main(): i32 { return 0; }`, "unknown trait"},
 	}
 }
 
+// @derive(Eq/Ord/Hash) on a type whose field (or variant payload) type
+// does not implement the derived trait is ONE positioned E021 at the
+// deriving decl — not the position-less per-field E043 garbage the
+// ill-typed synthesized body used to surface (#5392). Conformance uses
+// the same sources as the E021 bound check: an explicit impl, a derive
+// on the field's type, or a receiver-method set covering the trait.
+func TestDeriveFieldConformancePreCheck(t *testing.T) {
+	const ordTrait = "trait Ord { function cmp(self: Self, other: Self): i32; }\n"
+	const ordI32 = "impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n"
+
+	// Broken derive: exactly one E021, positioned at the struct decl
+	// (line 3 — never 0:0), with the self-explanatory message.
+	err := checkSource(t, ordTrait+"@derive(Ord)\nstruct Foo { x: i32, y: i32 }\nfunction main(): i32 { return 0; }")
+	if err == nil {
+		t.Fatal("expected E021 for underivable @derive(Ord), got nil")
+	}
+	es, ok := err.(diag.Errors)
+	if !ok {
+		t.Fatalf("expected diag.Errors, got %T: %v", err, err)
+	}
+	if len(es) != 1 {
+		t.Fatalf("expected ONE error for the two-field gap, got %d: %v", len(es), err)
+	}
+	ce, ok := es[0].(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", es[0])
+	}
+	if ce.ErrCode != "E021" {
+		t.Errorf("code = %q, want E021", ce.ErrCode)
+	}
+	const wantMsg = "cannot @derive(Ord) for Foo: field x of type i32 does not implement Ord — add `impl Ord for i32` (or remove the derive)"
+	if !strings.Contains(ce.Error(), wantMsg) {
+		t.Errorf("message %q does not contain %q", ce.Error(), wantMsg)
+	}
+	if ce.Pos.Line != 3 || ce.Pos.Col == 0 {
+		t.Errorf("position = %d:%d, want line 3 with a non-zero column", ce.Pos.Line, ce.Pos.Col)
+	}
+
+	// Enum variant payload names the variant.
+	err = checkSource(t, "trait Eq { function eq(self: Self, other: Self): boolean; }\n@derive(Eq)\nenum E { A, B(i32) }\nfunction main(): i32 { return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "cannot @derive(Eq) for E: variant B payload of type i32 does not implement Eq") {
+		t.Errorf("enum payload gap: got %v", err)
+	}
+
+	// All three conformance sources keep a derive clean: an explicit
+	// impl, a field type with its own derive, and an inherent method set.
+	for _, src := range []string{
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }",
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Outer { inner: Inner }\n@derive(Ord)\nstruct Inner { a: i32 }\nfunction main(): i32 { return 0; }",
+		ordTrait + "struct Bar { a: i32 }\nfunction (self: Bar) cmp(other: Bar): i32 { return 0; }\n@derive(Ord)\nstruct Foo { b: Bar }\nfunction main(): i32 { return 0; }",
+		// A generic struct's type-param field is bound-checked per
+		// instantiation, not by the pre-check.
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Box[T] { v: T, n: i32 }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1, n: 2 }; if (b < b) { return 1; } return 0; }",
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected clean derive for %q, got: %v", src, err)
+		}
+	}
+}
+
 // @derive on a generic enum and @derive(Ord) on an enum are rejected
 // with clear messages (both are follow-ups). See docs/TRAITS.md.
 func TestDeriveEnumErrors(t *testing.T) {

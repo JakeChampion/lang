@@ -230,7 +230,12 @@ pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string }
 // types substituted, so primitive/string payloads resolve their methods.
 // must_consume records a `@must_consume` attribute on the struct decl
 // (docs/MUST-CONSUME.md): the checker's E067 obligation walk consults it.
-pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean }
+// derives records the trait names of an `@derive(…)` attribute on the
+// decl (an enum's derives are stamped on each variant record): the
+// synthesis itself happens at parse time (synth_derives), but the
+// checker's E021 derive-field conformance pre-check (#5392) needs to
+// know which traits were derived.
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean }
 
 // Top-level union type alias: `type Name = V1 | V2 | V3;`.
 // Variants are captured as bare type-name strings — they
@@ -4519,7 +4524,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -4543,7 +4548,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -4563,7 +4568,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -4669,7 +4674,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0, enum_owner: name, must_consume: false });
+        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -4786,7 +4791,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     if (payload_type.len() > 0) {
         fields = fields.append(StructFieldDecl { name: "__ev", type_name: payload_type, fn_ret: "" });
     }
-    return acc.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false });
+    return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false });
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
@@ -4816,7 +4821,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var otf: StructFieldDecl[] = [];
         otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string", fn_ret: "" });
         otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false });
+        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false });
     }
     // FileStat: the builtin struct returned by stat(path). Injected so
     // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
@@ -4828,7 +4833,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "" });
         fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -4841,7 +4846,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "" });
         prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "" });
         prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -4857,7 +4862,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "" });
         hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
@@ -4865,14 +4870,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "" });
         hrf = hrf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "" });
         hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/time's seven date/time types are compiler built-ins (registered in
     // the Go checker, not `struct`-declared in std/time), so the self-host's
@@ -4891,7 +4896,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "" });
         df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "" });
         df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "Time")) {
         var tf: StructFieldDecl[] = [];
@@ -4899,7 +4904,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "" });
         tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "" });
         tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "Span")) {
         var spf: StructFieldDecl[] = [];
@@ -4911,7 +4916,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "" });
         spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "" });
         spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/io_buffered + std/stream + std/mock_platform built-ins (registered
     // in the Go checker, not `struct`-declared in source) — same injection
@@ -4929,12 +4934,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     if (!struct_declared(structs, "BytesWriter")) {
         var bwf: StructFieldDecl[] = [];
         bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "MockPlatform")) {
         var mpf: StructFieldDecl[] = [];
         mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/url's Url is a compiler built-in (registered in the Go checker, not
     // `struct`-declared in std/url), so the IR path needs its layout to lower
@@ -4950,7 +4955,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "" });
         urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "" });
         urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     return structs;
 }
@@ -4962,7 +4967,7 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
     var fields: StructFieldDecl[] = [];
     fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "" });
     fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "" });
-    return structs.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+    return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
 }
 
 // module_with_builtins returns `mod` with the auto-injected builtin
@@ -7216,7 +7221,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: sd.fields[fj].fn_ret });
                 fj = fj + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
         }
         si = si + 1;
     }
@@ -7269,7 +7274,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts) });
                 cfi = cfi + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume });
+            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume });
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
@@ -8363,7 +8368,7 @@ pub function monomorphize_enums(mod: Module): Module {
                         nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: f_ty, fn_ret: f_ret });
                         fj2 = fj2 + 1;
                     }
-                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume });
+                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume });
                 }
                 vi2 = vi2 + 1;
             }
@@ -8397,7 +8402,7 @@ pub function monomorphize_enums(mod: Module): Module {
                 rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, mod.enums, mod.funcs), fn_ret: me_rewrite_ty(sd.fields[rfj].fn_ret, mod.enums, mod.funcs) });
                 rfj = rfj + 1;
             }
-            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
         }
         osi = osi + 1;
     }
@@ -10529,7 +10534,7 @@ function str_list_contains(xs: string[], want: string): boolean {
 
 // derive_simple_name returns a (possibly qualified) trait name's simple
 // name (after the last `.`): `cmp.Display` → "Display".
-function derive_simple_name(name: string): string {
+pub function derive_simple_name(name: string): string {
     var last_dot: i32 = 0 - 1;
     var i: i32 = 0;
     while (i < name.len()) {
@@ -11900,7 +11905,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             if (dk == "struct") {
                 var (dsr_decl, dsr_p) = parse_struct_decl(p);
                 p = dsr_p;
-                structs = structs.append(dsr_decl);
+                structs = structs.append(StructDecl { ...dsr_decl, derives: dr_derives });
                 funcs = synth_derives(dsr_decl, dr_derives, funcs, imports_have_std_json(imports));
                 continue;
             }
@@ -11912,7 +11917,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false });
                 var dei: i32 = 0;
                 while (dei < denr_variants.len()) {
-                    structs = structs.append(denr_variants[dei]);
+                    structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });
                     dei = dei + 1;
                 }
                 // Synthesise variant-wise Display / Eq methods on the
@@ -12166,7 +12171,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;
