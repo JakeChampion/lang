@@ -4175,10 +4175,36 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
         // registry (ret flag '3' in i64_ret_fns, is_u32_ret_fn). This tracks only
         // SIGNEDNESS; value WRAPPING is unchanged (the callee already masked its
         // result into [0, 2^32), so calls stay non-wrapping — #5245). Free
-        // functions key by bare name; methods by "<BaseType>.<method>".
+        // functions key by bare name; methods by "<BaseType>.<method>" (a dyn
+        // receiver keys "dyn <Trait>.<method>", populated by
+        // append_dyn_i64_ret_fns). Beyond the concrete free-fn / method cases,
+        // this arm also covers an erased-GENERIC return that mirrors a u32
+        // argument (`idg[T](x: T): T`) and a u32-valued if/match IIFE (#5245).
         parser.ExprCall(c) => {
+            // A u32-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits):
+            // `(if (c) { big_u32 } else { 0 }) >> 1` selects the UNSIGNED shift.
+            // Classify by its first branch's returned value — the u32 sibling of
+            // expr_is_u64's IIFE arm.
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lam) => {
+                        if (lam.params.len() == 0 && lam.body.len() == 1) {
+                            return expr_is_u32(iife_first_return_expr(lam.body[0]), s);
+                        }
+                    },
+                    _ => {}
+                }
+            }
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_u32_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    if (s.is_u32_ret_fn(cid.name)) { return true; }
+                    // An erased-generic fn whose return mirrors argument i
+                    // (`id[T](x: T): T`) is u32 exactly when that argument is —
+                    // the same "name|$arg<i>" argref registry the u64 arm uses.
+                    var gui: i32 = str_ret_argref(s, cid.name);
+                    if (gui >= 0 && gui < c.args.len() && expr_is_u32(c.args[gui], s)) { return true; }
+                    return false;
+                },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
@@ -29068,7 +29094,8 @@ pub function append_dyn_str_ret_fns(base: string[], trait_reqs: parser.TraitReq[
 // arithmetic (`d.v() + 1`) width-tracks as i32 (infer_expr_width's method arm
 // misses the "dyn <Trait>.<method>" key), so the add lowers 32-bit and
 // truncates the high word. Mirrors i64_ret_fns_of's "<key>|<retflag><paramflags>"
-// format (retflag '1' since the method returns i64/u64; u64 rides the i64 path).
+// format (retflag '1' for an i64/u64 method — u64 rides the i64 path; '3' for a
+// u32 method, whose result needs the same unsigned-op selection — #5245).
 pub function append_dyn_i64_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
     var out: string[] = base;
     var t: i32 = 0;
@@ -29086,6 +29113,20 @@ pub function append_dyn_i64_ret_fns(base: string[], trait_reqs: parser.TraitReq[
                     pj = pj + 1;
                 }
                 out = out.append("dyn " + tr.trait_name + "." + fn.name + "|1" + flags);
+            }
+            // A u32-returning dyn method rides the '3' RETURN flag (is_u32_ret_fn):
+            // `d.v() >> 1` on a `dyn Trait` receiver selects shr_u. Distinct from
+            // the '1' i64/u64 case (u32 is 32-bit, so is_i64_ret_fn must exclude
+            // it). u32 params flag '0' like every non-64-bit param. (#5245)
+            else if (fn.ret_type == "u32") {
+                var uflags: string = "";
+                var uj: i32 = 0;
+                while (uj < fn.params.len()) {
+                    if (fn.params[uj].type_name == "i64" || fn.params[uj].type_name == "u64") { uflags = uflags + "1"; }
+                    else { uflags = uflags + "0"; }
+                    uj = uj + 1;
+                }
+                out = out.append("dyn " + tr.trait_name + "." + fn.name + "|3" + uflags);
             }
             m = m + 1;
         }
