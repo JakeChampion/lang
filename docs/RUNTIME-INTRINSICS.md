@@ -50,7 +50,7 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 >
 > **Status update (2026-07, dependencies-as-the-call-graph): the fs leaves share a
 > Fern `__fern_io_error`.** `stat` / `read_file` / `remove_file` / `write_file` /
-> `temp_dir` no longer *inline* the five-way errno→variant classification
+> `temp_dir` / `read_dir` no longer *inline* the five-way errno→variant classification
 > (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
 > `EINTR→Interrupted`, else `Other`) — they **call** a single Fern classifier,
 > `rt_src_io_error`. The needed helpers + `io_error` are emitted as one bundle
@@ -59,8 +59,9 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > call-graph edge (`io_error` consumes its fresh path arg; the helpers hand it a
 > fresh copy, never their borrowed `path`). This is the #2649 end-state in
 > miniature — a helper's dependency is a real call, not a hand-tracked inline.
-> (`temp_dir` additionally calls the `monotonic_ns` builtin, op-mediated, so it
-> composes in the bundle unchanged.) The arm64 / AST backends keep the register-ABI
+> (`temp_dir` additionally calls the `monotonic_ns` builtin and `read_dir` — the
+> first fs leaf returning a `string[]` — builds its array with `.append()`; both
+> are op-mediated, so they compose in the bundle unchanged.) The arm64 / AST backends keep the register-ABI
 > hand-asm `__fern_io_error`; this is x86-64 IR only. Verified RC-neutral against
 > the pre-consolidation inlined bodies (identical arena growth) and byte-identical
 > on the self-compile fixpoint.

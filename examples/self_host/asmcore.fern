@@ -385,6 +385,24 @@ pub function rt_src_env(): string {
     return "function __fern_env(name: string): Option[string] { var nlen: i32 = name.len(); var envp: i32 = __raw_environ(); var idx: i32 = 0; var done: i32 = 0; while (done == 0) { var entry: i32 = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { var m: i32 = 1; var k: i32 = 0; while (k < nlen) { if (__raw_load8(entry, k) != name[k]) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { var vs: i32 = nlen + 1; var vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } var vbuf: i32 = __raw_alloc(vlen + 1); var c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
 }
 
+// rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
+// IoError] — the first fs leaf returning an ARRAY. openat(AT_FDCWD, path,
+// O_DIRECTORY=65536), a SINGLE getdents64 (syscall 217) into a 1 MiB heap buffer
+// (like read_file's single read: no `buf + offset` loop, which the i32 raw-pointer
+// floor can't do 64-bit-safely — a directory of up to ~26k entries fits one call),
+// close. Then walk the linux_dirent64 records by d_reclen (u16 @ offset 16), skip
+// "." / ".." (name @ offset 19), and append each entry name — COPIED into its own
+// owned string (not aliased into the shared buffer, so each string is RC-managed
+// independently) — to the result string[]. The dirent bytes are read via
+// __raw_load8(buf, off) so the base+offset add happens 64-bit in hardware, never as
+// a truncating i32 `buf + off`. On openat failure the errno is classified by the
+// shared __fern_io_error (bundled with this helper), handed a FRESH path string.
+// Entry order is getdents order (native's os.ReadDir sorts — compare as a set).
+// x86-64-only (arch-specific syscall numbers).
+pub function rt_src_read_dir(): string {
+    return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var cap: i32 = 1048576; var buf: i32 = __raw_alloc(cap); var total: i32 = __syscall3(217, fd, buf, cap); __syscall3(3, fd, 0, 0); var result: string[] = []; var pos: i32 = 0; while (pos < total) { var reclen: i32 = __raw_load8(buf, pos + 16) + (__raw_load8(buf, pos + 17) * 256); var c0: i32 = __raw_load8(buf, pos + 19); var skip: boolean = false; if (c0 == 46) { var c1: i32 = __raw_load8(buf, pos + 20); if (c1 == 0) { skip = true; } if (c1 == 46) { if (__raw_load8(buf, pos + 21) == 0) { skip = true; } } } if (!skip) { var nlen: i32 = 0; while (__raw_load8(buf, pos + 19 + nlen) != 0) { nlen = nlen + 1; } var nb: i32 = __raw_alloc(nlen); var k: i32 = 0; while (k < nlen) { __raw_store8(nb, k, __raw_load8(buf, pos + 19 + k)); k = k + 1; } result = result.append(__raw_string(nb, nlen)); } pos = pos + reclen; } return Ok(result); }";
+}
+
 // rt_src_temp_dir backs `temp_dir(prefix)` (#2649, syscall-leaf) → Result[string,
 // IoError]. Builds a uniquely-named /tmp/<prefix>-<monotonic_ns> path with the
 // raw-memory intrinsics (inline i64→digits, like the hand-asm — avoids pulling in

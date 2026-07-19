@@ -269,6 +269,16 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_env",
 			[]string{"\n__fern_env:"},
 		},
+		{
+			// read_dir — Result[string[], IoError] leaf (#2649), the first fs leaf
+			// returning an ARRAY (getdents64 → string[] via .append()). Old hand-asm
+			// IR body (__fern_read_dir: / .Lrd_c1 / .Lrd_g:) gone; op_read_dir calls
+			// __fn___fern_read_dir.
+			"read_dir",
+			`function main(): i32 { match (read_dir("/nonexistent-dir-xyz")) { Ok(names) => { return names.len(); }, Err(e) => { return 0; } } }`,
+			"__fn___fern_read_dir",
+			[]string{"\n__fern_read_dir:", ".Lrd_c1", ".Lrd_g:"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -326,6 +336,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
     match (remove_file("/nope")) { Some(_) => { r = r + 1; }, None => {} }
     match (write_file("/nope-dir/x", "y")) { Some(_) => { r = r + 1; }, None => {} }
     match (temp_dir("/nope-parent/p")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (read_dir("/nope-dir-xyz")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
     return r;
 }`
 		var cmd *exec.Cmd
@@ -349,7 +360,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 		// Each fs helper delegates its error path to io_error: its body must CALL
 		// the shared classifier (an ordinary call-graph edge) rather than inline the
 		// five-way branch. A silent revert to inlining drops the call.
-		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir"} {
+		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir", "__fn___fern_read_dir"} {
 			body := extractFuncBody(got, sym)
 			if body == "" {
 				t.Errorf("%s not defined in the fs bundle", sym)
