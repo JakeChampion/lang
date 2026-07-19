@@ -1,5 +1,5 @@
 // std/sim — the deterministic simulation driver for std/async
-// (docs/DST-PLATFORM-BRIEF.md, slice 1). A `Sim` implements
+// (docs/DST-PLATFORM-BRIEF.md, slices 1–2). A `Sim` implements
 // `async.Driver` over a VIRTUAL clock: pass it to `async.gather_on` /
 // `race_on` / `with_deadline_on` and the whole fan-out runs under
 // simulated time — identically on every backend, including the
@@ -118,4 +118,151 @@ pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32
         i = i - 1;
     }
     return f;
+}
+
+// ---------------------------------------------------------------------------
+// SimNet (docs/DST-PLATFORM-BRIEF.md, slice 2) — scripted request/response
+// endpoints, the sim sibling of `fetch.fetch_future`. Register upstreams on a
+// `Net`, then `net.fetch_future(host_be, port, path)` returns a
+// `Future[string]` honouring the REAL fetch_future contract: it resolves to
+// the response body; an unregistered endpoint resolves immediately to ""
+// (the real one's dead-upstream behaviour); a chunked response re-suspends
+// once per chunk (the `__fetch_drain` shape), each chunk arriving at its
+// scheduled virtual time, and resolves to the accumulated body at the LAST
+// chunk's time. Latencies are measured from the fetch call's virtual `now`.
+
+// Endpoint — one scripted upstream. A registered `path` of "" matches any
+// path on its host:port. `hits` is a shared Cell (struct fields are frozen —
+// E048 — but a Cell[i64] mutates through), counting fetches routed here.
+pub struct Endpoint {
+    host_be: i32,
+    port: i32,
+    path: string,
+    body: string,
+    first_ns: i64,
+    chunk_ns: i64,
+    chunk_lens: i32[],
+    hits: Cell[i64],
+}
+
+// Net — a Sim plus its scripted endpoints. Registration is value-returning
+// (`n = n.serve(...)`) because struct fields are frozen; the per-endpoint
+// `hits` Cells are SHARED between the old and new Net values, so counters
+// survive further registration.
+pub struct Net { drv: Sim, eps: Endpoint[] }
+
+// net(drv) — a fresh SimNet with no endpoints on the given simulation.
+pub function net(drv: Sim): Net {
+    return Net { drv: drv, eps: [] };
+}
+
+// serve(host_be, port, path, body, latency_ns) — register an endpoint whose
+// whole body arrives in ONE chunk, `latency_ns` of virtual time after the
+// fetch. First matching registration wins on lookup; path "" is a wildcard.
+pub function (n: Net) serve(host_be: i32, port: i32, path: string, body: string, latency_ns: i64): Net {
+    var none: i32[] = [];
+    return n.serve_chunked(host_be, port, path, body, latency_ns, 0 as i64, none);
+}
+
+// serve_chunked(host_be, port, path, body, first_byte_ns, chunk_ns, chunk_lens)
+// — register an endpoint whose body arrives split per `chunk_lens`: chunk k
+// is ready `first_byte_ns + k * chunk_ns` after the fetch. Lengths past the
+// end of the body are clamped; bytes not covered by `chunk_lens` arrive as
+// one final chunk one `chunk_ns` later; an empty `chunk_lens` means a single
+// chunk (== serve). Use `chunks_of` for a fixed-size schedule.
+pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body: string, first_byte_ns: i64, chunk_ns: i64, chunk_lens: i32[]): Net {
+    var ep: Endpoint = Endpoint {
+        host_be: host_be, port: port, path: path, body: body,
+        first_ns: first_byte_ns, chunk_ns: chunk_ns, chunk_lens: chunk_lens,
+        hits: cell_new(0 as i64),
+    };
+    return Net { drv: n.drv, eps: n.eps.append(ep) };
+}
+
+// chunks_of(body_len, size) — the fixed-size chunking schedule: as many
+// `size`-length chunks as `body_len` needs (the last one short). An empty
+// body or non-positive size gives the empty schedule (single-chunk).
+pub function chunks_of(body_len: i32, size: i32): i32[] {
+    var out: i32[] = [];
+    if (size <= 0) { return out; }
+    var pos: i32 = 0;
+    while (pos < body_len) {
+        var take: i32 = size;
+        if (body_len - pos < take) { take = body_len - pos; }
+        out = out.append(take);
+        pos = pos + take;
+    }
+    return out;
+}
+
+// __find(n, host_be, port, path) — index of the first registration matching
+// host:port whose path is `path` or the "" wildcard, or -1.
+function __find(n: Net, host_be: i32, port: i32, path: string): i32 {
+    var i: i32 = 0;
+    while (i < n.eps.len()) {
+        var e: Endpoint = n.eps[i];
+        if (e.host_be == host_be && e.port == port) {
+            if (e.path == "" || e.path == path) { return i; }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// hits(host_be, port, path) — how many fetches have been routed to the
+// matching endpoint (0 for an unregistered one).
+pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64 {
+    var i: i32 = __find(n, host_be, port, path);
+    if (i < 0) { return 0 as i64; }
+    return n.eps[i].hits.get();
+}
+
+// __net_drain(at_ms, chunks, i, acc) — one step of the scripted read, the
+// sim twin of fetch's __fetch_drain: a Pending ready at chunk i's scheduled
+// time whose resume appends the chunk and either resolves (last chunk) or
+// re-suspends for the next. `acc` carries the body read so far across
+// re-suspends.
+function __net_drain(at_ms: i32[], chunks: string[], i: i32, acc: string): async.Future[string] {
+    function resume(woken: i32): async.Future[string] {
+        var got: string = acc + chunks[i];
+        if (i + 1 >= chunks.len()) { return Ready(got); }
+        return __net_drain(at_ms, chunks, i + 1, got);
+    }
+    return Pending(at_ms[i], resume);
+}
+
+// fetch_future(host_be, port, path) — the scripted awaitable fetch. Mirrors
+// `fetch.fetch_future`: an unregistered endpoint is a dead upstream and
+// resolves immediately to "" (a Ready future — it never stalls a fan-out);
+// a registered one re-suspends once per scheduled chunk and resolves to the
+// full body at the last chunk's virtual time. Each call bumps the
+// endpoint's `hits` counter.
+pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async.Future[string] {
+    var idx: i32 = __find(n, host_be, port, path);
+    if (idx < 0) { return Ready(""); }
+    var e: Endpoint = n.eps[idx];
+    e.hits.set(e.hits.get() + (1 as i64));
+    var chunks: string[] = [];
+    var pos: i32 = 0;
+    var k: i32 = 0;
+    while (k < e.chunk_lens.len() && pos < e.body.len()) {
+        var take: i32 = e.chunk_lens[k];
+        if (e.body.len() - pos < take) { take = e.body.len() - pos; }
+        if (take > 0) {
+            chunks = chunks.append(e.body[pos : pos + take] + "");
+            pos = pos + take;
+        }
+        k = k + 1;
+    }
+    if (pos < e.body.len() || chunks.len() == 0) {
+        chunks = chunks.append(e.body[pos : e.body.len()] + "");
+    }
+    var now: i64 = n.drv.now_ns();
+    var at_ms: i32[] = [];
+    var c: i32 = 0;
+    while (c < chunks.len()) {
+        at_ms = at_ms.append(((now + e.first_ns + (c as i64) * e.chunk_ns) / 1000000) as i32);
+        c = c + 1;
+    }
+    return __net_drain(at_ms, chunks, 0, "");
 }

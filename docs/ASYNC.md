@@ -185,6 +185,36 @@ var got: Option[string][] = async.with_deadline_on(d, 25, fs);
 `__fetch_drain` shape) before resolving. See
 `examples/tests/sim_driver_test.fern`.
 
+### SimNet — scripted upstreams
+
+`sim.Net` is the sim sibling of `fetch.fetch_future`: register scripted
+endpoints (host/port, optional path — `""` is a host:port wildcard — body,
+first-byte latency, chunking schedule), then fetch them through the
+combinators. The futures honour the real fetch contract: the body on
+success, `""` immediately for an unregistered (dead) upstream, one
+re-suspension per scheduled chunk with the accumulated body resolving at
+the last chunk's virtual time. Registration is value-returning
+(`n = n.serve(...)`); each endpoint carries a shared `hits` counter for
+call assertions.
+
+```fern
+var d: sim.Sim = sim.new(1);
+var n: sim.Net = sim.net(d);
+n = n.serve(1, 80, "/k", "primary", 30000000);          // one chunk at 30ms
+n = n.serve_chunked(2, 80, "/big", "abcdefghij",
+        5000000, 5000000, sim.chunks_of(10, 4));        // [4,4,2] at 5/10/15ms
+var fs: async.Future[string][] = [
+    n.fetch_future(1, 80, "/k"),
+    n.fetch_future(2, 80, "/big"),
+    n.fetch_future(9, 80, "/k")                          // unregistered -> Ready("")
+];
+var got: string[] = async.gather_on(d, fs, "");
+// got == ["primary", "abcdefghij", ""], d.now_ns() == exactly 30000000,
+// n.hits(1, 80, "/k") == 1
+```
+
+See `examples/tests/sim_net_test.fern`.
+
 ## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern
