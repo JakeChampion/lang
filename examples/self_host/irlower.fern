@@ -12769,6 +12769,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 if (tuot.len() >= 8 && tuot[0:7] == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
                 else if (tuot.len() >= 8 && tuot[0:7] == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
                 if (tupay.len() >= 2 && tupay[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
+                // A STRUCT (or nominal ENUM) success payload: `var u = f()?` where
+                // f returns `Result[User, E]` / `Option[User]`. Without the type
+                // annotation the slot was left untyped, so `u.field` / `u.method()`
+                // / `match (u)` in the body failed to lower and the module dropped
+                // to AST. Carry the payload's struct/enum name (mark_struct_type) —
+                // exactly what an explicit `var u: User = f()?` annotation does.
+                else if (decl_is_struct(sb.structs, tupay) || is_enum_like_name(tupay, sb.structs)) { sb = sb.mark_struct_type(slot, tupay); }
             }
         },
         _ => {}
