@@ -1,30 +1,32 @@
 import "std/array";
+import "std/num";
+import "core/cmp";
 import "std/test";
-// examples/tests/array_reductions_test.fern — wider-int
-// / float array reductions added to std/array as free
-// functions.
+// examples/tests/array_reductions_test.fern — wider-int /
+// float array reductions.
 //
-// The i32[] receiver-method family (`arr.sum()` /
-// `arr.max()` / `arr.min()` / `arr.avg()`) doesn't extend
-// to i64 / u32 / u64 / f64 today because Fern's
-// array-method dispatch keys on the method name only — it
-// can't be overloaded by element type. The free functions
-// here fill the gap until a generic-monomorphisation pass
-// covers receiver methods on parametric arrays.
+// The per-width `sum_*` / `max_*` / `min_*` zoo std/array once
+// carried was retired (#5349) in favour of the generic bounded
+// verbs: `num.sum[T: Add + Zero]` and `cmp.max_of` /
+// `cmp.min_of[T: Ord]`. These cases pin the width-specific
+// behaviours that mattered — i64 / u32 wrapping-add sums, the
+// near-u64-max unsigned max compare, f64 sum + max — now driven
+// through the generic forms monomorphised to each width. `avg_i64`
+// / `avg_f64` (no generic equivalent) stay in std/array.
 
 function test_sum_i64(): test.TestOutcome {
     var arr: i64[] = [1 as i64, 2 as i64, 3 as i64, 4 as i64];
-    return test.assert_eq(array.sum_i64(arr), 10 as i64);
+    return test.assert_eq(num.sum(arr), 10 as i64);
 }
 
 function test_sum_i64_empty(): test.TestOutcome {
     var arr: i64[] = [];
-    return test.assert_eq(array.sum_i64(arr), 0 as i64);
+    return test.assert_eq(num.sum(arr), 0 as i64);
 }
 
 function test_max_i64(): test.TestOutcome {
     var arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64];
-    match (array.max_i64(arr)) {
+    match (cmp.max_of(arr)) {
         Some(m) => { return test.assert_eq(m, 5 as i64); },
         None => { return test.fail("max_i64 returned None on non-empty input"); }
     }
@@ -33,7 +35,7 @@ function test_max_i64(): test.TestOutcome {
 
 function test_min_i64(): test.TestOutcome {
     var arr: i64[] = [3 as i64, 1 as i64, 4 as i64];
-    match (array.min_i64(arr)) {
+    match (cmp.min_of(arr)) {
         Some(m) => { return test.assert_eq(m, 1 as i64); },
         None => { return test.fail("min_i64 returned None on non-empty input"); }
     }
@@ -42,7 +44,7 @@ function test_min_i64(): test.TestOutcome {
 
 function test_max_i64_empty(): test.TestOutcome {
     var arr: i64[] = [];
-    match (array.max_i64(arr)) {
+    match (cmp.max_of(arr)) {
         Some(_) => { return test.fail("expected None on empty"); },
         None => { return test.pass(); }
     }
@@ -60,7 +62,7 @@ function test_avg_i64(): test.TestOutcome {
 
 function test_sum_u32(): test.TestOutcome {
     var arr: u32[] = [10u32, 20u32, 30u32];
-    return test.assert_eq(array.sum_u32(arr), 60u32);
+    return test.assert_eq(num.sum(arr), 60u32);
 }
 
 function test_max_u64_unsigned(): test.TestOutcome {
@@ -69,7 +71,7 @@ function test_max_u64_unsigned(): test.TestOutcome {
     // the compare, 18446744073709551615u64 would look smaller
     // than 1u64 (because as signed it's -1).
     var arr: u64[] = [18446744073709551615u64, 1u64, 1000u64];
-    match (array.max_u64(arr)) {
+    match (cmp.max_of(arr)) {
         Some(m) => { return test.assert_eq(m, 18446744073709551615u64); },
         None => { return test.fail("max_u64 returned None"); }
     }
@@ -78,12 +80,12 @@ function test_max_u64_unsigned(): test.TestOutcome {
 
 function test_sum_f64(): test.TestOutcome {
     var arr: f64[] = [1.5, 2.5, 3.0];
-    return test.assert_eq_f64_near(array.sum_f64(arr), 7.0, 0.0);
+    return test.assert_eq_f64_near(num.sum(arr), 7.0, 0.0);
 }
 
 function test_max_f64(): test.TestOutcome {
     var arr: f64[] = [1.5, 3.14, 2.5];
-    match (array.max_f64(arr)) {
+    match (cmp.max_of(arr)) {
         Some(m) => { return test.assert_eq_f64_near(m, 3.14, 0.0); },
         None => { return test.fail("max_f64 returned None"); }
     }

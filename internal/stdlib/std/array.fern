@@ -746,57 +746,16 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 
 // =================== WIDER-INT / FLOAT REDUCTIONS ===================
 //
-// Free-function reductions for i64 / u32 / u64 / f64 arrays.
-// Receiver-method form (`arr.sum()`) doesn't extend to these
-// widths today — lang's array-method dispatch keys on the
-// method name only, so `__method_Array_sum` can't be
-// overloaded by element type. The free-function form is the
-// right shape until a generic-monomorphisation pass covers
-// receiver methods on parametric arrays.
+// `avg_i64` / `avg_f64` and the running / statistical reductions
+// (`product_f64`, `cumsum_f64`, `cumprod_f64`, `diff_f64`,
+// `variance_f64`, `stddev_f64`, …) that have no generic bounded
+// equivalent. The per-width `sum_*` / `max_*` / `min_*` zoo that once
+// lived here was retired in favour of the generic bounded verbs
+// (`num.sum[T: Add + Zero]`, `cmp.max_of` / `cmp.min_of[T: Ord]`, #4387
+// item 2 / #5349); those cover i64 / u32 / u64 / f64 with the same
+// wrapping-add, unsigned-compare, and NaN-skip-by-comparison semantics.
 //
-// Empty-input semantics:
-//   sum_*  : 0 (additive identity)
-//   max_*  : Option, None on empty
-//   min_*  : Option, None on empty
-//   avg_*  : Option, None on empty (no sensible default)
-
-// sum_i64 — total of every element. Wraps on overflow; users
-// needing exact long sums should widen the per-element type
-// first.
-pub function sum_i64(arr: i64[]): i64 {
-    var n: i32 = arr.len();
-    var s: i64 = 0 as i64;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i];
-        i = i + 1;
-    }
-    return s;
-}
-
-pub function max_i64(arr: i64[]): Option[i64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: i64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] > m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-pub function min_i64(arr: i64[]): Option[i64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: i64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
+// Empty-input semantics: `avg_*` returns None (no sensible default).
 
 // avg_i64 — integer mean (floor toward zero for positive
 // sums, toward zero for negative — Go's int64 division
@@ -804,101 +763,10 @@ pub function min_i64(arr: i64[]): Option[i64] {
 pub function avg_i64(arr: i64[]): Option[i64] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    return Some(sum_i64(arr) / (n as i64));
-}
-
-// u32 / u64 sum / max / min. Unsigned compare drives `max` /
-// `min` correctly near the high end of the range (no
-// sign-extension contamination).
-
-pub function sum_u32(arr: u32[]): u32 {
-    var n: i32 = arr.len();
-    var s: u32 = 0u32;
+    var total: i64 = 0;
     var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i];
-        i = i + 1;
-    }
-    return s;
-}
-
-pub function max_u32(arr: u32[]): Option[u32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: u32 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] > m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-pub function min_u32(arr: u32[]): Option[u32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: u32 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-pub function sum_u64(arr: u64[]): u64 {
-    var n: i32 = arr.len();
-    var s: u64 = 0u64;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i];
-        i = i + 1;
-    }
-    return s;
-}
-
-pub function max_u64(arr: u64[]): Option[u64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: u64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] > m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-pub function min_u64(arr: u64[]): Option[u64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: u64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-// f64 reductions. NaN handling follows the IEEE-754
-// idiom: NaN inputs are infectious for `sum` (any NaN in →
-// NaN out via the propagation chain), and skipped-by-
-// comparison for `max` / `min` because every comparison
-// involving NaN is false (so `arr[i] > m` won't update
-// `m` from NaN; an all-NaN array yields `Some(NaN)` from
-// the first element). Callers wanting strict NaN handling
-// should filter the input first.
-
-pub function sum_f64(arr: f64[]): f64 {
-    var n: i32 = arr.len();
-    var s: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i];
-        i = i + 1;
-    }
-    return s;
+    while (i < n) { total = total + arr[i]; i = i + 1; }
+    return Some(total / (n as i64));
 }
 
 // `product_f64(arr)` — the product of every element, the f64 sibling of the i32
@@ -963,34 +831,13 @@ pub function diff_f64(arr: f64[]): f64[] {
     return out;
 }
 
-pub function max_f64(arr: f64[]): Option[f64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: f64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] > m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-pub function min_f64(arr: f64[]): Option[f64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: f64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
 pub function avg_f64(arr: f64[]): Option[f64] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    return Some(sum_f64(arr) / (n as f64));
+    var total: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n) { total = total + arr[i]; i = i + 1; }
+    return Some(total / (n as f64));
 }
 
 // `variance_f64(arr)` — the POPULATION variance (mean of the squared deviations
@@ -1000,7 +847,10 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 pub function variance_f64(arr: f64[]): Option[f64] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    var mean: f64 = sum_f64(arr) / (n as f64);
+    var msum: f64 = 0.0;
+    var mi: i32 = 0;
+    while (mi < n) { msum = msum + arr[mi]; mi = mi + 1; }
+    var mean: f64 = msum / (n as f64);
     var acc: f64 = 0.0;
     var i: i32 = 0;
     while (i < n) {

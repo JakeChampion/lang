@@ -13805,7 +13805,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // the binding is marked u64 — mark_u64 makes is_i64_slot(x) true (so
     // x is i64-wide) AND is_u64_slot(x) true (so the body's compares /
     // shifts on x select the UNSIGNED ops; a signed compare would
-    // mis-order a value >= 2^63, e.g. in max_u64). The slot passed the
+    // mis-order a value >= 2^63, e.g. in cmp.max_of over a u64[]). The slot passed the
     // is_arr_slot guard above, so is_u64_slot here means u64[], not a
     // scalar u64.
     var elem_is_u64: boolean = s.is_u64_slot(aslot);

@@ -6,7 +6,7 @@ import "std/array" as array;
 // the textbook {2,4,4,4,5,5,7,9} set (mean 5, variance 4, stddev 2) plus the
 // single-element / constant / empty edge cases. The Go-side TestArrayStats pins
 // these across interp / x86-64 / arm64 (the wasmbin leg skips Option over a
-// 64-bit payload, the enum-i64/f64 gap avg_f64 / max_f64 share); this is the
+// 64-bit payload, the enum-i64/f64 gap avg_f64 / variance_f64 share); this is the
 // migration-shaped companion. Option[f64] lowers on the self-host asm_ir path,
 // so this rides both self-host gates too.
 

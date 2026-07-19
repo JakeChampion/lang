@@ -2226,8 +2226,8 @@ func TestRunnerFloatHyperbolicExample(t *testing.T) {
 // stddev_f64 — population variance (mean of squared deviations) and its square
 // root, both Option[f64]. On the interp gate and both self-host gates; the
 // Go-side TestArrayStats pins native compilation on interp/x86-64/arm64 (the
-// wasmbin leg skips Option over a 64-bit payload, the gap avg_f64 / max_f64
-// share). Passing → exit 0.
+// wasmbin leg skips Option over a 64-bit payload, the gap avg_f64 /
+// variance_f64 share). Passing → exit 0.
 func TestRunnerArrayStatsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/array_stats_test.fern")
@@ -2549,13 +2549,13 @@ func TestRunnerBenchExample(t *testing.T) {
 }
 
 // `examples/tests/array_reductions_test.fern` exercises the
-// new wider-int / float array reductions added as free
-// functions to std/array: `sum_i64` / `max_i64` / `min_i64` /
-// `avg_i64`, `sum_u32` / `max_u32` / `min_u32`,
-// `sum_u64` / `max_u64` / `min_u64`, `sum_f64` / `max_f64` /
-// `min_f64` / `avg_f64`. Eleven cases cover the happy path
-// + empty input semantics + the near-u64-max unsigned-
-// compare correctness check.
+// wider-int / float array reductions through the generic bounded
+// verbs that replaced std/array's per-width zoo (#5349):
+// `num.sum[T: Add + Zero]` for i64 / u32 / f64 totals and
+// `cmp.max_of` / `cmp.min_of[T: Ord]` for the extrema, plus
+// std/array's own `avg_i64` / `avg_f64` (no generic equivalent).
+// Eleven cases cover the happy path + empty input semantics + the
+// near-u64-max unsigned-compare correctness check.
 func TestRunnerArrayReductionsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/array_reductions_test.fern")
