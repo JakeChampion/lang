@@ -5691,23 +5691,25 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		// Literal arm: build `scrutinee == literal` as a Binary
-		// AST node so the existing OpStrEq / OpEq dispatch
-		// (with IsStringCmp / IsFloat / Width settled by the
-		// checker pass over Literal already) handles each
-		// scrutinee type uniformly.
-		cond := &ast.Binary{
-			P:           arm.P,
-			Op:          "==",
-			Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
-			Right:       arm.Literal,
-			IsStringCmp: isStringType(tagT),
-			IsFloat:     isFloatType(tagT),
+		// Literal / range arm: build the boolean test as a Binary
+		// AST node so the existing OpStrEq / OpEq / OpGeS dispatch
+		// handles each scrutinee type uniformly. A plain literal is
+		// `scrutinee == literal`; a range is `scrutinee >= lo && scrutinee
+		// <op> hi`. The scrutinee is stashed under a synthetic local name
+		// (already in b.locals) so Ident lookup hits scrSlot.
+		var cond ast.Expr
+		if arm.RangeHi != nil {
+			cond = b.rangeMatchCond(arm.P, arm.Literal, arm.RangeHi, arm.RangeInclusive, scrSlot, tagT)
+		} else {
+			cond = &ast.Binary{
+				P:           arm.P,
+				Op:          "==",
+				Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+				Right:       arm.Literal,
+				IsStringCmp: isStringType(tagT),
+				IsFloat:     isFloatType(tagT),
+			}
 		}
-		// Stash the scrutinee under a synthetic local name so
-		// Ident lookup hits scrSlot — saves us a manual
-		// load/eval shape. The synthetic name's slot is already
-		// in b.locals, set above.
 		if err := b.expr(cond); err != nil {
 			return err
 		}
@@ -5738,6 +5740,32 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 
 func literalMatchScrName(slot int32) string {
 	return fmt.Sprintf("__lit_match_scr_%d", slot)
+}
+
+// rangeMatchCond builds the boolean test for a range-pattern arm
+// (`lo..hi` / `lo..=hi`): `scrutinee >= lo && scrutinee <op> hi`, where
+// <op> is `<` for an exclusive `..` and `<=` for an inclusive `..=`. The
+// comparison Binaries are stamped with the scrutinee's integer width /
+// signedness (or float-ness) directly — they bypass the checker, which
+// never sees these synthesised nodes. Both bound expressions were already
+// checked + settled (Literal as the low bound, RangeHi as the high).
+func (b *builder) rangeMatchCond(p ast.Position, lit, rangeHi ast.Expr, inclusive bool, scrSlot int32, tagT ast.Type) ast.Expr {
+	cmp := func(op string, bound ast.Expr) *ast.Binary {
+		c := &ast.Binary{P: p, Op: op, Left: &ast.Ident{P: p, Name: literalMatchScrName(scrSlot)}, Right: bound, IsFloat: isFloatType(tagT)}
+		if nt, ok := tagT.(ast.NumberType); ok {
+			c.IntWidth = nt.Width
+			c.IsUnsigned = !nt.Signed
+		}
+		if ft, ok := tagT.(ast.FloatType); ok {
+			c.FloatWidth = ft.Width
+		}
+		return c
+	}
+	hiOp := "<"
+	if inclusive {
+		hiOp = "<="
+	}
+	return &ast.Binary{P: p, Op: "&&", Left: cmp(">=", lit), Right: cmp(hiOp, rangeHi)}
 }
 
 // emitLiteralMatchExpr is the expression-form counterpart of
@@ -5812,13 +5840,18 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		cond := &ast.Binary{
-			P:           arm.P,
-			Op:          "==",
-			Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
-			Right:       arm.Literal,
-			IsStringCmp: isStringType(tagT),
-			IsFloat:     isFloatType(tagT),
+		var cond ast.Expr
+		if arm.RangeHi != nil {
+			cond = b.rangeMatchCond(arm.P, arm.Literal, arm.RangeHi, arm.RangeInclusive, scrSlot, tagT)
+		} else {
+			cond = &ast.Binary{
+				P:           arm.P,
+				Op:          "==",
+				Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+				Right:       arm.Literal,
+				IsStringCmp: isStringType(tagT),
+				IsFloat:     isFloatType(tagT),
+			}
 		}
 		if err := b.expr(cond); err != nil {
 			return err

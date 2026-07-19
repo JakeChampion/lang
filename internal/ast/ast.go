@@ -2407,6 +2407,14 @@ type MatchArm struct {
 	NamedFields bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	// RangeHi, when non-nil, marks a range pattern `lo..hi => …` /
+	// `lo..=hi => …` on a scalar scrutinee: Literal holds the low bound,
+	// RangeHi the high bound, and RangeInclusive distinguishes `..=`
+	// (inclusive hi) from `..` (exclusive hi). Lowered to the compound
+	// bound test `scr >= lo && scr <op> hi` on the same literal-match
+	// path as `==` arms.
+	RangeHi        Expr
+	RangeInclusive bool
 	// TupleElems is a tuple pattern `(p0, p1, …) => …` on a tuple-typed
 	// scrutinee — one element per scrutinee tuple element (arity checked
 	// by the checker). Nil for non-tuple patterns; mutually exclusive
@@ -2449,6 +2457,10 @@ type MatchExprArm struct {
 	NamedFields   bool // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
+	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see
+	// MatchArm.RangeHi. Literal holds the low bound.
+	RangeHi        Expr
+	RangeInclusive bool
 	// TupleElems is a tuple pattern on a tuple-typed scrutinee — see
 	// MatchArm.TupleElems. BindingTypes runs parallel to it.
 	TupleElems []TuplePatElem

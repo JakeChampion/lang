@@ -2721,11 +2721,11 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 				if arm.Literal == nil {
 					continue
 				}
-				lv, err := i.evalExpr(arm.Literal, e)
+				matched, err := i.armMatchesScalar(arm.Literal, arm.RangeHi, arm.RangeInclusive, tag, e)
 				if err != nil {
 					return result{}, err
 				}
-				if !valuesEqual(tag, lv) {
+				if !matched {
 					continue
 				}
 			}
@@ -2793,6 +2793,52 @@ func matchExprArmsHaveTuple(arms []*ast.MatchExprArm) bool {
 // comparisons. Numbers, Bools and Strings compare by content; other
 // types compare via Go's `==` which is a sensible fallback (Func
 // references, Void, etc.).
+// armMatchesScalar reports whether a scalar-match arm matches the
+// already-evaluated scrutinee value `tag`. A plain literal arm matches on
+// equality; a range arm (`lo..hi` / `lo..=hi`, RangeHi non-nil) matches
+// when `lo <= tag <op> hi`. Range scrutinees are signed-integer or float
+// (the checker restricts them), so the comparisons are signed.
+func (i *Interp) armMatchesScalar(lit, rangeHi ast.Expr, inclusive bool, tag Value, e *env) (bool, error) {
+	lv, err := i.evalExpr(lit, e)
+	if err != nil {
+		return false, err
+	}
+	if rangeHi == nil {
+		return valuesEqual(tag, lv), nil
+	}
+	hv, err := i.evalExpr(rangeHi, e)
+	if err != nil {
+		return false, err
+	}
+	if tn, ok := tag.(Number); ok {
+		ln, lok := lv.(Number)
+		hn, hok := hv.(Number)
+		if lok && hok {
+			if int64(ln) > int64(tn) {
+				return false, nil
+			}
+			if inclusive {
+				return int64(tn) <= int64(hn), nil
+			}
+			return int64(tn) < int64(hn), nil
+		}
+	}
+	if tf, ok := tag.(Float); ok {
+		lf, lok := lv.(Float)
+		hf, hok := hv.(Float)
+		if lok && hok {
+			if lf.V > tf.V {
+				return false, nil
+			}
+			if inclusive {
+				return tf.V <= hf.V, nil
+			}
+			return tf.V < hf.V, nil
+		}
+	}
+	return false, nil
+}
+
 func valuesEqual(a, b Value) bool {
 	switch ax := a.(type) {
 	case Number:
@@ -3323,11 +3369,11 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				if arm.Literal == nil {
 					continue
 				}
-				lv, err := i.evalExpr(arm.Literal, env)
+				matched, err := i.armMatchesScalar(arm.Literal, arm.RangeHi, arm.RangeInclusive, tag, env)
 				if err != nil {
 					return nil, err
 				}
-				if !valuesEqual(tag, lv) {
+				if !matched {
 					continue
 				}
 			}
