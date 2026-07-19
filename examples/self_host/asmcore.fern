@@ -413,6 +413,25 @@ pub function rt_src_read_file(): string {
     return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { return Err(__fern_io_error(0 - got, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
 }
 
+// rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
+// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY=
+// 65536) (syscall 257; mode ignored without O_CREAT so __syscall3 suffices), then
+// DRAIN the directory with a loop of getdents64 (syscall 217) reads into a FRESH
+// 64 KiB buffer each iteration — appending each entry's base name (skipping "." /
+// "..") to a string[]. The fresh-buffer-per-read shape avoids the `buf + off`
+// pointer arithmetic the i32 raw-pointer floor can't do 64-bit-safely (getdents64
+// never splits a linux_dirent64 record across calls, so each buffer parses
+// independently); the record fields are read via __raw_load8(buf, pos+k), which
+// offsets in the emitter. Record layout: d_ino(8) d_off(8) d_reclen(u16 @16)
+// d_type(1) d_name(@19, NUL-terminated). On openat failure the errno is classified
+// by the shared __fern_io_error (bundled with this helper), handed a FRESH path
+// string. The result string[] is built with .append() (→ __fern_arr_push /
+// arr_push_owned for the sole-owner local, like str_split). x86-64-only (arch-
+// specific syscall numbers); arm64/AST keep their hand-asm.
+pub function rt_src_read_dir(): string {
+    return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + 19 + nlen) != 0) { nlen = nlen + 1; } var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + 19 + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); return Ok(names); }";
+}
+
 // rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
 // selects monotonic_ns / now_ns / now_unix_ms. Each reads a `timespec { i64
 // tv_sec; i64 tv_nsec }` from clock_gettime (x86-64 syscall 228) into the fixed
@@ -2438,6 +2457,13 @@ pub function runtime_need_deps(name: string): string[] {
         // pulls str_split, so close_needs reaches these transitively.)
         var d8: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d8;
+    }
+    if (name == "read_dir") {
+        // __fern_read_dir (#2649) builds the result string[] with .append() — same
+        // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
+        // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
+        var d9: string[] = ["heap", "arr_push", "arr_push_owned"];
+        return d9;
     }
     var none: string[] = [];
     return none;
