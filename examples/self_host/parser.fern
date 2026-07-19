@@ -7461,7 +7461,14 @@ function me_env_from_params(params: ParamDecl[]): MEnv {
     var e: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
     while (i < params.len()) {
-        e = e.ebind(params[i].name, params[i].type_name);
+        var pt: string = params[i].type_name;
+        // A fn-typed param coarsens to "fn" with its return type held in
+        // fn_ret; encode it as "fn => <ret>" so me_scrutinee_type can recover a
+        // `match (f(x))` scrutinee's generic-enum return type and rewrite its
+        // arms (mirrors the me_bind_pat_vars fn-payload encoding). Otherwise the
+        // scrutinee typed "" and the arms stayed un-mangled → wrong variant.
+        if (pt == "fn" && params[i].fn_ret.len() > 0) { pt = "fn => " + params[i].fn_ret; }
+        e = e.ebind(params[i].name, pt);
         i = i + 1;
     }
     return e;
@@ -7895,6 +7902,16 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // present, else the init's recovered type (a call result, so
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
             var vty: string = v.type_name;
+            // A fn-typed local coarsens to "fn" (its return type is dropped
+            // from the annotation); recover it from the init lambda's declared
+            // return type and encode "fn => <ret>", so `match (f(x))` over a
+            // generic-enum-returning fn-value local recovers its instantiation.
+            if (vty == "fn") {
+                match (v.init) {
+                    ExprLambda(lm) => { if (lm.ret_type.len() > 0) { vty = "fn => " + lm.ret_type; } },
+                    _ => { }
+                }
+            }
             if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, structs, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, vty), rins2: cins };
         },
