@@ -260,6 +260,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_temp_dir",
 			[]string{"\n__fern_temp_dir:"},
 		},
+		{
+			// env — Option[string] leaf (#2649), first __raw_environ user. Walks the
+			// envp array + copies the value. Old hand-asm IR body (__fern_env:) gone;
+			// op_env calls __fn___fern_env. (__fern_envp global kept for subprocess.)
+			"env",
+			`function main(): i32 { match (env("PATH")) { Some(v) => { return 0; }, None => { return 1; } } }`,
+			"__fn___fern_env",
+			[]string{"\n__fern_env:"},
+		},
 	}
 
 	for _, tc := range cases {
