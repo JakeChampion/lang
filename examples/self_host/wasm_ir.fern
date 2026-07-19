@@ -1924,7 +1924,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // the helpers return the pointer, so the stack stays balanced.
             out = out + "    call $__fern_rc_inc\n";
         } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {  // call_direct
-            out = out + "    call $__fern_rc_dec\n";
+            out = out + "    call $__fern_arr_dec\n";
         } else if (o.kind_tag == 149 && asm_ir.is_fern_helper(o.str)) {  // call_direct
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.
