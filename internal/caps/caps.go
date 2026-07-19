@@ -2,12 +2,14 @@
 // per-package capability report behind the capability-grant design
 // (docs/PACKAGE-CAPABILITIES-BRIEF.md; tracking issue #5361).
 //
-// This is Phase 1 — inventory + report mode only. The table below
-// tags every capability-relevant runtime builtin with the v1
-// vocabulary (`net`, `fs`, `env`, `subprocess`, `time`, `random`);
-// `fern -capabilities` computes each package's transitive reach into
-// the table and prints it. Zero enforcement: no manifest key is read
-// and no error is ever produced.
+// The table below tags every capability-relevant runtime builtin with
+// the v1 vocabulary (`net`, `fs`, `env`, `subprocess`, `time`,
+// `random`). Analyze (report.go) computes each package's transitive
+// reach into the table — `fern -capabilities` prints it (phase 1), and
+// Enforce (enforce.go) checks the same rows against the manifests'
+// `capabilities` grants (phase 2): a governed package reaching outside
+// its grant is an E070 error, an ungoverned one a warn-and-allow
+// diagnostic, and the root package is exempt.
 //
 // The inventory's completeness contract: every user-callable builtin
 // registered by the checker (Info.FuncSigs) or the interpreter

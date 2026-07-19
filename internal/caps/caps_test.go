@@ -1,9 +1,10 @@
-package caps
+package caps_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/caps"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/parser"
@@ -41,11 +42,11 @@ func TestInventoryCoversCheckerRegistry(t *testing.T) {
 		if strings.HasPrefix(name, "__") {
 			continue
 		}
-		_, tagged := BuiltinCaps[name]
-		if !tagged && !Ungated[name] {
+		_, tagged := caps.BuiltinCaps[name]
+		if !tagged && !caps.Ungated[name] {
 			t.Errorf("checker builtin %q is unclassified: add it to caps.BuiltinCaps or caps.Ungated", name)
 		}
-		if tagged && Ungated[name] {
+		if tagged && caps.Ungated[name] {
 			t.Errorf("builtin %q is both capability-tagged and ungated", name)
 		}
 	}
@@ -60,11 +61,11 @@ func TestInventoryCoversInterpRegistry(t *testing.T) {
 		if strings.Contains(name, "__") {
 			continue
 		}
-		_, tagged := BuiltinCaps[name]
-		if !tagged && !Ungated[name] {
+		_, tagged := caps.BuiltinCaps[name]
+		if !tagged && !caps.Ungated[name] {
 			t.Errorf("interp builtin %q is unclassified: add it to caps.BuiltinCaps or caps.Ungated", name)
 		}
-		if tagged && Ungated[name] {
+		if tagged && caps.Ungated[name] {
 			t.Errorf("builtin %q is both capability-tagged and ungated", name)
 		}
 	}
@@ -72,27 +73,27 @@ func TestInventoryCoversInterpRegistry(t *testing.T) {
 
 // The reverse direction: every classified name must exist in at least
 // one registry (catches a builtin rename stranding a stale table
-// entry), and every BuiltinCaps value must be in the v1 vocabulary.
+// entry), and every caps.BuiltinCaps value must be in the v1 vocabulary.
 func TestInventoryNamesAreReal(t *testing.T) {
 	registry := checkerBuiltins(t)
 	for name := range interp.New().Builtins {
 		registry[name] = true
 	}
 	vocab := map[string]bool{}
-	for _, c := range Capabilities {
+	for _, c := range caps.Capabilities {
 		vocab[c] = true
 	}
-	for name, c := range BuiltinCaps {
+	for name, c := range caps.BuiltinCaps {
 		if !registry[name] {
-			t.Errorf("BuiltinCaps entry %q is not a registered builtin", name)
+			t.Errorf("caps.BuiltinCaps entry %q is not a registered builtin", name)
 		}
 		if !vocab[c] {
-			t.Errorf("BuiltinCaps[%q] = %q is not in the v1 vocabulary %v", name, c, Capabilities)
+			t.Errorf("caps.BuiltinCaps[%q] = %q is not in the v1 vocabulary %v", name, c, caps.Capabilities)
 		}
 	}
-	for name := range Ungated {
+	for name := range caps.Ungated {
 		if !registry[name] {
-			t.Errorf("Ungated entry %q is not a registered builtin", name)
+			t.Errorf("caps.Ungated entry %q is not a registered builtin", name)
 		}
 	}
 }

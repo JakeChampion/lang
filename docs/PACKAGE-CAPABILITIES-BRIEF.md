@@ -94,6 +94,23 @@ Rules:
 2. **Enforcement.** `capabilities` key honoured; violations are
    checker errors (new E-code) when the key is present; absent key =
    warn-and-allow for one release, then default-deny.
+
+   **Status: shipped (#5361).** Dependency entries accept
+   `capabilities = ["net", …]` on every form (path / url / workspace /
+   version); an unknown name is a manifest error naming the vocabulary
+   (`internal/manifest.parseCapabilities`). modload records each
+   governed dependency's grant on `ast.Program.CapGrants` (keyed by
+   the dep's resolved directory — `declaredDepDir` is shared with
+   import resolution so the two can't disagree), and cmd/fern's
+   `enforceCapabilities` runs after every successful type-check
+   (`-check`, `-interp`, and compile alike): `caps.Enforce` filters
+   the SAME `caps.Analyze` rows the report prints — report = all
+   usage, enforcement = usage minus grants. A governed package
+   reaching outside its grant is **E070** with the chain; a package
+   with no `capabilities` key is **warn-and-allow live today**
+   (stderr, once per package+capability, with an example chain) —
+   the default-deny flip is the pending follow-up; the root package
+   is never enforced or warned.
 3. **Attenuation.** Transitive subset rule at `-resolve` time.
 4. **Runtime alignment.** When the WASI component path matures
    (#4315–#4320 lane), derive the component's requested WASI imports

@@ -31,8 +31,9 @@ var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*)[
 func TestEmittedCodesHaveExplanations(t *testing.T) {
 	// Test runs in the package dir (internal/diag); the emitters are its
 	// siblings. modload/parser share the same emission helpers as checker;
-	// cmd/fern emits E066 (capability enforcement) via checker.Error, and
-	// internal/platforms owns that pass — scan both so new codes there
+	// cmd/fern emits E066 (platform capability enforcement) and E070
+	// (per-package capability grants) via checker.Error, and
+	// internal/platforms owns the E066 pass — scan both so new codes there
 	// can't ship without explanations either. internal/ir emits E068 (the
 	// fip/fbip verify-enable, fip_verify.go's errfCode) at lowering time.
 	dirs := []string{"../checker", "../parser", "../modload", "../platforms", "../ir", "../../cmd/fern"}

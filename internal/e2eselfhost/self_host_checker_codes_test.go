@@ -276,7 +276,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"bound-struct-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T, b: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p, p); return r.x; }\n", []string{"E021"}},
 		{"bound-prim-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { return pick(3); }\n", []string{"E021"}},
 		{"bound-struct-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nimpl Ord for Foo { function cmp(self: Self, other: Self): i32 { return 0; } }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
-		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		// bound-derive-ok carries `impl Ord for i32`: the derived `cmp`
+		// dispatches per-field to the FIELD type's impl (synthOrd emits
+		// `self.x.cmp(other.x)` — the ord_struct_enum e2e fixture is the
+		// design reference), so without it the synthesized body is
+		// ill-typed and the Go checker reports a position-less E043 that
+		// diag.Format used to swallow (the pre-#5391 rendering hole made
+		// the old impl-less expectation vacuously "pass"). The self-host
+		// checker does not yet type-check derived bodies at all — that
+		// gap is #5392.
+		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not

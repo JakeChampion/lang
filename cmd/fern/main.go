@@ -601,7 +601,7 @@ func main() {
 	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
 	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. This is the ONLY command that touches the network — build/check/interp read the store and error when a url dependency hasn't been fetched.")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
-	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. Report only — nothing is enforced (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). No codegen.")
+	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
 	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source on stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. A document using `file=PATH` blocks tangles to multiple modules, each printed under a `// ==> path <==` banner. With -o set, writes to disk instead: -o DIR receives one file per `file=` module (subdirs created as needed); a single-`<<*>>` document writes -o FILE. No codegen.")
 	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout (or -o FILE) — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. Add -html for a self-contained, styled HTML page (highlighted code + clickable chunk references). No codegen.")
 	weaveHTML := flag.Bool("html", false, "with -weave, emit a self-contained styled HTML page (embedded CSS, Fern syntax highlighting, and clickable `<<chunk>>` cross-reference links) instead of Markdown.")
@@ -950,6 +950,11 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	if err != nil {
 		return 1, formatErr(err)
 	}
+	if srcPath != "-" {
+		if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+			return 1, formatErr(err)
+		}
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, formatErr(err)
 	}
@@ -1033,6 +1038,11 @@ func runCheck(srcPath string) error {
 	if err != nil {
 		return formatErr(err)
 	}
+	if srcPath != "-" {
+		if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+			return formatErr(err)
+		}
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return formatErr(err)
 	}
@@ -1063,6 +1073,11 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
+		return 1, e.format(err)
+	}
+	// Per-package capability grants (E070 — the manifest-boundary
+	// sibling of the target-boundary E066 pass below).
+	if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
 		return 1, e.format(err)
 	}
 	// -O: drop assert() checks AFTER type-checking (an ill-typed assert
