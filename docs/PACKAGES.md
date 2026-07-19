@@ -43,12 +43,20 @@ lib = "lib.fern"      # entry module for `import "<name>"` (default)
 helper = { path = "../helper" }                    # local directory
 webkit = { url = "https://example.com/webkit.tar.gz",
            hash = "sha256:<64 hex of the archive bytes>" }
+kv = { path = "../kv", capabilities = ["net"] }    # capability grant
 ```
 
 The parser (`internal/manifest`) is a strict TOML subset — sections,
 quoted strings, inline tables — and rejects anything else with a
 pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
 `helper = "1.2"` errors (versions are MAJOR.MINOR.PATCH).
+
+An optional `capabilities = ["net", …]` on any dependency form grants
+the dependency the listed v1 capabilities (`net`, `fs`, `env`,
+`subprocess`, `time`, `random` — an unknown name is a manifest error).
+When the key is present, the checker enforces it by call-graph
+reachability (E070); without the key, reaches print as warnings for
+now. See docs/PACKAGE-CAPABILITIES-BRIEF.md.
 
 ## Hash-addressed dependencies + `fern -fetch` (slice 2)
 

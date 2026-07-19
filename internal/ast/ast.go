@@ -3120,6 +3120,17 @@ type Program struct {
 	// won't re-register `core/map`'s helpers when modload already
 	// pulled the module in (directly or transitively).
 	LoadedStdlibPaths map[string]bool
+	// CapGrants records the capability grants declared in the loaded
+	// manifests (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2), keyed by
+	// the dependency package's resolved directory: for every dependency
+	// entry carrying a `capabilities` key, the granted v1 capabilities
+	// (sorted; the union when several manifests grant the same package).
+	// A key mapping to an empty slice means `capabilities = []` (nothing
+	// granted); a package directory absent from the map is ungoverned —
+	// cmd/fern's enforcement warns instead of erroring for it
+	// (warn-and-allow). modload populates this during loading; nil when
+	// no manifest grants anything.
+	CapGrants map[string][]string
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
 	// codegen) ignore this field; the formatter walks it alongside

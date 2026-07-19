@@ -1,4 +1,4 @@
-package caps
+package caps_test
 
 import (
 	"os"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/caps"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
@@ -76,7 +77,7 @@ function main(): i32 {
 			return "(root)"
 		}
 	}
-	rows := Analyze(prog, pkgOf)
+	rows := caps.Analyze(prog, pkgOf)
 	if len(rows) != 2 || rows[0].Package != "(root)" || rows[1].Package != "util" {
 		t.Fatalf("want (root) + util rows, got %+v", rows)
 	}
@@ -121,7 +122,7 @@ function main(): i32 {
 			return "app"
 		}
 	}
-	rows := Analyze(prog, pkgOf)
+	rows := caps.Analyze(prog, pkgOf)
 	if len(rows) != 2 {
 		t.Fatalf("want app + helper rows, got %+v", rows)
 	}
@@ -152,7 +153,7 @@ function stray(): i32 {
 }`,
 	})
 	prog := loadChecked(t, filepath.Join(root, "main.fern"))
-	rows := Analyze(prog, rootOnly)
+	rows := caps.Analyze(prog, rootOnly)
 	if len(rows) != 1 || len(rows[0].Uses) != 1 || rows[0].Uses[0].Capability != "net" {
 		t.Fatalf("stray() is declared, so net must be reported: %+v", rows)
 	}
@@ -177,24 +178,24 @@ function main(): i32 {
 }`,
 	})
 	prog := loadChecked(t, filepath.Join(root, "main.fern"))
-	rows := Analyze(prog, rootOnly)
+	rows := caps.Analyze(prog, rootOnly)
 	if len(rows) != 1 || len(rows[0].Uses) != 1 || rows[0].Uses[0].Capability != "net" {
 		t.Fatalf("want net via the probe function value: %+v", rows)
 	}
 }
 
 func TestFormat(t *testing.T) {
-	rows := []Row{
-		{Package: "app", Uses: []Use{
+	rows := []caps.Row{
+		{Package: "app", Uses: []caps.Use{
 			{Capability: "fs", Chain: []string{"main", "lib__save", "write_file"}},
 			{Capability: "net", Chain: []string{"main", "fetch__fetch_raw", "tcp_connect"}},
 		}},
 		{Package: "helper", Uses: nil},
 	}
-	got := Format(rows)
+	got := caps.Format(rows)
 	want := "app  fs,net  (example: main → lib__save → write_file)\n" +
 		"helper  -\n"
 	if got != want {
-		t.Fatalf("Format:\ngot  %q\nwant %q", got, want)
+		t.Fatalf("caps.Format:\ngot  %q\nwant %q", got, want)
 	}
 }

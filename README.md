@@ -91,7 +91,10 @@ wasmtime run factorial.wasm
                                            # the file; exits 1 when they differ
 
 # Per-package capability report (net / fs / env / subprocess / time / random;
-# see docs/PACKAGE-CAPABILITIES-BRIEF.md)
+# see docs/PACKAGE-CAPABILITIES-BRIEF.md). Grants are also ENFORCED on every
+# compile / -check / -interp: a dependency whose fern.toml entry carries
+# `capabilities = [...]` gets an E070 error when it reaches outside the grant
+# (dependencies without the key warn for now).
 ./fern -capabilities app/main.fern
 
 # Literate programming (Knuth-style named chunks; see docs/LITERATE.md)

@@ -124,11 +124,12 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	loaded := map[string]*module{}      // path → loaded module
-	stack := map[string]bool{}          // path → true while in flight (cycle detection)
-	srcs := map[string]string{}         // path → source text (for diag formatting)
-	lit := map[string]*LiterateModule{} // path → literate provenance (tangled imports)
-	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit, map[string]*manifest.Manifest{}); err != nil {
+	loaded := map[string]*module{}          // path → loaded module
+	stack := map[string]bool{}              // path → true while in flight (cycle detection)
+	srcs := map[string]string{}             // path → source text (for diag formatting)
+	lit := map[string]*LiterateModule{}     // path → literate provenance (tangled imports)
+	mans := map[string]*manifest.Manifest{} // dir → governing manifest (nil = none)
+	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit, mans); err != nil {
 		// Return the partial source map (loadRecursive stamps srcs[path]
 		// BEFORE parsing each file, so the failing file's source is already
 		// captured) so the CLI/LSP formatter can render the offending line +
@@ -142,6 +143,7 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	if err != nil {
 		return nil, srcs, lit, err
 	}
+	prog.CapGrants = capGrants(mans)
 	return prog, srcs, lit, nil
 }
 
@@ -615,74 +617,11 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 		return resolveImportPath(importingDir, importPath), nil
 	}
 	seg, rest, _ := strings.Cut(importPath, "/")
-	if d, isDep := man.Deps[seg]; isDep && d.Workspace {
-		// Workspace-member dependency (Rec §5): resolve `seg` to the
-		// enclosing workspace's member whose package name is `seg`,
-		// instead of a path/url. Keeps cross-member deps explicit
-		// (isolation — still a declared dep) while dropping brittle
-		// `../../member` paths.
-		depDir, err := workspaceMemberDir(man.Dir, seg, mans)
-		if err != nil {
-			return "", err
-		}
-		return resolveDepImport(depDir, rest, mans)
-	}
-	// Vendored mode (Rec §6): when a `vendor/` tree governs this package,
-	// a declared dependency resolves to `<vendor-root>/vendor/<name>/` —
-	// flat, offline, path/url origins irrelevant, no network. Detected
-	// from man.Dir alone (no load-wide threading): the vendor root is the
-	// directory whose `vendor/` subdir either IS man's dir or contains it.
-	// Isolation is still enforced — only DECLARED deps (`isDep`) resolve —
-	// so a vendored package can't reach a sibling in vendor it didn't
-	// declare. A declared dep missing from a vendor tree is an error
-	// (the vendor dir is stale — re-run `fern -vendor`), never a fallback
-	// to the network.
 	if _, isDep := man.Deps[seg]; isDep {
-		vr := vendorRootFor(man.Dir)
-		if vr == "" {
-			// A workspace member's own directory has no `vendor/`, but the
-			// workspace root may (populated by `fern -vendor <root>`). Fall
-			// back to the enclosing workspace root's vendor tree so members
-			// share one vendored dependency set.
-			if ws, werr := manifest.FindWorkspace(man.Dir); werr == nil && ws != nil {
-				if st, err := os.Stat(filepath.Join(ws.Dir, "vendor")); err == nil && st.IsDir() {
-					vr = ws.Dir
-				}
-			}
-		}
-		if vr != "" {
-			depDir := filepath.Join(vr, "vendor", seg)
-			if st, err := os.Stat(depDir); err == nil && st.IsDir() {
-				return resolveDepImport(depDir, rest, mans)
-			}
-			return "", fmt.Errorf("dependency %q is not in the vendor directory %s — re-run `fern -vendor %s`", seg, filepath.Join(vr, "vendor"), filepath.Join(vr, manifest.FileName))
-		}
-	}
-	if d, isDep := man.Deps[seg]; isDep && d.Version != "" {
-		// Versioned (MVS) dependency: the concrete version was chosen by
-		// `fern -resolve` and pinned in fern.lock. Resolve through the lock
-		// — the compiler reads the lock, never the index or the network.
-		depDir, err := lockedDepDir(man.Dir, seg)
+		depDir, err := declaredDepDir(man, seg, mans)
 		if err != nil {
 			return "", err
 		}
-		return resolveDepImport(depDir, rest, mans)
-	}
-	if d, isDep := man.Deps[seg]; isDep && d.URL != "" {
-		// Hash-addressed dependency: resolve through the content-addressed
-		// store, NEVER the network — `fern -fetch` is the only fetcher (the
-		// no-build-time-network constraint). Absent from the store is a
-		// user-actionable error, not a download.
-		depDir, present, err := pkgcache.Dir(d.Hash)
-		if err != nil {
-			return "", fmt.Errorf("dependency %q: %w", seg, err)
-		}
-		if !present {
-			return "", fmt.Errorf("dependency %q (%s) is not in the package store — run `fern -fetch %s` to download and verify it", seg, d.Hash, filepath.Join(man.Dir, manifest.FileName))
-		}
-		return resolveDepImport(depDir, rest, mans)
-	}
-	if depDir, ok := man.DepDir(seg); ok {
 		return resolveDepImport(depDir, rest, mans)
 	}
 	// Not a declared dependency: a bare path that resolves to an existing
@@ -695,6 +634,120 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 	}
 	return "", fmt.Errorf("import %q: not found relative to %s, and %q is not a declared dependency in %s (add it under [dependencies], e.g. %s = { path = \"../%s\" })",
 		importPath, importingDir, seg, filepath.Join(man.Dir, manifest.FileName), seg, seg)
+}
+
+// declaredDepDir resolves the DECLARED dependency `seg` of `man` to its
+// package directory, one branch per dependency form. Shared by
+// resolveImport (the import path) and capGrants (the capability-grant
+// table), so the two can never disagree about which directory a
+// dependency entry governs.
+func declaredDepDir(man *manifest.Manifest, seg string, mans map[string]*manifest.Manifest) (string, error) {
+	d := man.Deps[seg]
+	if d.Workspace {
+		// Workspace-member dependency (Rec §5): resolve `seg` to the
+		// enclosing workspace's member whose package name is `seg`,
+		// instead of a path/url. Keeps cross-member deps explicit
+		// (isolation — still a declared dep) while dropping brittle
+		// `../../member` paths.
+		return workspaceMemberDir(man.Dir, seg, mans)
+	}
+	// Vendored mode (Rec §6): when a `vendor/` tree governs this package,
+	// a declared dependency resolves to `<vendor-root>/vendor/<name>/` —
+	// flat, offline, path/url origins irrelevant, no network. Detected
+	// from man.Dir alone (no load-wide threading): the vendor root is the
+	// directory whose `vendor/` subdir either IS man's dir or contains it.
+	// Isolation is still enforced — only DECLARED deps resolve — so a
+	// vendored package can't reach a sibling in vendor it didn't declare.
+	// A declared dep missing from a vendor tree is an error (the vendor
+	// dir is stale — re-run `fern -vendor`), never a fallback to the
+	// network.
+	vr := vendorRootFor(man.Dir)
+	if vr == "" {
+		// A workspace member's own directory has no `vendor/`, but the
+		// workspace root may (populated by `fern -vendor <root>`). Fall
+		// back to the enclosing workspace root's vendor tree so members
+		// share one vendored dependency set.
+		if ws, werr := manifest.FindWorkspace(man.Dir); werr == nil && ws != nil {
+			if st, err := os.Stat(filepath.Join(ws.Dir, "vendor")); err == nil && st.IsDir() {
+				vr = ws.Dir
+			}
+		}
+	}
+	if vr != "" {
+		depDir := filepath.Join(vr, "vendor", seg)
+		if st, err := os.Stat(depDir); err == nil && st.IsDir() {
+			return depDir, nil
+		}
+		return "", fmt.Errorf("dependency %q is not in the vendor directory %s — re-run `fern -vendor %s`", seg, filepath.Join(vr, "vendor"), filepath.Join(vr, manifest.FileName))
+	}
+	if d.Version != "" {
+		// Versioned (MVS) dependency: the concrete version was chosen by
+		// `fern -resolve` and pinned in fern.lock. Resolve through the lock
+		// — the compiler reads the lock, never the index or the network.
+		return lockedDepDir(man.Dir, seg)
+	}
+	if d.URL != "" {
+		// Hash-addressed dependency: resolve through the content-addressed
+		// store, NEVER the network — `fern -fetch` is the only fetcher (the
+		// no-build-time-network constraint). Absent from the store is a
+		// user-actionable error, not a download.
+		depDir, present, err := pkgcache.Dir(d.Hash)
+		if err != nil {
+			return "", fmt.Errorf("dependency %q: %w", seg, err)
+		}
+		if !present {
+			return "", fmt.Errorf("dependency %q (%s) is not in the package store — run `fern -fetch %s` to download and verify it", seg, d.Hash, filepath.Join(man.Dir, manifest.FileName))
+		}
+		return depDir, nil
+	}
+	depDir, _ := man.DepDir(seg)
+	return depDir, nil
+}
+
+// capGrants derives the per-package capability-grant table
+// (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2) from every manifest the
+// load consulted: each dependency entry whose `capabilities` key is
+// present contributes its grant to the entry's resolved directory —
+// unioned when several manifests grant the same package. Unused or
+// unresolvable declared deps are skipped silently (a dep that never
+// loaded contributes no code to enforce against). Returns nil when no
+// manifest grants anything, so grant-free programs stay allocation-free.
+func capGrants(mans map[string]*manifest.Manifest) map[string][]string {
+	byDir := map[string]*manifest.Manifest{}
+	for _, m := range mans {
+		if m != nil {
+			byDir[m.Dir] = m
+		}
+	}
+	var out map[string][]string
+	for _, man := range byDir {
+		for name, d := range man.Deps {
+			if d.Capabilities == nil {
+				continue
+			}
+			dir, err := declaredDepDir(man, name, mans)
+			if err != nil {
+				continue
+			}
+			if out == nil {
+				out = map[string][]string{}
+			}
+			merged := map[string]bool{}
+			for _, c := range out[dir] {
+				merged[c] = true
+			}
+			for _, c := range d.Capabilities {
+				merged[c] = true
+			}
+			union := make([]string, 0, len(merged))
+			for c := range merged {
+				union = append(union, c)
+			}
+			sort.Strings(union)
+			out[dir] = union
+		}
+	}
+	return out
 }
 
 // resolveDepImport resolves an import INTO a dependency directory:

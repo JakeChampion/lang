@@ -248,6 +248,15 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	}
 	line := pickLine(src, pos.Line)
 	if line == "" && pos.Line == 0 {
+		// Position-less but code-carrying errors (capability enforcement
+		// — E066 reached via an imported module, E070's cross-package
+		// chains) still get the `error[EXXX]:` header; the message body
+		// carries the attribution a caret cannot.
+		if cd, ok := err.(Coded); ok {
+			if code := cd.Code(); code != "" {
+				return paint(ansiRedBld, "error["+code+"]") + ": " + stripPrefix(pe.Error())
+			}
+		}
 		return err.Error()
 	}
 
