@@ -16321,6 +16321,22 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
                             ai = ai + 1;
                         }
                     }
+                    // Built-in payload constructors `Ok(a)/Err(a)/Some(a)`: the
+                    // Result/Option box stores the payload pointer with NO alias-inc
+                    // and is leak-mode (never deep-dropped), exactly like a user enum
+                    // variant — so `return Ok(names)` over a local array MOVES `names`
+                    // into the box and must keep it from the exit sweep. Without this
+                    // the sweep frees the array while the returned box still holds it;
+                    // harmless for a grown array (its buffer sits in a different
+                    // freelist size-class) but a use-after-free for an EMPTY array
+                    // (`var names: string[] = []` — freelist class 3), which the
+                    // caller's next 24-byte string box recycles. Surfaced by the
+                    // read_dir→Fern migration (#2649/#5290): `__fern_read_dir` on an
+                    // empty directory returns `Ok([])`, whose block the caller's next
+                    // string allocation aliased.
+                    if ((cid.name == "Ok" || cid.name == "Err" || cid.name == "Some") && c.args.len() == 1) {
+                        out = returned_moved_arr_slots(c.args[0], s, out);
+                    }
                 },
                 parser.ExprFieldAccess(fa) => {
                     // `arr.append(e)`: the receiver array is consumed and its buffer
