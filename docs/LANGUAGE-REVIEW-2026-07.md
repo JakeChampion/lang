@@ -467,6 +467,13 @@ Two frictions:
    `map_err` chains. The stdlib dodges this by using `IoError` almost
    uniformly, which won't survive contact with real programs. `std/error`'s
    `dyn error.Error` boxing is the beginning of an answer.
+   > **Correction (2026-07-19):** stale — this described the pre-#2697
+   > state. `?` now inserts a `From` conversion when `impl From[E1] for
+   > E2` exists (checker's `?` lowering maps `Err(e)` through the impl;
+   > verified end-to-end via `-interp`). The *adoption* half stands:
+   > the stdlib's sentinel/`IoError` conventions predate the mechanism
+   > and still need the Part II cleanup. See
+   > `PLT-LANDSCAPE-2026.md` §5.1.
 2. The stdlib itself still carries three conventions side by side —
    `Option` returns, `Result` returns, and `-1`/`""` sentinels
    (`index_of`, `http_status`) — see Part II.
