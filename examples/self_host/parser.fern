@@ -5897,7 +5897,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
         },
         ExprLambda(lm) => {
-            var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins);
+            var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
             return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts, use_infer: lm.use_infer }, rins: bodyr.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
@@ -5907,23 +5907,26 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
 
 // mono_stmt rebuilds a statement, threading the inference env (only
 // StmtVar extends it) and the instantiation accumulator.
-// mono_var_init rewrites a `var`'s initialiser, applying return-type-directed
-// instantiation when the var is ANNOTATED and its initialiser is a bounded-
-// generic call: `var b: Box[i32] = mk()` binds mk's type params from the
-// `Box[i32]` annotation (via infer_inst_ret) so a no-argument constructor
-// monomorphises instead of staying a template. Falls through to plain
-// mono_expr when the var is unannotated, the callee isn't a bounded generic,
-// or the instantiation still can't be resolved — so it is a strict superset of
-// mono_expr for this position (the arg-only cases resolve identically).
-function mono_var_init(v: StmtVar, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
-    if (v.type_name.len() > 0) {
-        match (v.init) {
+// mono_call_expected rewrites an expression in a position with a known EXPECTED
+// type (`expected`), applying return-type-directed instantiation when it is a
+// bounded-generic call: `var b: Box[i32] = mk()` / `function two(): Box[i32] {
+// return mk(); }` bind mk's type params from the `Box[i32]` expected type (via
+// infer_inst_ret) so a no-argument constructor monomorphises instead of staying
+// a template. (A return-only type param is now promoted, so the template is
+// DROPPED — an unresolved call site would be an undefined reference, not just an
+// AST fallback, which is why every expected-type position must resolve it.)
+// Falls through to plain mono_expr when there is no expected type, the callee
+// isn't a bounded generic, or the instantiation still can't be resolved — a
+// strict superset of mono_expr for this position.
+function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
+    if (expected.len() > 0) {
+        match (e) {
             ExprCall(c) => {
                 match (c.callee) {
                     ExprIdent(cid) => {
                         var bi: i32 = bg_index(funcs, cid.name);
                         if (bi >= 0) {
-                            var key: string = infer_inst_ret(funcs[bi], c.args, v.type_name, env, funcs);
+                            var key: string = infer_inst_ret(funcs[bi], c.args, expected, env, funcs);
                             if (key.len() > 0) {
                                 var nargs: Expr[] = [];
                                 var cur: Insts = ins;
@@ -5946,19 +5949,22 @@ function mono_var_init(v: StmtVar, env: MEnv, funcs: FuncDecl[], ins: Insts): RE
             _ => {}
         }
     }
-    return mono_expr(v.init, env, funcs, ins);
+    return mono_expr(e, env, funcs, ins);
 }
 
-function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne {
+function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
-            var iv: RExpr = mono_var_init(v, env, funcs, ins);
+            var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str }, renv: env.ebind(v.name, ty), rins2: iv.rins };
         },
         StmtReturn(r) => {
-            var rv: RExpr = mono_expr(r.value, env, funcs, ins);
+            // A `return mk()` binds a bounded-generic constructor's type params
+            // from the enclosing function's declared return type — the return-
+            // position sibling of the StmtVar annotation above.
+            var rv: RExpr = mono_call_expected(r.value, ret_ty, env, funcs, ins);
             return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         StmtExpr(x) => {
@@ -5971,19 +5977,19 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
         },
         StmtIf(f) => {
             var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
-            var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins);
-            var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3);
+            var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
+            var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
             return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
-            var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins);
+            var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins, ret_ty);
             return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
-            var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins);
+            var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
             return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
@@ -5992,7 +5998,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             var cur: Insts = sv.rins;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur);
+                var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur, ret_ty);
                 cur = ab.rins3;
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
@@ -6004,14 +6010,16 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
     return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
-// mono_stmts walks a statement list, threading the (block-local) env.
-function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts): RStmts {
+// mono_stmts walks a statement list, threading the (block-local) env. `ret_ty`
+// is the enclosing function's declared return type, used by StmtReturn to bind
+// a `return <generic constructor>()` from it; "" at top-level / in a lambda.
+function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var rs: RStmtOne = mono_stmt(stmts[i], e2, funcs, cur);
+        var rs: RStmtOne = mono_stmt(stmts[i], e2, funcs, cur, ret_ty);
         out = out.append(rs.rstmt);
         e2 = rs.renv;
         cur = rs.rins2;
@@ -6553,7 +6561,7 @@ pub function monomorphize_module(mod: Module): Module {
             // skip — will be cloned
         } else {
             var env: MEnv = env_from_params(fd.params);
-            var rb: RStmts = mono_stmts(fd.body, env, funcs, ins);
+            var rb: RStmts = mono_stmts(fd.body, env, funcs, ins, fd.ret_type);
             ins = rb.rins3;
             rewritten = rewritten.append(FuncDecl {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
@@ -6565,7 +6573,7 @@ pub function monomorphize_module(mod: Module): Module {
     }
     // Rewrite top-level stmts too.
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, funcs, ins);
+    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, funcs, ins, "");
     ins = tr.rins3;
 
     // Worklist: generate clones; a clone's own body may call bounded
@@ -6583,7 +6591,7 @@ pub function monomorphize_module(mod: Module): Module {
             // Rewrite the clone's body so any bounded-generic calls it
             // makes resolve too (and enqueue their instantiations).
             var cenv: MEnv = env_from_params(cl.params);
-            var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins);
+            var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins, cl.ret_type);
             ins = crb.rins3;
             rewritten = rewritten.append(FuncDecl {
                 name: cl.name, receiver_name: "", receiver_type: "",

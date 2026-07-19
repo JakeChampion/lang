@@ -46,6 +46,15 @@ function main(): i32 { var b: Bag[i32] = make(3); return b.xs.len() + 42; }`},
 	{"ctor_then_use", `struct Box[T] { xs: T[] }
 function mk[T](): Box[T] { return Box { xs: [] }; }
 function main(): i32 { var b: Box[i32] = mk(); var ys = b.xs.append(7); return ys.len() * 100 + ys[0]; }`},
+	// RETURN position: `return mk()` binds the constructor from the ENCLOSING
+	// function's declared return type — not a var annotation. Since the return-
+	// only type param is now promoted (template dropped), an unresolved call
+	// here is an undefined reference, so this position must resolve too. len 0
+	// + 20 = 20.
+	{"return_position", `struct Box[T] { xs: T[] }
+function mk[T](): Box[T] { return Box { xs: [] }; }
+function two(): Box[i32] { return mk(); }
+function main(): i32 { var b = two(); return b.xs.len() + 20; }`},
 	// The real-world case: std/set's set_of builds through set_new (a no-arg
 	// generic constructor) — distinct count of {1,2,3} = 3.
 	{"std_set_of", `import "std/set";
