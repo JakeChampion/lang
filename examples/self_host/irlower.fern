@@ -31440,19 +31440,54 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.
 // the probe (a homogeneous closure-array literal, matching the is_closurearr
 // var-binding rule). `closureset` is the set of closure-returning fns (so a
 // `[mk(), …]` element counts). Used by closurearr_ret_fns_of.
+// expr_is_closure_elem reports whether `e` is a closure VALUE — a lambda, a
+// `__mkclo$` env-box construction, or a call to a closure-box-returning factory
+// (closureset). A bare named fn is NOT a closure (it lowers to a plain fn
+// pointer), so an array built only from those stays a fn-pointer array.
+function expr_is_closure_elem(e: parser.Expr, closureset: string[]): boolean {
+    match (e) {
+        parser.ExprLambda(_) => { return true; },
+        parser.ExprCall(ec) => {
+            match (ec.callee) {
+                parser.ExprIdent(ecid) => {
+                    if (ecid.name.len() > 8 && ecid.name[0:8] == "__mkclo$") { return true; }
+                    if (util.index_of_str(closureset, ecid.name) >= 0) { return true; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
 function array_lit_is_closurearr(init: parser.Expr, closureset: string[]): boolean {
     match (init) {
         parser.ExprArray(a) => {
             if (a.elements.len() == 0) { return false; }
-            match (a.elements[0]) {
-                parser.ExprLambda(_) => { return true; },
-                parser.ExprCall(ec) => {
-                    match (ec.callee) {
-                        parser.ExprIdent(ecid) => {
-                            if (ecid.name.len() > 8 && ecid.name[0:8] == "__mkclo$") { return true; }
-                            if (util.index_of_str(closureset, ecid.name) >= 0) { return true; }
-                        },
-                        _ => {}
+            return expr_is_closure_elem(a.elements[0], closureset);
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// assign_builds_closurearr reports whether `value` (the RHS of `name = value`)
+// makes `name` a closure array: either a closure-array literal, or an
+// `<arr>.append(<closure>)` / `.push(<closure>)` that adds a closure element —
+// the incremental build the initial `var fs = []` literal misses.
+function assign_builds_closurearr(value: parser.Expr, closureset: string[]): boolean {
+    if (array_lit_is_closurearr(value, closureset)) { return true; }
+    match (value) {
+        parser.ExprCall(sac) => {
+            match (sac.callee) {
+                parser.ExprFieldAccess(safa) => {
+                    if (safa.field == "append" || safa.field == "push") {
+                        var ai: i32 = 0;
+                        while (ai < sac.args.len()) {
+                            if (expr_is_closure_elem(sac.args[ai], closureset)) { return true; }
+                            ai = ai + 1;
+                        }
                     }
                 },
                 _ => {}
@@ -31486,6 +31521,15 @@ function body_binds_closurearr_local(body: parser.Stmt[], name: string, closures
                         _ => {}
                     }
                 }
+            },
+            // `fs = fs.append(<closure>)` / `fs = [<closure>, …]` — an
+            // incremental reassignment that makes `name` a closure array, which
+            // the initial (often empty `[]`) StmtVar literal doesn't reveal.
+            // Without this a factory that builds its closure array by append
+            // isn't classified closurearr-returning, so the CALLER dispatches
+            // `fs[i](x)` as a bare fn pointer and SIGSEGVs on the env box.
+            parser.StmtAssign(sasg) => {
+                if (sasg.target == name && assign_builds_closurearr(sasg.value, closureset)) { return true; }
             },
             parser.StmtIf(bif) => {
                 if (body_binds_closurearr_local(bif.then_body, name, closureset, caset)) { return true; }
