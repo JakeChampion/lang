@@ -630,6 +630,40 @@ pub function (s: LowerState) is_const_fn(name: string): boolean {
 pub function (s: LowerState) is_closure_local(name: string): boolean {
     return util.index_of_str(s.closure_locals, name) >= 0;
 }
+// fn_arg_is_dyn reports whether argument index `ai` of an indirect call through
+// the fn-value named `name` targets a `dyn Trait` parameter — so the arg must be
+// lowered via lower_dyn_arg (dyn-boxed), not plain lower_expr. Reads the
+// "FNDYN:<name>|<comma-separated positions>" seed lower_func plants for each
+// fn-typed param carrying dyn positions (parser's fn_param_dyn). #5276.
+pub function (s: LowerState) fn_arg_is_dyn(name: string, ai: i32): boolean {
+    var pfx: string = "FNDYN:" + name + "|";
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
+            // The tail is a comma-separated list of dyn positions ("0" / "0,2").
+            // Parse each number numerically and test membership of `ai`.
+            var cur: i32 = 0;
+            var started: boolean = false;
+            var pj: i32 = pfx.len();
+            while (pj < e.len()) {
+                var ch: i32 = e[pj];
+                if (ch == 44) {   // 44 = ','
+                    if (started && cur == ai) { return true; }
+                    cur = 0;
+                    started = false;
+                } else if (ch >= 48 && ch <= 57) {   // '0'..'9'
+                    cur = cur * 10 + (ch - 48);
+                    started = true;
+                }
+                pj = pj + 1;
+            }
+            return started && cur == ai;
+        }
+        i = i + 1;
+    }
+    return false;
+}
 pub function (s: LowerState) mark_closure_local(name: string): LowerState {
     return LowerState { ops: s.ops, locals: s.locals, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_arrdyn: s.ret_arrdyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, cur_ret: s.cur_ret, closure_fns: s.closure_fns, closurearr_ret_fns: s.closurearr_ret_fns, const_fns: s.const_fns, closure_locals: s.closure_locals.append(name), f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, aliased_names: s.aliased_names, fn_names: s.fn_names, return_fresh_struct_ret_fns: s.return_fresh_struct_ret_fns, xblock_pending: s.xblock_pending, try_cleanup: s.try_cleanup, grow_exempt: s.grow_exempt, n_params: s.n_params, ok: s.ok };
 }
@@ -6186,7 +6220,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var cls: LowerState = s.emit(ir.op_load_local(clslot));
                         var cla: i32 = 0;
                         while (cla < c.args.len()) {
-                            cls = lower_expr(c.args[cla], cls);
+                            // A `dyn Trait` param position dyn-boxes its arg (#5276).
+                            if (s.fn_arg_is_dyn(cid.name, cla)) { cls = lower_dyn_arg(c.args[cla], cls); }
+                            else { cls = lower_expr(c.args[cla], cls); }
                             if (!cls.ok) { return cls; }
                             cla = cla + 1;
                         }
@@ -6200,7 +6236,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var ics: LowerState = s;
                         var ica: i32 = 0;
                         while (ica < c.args.len()) {
-                            ics = lower_expr(c.args[ica], ics);
+                            // A `dyn Trait` param position dyn-boxes its arg so the
+                            // callee's op_dyn_dispatch reads a real shape pointer,
+                            // not a raw primitive (SIGSEGV otherwise) — #5276.
+                            if (s.fn_arg_is_dyn(cid.name, ica)) { ics = lower_dyn_arg(c.args[ica], ics); }
+                            else { ics = lower_expr(c.args[ica], ics); }
                             if (!ics.ok) { return ics; }
                             ica = ica + 1;
                         }
@@ -28736,6 +28776,18 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var clo_seed: string[] = clo_rc_candidate_names(fn.body, borrowable_params);
     var clo_si: i32 = 0;
     while (clo_si < clo_seed.len()) { reclaim = reclaim.append("CLO:" + clo_seed[clo_si]); clo_si = clo_si + 1; }
+    // #5276: seed each fn-typed PARAM whose fn-type has `dyn Trait` parameter
+    // positions as "FNDYN:<name>|<positions>" (comma-separated indices), so an
+    // indirect call `f(7)` through the fn value dyn-boxes the argument at those
+    // positions. The flat "fn" type tag dropped the per-param dyn-ness; parser's
+    // fn_param_dyn preserved it. Prefix-tagged (33-field pin), inert elsewhere.
+    var fpdi: i32 = 0;
+    while (fpdi < fn.params.len()) {
+        if (fn.params[fpdi].type_name == "fn" && fn.params[fpdi].fn_param_dyn.len() > 0) {
+            reclaim = reclaim.append("FNDYN:" + fn.params[fpdi].name + "|" + fn.params[fpdi].fn_param_dyn);
+        }
+        fpdi = fpdi + 1;
+    }
     // #4355: seed the opt-fresh producer NAMES as "OPTFRESH:<name>" so
     // lower_try's `?`-edge source-box free can check callee eligibility from
     // LowerState (33-field pin — no new registry field; prefix-tagged entries
@@ -36994,7 +37046,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }); cj = cj + 1; }
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
@@ -37150,7 +37202,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
@@ -37254,7 +37306,7 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
@@ -37272,7 +37324,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
     while (fi < mfuncs.len()) {
         if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs[fi];
-            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
+            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
             var args: parser.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {

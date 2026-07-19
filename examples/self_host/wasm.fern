@@ -11136,7 +11136,7 @@ function returns_value(ret_type: string): boolean {
 // lambda cells so nested lambdas keep counting.
 function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): string {
     var ps: parser.ParamDecl[] = [];
-    ps = ps.append(parser.ParamDecl { name: "__env", type_name: "i32", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" });
+    ps = ps.append(parser.ParamDecl { name: "__env", type_name: "i32", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" });
     var i: i32 = 0;
     while (i < lm.params.len()) {
         ps = ps.append(lm.params[i]);
