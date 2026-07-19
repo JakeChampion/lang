@@ -1319,7 +1319,8 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
                         // `Map[K, i32]` and a chained `m.get_or(...) >> 58`
                         // lowered 32-bit signed on the IR path (#5253 follow-up).
                         else if (expr_is_u64(vc.args[1], s)) { vtag = "u64"; }
-                        else if (!expr_is_f64(vc.args[1], s) && infer_expr_width(vc.args[1], s) == 64) { vtag = "i64"; }
+                        else if (expr_is_f64(vc.args[1], s)) { vtag = "f64"; }
+                        else if (infer_expr_width(vc.args[1], s) == 64) { vtag = "i64"; }
                     }
                 },
                 _ => {}
@@ -4145,6 +4146,13 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                     return false;
                 },
                 parser.ExprFieldAccess(cfa) => {
+                    // `m.get_or(k, d)` on an f64-VALUED map (Map[K, f64]) is an
+                    // f64 value — the column stores 8-byte doubles and get_or
+                    // returns them bit-intact — so a chained `* 2.0` lowers as a
+                    // float op instead of an integer op on the double's bits
+                    // (#5253, the f64 sibling of expr_is_u64's get_or arm).
+                    if (cfa.field == "get_or" && c.args.len() == 2
+                        && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "f64") { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
                     // A scalar VALUE receiver (`(3.5).m()`) isn't struct-typed —
                     // resolve its primitive receiver type so an f64-returning
@@ -7481,7 +7489,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (msvw) { mset = lower_i64(c.args[1], mset); }
                             else { mset = lower_expr(c.args[1], mset); }
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn, msvw));
+                            // f64 values lower via lower_expr (bit-intact 8-byte
+                            // push) but still need the valwide OP flag so the
+                            // i32-celled wasm map runtime is gated (#5253).
+                            var msww: boolean = msvw || map_value_of(mtype) == "f64" || expr_is_f64(c.args[1], s);
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn, msww));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -7514,7 +7526,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (govw) { mgo = lower_i64(c.args[1], mgo); }
                             else { mgo = lower_expr(c.args[1], mgo); }
                             if (!mgo.ok) { return mgo; }
-                            return mgo.emit(ir.op_map_get_or(mkk2, meqfn, govw));
+                            // f64 column: valwide OP flag only (wasm gate), the
+                            // default lowered via lower_expr above (#5253).
+                            var goww: boolean = govw || map_value_of(mtype) == "f64" || expr_is_f64(c.args[1], s);
+                            return mgo.emit(ir.op_map_get_or(mkk2, meqfn, goww));
                         }
                         if (fa.field == "without" && c.args.len() == 1) {
                             // Functional delete: `m.without(k)` -> the map with k
@@ -7610,7 +7625,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (emvw) { emset = lower_i64(c.args[1], emset); }
                             else { emset = lower_expr(c.args[1], emset); }
                             if (!emset.ok) { return emset; }
-                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_key_eqfn(emtt), emvw));
+                            // f64 values: valwide OP flag only (wasm gate) —
+                            // lowering stays on lower_expr (#5253).
+                            var emww: boolean = emvw || map_value_of(emtt) == "f64" || expr_is_f64(c.args[1], s);
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_key_eqfn(emtt), emww));
                         }
                     }
                     // Qualified built-in Option/Result construction:
@@ -12334,7 +12352,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                                 // the binding-site twin of expr_map_type_tag's
                                 // value inference (#5253 follow-up).
                                 else if (expr_is_u64(uvc.args[1], sb)) { uvtag = "u64"; }
-                                else if (!expr_is_f64(uvc.args[1], sb) && infer_expr_width(uvc.args[1], sb) == 64) { uvtag = "i64"; }
+                                else if (expr_is_f64(uvc.args[1], sb)) { uvtag = "f64"; }
+                                else if (infer_expr_width(uvc.args[1], sb) == 64) { uvtag = "i64"; }
                             }
                         },
                         _ => {}
