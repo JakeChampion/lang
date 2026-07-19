@@ -20,7 +20,10 @@
 //  1. Linear arithmetic / comparison folding: a window of
 //     `OpConstI32 a; OpConstI32 b; <binop>` collapses to
 //     `OpConstI32 (a OP b)`; `OpConstI32 a; OpNot` collapses to
-//     `OpConstI32 (a == 0 ? 1 : 0)`.
+//     `OpConstI32 (a == 0 ? 1 : 0)`. A constant separated from a second
+//     constant by an associative op (`x + 1 + 2`, `(m & 12) & 10`)
+//     reassociates so the two constants fold: `(x OP c1) OP c2` becomes
+//     `x OP (c1 OP c2)`.
 //  2. Constant-if pruning: if an OpIf is preceded by a constant
 //     condition, the entire `OpIf … OpElse … OpEnd` block is replaced
 //     with the surviving arm's ops. The same decision applies to a
@@ -126,6 +129,38 @@ func foldOnce(ops []Op) []Op {
 					out = append(out, Op{Kind: OpConstI64, I64: res, Pos: ops[i+2].Pos})
 				}
 				i += 2
+				continue
+			}
+		}
+		// Constant reassociation across a non-constant operand:
+		//   <x> ; const c1 ; OP ; const c2 ; OP
+		//     →  <x> ; const (c1 OP c2) ; OP
+		// for an associative OP (add / mul / and / or / xor) at matching
+		// width. `(x OP c1) OP c2 == x OP (c1 OP c2)` in fixed-width
+		// wrapping integer arithmetic, so chained constant offsets / masks
+		// — `a + 1 + 2`, `(m & 12) & 10` — collapse to a single op even
+		// though the two constants are separated by the first OP (the plain
+		// binary fold above only fires on two ADJACENT constants). Shifts
+		// are excluded: the runtime masks the shift count to the operand
+		// width, so combining `<< a` then `<< b` into `<< (a+b)` would
+		// diverge once a+b reaches the width.
+		if i+3 < len(ops) &&
+			ops[i].Kind == OpConstI32 && ops[i+2].Kind == OpConstI32 &&
+			isReassocBinary(ops[i+1].Kind) && sameWidthBinary(ops[i+1], ops[i+3]) {
+			if res, ok := foldBinary(ops[i+1].Kind, ops[i+1].Unsigned, ops[i].I32, ops[i+2].I32); ok {
+				out = append(out, Op{Kind: OpConstI32, I32: res, Pos: ops[i+2].Pos})
+				out = append(out, ops[i+1]) // the single surviving OP
+				i += 3                      // consumed: const, OP, const (the trailing OP is the one emitted)
+				continue
+			}
+		}
+		if i+3 < len(ops) &&
+			ops[i].Kind == OpConstI64 && ops[i+2].Kind == OpConstI64 &&
+			isReassocBinary(ops[i+1].Kind) && sameWidthBinary(ops[i+1], ops[i+3]) {
+			if res, _, ok := foldBinary64(ops[i+1].Kind, ops[i+1].Unsigned, ops[i].I64, ops[i+2].I64); ok {
+				out = append(out, Op{Kind: OpConstI64, I64: res, Pos: ops[i+2].Pos})
+				out = append(out, ops[i+1])
+				i += 3
 				continue
 			}
 		}
@@ -327,6 +362,29 @@ func isFoldableBinary(k OpKind) bool {
 		return true
 	}
 	return false
+}
+
+// isReassocBinary reports whether k is an integer op that is
+// associative in fixed-width wrapping arithmetic, so a chain of two
+// with a constant on the outer side of each can combine its constants:
+// `(x OP c1) OP c2 == x OP (c1 OP c2)`. Add / mul / and / or / xor
+// qualify; sub is not associative in this shape, and shifts are excluded
+// because the runtime masks the shift count to the operand width.
+func isReassocBinary(k OpKind) bool {
+	switch k {
+	case OpAdd, OpMul, OpAnd, OpOr, OpXor:
+		return true
+	}
+	return false
+}
+
+// sameWidthBinary reports whether two ops are the same binary op at the
+// same width — the guard for combining an associative constant chain
+// (the two OPs must be identical for the reassociation to hold). The
+// Unsigned flag is not compared: for the reassociable ops the result is
+// bit-identical regardless of signedness.
+func sameWidthBinary(a, b Op) bool {
+	return a.Kind == b.Kind && a.Width == b.Width
 }
 
 // foldBinary computes the result of a fold-eligible binary op on two
