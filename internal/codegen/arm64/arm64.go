@@ -8527,15 +8527,25 @@ func (g *generator) loadImm64(reg string, v uint64) {
 func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]irScope) error {
 	switch op.Kind {
 	case ir.OpConstI32:
-		// Materialise the constant into x0 and push. Small
-		// values fit `mov` (imm16); larger ones use `ldr =N`
-		// (assembler pseudo-instruction backed by a literal
-		// pool). i32s use the w0 alias when narrowing matters,
-		// but for the 64-bit operand stack we keep them in x0.
+		// Materialise the constant into x0 and push. i32 operand-stack
+		// values live in 64-bit x-registers and feed 64-bit arithmetic
+		// (index / slice / pointer math), so the value must be the
+		// SIGN-extended 64-bit form of the i32.
+		//
+		// A NEGATIVE i32 loaded into the w0 alias zero-extends into x0
+		// (e.g. -2 → 0x00000000FFFFFFFE), so a later 64-bit add / slice
+		// sees a huge positive value and a bounds check traps. Load its
+		// sign-extended 64-bit value instead. Small non-negatives fit a
+		// bare `mov`; larger non-negatives zero-extend correctly through
+		// w0 (high bits are 0 either way). A negative constant is common
+		// after folding collapses `x - 1 - 1` to `x + (-2)`.
 		v := op.I32
-		if v >= 0 && v <= 0xffff {
+		switch {
+		case v >= 0 && v <= 0xffff:
 			g.emit("mov x0, #%d", v)
-		} else {
+		case v < 0:
+			g.loadImm64("x0", uint64(int64(v)))
+		default:
 			g.loadImm32("w0", uint32(v))
 		}
 		g.push()

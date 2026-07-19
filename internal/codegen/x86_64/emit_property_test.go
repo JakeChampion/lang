@@ -264,3 +264,27 @@ function main(): i32 {
 		}
 	}
 }
+
+// A negative i32 constant must materialise into the full 64-bit register
+// SIGN-extended, not zero-extended: i32 operand-stack values feed 64-bit
+// arithmetic (index / slice / pointer math), so `mov eax, -2` (which
+// zero-extends to rax = 0x00000000FFFFFFFE) corrupts a later 64-bit use
+// and trips the bounds-check trap. The fix emits `mov rax, N` (REX.W C7
+// /0, sign-extends). A non-negative constant keeps the compact `mov eax`.
+// Regression for the modloader.parent_dir `dir.len() - 1 - 1` crash.
+func TestNegativeConstSignExtends(t *testing.T) {
+	// `x + (-2)` keeps the -2 as a bare negative i32 const in the IR.
+	asm := compile(t, `function f(x: i32): i32 { return x + (0 - 2); }
+function main(): i32 { return f(5); }`)
+	if !strings.Contains(asm, "mov rax, -2") {
+		t.Errorf("negative i32 const should emit sign-extending `mov rax, -2`:\n%s", asm)
+	}
+	if strings.Contains(asm, "mov eax, -2") {
+		t.Errorf("negative i32 const must NOT emit zero-extending `mov eax, -2`:\n%s", asm)
+	}
+	// A non-negative constant still uses the compact 32-bit form.
+	pos := compile(t, `function main(): i32 { return 7; }`)
+	if !strings.Contains(pos, "mov eax, 7") {
+		t.Errorf("non-negative i32 const should keep `mov eax, 7`:\n%s", pos)
+	}
+}

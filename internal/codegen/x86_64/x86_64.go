@@ -1302,13 +1302,25 @@ type irScope struct {
 func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	switch op.Kind {
 	case ir.OpConstI32:
-		// Materialise the immediate into rax, then push.
-		// `mov eax, imm32` zero-extends the high 32 bits of
-		// rax, keeping the encoding compact for the common
-		// case. Negative values are written as `mov eax, N`
-		// with N's two's-complement bit pattern (assembler
-		// accepts negative imm32 directly).
-		g.emit(fmt.Sprintf("mov eax, %d", op.I32))
+		// Materialise the immediate into rax, then push. i32 operand-stack
+		// values live in 64-bit slots and feed 64-bit-register arithmetic
+		// (index / slice / pointer math), so the value must be the
+		// SIGN-extended 64-bit form of the i32.
+		//
+		// `mov eax, imm32` zero-extends the high 32 bits — correct for a
+		// NON-negative i32 (high bits are 0 either way), and the compact
+		// 5-byte encoding for the common case. A NEGATIVE i32, though, must
+		// sign-extend: `mov eax, -2` leaves rax = 0x00000000FFFFFFFE, so a
+		// later 64-bit `add`/slice sees a huge positive value and (e.g.) a
+		// bounds check traps. `mov rax, N` (REX.W C7 /0) sign-extends the
+		// imm32 to the correct 64-bit value. Reaching a negative constant
+		// here is common after constant folding collapses `x - 1 - 1` to
+		// `x + (-2)`.
+		if op.I32 < 0 {
+			g.emit(fmt.Sprintf("mov rax, %d", op.I32))
+		} else {
+			g.emit(fmt.Sprintf("mov eax, %d", op.I32))
+		}
 		g.push()
 	case ir.OpConstStr:
 		// Materialise the .rodata string-literal address
