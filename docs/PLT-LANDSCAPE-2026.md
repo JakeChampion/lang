@@ -76,13 +76,15 @@ without a Rust-scale borrow checker.
 Fern has grown four surfaces that are points in one mode lattice:
 `own` consuming params (E050/E051), `fip` functions (E053), the
 `T[]`-owned vs `[T]`-view spelling (E063), and `@must_consume`
-(exactly-once obligations). Each is individually justified; together
-they are an ad-hoc modal system nobody designed as one. No action now
-— but the goal-2 Perceus port must re-derive all four rule sets in
-the self-host checker anyway, and that is the natural moment to write
-the unified lattice down (borrowed ≤ owned ≤ unique; droppable vs
-must-consume as an orthogonal axis) so the self-host implementation is
-one analysis with four spellings rather than four analyses. The
+(consumption obligations — at-least-once as implemented, see
+`MODE-LATTICE.md` §2.4). Each is individually justified; together
+they are an ad-hoc modal system nobody designed as one. The unified
+lattice (borrowed ≤ owned ≤ unique; droppable vs must-consume as an
+orthogonal axis) is now written down in `MODE-LATTICE.md`, which also
+corrected this section's original premise: the four checker walks are
+ALREADY ported to the self-host checker — what remains for goal 2 is
+consolidating them into one analysis when next touched, plus the
+IR-side fip reuse verification (E068). The
 OCaml-modes papers ("Oxidizing OCaml") are the reference design.
 Research issue: #5365.
 
