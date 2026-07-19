@@ -12403,8 +12403,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         var ir_out: string = "(module\n";
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         // print_int / print_str / eprint_str / putchar write via WASI fd_write
-        // — import it only when the module writes to stdout or stderr.
-        if (wasm_ir.module_emits_op_cached(ir_cache, "print_int") || wasm_ir.module_emits_op_cached(ir_cache, "print_i64") || wasm_ir.module_emits_op_cached(ir_cache, "print_str") || wasm_ir.module_emits_op_cached(ir_cache, "eprint_str") || wasm_ir.module_emits_op_cached(ir_cache, "putchar")) {
+        // — import it only when the module writes to stdout or stderr
+        // (write_file also writes via fd_write).
+        if (wasm_ir.module_emits_op_cached(ir_cache, "print_int") || wasm_ir.module_emits_op_cached(ir_cache, "print_i64") || wasm_ir.module_emits_op_cached(ir_cache, "print_str") || wasm_ir.module_emits_op_cached(ir_cache, "eprint_str") || wasm_ir.module_emits_op_cached(ir_cache, "putchar") || wasm_ir.module_emits_op_cached(ir_cache, "write_file")) {
             ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         // random_bytes / random_i32 fill a CSPRNG buffer via the wasi random_get
@@ -12412,15 +12413,45 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_random(ir_cache)) {
             ir_out = ir_out + random_get_import();
         }
-        // read_file opens a path under preopen fd 3 (path_open + fd_read + fd_close).
-        // The imports must precede the memory + function sections. The differential
-        // wasm_ir_run driver gates these identically; emit_module_mode previously
-        // omitted them, so an IR-eligible module calling read_file (e.g. the
-        // x86_gas capstone driver reading its .s once x86_gas is E048-migrated and
-        // thus IR-eligible) linked against undefined $__fern_read_file / imports.
-        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) {
+        // The WASI facility imports below mirror the differential wasm_ir_run
+        // driver's battery exactly (its lines are the reference) — this
+        // orchestration previously gated only read_file, so an IR-eligible module
+        // calling env / args / write_file / a clock emitted a dangling
+        // `call $__fern_<op>` the wasmtime loader rejects (#4801,
+        // TestSelfHostWasmRun's env/args/writefile/clock cluster).
+        // read_file / write_file open paths under preopen fd 3 (path_open +
+        // fd_read + fd_close); read_dir / remove_dir_all share the bundle and add
+        // only fd_readdir. These imports must precede the function section.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file") || wasm_ir.module_emits_op_cached(ir_cache, "write_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) {
             ir_out = ir_out + file_imports();
         }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) { ir_out = ir_out + readdir_fd_import(); }
+        // read_line / read_int / read_chunk read stdin via fd_read — standalone
+        // import ONLY when no file op already imported fd_read (else duplicate).
+        if ((wasm_ir.module_emits_op_cached(ir_cache, "read_line") || wasm_ir.module_emits_op_cached(ir_cache, "read_int") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk")) && !(wasm_ir.module_emits_op_cached(ir_cache, "read_file") || wasm_ir.module_emits_op_cached(ir_cache, "write_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all"))) {
+            ir_out = ir_out + stdin_fd_read_import();
+        }
+        // reader_close calls fd_close — standalone import only without file ops.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "reader_close") && !(wasm_ir.module_emits_op_cached(ir_cache, "read_file") || wasm_ir.module_emits_op_cached(ir_cache, "write_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all"))) {
+            ir_out = ir_out + reader_fd_close_import();
+        }
+        // The clock builtins wrap the preview1 clock_time_get import.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "monotonic_ns") || wasm_ir.module_emits_op_cached(ir_cache, "now_unix_ms") || wasm_ir.module_emits_op_cached(ir_cache, "now_ns") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir")) {
+            ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n";
+        }
+        // args() reads the wasi argv vector; env(name) scans environ.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "args")) { ir_out = ir_out + args_helpers(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "env")) { ir_out = ir_out + env_helpers(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "stat")) { ir_out = ir_out + stat_import(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) { ir_out = ir_out + remove_file_import(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) { ir_out = ir_out + remove_dir_import(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "temp_dir")) { ir_out = ir_out + temp_dir_import(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms")) { ir_out = ir_out + sleep_ms_import(); }
+        // Preview-2 timer-pollable ops (#4317) — admitted by the deferral gate,
+        // so their component-model imports must be emitted here too.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_timer_pollable")) { ir_out = ir_out + wasm_ir.wasi_subscribe_duration_import(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_pollable_drop")) { ir_out = ir_out + wasm_ir.wasi_pollable_drop_import(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_block")) { ir_out = ir_out + wasm_ir.wasi_pollable_block_import(); }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
         // supplies the distinct values + offsets; the byte encoding reuses this
@@ -12435,7 +12466,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // i32.to_string() allocates its decimal-text box, so it needs the heap
         // allocator even in an otherwise alloc-free module (mirrors asm_ir's
         // has_need("i32_to_string") gate on the register backend).
-        if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache)) {
+        if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "env") || wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk") || wasm_ir.module_emits_op_cached(ir_cache, "reader_close")) {
             ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
             ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
         }
@@ -12533,13 +12564,33 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // string_from_bytes (e.g. the x86_encode/x86_gas encoders emitting a byte
         // string) links against an undefined function under wasmtime.
         if (wasm_ir.module_emits_op_cached(ir_cache, "str_from_bytes")) { ir_out = ir_out + string_from_bytes_helper(); }
-        // $__fern_read_file: path_open + fd_read loop + fd_close, boxing the file
-        // bytes as a string. Its wasi imports are gated above; the differential
-        // wasm_ir_run driver emits this same helper on the read_file op.
-        // $__fern_build_io_error(errno, path) backs read_file's Err payload
-        // (and every other fs helper's) with a real IoError variant box — emit
-        // it whenever the helper is present so the WAT reference resolves.
-        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) { ir_out = ir_out + wasm_ir.build_io_error_func(mod.structs) + readfile_func(); }
+        // The WASI facility helper BODIES, mirroring the differential
+        // wasm_ir_run driver's battery (see the imports comment above).
+        // $__fern_now_ns / $__fern_now_unix_ms / $__fern_monotonic_ns read the
+        // clock_time_get import into the 8-byte scratch — emitted as a trio.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "monotonic_ns") || wasm_ir.module_emits_op_cached(ir_cache, "now_unix_ms") || wasm_ir.module_emits_op_cached(ir_cache, "now_ns") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir")) { ir_out = ir_out + clock_funcs(); }
+        // $__fern_args builds the argv string[]; $__fern_env boxes an
+        // Option[string] — both heap-backed (gated in above).
+        if (wasm_ir.module_emits_op_cached(ir_cache, "args")) { ir_out = ir_out + args_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "env")) { ir_out = ir_out + env_func(); }
+        // $__fern_build_io_error(errno, path) backs every fs helper's Err/Some
+        // payload with a real IoError variant box — emit it ONCE for any fs op.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "read_file") || wasm_ir.module_emits_op_cached(ir_cache, "write_file")) { ir_out = ir_out + wasm_ir.build_io_error_func(mod.structs); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "stat")) { ir_out = ir_out + stat_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "remove_file")) { ir_out = ir_out + remove_file_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_dir")) { ir_out = ir_out + read_dir_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) { ir_out = ir_out + remove_dir_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "temp_dir")) { ir_out = ir_out + temp_dir_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms")) { ir_out = ir_out + sleep_ms_func(); }
+        // $__fern_read_file / $__fern_write_file: whole-file I/O under the
+        // preopen, boxing Result[string, IoError] / Option[IoError].
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) { ir_out = ir_out + readfile_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "write_file")) { ir_out = ir_out + writefile_func(); }
+        // Stdin readers + the Reader intrinsics.
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_line")) { ir_out = ir_out + read_line_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_int")) { ir_out = ir_out + read_int_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "read_chunk")) { ir_out = ir_out + reader_read_chunk_func(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "reader_close")) { ir_out = ir_out + reader_close_func(); }
         if (wasm_ir.module_uses_arr_slice(ir_cache)) { ir_out = ir_out + arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(ir_cache)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(ir_cache)) { ir_out = ir_out + map_helpers(); }
