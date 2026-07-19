@@ -4376,7 +4376,18 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
             if (token_at_paren_depth0(params[pj].type_name, un) || token_in_tuple_param(params[pj].type_name, un)) { bindable = true; }
             pj = pj + 1;
         }
-        if (feeds && bindable) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
+        // (b′) return-bindable: a param reachable only through the RETURN's
+        // user-parametric / Map position (`mk[T](): Box[T]`, `set_new[T]():
+        // Set[T]`) is bindable from the call-site ANNOTATION via infer_inst_ret's
+        // return-type-directed instantiation (mono_var_init) — the annotated-var
+        // context a no-argument generic CONSTRUCTOR is always used in. Without
+        // promotion its erased body's generic struct literal (`Box { xs: [] }`)
+        // can't lower and drags the module to the AST emitter (std/set's set_new
+        // → segfault). Builtin returns (Option[T] / Result[T,E]) are erased-safe
+        // and stay unpromoted: feeds_user_parametric excludes their bases, so a
+        // `find[T,I](): Option[T]` — bindable from NO call site — is untouched.
+        var ret_bindable: boolean = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
+        if (feeds && (bindable || ret_bindable)) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }
     // A body-less function (`function f(): T;`) is an extern import
@@ -5362,10 +5373,16 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
         }
         i = i + 1;
     }
+    return binds_to_key(fd.type_params, binds);
+}
+
+// binds_to_key joins a resolved binding env into the ';'-separated
+// instantiation key infer_inst returns, or "" if any type param is unbound.
+function binds_to_key(tparams: string[], binds: MEnv): string {
     var key: string = "";
     var j: i32 = 0;
-    while (j < fd.type_params.len()) {
-        var b: string = binds.elook(fd.type_params[j]);
+    while (j < tparams.len()) {
+        var b: string = binds.elook(tparams[j]);
         if (b.len() == 0) { return ""; }
         // Join multi-param instantiation keys with ';' (a char that never
         // appears in a type name) rather than '__': a per-param value can
@@ -5379,6 +5396,40 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
         j = j + 1;
     }
     return key;
+}
+
+// infer_inst_ret is infer_inst PLUS return-type-directed instantiation: it
+// also binds any type param left unbound by the arguments from `expected_ret`
+// unified against `fd.ret_type`. This is what instantiates a no-argument
+// generic constructor from its call-site annotation — `var b: Box[i32] =
+// mk()` binds mk[T]()'s `T` (which appears ONLY in the `Box[T]` return) from
+// the `Box[i32]` annotation. Without it such a call stays the un-monomorphised
+// template (T unbound), whose `Box { xs: [] }` can't lower and drags the
+// module to the AST emitter (std/set's `set_new` → segfault). Returns "" when
+// still incomplete (the call then stays generic, as before).
+function infer_inst_ret(fd: FuncDecl, args: Expr[], expected_ret: string, env: MEnv, funcs: FuncDecl[]): string {
+    if (fd.type_params.len() == 0) { return ""; }
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (i < args.len()) {
+            var ct: string = mono_infer(args[i], env, funcs);
+            if (ct.len() > 0) {
+                binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
+            }
+            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, fd.type_params) >= 0) {
+                var lr: string = lambda_ret_of(args[i], env, funcs);
+                if (lr.len() > 0) {
+                    binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if (expected_ret.len() > 0) {
+        binds = bind_unify(fd.ret_type, expected_ret, fd.type_params, binds);
+    }
+    return binds_to_key(fd.type_params, binds);
 }
 
 // split_inst_key splits a multi-param instantiation key (joined by infer_inst
@@ -5856,10 +5907,52 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
 
 // mono_stmt rebuilds a statement, threading the inference env (only
 // StmtVar extends it) and the instantiation accumulator.
+// mono_var_init rewrites a `var`'s initialiser, applying return-type-directed
+// instantiation when the var is ANNOTATED and its initialiser is a bounded-
+// generic call: `var b: Box[i32] = mk()` binds mk's type params from the
+// `Box[i32]` annotation (via infer_inst_ret) so a no-argument constructor
+// monomorphises instead of staying a template. Falls through to plain
+// mono_expr when the var is unannotated, the callee isn't a bounded generic,
+// or the instantiation still can't be resolved — so it is a strict superset of
+// mono_expr for this position (the arg-only cases resolve identically).
+function mono_var_init(v: StmtVar, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
+    if (v.type_name.len() > 0) {
+        match (v.init) {
+            ExprCall(c) => {
+                match (c.callee) {
+                    ExprIdent(cid) => {
+                        var bi: i32 = bg_index(funcs, cid.name);
+                        if (bi >= 0) {
+                            var key: string = infer_inst_ret(funcs[bi], c.args, v.type_name, env, funcs);
+                            if (key.len() > 0) {
+                                var nargs: Expr[] = [];
+                                var cur: Insts = ins;
+                                var i: i32 = 0;
+                                while (i < c.args.len()) {
+                                    var ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
+                                    cur = ra.rins;
+                                    nargs = nargs.append(ra.rexpr);
+                                    i = i + 1;
+                                }
+                                var mang: string = cid.name + "__" + sanitize_key(key);
+                                cur = cur.iadd(cid.name, key);
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+    }
+    return mono_expr(v.init, env, funcs, ins);
+}
+
 function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne {
     match (st) {
         StmtVar(v) => {
-            var iv: RExpr = mono_expr(v.init, env, funcs, ins);
+            var iv: RExpr = mono_var_init(v, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str }, renv: env.ebind(v.name, ty), rins2: iv.rins };
@@ -6754,7 +6847,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             return RExpr { rexpr: ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
         },
         ExprLambda(lm) => {
-            var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins);
+            var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins, "");
             var rt: TyIns = mg_ty(lm.ret_type, gstructs, bodyr.rins3);
             var nparams: ParamDecl[] = [];
             var pcur: Insts = rt.mins;
@@ -6834,7 +6927,7 @@ function retype_struct_lit(init: Expr, concrete: string, gstructs: StructDecl[])
 
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
-function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
+function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
             var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
@@ -6847,7 +6940,14 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
-            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+            // A `return Box { xs: [] }` whose instantiation can't be inferred
+            // from the field values (an empty-array field yields no element
+            // type) takes it from the FUNCTION's concrete return type — the
+            // return-position sibling of the StmtVar annotation retype above.
+            // Without this a monomorphised no-arg constructor's generic struct
+            // literal stays "Box" and can't lower (std/set's set_new).
+            var nret: Expr = retype_struct_lit(rv.rexpr, ret_ty, gstructs);
+            return RStmtOne { rstmt: StmtReturn { value: nret, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         StmtExpr(x) => {
             var xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
@@ -6859,19 +6959,19 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtIf(f) => {
             var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
-            var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins);
-            var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3);
+            var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
+            var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
             return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
-            var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins);
+            var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins, ret_ty);
             return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
-            var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins);
+            var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins, ret_ty);
             return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
@@ -6880,7 +6980,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             var cur: Insts = sv.rins;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur);
+                var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur, ret_ty);
                 cur = ab.rins3;
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
@@ -6892,14 +6992,17 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
     return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
-// ms_stmts walks a statement list, threading the (block-local) env.
-function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmts {
+// ms_stmts walks a statement list, threading the (block-local) env. `ret_ty`
+// is the enclosing function's concrete (mangled) return type, used to retype a
+// `return <generic struct literal>` whose instantiation the field values can't
+// supply; "" at top-level / for non-struct returns (a no-op there).
+function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var rs: RStmtOne = ms_stmt(stmts[i], e2, gstructs, funcs, cur);
+        var rs: RStmtOne = ms_stmt(stmts[i], e2, gstructs, funcs, cur, ret_ty);
         out = out.append(rs.rstmt);
         e2 = rs.renv;
         cur = rs.rins2;
@@ -6924,7 +7027,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
     cur = rt.mins;
     var rcv: TyIns = mg_ty(fn.receiver_type, gstructs, cur);
     cur = rcv.mins;
-    var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur);
+    var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur, rt.ty);
     cur = br.rins3;
     return FRes {
         ffn: FuncDecl {
@@ -7037,7 +7140,7 @@ pub function monomorphize_structs(mod: Module): Module {
     }
 
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, mod.funcs, ins);
+    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, mod.funcs, ins, "");
     ins = tr.rins3;
 
     // Phase 2: generate clones; a worklist covers clones whose own field
@@ -7074,7 +7177,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
-                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins);
+                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins, clm.ret_type);
                     ins = br2.rins3;
                     nfuncs = nfuncs.append(FuncDecl {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
