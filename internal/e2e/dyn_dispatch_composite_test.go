@@ -32,6 +32,16 @@ function main(): i32 {
     return b.e.message().len();
 }`
 
+// (b') same as (b) but the field value coerces IMPLICITLY (no `as dyn Error`):
+// the struct-field position was missing from assignable()'s dyn boxing-site
+// list, so this reported a spurious E043. Now the concrete boxes into the dyn
+// field like every other position; dispatch still reads "ab" (len 2).
+const dynDispatchFieldImplicit = dynDispatchHdr + `struct Box { e: dyn Error }
+function main(): i32 {
+    var b: Box = Box { e: NotFound { what: "ab" } };
+    return b.e.message().len();
+}`
+
 // (c) receiver read from an array element
 const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
     var xs: dyn Error[] = [NotFound { what: "ab" } as dyn Error];
@@ -40,9 +50,10 @@ const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
 
 func dynDispatchCases() map[string]string {
 	return map[string]string{
-		"match-arm": dynDispatchMatchArm,
-		"field":     dynDispatchField,
-		"array":     dynDispatchArrayElem,
+		"match-arm":      dynDispatchMatchArm,
+		"field":          dynDispatchField,
+		"field-implicit": dynDispatchFieldImplicit,
+		"array":          dynDispatchArrayElem,
 	}
 }
 

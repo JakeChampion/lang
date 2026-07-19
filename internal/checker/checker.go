@@ -11562,14 +11562,31 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// behaviour. Mutates the real AST slot (Fields are values),
 			// so index rather than the loop copy.
 			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
+			// Concrete→`dyn Trait` boxing in a struct-field position. The
+			// coercion was already recorded by maybeWrapForUnion above, but the
+			// unifyType / ast.Equal checks below don't know the dyn boxing rule
+			// — and assignable()'s boxing-site list (var init / assignment /
+			// argument / array element / return) omitted the struct field, so a
+			// direct `S { d: Concrete{...} }` reported a spurious E043 even
+			// though every other position accepts it (and the self-host checker
+			// already does). Mirror assignable()'s dyn branch here: a concrete
+			// that impls every trait in the set is a valid field value.
+			dynFieldOK := false
+			if dt, ok := fieldExpected.(ast.DynTraitType); ok {
+				if _, srcDyn := vt.(ast.DynTraitType); !srcDyn {
+					if tn, ok2 := methodTypeName(vt); ok2 && c.implementsAllDynTraits(dt, tn) {
+						dynFieldOK = true
+					}
+				}
+			}
 			if sub != nil {
-				if !c.unifyType(expected, vt, sub) {
+				if !c.unifyType(expected, vt, sub) && !dynFieldOK {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, substituteType(expected, sub), vt)
 				}
-			} else if !ast.Equal(vt, expected) {
+			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
 				// concrete widening rules from `unifyIfArms`
 				// — e.g. `struct Node { next: Option[Node] }`

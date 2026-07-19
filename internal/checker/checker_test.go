@@ -3673,6 +3673,15 @@ function main(): i32 { var d: dyn Shape = Circle { r: 3 }; return f(d); }`); err
 		t.Fatalf("valid dyn use should check: %v", err)
 	}
 
+	// Accepted: a concrete value coerces to a `dyn Trait` STRUCT FIELD with
+	// no explicit `as dyn Shape` — the struct-field position was missing from
+	// assignable()'s boxing-site list, so this reported a spurious E043 even
+	// though var-init / argument / array-element / return all accept it.
+	if err := checkSource(t, prelude+`struct Holder { shape: dyn Shape, tag: i32 }
+function main(): i32 { var h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }; return h.shape.area() + h.tag; }`); err != nil {
+		t.Fatalf("implicit concrete->dyn coercion in a struct field should check: %v", err)
+	}
+
 	cases := []struct{ name, src, want string }{
 		{"non-impl coercion",
 			prelude + `struct NoShape { z: i32 }
@@ -3695,6 +3704,11 @@ function main(): i32 { return 0; }`,
 			prelude + `struct NoShape { z: i32 }
 function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]; return 0; }`,
 			"does not implement Shape"},
+		{"non-impl in dyn struct field",
+			prelude + `struct NoShape { z: i32 }
+struct Holder { shape: dyn Shape }
+function main(): i32 { var h: Holder = Holder { shape: NoShape { z: 1 } }; return 0; }`,
+			"expected dyn Shape, got NoShape"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
