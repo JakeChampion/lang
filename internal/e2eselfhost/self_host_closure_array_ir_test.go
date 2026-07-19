@@ -60,6 +60,19 @@ var closureArrayIRCases = []struct {
 	{"append-after-literal", `function main(): i32 { var n = 4; var fns: (() => i32)[] = [() => n]; fns = fns.append(() => n + 1); return fns[1](); }`, 5},
 	// append three, then sum them via a `for` loop over the array: 1+2+3 = 6.
 	{"append-loop", `function main(): i32 { var a = 1; var b = 2; var c = 3; var fns: (() => i32)[] = []; fns = fns.append(() => a); fns = fns.append(() => b); fns = fns.append(() => c); var s = 0; for f in fns { s = s + f(); } return s; }`, 6},
+	// ESCAPING closure array: a factory builds the array by `.append(<lambda>)`
+	// and RETURNS it; the caller indexes and calls it. The append-built closure
+	// class must be recovered from the reassignment (not just the initial `[]`
+	// literal) so the factory is classified closurearr-returning — otherwise the
+	// caller dispatched `fns[i](x)` as a bare fn pointer and SIGSEGV'd on the env
+	// box. Capturing single: 5.
+	{"escape-append-capture", `function make(): (() => i32)[] { var fns: (() => i32)[] = []; var n = 5; fns = fns.append(() => n); return fns; } function main(): i32 { var fns = make(); return fns[0](); }`, 5},
+	// A NON-capturing lambda is still a closure box (distinct from a bare named
+	// fn), so the escaping array is still a closure array: 15.
+	{"escape-append-noncap", `function make(): ((i32) => i32)[] { var fns: ((i32) => i32)[] = []; fns = fns.append((x: i32) => x + 5); return fns; } function main(): i32 { var fns = make(); return fns[0](10); }`, 15},
+	// The loop form: a factory appends one capturing lambda per iteration and
+	// returns the array; the caller sums the calls. (10+0)+(10+1)+(10+2) = 33.
+	{"escape-loop-capture", `function adders(n: i32): ((i32) => i32)[] { var fs: ((i32) => i32)[] = []; var i = 0; while (i < n) { var k = i; fs = fs.append((x: i32) => x + k); i = i + 1; } return fs; } function main(): i32 { var fs = adders(3); var t = 0; for f in fs { t = t + f(10); } return t; }`, 33},
 	// #3574: a bare NAMED-fn value appended to an empty fn-pointer array (is_fnarr),
 	// then called — previously const-called f and segfaulted (exit -1).
 	{"namedfn-append-empty", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); return fns[0](); }`, 7},
