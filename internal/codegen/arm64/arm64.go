@@ -547,6 +547,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the _start epilogue always
+		// calls the report, so the helper (and its BSS counters +
+		// literal labels, see emitDataSections) is unconditional under
+		// the flag — a no-alloc program just reports zeros.
+		g.emitLcReportRuntime()
+	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
 	}
@@ -837,7 +844,21 @@ func (g *generator) emitDataSections() {
 		g.label(".LLangNewline")
 		g.line(`	.asciz "\n"`)
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount {
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the fixed text of
+		// __fern_lc_report's summary line. `.asciz` for uniformity with
+		// the literals above (and Mach-O friendliness); the report
+		// writes exact lengths, so the trailing NULs are never emitted.
+		g.label(".Llc_str_allocs")
+		g.line(`	.asciz "leakcheck: allocs="`)
+		g.label(".Llc_str_frees")
+		g.line(`	.asciz " frees="`)
+		g.label(".Llc_str_live")
+		g.line(`	.asciz " live_bytes="`)
+		g.label(".Llc_str_nl")
+		g.line(`	.asciz "\n"`)
+	}
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || ast.LeakCheckEnabled {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -849,6 +870,25 @@ func (g *generator) emitDataSections() {
 			g.line(`.section __DATA,__bss`)
 		} else {
 			g.line(`.section .bss`)
+		}
+		if ast.LeakCheckEnabled {
+			// Leak detector counters (#5362 slice 1). alloc_count /
+			// alloc_bytes tick in __fern_alloc (post-16-rounding, both
+			// the freelist-pop and bump paths); free_count / free_bytes
+			// in __fern_free (same rounding). __fern_lc_report prints
+			// them at exit; live_bytes = alloc_bytes − free_bytes.
+			g.line(`.align 3`)
+			g.label("__fern_lc_alloc_count")
+			g.line(`	.quad 0`)
+			g.line(`.align 3`)
+			g.label("__fern_lc_alloc_bytes")
+			g.line(`	.quad 0`)
+			g.line(`.align 3`)
+			g.label("__fern_lc_free_count")
+			g.line(`	.quad 0`)
+			g.line(`.align 3`)
+			g.label("__fern_lc_free_bytes")
+			g.line(`	.quad 0`)
 		}
 	}
 	if g.usesAlloc {
@@ -1003,6 +1043,24 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("add x0, x0, #15")
 	g.emit("and x0, x0, #-16")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): count every allocation — the
+		// freelist-pop and bump paths both flow through here — at the
+		// 16-rounded size, the same rounding __fern_free's counter
+		// applies, so a block's alloc and eventual free cancel exactly.
+		// (The large tier's further capacity round-up is deliberately
+		// NOT counted: free is called with the logical size and never
+		// sees it.) x9/x10 are scratch here — the mmap path's x9 stash
+		// happens later.
+		g.adrpAdd("x9", "__fern_lc_alloc_count")
+		g.emit("ldr x10, [x9]")
+		g.emit("add x10, x10, #1")
+		g.emit("str x10, [x9]")
+		g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+		g.emit("ldr x10, [x9]")
+		g.emit("add x10, x10, x0")
+		g.emit("str x10, [x9]")
+	}
 	if ast.RcFreeEnabled {
 		// Two-tier segregated freelist (arm64 mirror of the x86_64 helper).
 		// Small tier (16..2048 B): 16-byte exact-fit classes 0..127,
@@ -1130,6 +1188,32 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".global __fern_free")
 	g.typeDirective("__fern_free")
 	g.label("__fern_free")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): every reclamation site funnels
+		// through this helper (box_free / arr_dec / map_drop /
+		// drop_arr_ptr / drop_arr_str / alloc_reuse's mismatch path /
+		// the __free builtin — the freelist push below is the only
+		// other freelist writer and it's in this same function), so
+		// counting here covers them all. Count at the same
+		// (size+15)&-16 rounding __fern_alloc counted, in scratch regs
+		// so the RcFreeEnabled body's own rounding of x1 is untouched
+		// (and the counters still tick when the freelist is compiled
+		// out). __fern_alloc_reuse's in-place path calls neither
+		// __fern_alloc nor __fern_free — in-place reuse counts as
+		// NEITHER an alloc nor a free, which is exact: its class match
+		// requires equal rounded sizes, so the block's original alloc
+		// count still cancels against its eventual free.
+		g.emit("add x9, x1, #15")
+		g.emit("and x9, x9, #-16")
+		g.adrpAdd("x10", "__fern_lc_free_count")
+		g.emit("ldr x11, [x10]")
+		g.emit("add x11, x11, #1")
+		g.emit("str x11, [x10]")
+		g.adrpAdd("x10", "__fern_lc_free_bytes")
+		g.emit("ldr x11, [x10]")
+		g.emit("add x11, x11, x9")
+		g.emit("str x11, [x10]")
+	}
 	if ast.RcFreeEnabled {
 		g.emit("add x1, x1, #15")
 		g.emit("and x1, x1, #-16")
@@ -4018,9 +4102,106 @@ func (g *generator) emitExitRuntime() {
 	g.line(".global __fern_exit")
 	g.typeDirective("__fern_exit")
 	g.label("__fern_exit")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the exit() builtin bypasses the
+		// _start epilogue, so report here too. The code parks in x19 —
+		// clobbering a callee-save is fine on a path that never returns.
+		g.emit("mov x19, x0")
+		g.emit("bl __fern_lc_report")
+		g.emit("mov x0, x19")
+	}
 	g.syscallExit()
 	g.emit("ret")
 	g.sizeDirective("__fern_exit")
+	g.line(".ltorg")
+}
+
+// emitLcReportRuntime emits `__fern_lc_report()` — the leak detector's
+// (#5362 slice 1) exit-time summary, the arm64 mirror of the x86_64
+// helper. Writes one line to stderr:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = __fern_lc_alloc_bytes − __fern_lc_free_bytes (signed — an
+// over-free would show negative rather than wrapping). Only emitted
+// when ast.LeakCheckEnabled; called from the _start epilogue and
+// __fern_exit, which park the exit code in x19 across the call, so the
+// helper (and its two local subroutines) must touch caller-saved
+// registers only. The decimal formatting is a self-contained
+// divide-by-10 loop into a stack buffer (.Llc_wrnum).
+func (g *generator) emitLcReportRuntime() {
+	g.line("")
+	g.line(".global __fern_lc_report")
+	g.typeDirective("__fern_lc_report")
+	g.label("__fern_lc_report")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.adrpAdd("x1", ".Llc_str_allocs")
+	g.emit("mov x2, #18")
+	g.emit("bl .Llc_write")
+	g.adrpAdd("x9", "__fern_lc_alloc_count")
+	g.emit("ldr x0, [x9]")
+	g.emit("bl .Llc_wrnum")
+	g.adrpAdd("x1", ".Llc_str_frees")
+	g.emit("mov x2, #7")
+	g.emit("bl .Llc_write")
+	g.adrpAdd("x9", "__fern_lc_free_count")
+	g.emit("ldr x0, [x9]")
+	g.emit("bl .Llc_wrnum")
+	g.adrpAdd("x1", ".Llc_str_live")
+	g.emit("mov x2, #12")
+	g.emit("bl .Llc_write")
+	g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+	g.emit("ldr x0, [x9]")
+	g.adrpAdd("x9", "__fern_lc_free_bytes")
+	g.emit("ldr x1, [x9]")
+	g.emit("sub x0, x0, x1")
+	g.emit("bl .Llc_wrnum")
+	g.adrpAdd("x1", ".Llc_str_nl")
+	g.emit("mov x2, #1")
+	g.emit("bl .Llc_write")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	// .Llc_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf —
+	// no bl inside, so x30 (the report's return-into-report address)
+	// survives.
+	g.label(".Llc_write")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("ret")
+	// .Llc_wrnum(x0 = signed i64): decimal itoa, digits built backwards
+	// from the end of a 32-byte stack buffer (an i64 is at most 19
+	// digits + sign), then one write(2) to stderr. Leaf.
+	g.label(".Llc_wrnum")
+	g.emit("sub sp, sp, #48") // 32-byte digit buffer + 16 spare
+	g.emit("add x3, sp, #32")
+	g.emit("mov x4, #10")
+	g.emit("mov x5, #0") // sign flag
+	g.emit("cmp x0, #0")
+	g.emit("b.ge .Llc_wrnum_loop")
+	g.emit("neg x0, x0")
+	g.emit("mov x5, #1")
+	g.label(".Llc_wrnum_loop")
+	g.emit("udiv x6, x0, x4")
+	g.emit("msub x7, x6, x4, x0") // remainder = x0 - q*10
+	g.emit("add x7, x7, #48")     // → ASCII digit
+	g.emit("sub x3, x3, #1")
+	g.emit("strb w7, [x3]")
+	g.emit("mov x0, x6")
+	g.emit("cbnz x0, .Llc_wrnum_loop")
+	g.emit("cbz x5, .Llc_wrnum_emit")
+	g.emit("mov x7, #45") // '-'
+	g.emit("sub x3, x3, #1")
+	g.emit("strb w7, [x3]")
+	g.label(".Llc_wrnum_emit")
+	g.emit("add x2, sp, #32")
+	g.emit("sub x2, x2, x3") // len
+	g.emit("mov x1, x3")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("add sp, sp, #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_lc_report")
 	g.line(".ltorg")
 }
 
@@ -7500,6 +7681,16 @@ func (g *generator) emitStartRuntime() {
 		}
 	}
 	g.emit("bl main")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): print the alloc/free summary
+		// before exiting. main's return value parks in x19 (callee-save,
+		// and _start has no caller to preserve it for; the report helper
+		// itself only touches caller-saved registers) so the exit code
+		// survives the report's syscalls.
+		g.emit("mov x19, x0")
+		g.emit("bl __fern_lc_report")
+		g.emit("mov x0, x19")
+	}
 	g.syscallExit()
 	if !g.darwin {
 		g.sizeDirective(entry)

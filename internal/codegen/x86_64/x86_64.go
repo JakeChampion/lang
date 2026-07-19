@@ -380,6 +380,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the _start epilogue always
+		// calls the report, so the helper (and its BSS counters +
+		// .rodata labels, see emitDataSections) is unconditional under
+		// the flag — a no-alloc program just reports zeros.
+		g.emitLcReportRuntime()
+	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
 	}
@@ -1150,7 +1157,18 @@ func (g *generator) emitStartRuntime() {
 		g.emit("mov [rip + __fern_envp], rdi")
 	}
 	g.emit("call main")
-	g.emit("mov edi, eax") // exit code = main's return value
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): print the alloc/free summary
+		// before exiting. main's return value parks in rbx (callee-save,
+		// and _start has no caller to preserve it for; the report helper
+		// itself only touches caller-saved registers) so the exit code
+		// survives the report's syscalls.
+		g.emit("mov ebx, eax")
+		g.emit("call __fern_lc_report")
+		g.emit("mov edi, ebx")
+	} else {
+		g.emit("mov edi, eax") // exit code = main's return value
+	}
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 }
@@ -3770,7 +3788,7 @@ func (g *generator) emitDataSections() {
 	}
 	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty {
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -3860,6 +3878,20 @@ func (g *generator) emitDataSections() {
 				g.line(fmt.Sprintf("\t.4byte %d", t))
 			}
 		}
+		if ast.LeakCheckEnabled {
+			// Leak detector (#5362 slice 1): the fixed text of
+			// __fern_lc_report's summary line. `.asciz` for uniformity
+			// with the literals above; the report writes exact lengths,
+			// so the trailing NULs are never emitted.
+			g.label(".Llc_str_allocs")
+			g.line(`	.asciz "leakcheck: allocs="`)
+			g.label(".Llc_str_frees")
+			g.line(`	.asciz " frees="`)
+			g.label(".Llc_str_live")
+			g.line(`	.asciz " live_bytes="`)
+			g.label(".Llc_str_nl")
+			g.line(`	.asciz "\n"`)
+		}
 	}
 	// SSO inline strings ride in a 64-bit register and don't
 	// have a usable memory address until materialised. The
@@ -3871,9 +3903,28 @@ func (g *generator) emitDataSections() {
 	// path spill is overwritten on each call, but the value
 	// is consumed immediately by OpLoadByte before the next
 	// __str_idx fires).
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || ast.LeakCheckEnabled {
 		g.line("")
 		g.line(".section .bss")
+		if ast.LeakCheckEnabled {
+			// Leak detector counters (#5362 slice 1). alloc_count /
+			// alloc_bytes tick in __fern_alloc (post-16-rounding, both
+			// the freelist-pop and bump paths); free_count / free_bytes
+			// in __fern_free (same rounding). __fern_lc_report prints
+			// them at exit; live_bytes = alloc_bytes − free_bytes.
+			g.line(".align 8")
+			g.label("__fern_lc_alloc_count")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__fern_lc_alloc_bytes")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__fern_lc_free_count")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__fern_lc_free_bytes")
+			g.line("\t.quad 0")
+		}
 		if g.usesAlloc {
 			// Single-cursor bump allocator. See the x86-64
 			// emitAllocRuntime comment. (The persistent cursor +
@@ -3982,6 +4033,18 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): count every allocation — the
+		// freelist-pop and bump paths both flow through here — at the
+		// 16-rounded size, the same rounding __fern_free's counter
+		// applies, so a block's alloc and eventual free cancel exactly.
+		// (The large tier's further round-up to a power-of-two-ish
+		// capacity is deliberately NOT counted: free is called with the
+		// logical size and never sees that capacity, so counting it
+		// would drift live_bytes by the internal waste.)
+		g.emit("add qword ptr [rip + __fern_lc_alloc_count], 1")
+		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rdi")
+	}
 	if ast.RcFreeEnabled {
 		// Two-tier segregated freelist — reuse a freed block before bumping.
 		//
@@ -4123,6 +4186,26 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".globl __fern_free")
 	g.line(".type __fern_free, @function")
 	g.label("__fern_free")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): every reclamation site funnels
+		// through this helper (box_free / arr_dec / map_drop /
+		// drop_arr_ptr / drop_arr_str / alloc_reuse's mismatch path /
+		// the __free builtin — the freelist push below is the only
+		// other freelist writer and it's in this same function), so
+		// counting here covers them all. Count at the same
+		// (size+15)&-16 rounding __fern_alloc counted, in a scratch reg
+		// so the RcFreeEnabled body's own rounding of rsi is untouched
+		// (and the counters still tick when the freelist is compiled
+		// out). __fern_alloc_reuse's in-place path calls neither
+		// __fern_alloc nor __fern_free — in-place reuse counts as
+		// NEITHER an alloc nor a free, which is exact: its class match
+		// requires equal rounded sizes, so the block's original alloc
+		// count still cancels against its eventual free.
+		g.emit("lea rax, [rsi + 15]")
+		g.emit("and rax, -16")
+		g.emit("add qword ptr [rip + __fern_lc_free_count], 1")
+		g.emit("add qword ptr [rip + __fern_lc_free_bytes], rax")
+	}
 	if ast.RcFreeEnabled {
 		g.emit("add rsi, 15")
 		g.emit("and rsi, -16") // round size to the class granularity
@@ -5817,10 +5900,99 @@ func (g *generator) emitExitRuntime() {
 	g.line(".type __fern_exit, @function")
 	g.label("__fern_exit")
 	// rdi already holds the exit code (System V arg 1).
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the exit() builtin bypasses the
+		// _start epilogue, so report here too. The code parks in rbx —
+		// clobbering a callee-save is fine on a path that never returns.
+		g.emit("mov ebx, edi")
+		g.emit("call __fern_lc_report")
+		g.emit("mov edi, ebx")
+	}
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 	g.emit("ret")
 	g.line(".size __fern_exit, .-__fern_exit")
+}
+
+// emitLcReportRuntime emits `__fern_lc_report()` — the leak detector's
+// (#5362 slice 1) exit-time summary. Writes one line to stderr:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = __fern_lc_alloc_bytes − __fern_lc_free_bytes (signed — an
+// over-free would show negative rather than wrapping). Only emitted
+// when ast.LeakCheckEnabled; called from the _start epilogue and
+// __fern_exit, which park the exit code in rbx across the call, so the
+// helper (and its two local subroutines) must touch caller-saved
+// registers only. The decimal formatting is a self-contained
+// divide-by-10 loop into a stack buffer (.Llc_wrnum) — the language's
+// i64-to-string paths are Fern-level and can't be assumed present.
+func (g *generator) emitLcReportRuntime() {
+	g.line("")
+	g.line(".globl __fern_lc_report")
+	g.line(".type __fern_lc_report, @function")
+	g.label("__fern_lc_report")
+	g.emit("lea rsi, [rip + .Llc_str_allocs]")
+	g.emit("mov edx, 18")
+	g.emit("call .Llc_write")
+	g.emit("mov rdi, [rip + __fern_lc_alloc_count]")
+	g.emit("call .Llc_wrnum")
+	g.emit("lea rsi, [rip + .Llc_str_frees]")
+	g.emit("mov edx, 7")
+	g.emit("call .Llc_write")
+	g.emit("mov rdi, [rip + __fern_lc_free_count]")
+	g.emit("call .Llc_wrnum")
+	g.emit("lea rsi, [rip + .Llc_str_live]")
+	g.emit("mov edx, 12")
+	g.emit("call .Llc_write")
+	g.emit("mov rdi, [rip + __fern_lc_alloc_bytes]")
+	g.emit("sub rdi, [rip + __fern_lc_free_bytes]")
+	g.emit("call .Llc_wrnum")
+	g.emit("lea rsi, [rip + .Llc_str_nl]")
+	g.emit("mov edx, 1")
+	g.emit("call .Llc_write")
+	g.emit("ret")
+	// .Llc_write(rsi = buf, edx = len): one write(2) to stderr.
+	g.label(".Llc_write")
+	g.emit("mov edi, 2")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("ret")
+	// .Llc_wrnum(rdi = signed i64): decimal itoa, digits built
+	// backwards from the end of a 32-byte stack buffer (an i64 is at
+	// most 19 digits + sign), then one write(2) to stderr.
+	g.label(".Llc_wrnum")
+	g.emit("sub rsp, 40") // 32-byte digit buffer + 8 spare
+	g.emit("lea rcx, [rsp + 32]")
+	g.emit("mov r8, 10")
+	g.emit("xor r9d, r9d") // sign flag
+	g.emit("mov rax, rdi")
+	g.emit("test rax, rax")
+	g.emit("jns .Llc_wrnum_loop")
+	g.emit("neg rax")
+	g.emit("mov r9d, 1")
+	g.label(".Llc_wrnum_loop")
+	g.emit("xor edx, edx")
+	g.emit("div r8")
+	g.emit("add edx, 48") // remainder → ASCII digit
+	g.emit("sub rcx, 1")
+	g.emit("mov byte ptr [rcx], dl")
+	g.emit("test rax, rax")
+	g.emit("jnz .Llc_wrnum_loop")
+	g.emit("test r9d, r9d")
+	g.emit("jz .Llc_wrnum_emit")
+	g.emit("sub rcx, 1")
+	g.emit("mov byte ptr [rcx], 45") // '-'
+	g.label(".Llc_wrnum_emit")
+	g.emit("lea rdx, [rsp + 32]")
+	g.emit("sub rdx, rcx") // len
+	g.emit("mov rsi, rcx")
+	g.emit("mov edi, 2")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("add rsp, 40")
+	g.emit("ret")
+	g.line(".size __fern_lc_report, .-__fern_lc_report")
 }
 
 // emitNowUnixMsRuntime emits `__fern_now_unix_ms()` — wall-

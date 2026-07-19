@@ -210,3 +210,34 @@ func TestEncodeAluImmSize(t *testing.T) {
 		}
 	}
 }
+
+// A rip-relative disp32 is relative to the END of its instruction. For
+// lea/mov-load forms the disp32 IS the last field, but the mem,imm forms
+// (`add qword ptr [rip+sym], 1`, `mov qword ptr [rip+sym], 0`) append the
+// immediate after it — resolving against disp-field-end pointed the
+// access immLen bytes past the symbol. The regressions this pins: the
+// rc-underflow and leakcheck counters incremented at [sym+1] (a ×256
+// count drift) and strbuf_take's `mov qword ptr [rip+__fern_strbuf_len],
+// 0` cleared [sym+4..sym+12) instead of the length (so the builder never
+// reset on the in-process-assembled path). Layout: .text is 27 bytes,
+// .rodata starts at align8(27)=32, sym sits at its head, so the expected
+// disps are 32−7=25 (lea), 32−15=17 (add …,imm8), 32−26=6 (mov …,imm32).
+// Encodings cross-checked against GNU as / objdump.
+func TestEncodeRipRelativeDispIsFromInsnEnd(t *testing.T) {
+	src := `
+lea rax, [rip + sym]
+add qword ptr [rip + sym], 1
+mov qword ptr [rip + sym], 0
+ret
+.section .rodata
+sym:
+	.quad 0
+`
+	want := "488d0519000000" + // lea rax, [rip+25]
+		"48830511000000" + "01" + // add qword ptr [rip+17], 1
+		"48c70506000000" + "00000000" + // mov qword ptr [rip+6], 0
+		"c3"
+	if got := asm(t, src); got != want {
+		t.Errorf("asm rip-relative block = %s, want %s", got, want)
+	}
+}

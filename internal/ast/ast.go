@@ -1124,6 +1124,25 @@ var RcReuseEnabled = true
 // so test subprocesses and the CLI can toggle it without a fork.
 var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 
+// LeakCheckEnabled gates the native leak detector (#5362 slice 1): a
+// compile-time build mode that counts every __fern_alloc (count +
+// 16-rounded bytes) and every __fern_free (count + identically rounded
+// bytes) in BSS quads and prints one summary line to stderr at process
+// exit — both the `_start` epilogue and the `exit()` builtin's
+// __fern_exit:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = alloc_bytes − free_bytes. Both sides count the SAME
+// (size+15)&-16 rounding, so a block's alloc and eventual free always
+// cancel exactly and live_bytes is exact, not approximate.
+// __fern_alloc_reuse's in-place path counts as NEITHER an alloc nor a
+// free (see the emitter comments). x86-64 + arm64; wasm ignores the
+// flag. With the flag OFF the emitted asm is byte-identical to a build
+// without the feature. Settable via FERN_LEAKCHECK=1 (the
+// RcReuseDropGuided precedent) so the CLI can toggle it without a fork.
+var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
+
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside
 // RcFreeEnabled). Instead of recycling a freed array buffer, the
