@@ -374,6 +374,17 @@ pub function rt_src_write_file(): string {
     return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { return Some(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
 }
 
+// rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
+// array (via __raw_environ, the saved __fern_envp) for a "name=value" entry, then
+// COPIES the value into a fresh heap string. Unlike the hand-asm (which boxed the
+// kernel-immortal bytes in place), it copies because the entry pointer is a high
+// stack address the i32 raw-pointer floor can't offset 64-bit-safely as a Fern
+// value — but __raw_load8(entry, off) offsets in the emitter, so per-byte reads
+// are safe. x86-64-only.
+pub function rt_src_env(): string {
+    return "function __fern_env(name: string): Option[string] { var nlen: i32 = name.len(); var envp: i32 = __raw_environ(); var idx: i32 = 0; var done: i32 = 0; while (done == 0) { var entry: i32 = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { var m: i32 = 1; var k: i32 = 0; while (k < nlen) { if (__raw_load8(entry, k) != name[k]) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { var vs: i32 = nlen + 1; var vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } var vbuf: i32 = __raw_alloc(vlen + 1); var c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
+}
+
 // rt_src_temp_dir backs `temp_dir(prefix)` (#2649, syscall-leaf) → Result[string,
 // IoError]. Builds a uniquely-named /tmp/<prefix>-<monotonic_ns> path with the
 // raw-memory intrinsics (inline i64→digits, like the hand-asm — avoids pulling in
@@ -1970,6 +1981,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // sibling. Returns the syscall result as i32.
                     if (id.name == "__syscall3") { return ty_i32(); }
                     if (id.name == "__syscall4") { return ty_i32(); }
+                    if (id.name == "__raw_environ") { return ty_i32(); }
                     // Fixed static scratch buffer for syscall leaves (timespec /
                     // stat) — reused, never freed. Returns the buffer ptr as i32.
                     if (id.name == "__raw_scratch") { return ty_i32(); }

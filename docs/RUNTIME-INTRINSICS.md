@@ -105,6 +105,8 @@ nominal.
 | `__raw_string(data: i32, len: i32): string` | alloc a 16-byte box `{data, len}` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface |
 | `__syscall3(nr: i32, a1: i32, a2: i32, a3: i32): i32` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
 | `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
+| `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
+| `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
 
 Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64
 math reuses the **existing** `__load_i64(addr): i64` intrinsic (#4375) — no new

@@ -6802,6 +6802,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sc3.ok) { return sc3; }
                         return sc3.emit(ir.op_syscall3());
                     }
+                    // __raw_environ() — the process envp pointer (#2649 env slice).
+                    if (cid.name == "__raw_environ" && c.args.len() == 0) {
+                        return s.emit(ir.op_raw_environ());
+                    }
                     // __syscall4(nr, a1, a2, a3, a4) — the 4-arg sub-floor sibling.
                     if (cid.name == "__syscall4" && c.args.len() == 5) {
                         var s40: LowerState = lower_expr(c.args[0], s);
