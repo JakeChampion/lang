@@ -143,7 +143,9 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	if err != nil {
 		return nil, srcs, lit, err
 	}
-	prog.CapGrants = capGrants(mans)
+	if prog.CapGrants, err = capGrants(mans); err != nil {
+		return nil, srcs, lit, err
+	}
 	return prog, srcs, lit, nil
 }
 
@@ -712,15 +714,32 @@ func declaredDepDir(man *manifest.Manifest, seg string, mans map[string]*manifes
 // unresolvable declared deps are skipped silently (a dep that never
 // loaded contributes no code to enforce against). Returns nil when no
 // manifest grants anything, so grant-free programs stay allocation-free.
-func capGrants(mans map[string]*manifest.Manifest) map[string][]string {
+//
+// It also enforces the ATTENUATION rule (brief phase 3): a governed
+// manifest — one whose own package dir received a capability grant
+// from some parent — may grant each of its dependencies at most the
+// union of capabilities it holds itself. Each granting edge is checked
+// against ITS grantor's holdings independently (a sibling's legitimate
+// grant of the same capability never excuses an amplifying edge), and
+// any violation is a load error. An ungoverned grantor — no
+// `capabilities` key anywhere declares it, which includes the root —
+// imposes no ceiling. Violations are reported all at once, sorted by
+// granting manifest dir, then dependency name, then capability.
+func capGrants(mans map[string]*manifest.Manifest) (map[string][]string, error) {
 	byDir := map[string]*manifest.Manifest{}
 	for _, m := range mans {
 		if m != nil {
 			byDir[m.Dir] = m
 		}
 	}
+	dirs := make([]string, 0, len(byDir))
+	for d := range byDir {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
 	var out map[string][]string
-	for _, man := range byDir {
+	for _, mdir := range dirs {
+		man := byDir[mdir]
 		for name, d := range man.Deps {
 			if d.Capabilities == nil {
 				continue
@@ -747,7 +766,35 @@ func capGrants(mans map[string]*manifest.Manifest) map[string][]string {
 			out[dir] = union
 		}
 	}
-	return out
+	var viols []string
+	for _, mdir := range dirs {
+		man := byDir[mdir]
+		held, governed := out[man.Dir]
+		if !governed {
+			continue
+		}
+		heldSet := map[string]bool{}
+		for _, c := range held {
+			heldSet[c] = true
+		}
+		names := make([]string, 0, len(man.Deps))
+		for name := range man.Deps {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			for _, c := range man.Deps[name].Capabilities {
+				if !heldSet[c] {
+					viols = append(viols, fmt.Sprintf("%s: dependency %q of %q is granted '%s' but %q itself holds only [%s] (attenuation: a dependency may grant at most what it holds)",
+						filepath.Join(man.Dir, manifest.FileName), name, man.Name, c, man.Name, strings.Join(held, ", ")))
+				}
+			}
+		}
+	}
+	if len(viols) > 0 {
+		return nil, errors.New(strings.Join(viols, "\n"))
+	}
+	return out, nil
 }
 
 // resolveDepImport resolves an import INTO a dependency directory:

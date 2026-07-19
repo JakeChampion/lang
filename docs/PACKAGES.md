@@ -56,7 +56,10 @@ the dependency the listed v1 capabilities (`net`, `fs`, `env`,
 `subprocess`, `time`, `random` — an unknown name is a manifest error).
 When the key is present, the checker enforces it by call-graph
 reachability (E070); without the key, reaches print as warnings for
-now. See docs/PACKAGE-CAPABILITIES-BRIEF.md.
+now. Grants attenuate: a governed dependency may grant its own
+dependencies at most the capabilities it holds itself — an amplifying
+grant is a load-time manifest error. See
+docs/PACKAGE-CAPABILITIES-BRIEF.md.
 
 ## Hash-addressed dependencies + `fern -fetch` (slice 2)
 
