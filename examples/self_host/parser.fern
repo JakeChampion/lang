@@ -4934,7 +4934,17 @@ function (e: MEnv) elook(n: string): string {
 
 // Insts accumulates the unique (bounded-generic name, concrete type)
 // instantiations discovered while rewriting call sites.
-struct Insts { inames: string[], itypes: string[] }
+// Insts records generic instantiations as three parallel arrays: the base
+// name, the mangled `__`-key (used to build clone symbol names), and `iargs`
+// — the ORIGINAL single-type-arg spelling for a single-param enum. iargs
+// exists because a composite (fn) arg mangles LOSSILY (`(i32) => i32` →
+// sanitized `_i32_____i32`), so phase-2 field substitution can't recover the
+// real field type from the key alone; it reads iargs instead. For a nominal /
+// nested-enum key, iargs carries the original spelling too, but `me_rewrite_ty`
+// re-derives the identical mangled field type either way (`Opt[i32]` → `Opt__i32`
+// == the key), so those stay byte-identical. Non-enum callers use the default
+// `iadd` (iargs = the key), which phase-2 enum cloning never reads.
+struct Insts { inames: string[], itypes: string[], iargs: string[] }
 function (a: Insts) ihas(n: string, t: string): boolean {
     var i: i32 = 0;
     while (i < a.inames.len()) {
@@ -4945,7 +4955,14 @@ function (a: Insts) ihas(n: string, t: string): boolean {
 }
 function (a: Insts) iadd(n: string, t: string): Insts {
     if (a.ihas(n, t)) { return a; }
-    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t) };
+    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t), iargs: a.iargs.append(t) };
+}
+// iadd_arg records an instantiation together with the original single-arg
+// spelling `arg` (phase-2 field substitution reads it for a fn-keyed clone).
+// Enum-collection sites use this; the default `iadd` sets iargs = key.
+function (a: Insts) iadd_arg(n: string, t: string, arg: string): Insts {
+    if (a.ihas(n, t)) { return a; }
+    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t), iargs: a.iargs.append(arg) };
 }
 // ihas_other reports whether `n` is already recorded at a DIFFERENT
 // concrete type than `t`. The array-method path uses this to keep a
@@ -6549,7 +6566,7 @@ pub function monomorphize_module(mod: Module): Module {
     }
     if (!any_bg) { return mod; }
 
-    var ins: Insts = Insts { inames: [], itypes: [] };
+    var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
     // Rewrite call sites in every NON-bounded function body. Bounded
     // generics themselves are dropped (replaced by clones), so their
     // bodies are rewritten later, per clone.
@@ -6578,7 +6595,7 @@ pub function monomorphize_module(mod: Module): Module {
 
     // Worklist: generate clones; a clone's own body may call bounded
     // generics, adding new instantiations.
-    var done: Insts = Insts { inames: [], itypes: [] };
+    var done: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var wi: i32 = 0;
     while (wi < ins.inames.len()) {
         var nm: string = ins.inames[wi];
@@ -6727,7 +6744,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
 // (`Box[i32]`, from a parametric `impl[T]`) goes through mg_ty.
 function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[]): string {
     if (ty == base) { return mang; }
-    var fresh: Insts = Insts { inames: [], itypes: [] };
+    var fresh: Insts = Insts { inames: [], itypes: [], iargs: [] };
     return mg_ty(ty, gstructs, fresh).ty;
 }
 
@@ -7110,7 +7127,7 @@ pub function monomorphize_structs(mod: Module): Module {
     }
     if (gstructs.len() == 0) { return mod; }
 
-    var ins: Insts = Insts { inames: [], itypes: [] };
+    var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
 
     // Phase 1: rewrite all references; drop the generic decls.
     var nstructs: StructDecl[] = [];
@@ -7153,7 +7170,7 @@ pub function monomorphize_structs(mod: Module): Module {
 
     // Phase 2: generate clones; a worklist covers clones whose own field
     // types / method bodies reference further instantiations.
-    var done: Insts = Insts { inames: [], itypes: [] };
+    var done: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var wi: i32 = 0;
     while (wi < ins.inames.len()) {
         var base: string = ins.inames[wi];
@@ -7360,14 +7377,84 @@ function ge_inst_of(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): GEInst {
     return GEInst { ok: true, base: base + "", key: key, mang: base + "__" + key };
 }
 
+// fn_key_sanitize maps a fn type spelling into a token safe to embed in a `__`
+// symbol name — every char outside [A-Za-z0-9_] becomes '_'. Mirrors native's
+// `sanitize` (internal/monomorph/monomorph.go) so a fn type argument
+// (`(i32) => i32`) keys to `_i32_____i32` instead of dragging its parens /
+// spaces / `=>` into an unassemblable symbol. (The sibling `sanitize_key`
+// above handles only bracket/comma keys and is shared with fn/struct mangling,
+// so a fn-only transform stays out of its blast radius.)
+function fn_key_sanitize(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        var alnum: boolean = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
+        if (alnum) { out = out + s[i : i + 1]; } else { out = out + "_"; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// pk_is_fn_spelling reports whether `t` is a single-parameter-list function
+// type spelling — `(...) => R` with no depth-1 comma (a top-level comma is a
+// tuple, not a param list). The self-host sibling of irlower's
+// is_fn_payload_spelling; lets ge_targ_mangle admit a fn type arg as a
+// (sanitised) monomorphisation key.
+function pk_is_fn_spelling(t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 5) { return false; }
+    if (t[0] != 40) { return false; }
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var close: i32 = 0 - 1;
+    while (i < n) {
+        var ch: i32 = t[i];
+        if (ch == 40 || ch == 91) { depth = depth + 1; }
+        else if (ch == 41 || ch == 93) { depth = depth - 1; if (depth == 0 && ch == 41) { close = i; i = n; } }
+        else if (ch == 44 && depth == 1) { return false; }
+        i = i + 1;
+    }
+    if (close < 0) { return false; }
+    var j: i32 = close + 1;
+    while (j < n && t[j] == 32) { j = j + 1; }
+    if (j + 1 >= n) { return false; }
+    return t[j] == 61 && t[j + 1] == 62;
+}
+
+// fn_spelling_ret returns the result-type spelling of a fn type
+// (`(i32) => Opt[i32]` → `Opt[i32]`), or "" when `t` is not a fn spelling. The
+// coarsening below stores it on a variant fn field's fn_ret, matching how the
+// parser records a source-written fn field (type_name "fn" + fn_ret).
+function fn_spelling_ret(t: string): string {
+    if (!pk_is_fn_spelling(t)) { return ""; }
+    var n: i32 = t.len();
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var close: i32 = 0 - 1;
+    while (i < n) {
+        var ch: i32 = t[i];
+        if (ch == 40 || ch == 91) { depth = depth + 1; }
+        else if (ch == 41 || ch == 93) { depth = depth - 1; if (depth == 0 && ch == 41) { close = i; i = n; } }
+        i = i + 1;
+    }
+    var j: i32 = close + 1;
+    while (j < n && t[j] == 32) { j = j + 1; }
+    j = j + 2;                                   // skip "=>"
+    while (j < n && t[j] == 32) { j = j + 1; }
+    return t[j : n] + "";
+}
+
 // ge_targ_mangle mangles ONE generic-enum type argument to its `__` symbol
 // form: a simple nominal (`i32`, `string`, a bare struct `P`) passes through;
 // a NESTED monomorphisable generic-enum arg (`Opt[i32]`) recurses to its
-// mangled clone name (`Opt__i32`). Returns "" for an arg this pass can't key
-// (an array, tuple, generic struct, or a method-bearing / non-generic enum),
-// so the enclosing instantiation bails to AST cleanly (over-admission-safe).
+// mangled clone name (`Opt__i32`); a fn type (`(i32) => i32`) sanitises to a
+// symbol-safe token (native parity). Returns "" for an arg this pass still
+// can't key (an array, tuple, generic struct, or a method-bearing /
+// non-generic enum), so the enclosing instantiation bails to AST cleanly.
 function ge_targ_mangle(arg: string, enums: EnumDecl[], funcs: FuncDecl[]): string {
     if (arg.len() == 0) { return ""; }
+    if (pk_is_fn_spelling(arg)) { return fn_key_sanitize(arg); }
     var lb: i32 = first_bracket(arg);
     if (lb < 0) {
         if (util.contains(arg, " ")) { return ""; }
@@ -7400,7 +7487,7 @@ function me_collect_anno(ty: string, enums: EnumDecl[], funcs: FuncDecl[], ins: 
     if (type_ends_arr(t)) { t = t[0 : t.len() - 2] + ""; }
     var gi: GEInst = ge_inst_of(t, enums, funcs);
     if (!gi.ok) { return ins; }
-    var cur: Insts = ins.iadd(gi.base, gi.key);
+    var cur: Insts = ins.iadd_arg(gi.base, gi.key, genum_single_arg(t));
     var lb: i32 = first_bracket(t);
     if (lb > 0 && t[t.len() - 1 : t.len()] == "]") {
         var parts: string[] = split_top_commas(t[lb + 1 : t.len() - 1]);
@@ -7548,7 +7635,12 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                 if (owner >= 0) {
                     var key: string = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
                     if (key.len() > 0) {
-                        cur = cur.iadd(enums[owner].name, key);
+                        // The original single-arg spelling (for a fn-keyed clone's
+                        // field type). From the annotation when present; else the
+                        // key IS the arg spelling (a nominal/nested inferred key).
+                        var carg: string = genum_single_arg(expected);
+                        if (carg.len() == 0) { carg = key; }
+                        cur = cur.iadd_arg(enums[owner].name, key, carg);
                         var mv: string = vname + "__" + key;
                         return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
                     }
@@ -7564,7 +7656,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             if (owner >= 0) {
                 var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
                 if (key.len() > 0) {
-                    var nins: Insts = ins.iadd(enums[owner].name, key);
+                    var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
                     return RExpr { rexpr: ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col }, rins: nins };
                 }
             }
@@ -7646,7 +7738,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                         if (owner >= 0) {
                             var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
                             if (key.len() > 0) {
-                                var nins: Insts = ins.iadd(enums[owner].name, key);
+                                var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
                                 return RExpr { rexpr: ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col }, rins: nins };
                             }
                         }
@@ -7973,7 +8065,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                     var gidx: i32 = genum_index(enums, gi.base);
                     if (gidx >= 0) {
                         npat = me_rewrite_arm_pattern(m.arms[i].pattern, enums[gidx], gi.key);
-                        cur = cur.iadd(gi.base, gi.key);
+                        cur = cur.iadd_arg(gi.base, gi.key, genum_single_arg(sty));
                         if (enums[gidx].type_params.len() == 1) {
                             var arg0: string = genum_single_arg(sty);
                             if (arg0.len() > 0) { armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], arg0, structs, env); }
@@ -8032,7 +8124,7 @@ pub function monomorphize_enums(mod: Module): Module {
     }
     if (!any) { return mod; }
 
-    var ins: Insts = Insts { inames: [], itypes: [] };
+    var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
@@ -8091,11 +8183,14 @@ pub function monomorphize_enums(mod: Module): Module {
         var gidx: i32 = genum_index(mod.enums, base);
         if (gidx >= 0) {
             var ed: EnumDecl = mod.enums[gidx];
-            // A single-type-param enum's key IS the one concrete arg verbatim
-            // (which may itself be a mangled nested clone like `Opt__i32`, so
-            // splitting on `__` would wrongly fracture it). A multi-param key
-            // is the `__`-join of simple nominals and splits unambiguously.
-            var cts: string[] = [key];
+            // A single-type-param enum substitutes T with the ORIGINAL arg
+            // spelling (`iargs`), not the mangled key: for a nominal / nested
+            // clone the two coincide (`i32`, `Opt[i32]` → me_rewrite_ty gives
+            // `Opt__i32` == the key), but a fn-keyed clone's key is LOSSILY
+            // sanitised (`_i32_____i32`), so only iargs recovers the real field
+            // type `(i32) => i32`. A multi-param key is the `__`-join of simple
+            // nominals and splits unambiguously (iargs is unused there).
+            var cts: string[] = [ins.iargs[wi]];
             if (ed.type_params.len() != 1) { cts = split_dunder(key); }
             var mname: string = base + "__" + key;
             var nvn: string[] = [];
@@ -8127,7 +8222,20 @@ pub function monomorphize_enums(mod: Module): Module {
                         // arms (#4722). Empty (non-fn) fn_ret stays empty.
                         var sub_ret: string = subst_ty(vs.fields[fj2].fn_ret, ed.type_params, cts);
                         ins = me_collect_anno(sub_ret, mod.enums, mod.funcs, ins);
-                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: me_rewrite_ty(subbed, mod.enums, mod.funcs), fn_ret: me_rewrite_ty(sub_ret, mod.enums, mod.funcs) });
+                        var f_ty: string = me_rewrite_ty(subbed, mod.enums, mod.funcs);
+                        var f_ret: string = me_rewrite_ty(sub_ret, mod.enums, mod.funcs);
+                        // A type-param substituted to a fn spelling (`T` → `(i32)
+                        // => i32`, #5298) must be COARSENED to the parser's fn
+                        // field shape — type_name "fn" with the result on fn_ret —
+                        // so the IR path recognises it as a fn payload (a raw
+                        // spelling in type_name trips the per-function IR
+                        // eligibility, bailing the whole function to AST).
+                        if (pk_is_fn_spelling(f_ty)) {
+                            f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), mod.enums, mod.funcs);
+                            ins = me_collect_anno(f_ret, mod.enums, mod.funcs, ins);
+                            f_ty = "fn";
+                        }
+                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: f_ty, fn_ret: f_ret });
                         fj2 = fj2 + 1;
                     }
                     cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume });
