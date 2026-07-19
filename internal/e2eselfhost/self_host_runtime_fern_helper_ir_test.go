@@ -280,6 +280,18 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_read_dir",
 			[]string{"\n__fern_read_dir:", ".Lrd_g", ".Lrd_p2"},
 		},
+		{
+			// remove_dir_all — Option[IoError] leaf (#2649), the last fs syscall leaf.
+			// Best-effort recursive rm -rf: probe openat to classify, delegate
+			// enumeration to the (Fern) read_dir, recurse, rmdir. Old hand-asm IR body
+			// (__fern_remove_dir_all:) gone; op_remove_dir_all calls the stack-ABI
+			// __fn___fern_remove_dir_all. The .Lrda_* local labels of the retired
+			// hand-asm body must be gone.
+			"remove_dir_all",
+			`function main(): i32 { match (remove_dir_all("/nonexistent-fern-xyz")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			"__fn___fern_remove_dir_all",
+			[]string{"\n__fern_remove_dir_all:", ".Lrda_copy", ".Lrda_it"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -338,6 +350,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
     match (write_file("/nope-dir/x", "y")) { Some(_) => { r = r + 1; }, None => {} }
     match (temp_dir("/nope-parent/p")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
     match (read_dir("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (remove_dir_all("/nope-parent/deep/tree")) { Some(_) => { r = r + 1; }, None => {} }
     return r;
 }`
 		var cmd *exec.Cmd
@@ -361,7 +374,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 		// Each fs helper delegates its error path to io_error: its body must CALL
 		// the shared classifier (an ordinary call-graph edge) rather than inline the
 		// five-way branch. A silent revert to inlining drops the call.
-		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir", "__fn___fern_read_dir"} {
+		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir", "__fn___fern_read_dir", "__fn___fern_remove_dir_all"} {
 			body := extractFuncBody(got, sym)
 			if body == "" {
 				t.Errorf("%s not defined in the fs bundle", sym)
