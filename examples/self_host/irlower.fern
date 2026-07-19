@@ -1891,6 +1891,39 @@ pub function is_leaksafe_tuple_field(t: string): boolean {
     return any;
 }
 
+// is_leaksafe_tuple_field_d widens is_leaksafe_tuple_field with the `structs`
+// view: a STRUCT-array (`Inner[]`) or ENUM-array (`Color[]`) tuple element is
+// also a leak-only heap pointer in one tuple slot — the set tuple_elems_lowerable
+// already admits for tuple construction / return, where the `.N` read binds the
+// slot mark_arr + the element struct/enum name so `t.N[i].field` / `match (t.N[i])`
+// resolve. Only decl_is_leaksafe_d (which holds the struct view) uses this; the
+// reuse-analysis callers keep the narrower structs-free predicate, so a struct
+// with such a tuple field is admitted to the IR path but conservatively skips
+// constructor reuse (alloc path — sound, just unoptimised).
+pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string): boolean {
+    var len: i32 = t.len();
+    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return false; }
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < 64) {
+        var tag: string = tuple_type_elem_tag(t, i);
+        if (tag == "") { return any; }
+        var elem_ok: boolean = is_leaksafe_payload(tag);
+        if (!elem_ok) { elem_ok = is_leaksafe_opt_field_d(structs, tag); }
+        if (!elem_ok && (tag == "string[]" || tag == "f64[]" || tag == "i64[]" || is_leaksafe_array_field(tag))) { elem_ok = true; }
+        // The struct-view additions over the plain gate: a struct-array / enum-
+        // array element.
+        if (!elem_ok && (is_struct_array_field_type(structs, tag) || is_enum_array_field_type(structs, tag))) { elem_ok = true; }
+        // A NESTED tuple element recurses through THIS predicate so an inner
+        // struct-/enum-array element is admitted at any depth.
+        if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_d(structs, tag); }
+        if (!elem_ok) { return false; }
+        any = true;
+        i = i + 1;
+    }
+    return any;
+}
+
 pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprFieldAccess(fa) => {
@@ -2075,7 +2108,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field_d(structs, t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -2121,7 +2154,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                     // leak-safe tuple: the whole nested structure leaks with the
                     // struct. Covers the common 2-D field; deeper nesting still
                     // bails.
-                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field(elt)) {
+                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field_d(structs, elt)) {
                         fi = fi + 1;
                         continue;
                     }
