@@ -10787,7 +10787,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
 // names are ignored (the Go checker is the strict gate). `Default` is the
 // only associated (receiver-less) one — and only synthesised when every
 // field is itself default-derivable.
-function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): FuncDecl[] {
+function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[], has_json_import: boolean): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
@@ -10798,12 +10798,33 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
         if (kind == "Json") {
             funcs = funcs.append(synth_struct_json(sd));
-            if (from_json_derivable(sd)) { funcs = funcs.append(synth_from_json(sd)); }
+            // The deserialise companion `from_json` calls `json.json_parse` /
+            // `json.json_get_*`, so it is ONLY synthesised when the real
+            // std/json is imported (mirrors native's `json__json_parse in
+            // prog.Funcs` gate). A module deriving a user's OWN inline `trait
+            // Json` — or one that never imports std/json — gets serialise-only,
+            // so those `json.*` calls are never emitted into an unresolved
+            // module.
+            if (has_json_import && from_json_derivable(sd)) { funcs = funcs.append(synth_from_json(sd)); }
         }
         if (kind == "Default") { if (struct_default_derivable(sd)) { funcs = funcs.append(synth_struct_default(sd)); } }
         di = di + 1;
     }
     return funcs;
+}
+
+// imports_have_std_json reports whether the module's parsed imports include
+// std/json — the precondition for synthesising a `@derive(Json)` struct's
+// `from_json` (whose body calls std/json's json_parse / json_get_*). Imports
+// are conventionally at the top of a module, so they are already accumulated
+// by the time a `@derive` struct decl is reached in parse_module.
+function imports_have_std_json(imports: Import[]): boolean {
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        if (imports[i].path == "std/json") { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // parse_derive_attr consumes `@derive(Trait, mod.Trait, …)` (the `@` is
@@ -11463,7 +11484,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var (dsr_decl, dsr_p) = parse_struct_decl(p);
                 p = dsr_p;
                 structs = structs.append(dsr_decl);
-                funcs = synth_derives(dsr_decl, dr_derives, funcs);
+                funcs = synth_derives(dsr_decl, dr_derives, funcs, imports_have_std_json(imports));
                 continue;
             }
             if (dk == "enum") {
