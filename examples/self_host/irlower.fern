@@ -4342,6 +4342,11 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                 // resolve the receiver's struct / primitive type and look up the
                 // qualified key; the '2' return flag marks it u64 (is_u64_ret_fn).
                 parser.ExprFieldAccess(cfa) => {
+                    // A `.get()` / `.get_or()` on a Map[K, u64] yields an
+                    // unsigned value, so a chained `>> n` / compare selects the
+                    // UNSIGNED i64 op (#5253) — the map sibling of the u64[]
+                    // element arm above.
+                    if ((cfa.field == "get" || cfa.field == "get_or") && map_recv_value_type(cfa.obj, s) == "u64") { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
                     if (crty == "") { return false; }
@@ -4407,6 +4412,17 @@ pub function is_eager_safe(e: parser.Expr): boolean {
         },
         _ => { return false; }
     }
+}
+
+// map_recv_value_type returns the VALUE-column type ("i64" / "u64" / "string" /
+// "i32" / …) of a `.get()` / `.get_or()` / `.set()` receiver, or "" when `recv`
+// is not a resolvable Map. It threads the map's declared value width + sign
+// into the i64/u64 value classifiers so a `Map[K, i64]` / `Map[K, u64]` value
+// round-trips full-width on the IR path instead of truncating to i32 (#5253).
+function map_recv_value_type(recv: parser.Expr, s: LowerState): string {
+    var mt: string = expr_map_type_tag(recv, s);
+    if (!is_map_type_name(mt)) { return ""; }
+    return map_value_of(mt);
 }
 
 // infer_expr_width returns 64 if `e` evaluates to an i64 value, else 32.
@@ -4484,6 +4500,12 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return 64; }
+                    // A `.get()` / `.get_or()` on a Map with an i64/u64 VALUE
+                    // column yields an 8-byte value (#5253).
+                    if (cfa.field == "get" || cfa.field == "get_or") {
+                        var mvw: string = map_recv_value_type(cfa.obj, s);
+                        if (mvw == "i64" || mvw == "u64") { return 64; }
+                    }
                 },
                 _ => {}
             }
@@ -4673,6 +4695,14 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
+                    // A map `.get()` / `.get_or()` with an i64/u64 VALUE column
+                    // returns an 8-byte value; op_map_get(_or) loads the full
+                    // word, so the normal call path pushes the correct i64
+                    // (#5253). The get_or DEFAULT is lowered i64 at its own site.
+                    if (cfa.field == "get" || cfa.field == "get_or") {
+                        var mvt: string = map_recv_value_type(cfa.obj, s);
+                        if (mvt == "i64" || mvt == "u64") { return lower_expr(e, s); }
+                    }
                 },
                 _ => {}
             }
@@ -7346,7 +7376,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[0], mset);
                             if (!mset.ok) { return mset; }
-                            mset = lower_expr(c.args[1], mset);
+                            // An i64/u64 VALUE column stores an 8-byte value:
+                            // lower the value full-width so a wide literal / cast
+                            // doesn't truncate to i32 (#5253). A map-literal chain's
+                            // base (`map_new_i32(n)`) carries no V, so mtype's value
+                            // column can default to "i32" — also key off the VALUE:
+                            // a NON-literal width-64 value (an `as i64` / `as u64`
+                            // cast, or an i64/u64 operand) is unambiguously 8-byte
+                            // (the checker forbids it in an i32/u32 column). A bare
+                            // number literal keeps the receiver-typed path (its map
+                            // may be u32, and lower_expr round-trips a wide literal).
+                            var msetvt: string = map_value_of(mtype);
+                            var msetvlit: boolean = false;
+                            match (c.args[1]) { parser.ExprNumber(_) => { msetvlit = true; }, _ => {} }
+                            if (msetvt == "i64" || msetvt == "u64" || (!msetvlit && infer_expr_width(c.args[1], s) == 64)) { mset = lower_i64(c.args[1], mset); }
+                            else { mset = lower_expr(c.args[1], mset); }
                             if (!mset.ok) { return mset; }
                             return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn));
                         }
@@ -7374,7 +7418,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             mgo = lower_expr(c.args[0], mgo);
                             if (!mgo.ok) { return mgo; }
-                            mgo = lower_expr(c.args[1], mgo);
+                            // The DEFAULT rides the same 8-byte value slot as the
+                            // stored value: lower it full-width for an i64/u64
+                            // map so `get_or(k, 0)` doesn't push a 4-byte default
+                            // against an 8-byte found value (#5253).
+                            var mgovt: string = map_value_of(mtype);
+                            if (mgovt == "i64" || mgovt == "u64") { mgo = lower_i64(c.args[1], mgo); }
+                            else { mgo = lower_expr(c.args[1], mgo); }
                             if (!mgo.ok) { return mgo; }
                             return mgo.emit(ir.op_map_get_or(mkk2, meqfn));
                         }
