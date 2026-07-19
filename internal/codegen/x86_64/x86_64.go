@@ -1155,6 +1155,46 @@ var rcInlineMaxOps = 1_000_000
 // emitFunc lowers one function to assembly. Per-function
 // scope-tracking state lives in `scope` (currently unused —
 // PR 1 has no block / loop / if ops to dispatch).
+// x86RegisterName is the set of tokens the assembler — both this project's
+// pure-Go one (internal/native/x86_64) and GNU as — resolves to a register.
+// A user function whose name matches one would be mis-assembled: `call ch`
+// reads `ch` as register CH and encodes an indirect `call rbp` through
+// garbage (SIGSEGV), and `.size ch, .-ch` / `.quad ch` fail to evaluate.
+var x86RegisterName = func() map[string]bool {
+	m := map[string]bool{}
+	for _, n := range []string{
+		"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+		"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
+		"ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
+		"al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
+		"ah", "ch", "dh", "bh", "st",
+	} {
+		m[n] = true
+	}
+	for i := 0; i < 16; i++ {
+		m[fmt.Sprintf("xmm%d", i)] = true
+	}
+	return m
+}()
+
+// asmFnName returns the asm symbol for a Fern function `name`, escaping
+// names that collide with an x86 register mnemonic (register names are
+// case-insensitive to the assembler, so the check folds case). The `$`
+// suffix is collision-proof: Fern identifiers cannot contain `$`, so no
+// real function name can equal an escaped one, and both assemblers accept
+// `$` in a symbol. Non-colliding names — the overwhelming majority,
+// including every `__fern_*` runtime helper — pass through unchanged, so
+// applying it to any function symbol (user or runtime) is safe. It must be
+// used at EVERY site that emits a function name as an asm token
+// (definition, call, and `.quad` pointer), or the definition and its
+// references disagree and the link fails with an undefined symbol.
+func asmFnName(name string) string {
+	if x86RegisterName[strings.ToLower(name)] {
+		return name + "$fn"
+	}
+	return name
+}
+
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// #4402 opt 2b: inline rc ops only when the function is small enough that
 	// the ~10-instruction-per-op expansion doesn't balloon the emitted `.s`
@@ -1186,10 +1226,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		localsSize += 8
 	}
 
+	sym := asmFnName(fn.Name)
 	g.line("")
-	g.line(fmt.Sprintf(".globl %s", fn.Name))
-	g.line(fmt.Sprintf(".type %s, @function", fn.Name))
-	g.label(fn.Name)
+	g.line(fmt.Sprintf(".globl %s", sym))
+	g.line(fmt.Sprintf(".type %s, @function", sym))
+	g.label(sym)
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	if localsSize > 0 {
@@ -1235,7 +1276,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
+	g.line(fmt.Sprintf(".size %s, .-%s", sym, sym))
 	return nil
 }
 
@@ -1954,7 +1995,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 		g.emitCallArgsCleanup(argc)
 		g.push()
 
@@ -2099,7 +2140,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// absorb the inline bloat (see the rcInlineOK field) — the
 			// helper is behaviour-identical to the inline sequence.
 			g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", op.Str))
+			g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 			g.push()
 			return nil
 		}
@@ -2143,7 +2184,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// recorded the "__fern_rc_is_unique" use, so the helper is
 			// emitted regardless of inline-vs-call.
 			g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", op.Str))
+			g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 			g.push()
 			return nil
 		}
@@ -2339,7 +2380,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", target))
+		g.emit(fmt.Sprintf("call %s", asmFnName(target)))
 		g.emitCallArgsCleanup(argc)
 		// Void-returning callees push NOTHING. Without this gate,
 		// helpers like `__memcpy` / `__memset` leave a phantom
@@ -2369,7 +2410,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// call" contract is now register-backed.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 		g.emitCallArgsCleanup(argc)
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)
@@ -3673,7 +3714,7 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
 			for _, m := range vt.Methods {
-				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+				g.line(fmt.Sprintf("\t.quad %s", asmFnName(m.Func)))
 			}
 			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
 			// §4.4, slice 4b): the concrete type's drop fn as an absolute
@@ -3683,7 +3724,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors wasm internVtable.
 			if vt.Drop != "" {
-				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
+				g.line(fmt.Sprintf("\t.quad %s", asmFnName(vt.Drop)))
 			} else {
 				g.line("\t.quad 0")
 			}
@@ -3708,7 +3749,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
 			g.label(fmt.Sprintf("__closure_cell_%s", name))
-			g.line(fmt.Sprintf("\t.quad %s", name))
+			g.line(fmt.Sprintf("\t.quad %s", asmFnName(name)))
 			g.line("\t.quad 0")
 		}
 	}
