@@ -5344,7 +5344,7 @@ func unknownTypeHint(name string) string {
 		return " (did you mean `i32`?)"
 	case "uint", "u8":
 		return " (did you mean `u32`?)"
-	case "float", "double":
+	case "double":
 		return " (did you mean `f64`?)"
 	case "str", "String":
 		return " (did you mean `string`?)"
@@ -6251,9 +6251,9 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	// Polymorphic float (an unsettled FloatLit) is
 	// compatible with any concrete FloatType — let the
 	// settle pass stamp the literal's width. Without this,
-	// `var f: f64 = if cond { n.v } else { 0.0 };` rejects
-	// because `0.0` defaults to f32 polymorphic and `n.v`
-	// is concrete f64.
+	// `var f: f32 = if cond { n.v } else { 0.0 };` rejects
+	// because `0.0` is float-polymorphic and `n.v` is
+	// concrete f32.
 	if af, aok := a.(ast.FloatType); aok && af.Polymorphic {
 		if _, ok := b.(ast.FloatType); ok {
 			return b
@@ -12123,9 +12123,9 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 	// hint applies to the inner expression's payload, not
 	// to the TryOp itself. Wrap the hint in the appropriate
 	// enum (Option / Result) so the inner variant-call gets
-	// its payload settled. Without this, `var v: f64 =
-	// Some(3.14)?;` left 3.14 at f32 default and wasm
-	// rejected the f64 destination load.
+	// its payload settled. Without this, `var v: f32 =
+	// Some(3.14)?;` left 3.14 unsettled (defaulting to f64)
+	// and wasm rejected the f32 destination load.
 	if to, ok := e.(*ast.TryOp); ok {
 		switch to.Kind {
 		case ast.TryKindOption:

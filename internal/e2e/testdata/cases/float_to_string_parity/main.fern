@@ -19,16 +19,12 @@ import "core/int";
 import "std/float";
 import "std/string";
 
-function abs_f32(x: f32): f32 {
-    if (x < 0.0) { return 0.0 - x; }
-    return x;
-}
-
-// round-trips `x` through to_string → parse_float and returns true when the
-// recovered value is within `tol` of the original.
+// round-trips the f32 `x` through to_string → parse_float (which parses in
+// the f64 domain, #5363) and returns true when the recovered value is within
+// `tol` of the original.
 function roundtrips(x: f32, tol: f32): boolean {
     match (x.to_string().parse_float()) {
-        Some(y) => { return abs_f32(y - x) <= tol; },
+        Some(y) => { return (y - (x as f64)).abs() <= (tol as f64); },
         None => { return false; }
     }
 }

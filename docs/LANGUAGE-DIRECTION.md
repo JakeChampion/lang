@@ -181,8 +181,9 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
 - Explicit conversion only (`x as i64`); no implicit widening.
-- `f32` (existing) and `f64` (new); current `float` becomes alias
-  for `f32`.
+- `f32` (existing) and `f64` (new); `float` becomes an alias —
+  originally planned as f32, decided as **f64** (#5363,
+  2026-07: f64 is the default and primary float).
 - The historical `number` alias was dropped in PR 1's
   follow-up cleanup; use `i32` / `i64` / `u32` etc. directly.
 - Update WASM codegen: i64 ops via `i64.*` instructions.
@@ -228,8 +229,8 @@ Status:
   `OpFPromoteF32` / `OpFDemoteF64` cast ops, wasm codegen picks
   `f64.*` instructions when `Op.Width == 64`, and float
   literals (`1.5`, `3.14`) participate in the same polymorphic-
-  literal flow as integer literals. `float` is still an alias
-  for `f32`.
+  literal flow as integer literals. `float` is the alias for
+  f64 (#5363; an unsettled literal also defaults to f64).
 
 ### PR 2 — Tuples (shipped) + slice views (deferred)
 
@@ -1112,7 +1113,8 @@ tests.
     wat, now ~25 lines of Fern code in
     `internal/prelude/prelude.fern`.
   - **`s.parse_float()` shipped.** `string` method returning
-    `Option[f32]`. Grammar: `[-]<digits>[.<digits>]
+    `Option[f64]` (originally f32; flipped with the #5363
+    f64-default decision). Grammar: `[-]<digits>[.<digits>]
     [(e|E)[+-]?<digits>]`, with at least one of integer or
     fraction digits required. Mantissa accumulates into an
     i64 with a saturation cap at ~2^50 (1e15) — beyond that,
@@ -1187,8 +1189,8 @@ tests.
     Special values get canonical names: `NaN`, `Inf`, `-Inf`.
     NOT bit-exact Steele/White / Ryu — close-enough-for-handler
     output, same trade-off as `parse_float`. Round-trip
-    `parse_float(x.to_string())` recovers `x` to within f32
-    epsilon for typical values; pathological cases lose
+    `parse_float(x.to_string())` recovers `x` to within a small
+    tolerance for typical values; pathological cases lose
     trailing precision.
   - **`json_parse(s)` shipped.** RFC 8259 grammar
     recognizer; returns `Option[JsonValue]` (None on any

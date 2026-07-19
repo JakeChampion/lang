@@ -118,11 +118,14 @@ type NeverType struct{}
 // FloatType represents an IEEE-754 binary float. Width is 32 or
 // 64; the non-polymorphic zero value is f32 (the parser spells
 // `f32` as `FloatType{Width:0, Spelling:"f32"}`, so Width=0 must
-// keep meaning f32 there). Both widths are wired through every
-// backend. An unsettled float literal carries Polymorphic=true,
-// for which NormalWidth defaults to f64 — see NormalWidth.
+// keep meaning f32 there). `float` is the width-unqualified
+// alias for f64 (#5363) — the parser spells it
+// `FloatType{Width:64, Spelling:"float"}`. Both widths are wired
+// through every backend. An unsettled float literal carries
+// Polymorphic=true, for which NormalWidth defaults to f64 — see
+// NormalWidth.
 //
-// Spelling matches NumberType.Spelling — captures the keyword
+// Spelling matches NumberType.Spelling — captures the type name
 // the parser saw (`"float"`, `"f32"`, ...) so the formatter can
 // preserve it on round-trip.
 type FloatType struct {
@@ -1481,8 +1484,10 @@ type FloatLit struct {
 	P     Position
 	Value float64
 	// Width is set by the checker once a concrete float type is
-	// known (`var x: f64 = 1.5` → 64). 0 means "default f32" for
-	// backwards compatibility.
+	// known (`var x: f32 = 1.5` → 32). 0 means the literal stayed
+	// unsettled; every consumer (interp, IR lowering) defaults it
+	// to f64, the language's primary float — see
+	// FloatType.NormalWidth.
 	Width int
 }
 type Ident struct {
