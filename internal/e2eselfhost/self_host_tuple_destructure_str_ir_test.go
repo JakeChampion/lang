@@ -26,6 +26,7 @@ const tupleDestructureStrIRPrelude = `function mk2(): (i32, string) { return (5,
 function mkStrFirst(): (string, i32) { return ("abc", 9); }
 function mk3(): (i32, string, i32) { return (1, "xy", 2); }
 function mk2str(): (string, string) { return ("ab", "cde"); }
+function mkNest(): ((string, i32), i32) { return (("hi", 4), 5); }
 `
 
 var tupleDestructureStrIRCases = []struct {
@@ -45,6 +46,16 @@ var tupleDestructureStrIRCases = []struct {
 	{"let-scalar-str", `let (a, s) = mk2(); return a + s.len();`, 7},
 	// bind only the string element (the i32 slot is still read past).
 	{"str-only-use", `var (a, s) = mk2(); return s.len();`, 2},
+	// NESTED string destructure (#5306 Gap 1): `var (p, c) = t` binds
+	// p : (string, i32), then `var (s, b) = p` reads the string element. Before
+	// the fix the second-level read got an untyped slot (the destructure-bound
+	// p carried no inner tuple tags), so s.len() read 0 → 9 instead of 11. The
+	// fix records p's inner element tags (mark_tuple_elems) at the first bind.
+	// len("hi") + 4 + 5 = 11.
+	{"nested-str-destructure", `var (p, c) = mkNest(); var (s, b) = p; return s.len() + b + c;`, 11},
+	// The same nested shape from a tuple LITERAL local (not a call): exercises
+	// the ExprTuple init tag path feeding the inner-tuple tag record.
+	{"nested-str-literal", `var t: ((string, i32), i32) = (("yo", 3), 6); var (p, c) = t; var (s, b) = p; return s.len() + b + c;`, 11},
 }
 
 func tupleDestructureStrIRSrc(mainBody string) string {

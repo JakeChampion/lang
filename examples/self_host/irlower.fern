@@ -11295,6 +11295,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // type (like an enum local/param) so `match (c)` / `c.method()`
             // on the bound slot dispatches to `<Enum>.<variant/method>`.
             else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
+            // A NESTED-TUPLE element (`var (p, c) = t` where t : ((string,i32),i32)
+            // binds p : (string,i32)): record p's inner element tags so a
+            // SUBSEQUENT destructure `var (s, b) = p` can recover each element's
+            // type (else s reads untyped and a string element is lost — #5306
+            // Gap 1). The tag is the parenthesised inner-tuple type; strip the
+            // outer parens to the comma-joined encoding mark_tuple_elems expects.
+            else if (dtag.len() >= 2 && dtag[0] == 40) { dt = dt.mark_tuple_elems(dkslot, dtag[1 : dtag.len() - 1]); }
             dk = dk + 1;
         }
         return dt;
