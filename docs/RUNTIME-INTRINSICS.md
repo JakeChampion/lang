@@ -48,9 +48,21 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `write_file` (`rt_src_write_file` → `Option[IoError]`, the first `__syscall4`
 > user) followed.
 >
+> **`read_dir`** (`rt_src_read_dir` → `Result[string[], IoError]`) followed too —
+> the first fs leaf that returns an *array*. It `openat`s the dir
+> (`O_RDONLY|O_DIRECTORY`) and **drains** it with a `getdents64` loop over a FRESH
+> 64 KiB buffer per read, parsing each `linux_dirent64` record (`d_reclen@16`,
+> NUL-terminated `d_name@19`, skipping `.` / `..`) and appending each base name to
+> the result `string[]` with `.append()` (→ `__fern_arr_push` / the sole-owner
+> `arr_push_owned`, like `str_split`). The fresh-buffer-per-read shape sidesteps
+> the `buf + offset`-as-syscall-arg arithmetic the i32 raw-pointer floor can't do
+> 64-bit-safely (`getdents64` never splits a record across calls, so each buffer
+> parses independently); the record fields are read via `__raw_load8(buf, pos+k)`,
+> which offsets in the emitter.
+>
 > **Status update (2026-07, dependencies-as-the-call-graph): the fs leaves share a
 > Fern `__fern_io_error`.** `stat` / `read_file` / `remove_file` / `write_file` /
-> `temp_dir` no longer *inline* the five-way errno→variant classification
+> `temp_dir` / `read_dir` no longer *inline* the five-way errno→variant classification
 > (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
 > `EINTR→Interrupted`, else `Other`) — they **call** a single Fern classifier,
 > `rt_src_io_error`. The needed helpers + `io_error` are emitted as one bundle
