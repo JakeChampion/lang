@@ -970,6 +970,11 @@ function arm64_msub(buf: i32[], rd: i32, rn: i32, rm: i32, ra: i32): i32[] {
 function arm64_rev16(buf: i32[], rd: i32, rn: i32): i32[] {
     return arm64_le32(buf, 0xdac00400 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
+// clz Xd, Xn -> 0xDAC01000 | Rn<<5 | Rd (same DP-1-source family as rev16;
+// the Go arm64 backend emits it for the freelist size-class log2).
+function arm64_clz(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0xdac01000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
 
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
 // ldrb/strb size 0 (no scale); ldrh/strh size 1 (÷2); ldrsw size 2 (÷4).
@@ -1605,6 +1610,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_rev16(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
+    if (mnem == "clz") {
+        a = Arm64Asm { ...a, code: arm64_clz(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        return a;
+    }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") {
         // post-index `ldrb/strb Wt, [Xn], #imm` (the byte-copy loop): 3
         // operands, ops[1]="[Xn]", ops[2]="#imm".
@@ -1713,7 +1722,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw" || mnem == "sbfiz") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
-    if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16") { return true; }
+    if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
     if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fneg" || mnem == "fcmp" || mnem == "frinta" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
