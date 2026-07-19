@@ -1309,7 +1309,18 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
         parser.ExprCall(vc) => {
             match (vc.callee) {
                 parser.ExprFieldAccess(vfa) => {
-                    if (vfa.field == "insert" && vc.args.len() == 2 && expr_is_str(vc.args[1], s)) { vtag = "string"; }
+                    if (vfa.field == "insert" && vc.args.len() == 2) {
+                        if (expr_is_str(vc.args[1], s)) { vtag = "string"; }
+                        // A 64-bit insert value (a u64/i64 cast, a wide literal,
+                        // a 64-bit local) makes the inferred V 64-bit, so an
+                        // UNANNOTATED `var m = Map { 1: big }` binding records a
+                        // 64-bit value tag and the get_or read side width/sign-
+                        // tracks it — without this the slot recorded
+                        // `Map[K, i32]` and a chained `m.get_or(...) >> 58`
+                        // lowered 32-bit signed on the IR path (#5253 follow-up).
+                        else if (expr_is_u64(vc.args[1], s)) { vtag = "u64"; }
+                        else if (!expr_is_f64(vc.args[1], s) && infer_expr_width(vc.args[1], s) == 64) { vtag = "i64"; }
+                    }
                 },
                 _ => {}
             }
@@ -1328,6 +1339,46 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
+// get_or_recv_map_type (#5253 follow-up): resolve the Map[K, V] type of a
+// `.get_or(k, d)` RECEIVER for the width/sign predicates (infer_expr_width /
+// expr_is_u64 / lower_i64), mirroring the receiver shapes the map-op LOWERING
+// itself dispatches on. expr_map_type_tag covers a map-typed local, a
+// map-returning call, and a literal chain — but NOT a Map struct field
+// (`c.m.get_or(...)`), a map tuple element, or a map array element, so a
+// 64-bit-valued read through those receivers width-tracked 32 and a chained
+// shift picked the SIGNED form even though the lowering site stored/read the
+// column full-width (a silent on-IR miscompile). Returns "" when the receiver
+// isn't a map.
+function get_or_recv_map_type(obj: parser.Expr, s: LowerState): string {
+    var mt: string = expr_map_type_tag(obj, s);
+    if (is_map_type_name(mt)) { return mt; }
+    match (obj) {
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                if (is_map_type_name(tt)) { return tt; }
+            } else {
+                var oty: string = expr_struct_type(fa.obj, s);
+                if (oty != "") {
+                    var ft: string = decl_field_type(s.structs, oty, fa.field);
+                    if (is_map_type_name(ft)) { return ft; }
+                }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(aid) => {
+                    var asl: i32 = s.slot_of(aid.name);
+                    if (asl >= 0 && s.is_arr_slot(asl) && is_map_type_name(s.map_type_of(asl))) { return s.map_type_of(asl); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
 function insert_value_is_ptr(e: parser.Expr, s: LowerState): boolean {
     if (expr_is_str(e, s)) { return true; }
     if (expr_struct_type(e, s).len() > 0) { return true; }
@@ -4390,7 +4441,7 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprFieldAccess(cfa) => {
                     // `m.get_or(k, d)` on a u64-VALUED map is an unsigned 64-bit
                     // value, so a chained `m.get_or(...) >> 1` selects shr_u (#5253).
-                    if (cfa.field == "get_or" && c.args.len() == 2 && map_value_of(expr_map_type_tag(cfa.obj, s)) == "u64") { return true; }
+                    if (cfa.field == "get_or" && c.args.len() == 2 && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "u64") { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
                     if (crty == "") { return false; }
@@ -4538,7 +4589,7 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // width, so an unannotated `var g = m.get_or(...)` (and any
                     // chained arithmetic) must width-track i64 (#5253).
                     if (cfa.field == "get_or" && c.args.len() == 2) {
-                        var gvt: string = map_value_of(expr_map_type_tag(cfa.obj, s));
+                        var gvt: string = map_value_of(get_or_recv_map_type(cfa.obj, s));
                         if (gvt == "i64" || gvt == "u64") { return 64; }
                     }
                 },
@@ -4735,7 +4786,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // normal call path is correct (the width-32 extend below would be
                     // a no-op-then-truncate). #5253.
                     if (cfa.field == "get_or" && c.args.len() == 2) {
-                        var glvt: string = map_value_of(expr_map_type_tag(cfa.obj, s));
+                        var glvt: string = map_value_of(get_or_recv_map_type(cfa.obj, s));
                         if (glvt == "i64" || glvt == "u64") { return lower_expr(e, s); }
                     }
                 },
@@ -12258,7 +12309,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 parser.ExprCall(uvc) => {
                     match (uvc.callee) {
                         parser.ExprFieldAccess(uvfa) => {
-                            if (uvfa.field == "insert" && uvc.args.len() == 2 && expr_is_str(uvc.args[1], sb)) { uvtag = "string"; }
+                            if (uvfa.field == "insert" && uvc.args.len() == 2) {
+                                if (expr_is_str(uvc.args[1], sb)) { uvtag = "string"; }
+                                // A 64-bit value (u64/i64 cast, wide literal,
+                                // 64-bit local) records a 64-bit value tag, so
+                                // the get_or read side width/sign-tracks it —
+                                // the binding-site twin of expr_map_type_tag's
+                                // value inference (#5253 follow-up).
+                                else if (expr_is_u64(uvc.args[1], sb)) { uvtag = "u64"; }
+                                else if (!expr_is_f64(uvc.args[1], sb) && infer_expr_width(uvc.args[1], sb) == 64) { uvtag = "i64"; }
+                            }
                         },
                         _ => {}
                     }
