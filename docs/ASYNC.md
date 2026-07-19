@@ -150,7 +150,42 @@ var bodies: string[] = async.with_deadline(250, [
 
 ---
 
-## 6. The awaitable fetch: `fetch.fetch_future`
+## 6. Deterministic simulation: the `Driver` seam and `std/sim`
+
+Everything nondeterministic the combinators do funnels through one seam: the
+`async.Driver` trait (`poll_ready` / `now_ns` / `timer` / `drop_token`). Each
+combinator has an `*_on(drv, …)` sibling — `gather_on` / `race_on` /
+`with_deadline_on` — carrying the loop; the plain forms delegate to it with the
+real driver (whose methods are exactly the `poll` / `monotonic_ns` /
+`wasm_timer_pollable` / `wasm_pollable_drop` builtins).
+
+`std/sim` substitutes a virtual driver (`docs/DST-PLATFORM-BRIEF.md`): a
+virtual clock starting at 0 ns that advances only inside `poll_ready`, tokens
+that encode their ready-at time, and a seeded PRNG breaking readiness ties —
+so a whole fan-out is a pure function of the seed, on every backend
+**including the interpreter** (where fd-backed futures never resolve on the
+real driver). Deadlines become exact virtual-time assertions instead of
+sleeps:
+
+```fern
+import "std/async";
+import "std/sim";
+
+var d: sim.Sim = sim.new(7);
+var fs: async.Future[string][] = [
+    sim.future_at(d, 40000000, "late"),   // ready at 40ms of virtual time
+    sim.future_at(d, 10000000, "early")   // ready at 10ms
+];
+var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+// got == [None, Some("early")], and d.now_ns() == exactly 25000000
+```
+
+`sim.future_at(d, at_ns, v)` resolves to `v` at virtual time `at_ns`;
+`sim.future_chain(d, at_ns, step_ns, n, v)` re-suspends `n` times (the
+`__fetch_drain` shape) before resolving. See
+`examples/tests/sim_driver_test.fern`.
+
+## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[string]
@@ -165,7 +200,7 @@ network byte order — build it with `fetch.ipv4(a,b,c,d)`.)
 
 ---
 
-## 7. How it works (one paragraph)
+## 8. How it works (one paragraph)
 
 A `Future[T]` is either a ready value or an fd plus a continuation. The
 combinators gather the pending futures' fds, block once in the universal `poll`
