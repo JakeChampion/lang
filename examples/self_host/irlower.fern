@@ -11123,6 +11123,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // i32[] env box; bind f as an array slot AND mark it a closure local
     // so a later `f(args)` uses the env-passing closure-call form.
     var clo_init: boolean = false;
+    // #5281: set when the init is a call producing a closure whose OWN call
+    // returns another closure (`var g = pick()`, pick a `() => (() => T)`
+    // factory) — mark the binding a RETCLO local below so a later `var h = g()`
+    // binds h a closure local.
+    var init_retclo: boolean = false;
     match (v.init) {
         parser.ExprLambda(_) => { clo_init = true; },
         parser.ExprCall(cc) => {
@@ -11137,10 +11142,19 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // `var inner = outer()` where `outer` is itself a closure
                     // LOCAL whose return type is a fn (a closure factory
                     // returning a closure): the returned value is a closure BOX,
-                    // so inner must dispatch env-first. Without this inner stayed
-                    // a plain slot and `inner(x)` called the box pointer as code
-                    // — SIGSEGV on the nested closure-of-closure factory.
+                    // so inner must dispatch env-first. Handles the ANNOTATED form
+                    // (`var inner: fn = outer()`); the unannotated `var h = g()`
+                    // rides the RETCLO markers below.
                     else if (s.is_closure_local(cid.name) && (v.type_name == "fn" || is_fn_payload_spelling(v.type_name))) { clo_init = true; }
+                    // `var g = pick()` where pick returns a closure that ITSELF
+                    // returns a closure (RETCLO2) — g is a closure local AND a
+                    // RETCLO local (#5281). Covers the UNANNOTATED `var h = g()`
+                    // case the fn-typed rule above misses (no type annotation).
+                    if (util.index_of_str(s.closure_fns, "RETCLO2:" + cid.name) >= 0) { clo_init = true; init_retclo = true; }
+                    // `var h = g()` where g is a RETCLO closure local — g()'s
+                    // result is a closure box, so bind h a closure local; else
+                    // `h()` bare-calls the box pointer as code (SIGSEGV).
+                    if (s.is_closure_local("RETCLO$" + cid.name)) { clo_init = true; }
                 },
                 _ => { }
             }
@@ -11205,6 +11219,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var cslot: i32 = cvb.slot_of(v.name);
         cvb = cvb.mark_arr(cslot, true);
         cvb = cvb.mark_closure_local(v.name);
+        // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from
+        // a RETCLO2 factory call) recognises g()'s result as a closure.
+        if (init_retclo) { cvb = cvb.mark_closure_local("RETCLO$" + v.name); }
         cvb = cvb.emit(ir.op_store_local(cslot));
         // #4557 alias retain: a bare-ident closure alias shares the
         // env box; inc it so this slot's exit-sweep dec is balanced
@@ -31597,6 +31614,100 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.
     var fp: string[] = fnptr_arr_fields_of(funcs, structs);
     var i: i32 = 0;
     while (i < fp.len()) { out = out.append(fp[i]); i = i + 1; }
+    // #5281: "RETCLO2:<fn>" markers for functions whose returned closure is
+    // ITSELF closure-returning (a `() => (() => T)` factory). Ride the same list
+    // as the FNPTR markers — a marker can't collide with a bare fn name, and the
+    // membership consumers ignore it. `var g = pick()` reads this to mark g a
+    // RETCLO local so a later `var h = g()` binds h a closure local (env-first).
+    var rc: string[] = closure_ret_closure_fns_of(funcs, structs);
+    var ri: i32 = 0;
+    while (ri < rc.len()) { out = out.append("RETCLO2:" + rc[ri]); ri = ri + 1; }
+    return out;
+}
+
+// mkclo_funcval extracts the closure funcval name from a `__mkclo$<fv>` env-box
+// constructor marker (`__mkclo$pick$clo0` -> `pick$clo0`), or "" if not one.
+function mkclo_funcval(name: string): string {
+    if (name.len() > 8 && name[0:8] == "__mkclo$") { return name[8 : name.len()] + ""; }
+    return "";
+}
+
+// body_binding_mkclo_funcval returns the closure funcval `name` is bound to in
+// `body` via a `var name = __mkclo$<fv>(caps)` binding (recursing into nested
+// blocks), or "". This is the LIFTED-module shape of a captured lambda bound to a
+// local — the form a returned closure takes after lift_lambdas hoists it.
+function body_binding_mkclo_funcval(body: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprCall(cc) => {
+                            match (cc.callee) {
+                                parser.ExprIdent(cid) => { var fv: string = mkclo_funcval(cid.name); if (fv.len() > 0) { return fv; } },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(bif) => {
+                var t: string = body_binding_mkclo_funcval(bif.then_body, name); if (t.len() > 0) { return t; }
+                var e: string = body_binding_mkclo_funcval(bif.else_body, name); if (e.len() > 0) { return e; }
+            },
+            parser.StmtWhile(bwh) => { var wt: string = body_binding_mkclo_funcval(bwh.body, name); if (wt.len() > 0) { return wt; } },
+            parser.StmtFor(bfr) => { var ft: string = body_binding_mkclo_funcval(bfr.body, name); if (ft.len() > 0) { return ft; } },
+            parser.StmtMatch(bmt) => {
+                var mi: i32 = 0;
+                while (mi < bmt.arms.len()) { var mt: string = body_binding_mkclo_funcval(bmt.arms[mi].body, name); if (mt.len() > 0) { return mt; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// closure_ret_closure_fns_of returns the names of module functions whose returned
+// CLOSURE is itself closure-returning — a `() => (() => T)` two-level factory. Run on
+// the LIFTED module (post lift_lambdas): the returned closure is a `__mkclo$<fv>` box
+// whose funcval `fv` is another module function; the factory is RETCLO2 when that
+// funcval is ITSELF closure-returning (a member of closureset = closure_ret_fns_of).
+// A caller's `var g = pick()` reads this to mark g a RETCLO local so a later
+// `var h = g()` binds h a closure local and `h()` dispatches env-first instead of
+// bare-calling the inner box pointer (#5281 SIGSEGV).
+pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var closureset: string[] = closure_ret_fns_of(funcs, structs);
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < funcs.len()) {
+        if (funcs[fi].ret_type == "fn") {
+            var rets: parser.Expr[] = collect_returns(funcs[fi].body, []);
+            var hit: boolean = false;
+            var ri: i32 = 0;
+            while (ri < rets.len()) {
+                var fv: string = "";
+                match (rets[ri]) {
+                    // `return $lamret` bound to `__mkclo$<fv>(caps)` (the lifted form).
+                    parser.ExprIdent(rid) => { fv = body_binding_mkclo_funcval(funcs[fi].body, rid.name); },
+                    // `return __mkclo$<fv>(caps)` directly.
+                    parser.ExprCall(rcc) => {
+                        match (rcc.callee) {
+                            parser.ExprIdent(rcid) => { fv = mkclo_funcval(rcid.name); },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                if (fv.len() > 0 && util.index_of_str(closureset, fv) >= 0) { hit = true; }
+                ri = ri + 1;
+            }
+            if (hit) { out = out.append(funcs[fi].name); }
+        }
+        fi = fi + 1;
+    }
     return out;
 }
 
