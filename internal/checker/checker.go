@@ -10337,7 +10337,29 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if i >= len(vr.payloads) || at == nil {
 						continue
 					}
-					if !c.unifyType(vr.payloads[i], at, sub) {
+					// Concrete→`dyn Trait` boxing in a variant-payload position.
+					// The dyn boxing-site list (var init / assignment / argument /
+					// array element / return / struct field) omitted the user-enum
+					// variant payload, so `Wrap(Concrete{...})` for a
+					// `Wrap(dyn Trait)` variant reported a spurious E036 even though
+					// the builtin Ok/Some/Err payloads and struct fields accept it.
+					// Record the coercion (so the IR boxes it) and accept it when the
+					// concrete impls every trait in the set — mirroring
+					// assignable()'s / maybeWrapForUnion's dyn branch. A
+					// non-implementing concrete still errors E036.
+					dynPayloadOK := false
+					if dt, ok := substituteType(vr.payloads[i], sub).(ast.DynTraitType); ok {
+						if _, srcDyn := at.(ast.DynTraitType); !srcDyn {
+							if tn, ok2 := methodTypeName(at); ok2 && c.implementsAllDynTraits(dt, tn) {
+								dynPayloadOK = true
+								if c.info.DynCoercions == nil {
+									c.info.DynCoercions = map[ast.Expr]DynCoercion{}
+								}
+								c.info.DynCoercions[a] = DynCoercion{Trait: dt.Trait0(), Traits: dt.Traits, Concrete: tn}
+							}
+						}
+					}
+					if !c.unifyType(vr.payloads[i], at, sub) && !dynPayloadOK {
 						c.errfCode(a.Pos(), "E036", "variant %s payload %d type %s, expected %s",
 							id.Name, i, at, substituteType(vr.payloads[i], sub))
 					}

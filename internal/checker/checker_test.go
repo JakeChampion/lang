@@ -3682,6 +3682,16 @@ function main(): i32 { var h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }
 		t.Fatalf("implicit concrete->dyn coercion in a struct field should check: %v", err)
 	}
 
+	// Accepted: a concrete value coerces to a `dyn Trait` USER-ENUM variant
+	// payload with no explicit `as dyn Shape` — the variant-payload position
+	// was also missing from the boxing-site list, so this reported a spurious
+	// E036 even though the builtin Ok/Some/Err payloads and struct fields
+	// accept it.
+	if err := checkSource(t, prelude+`enum Box { Wrap(dyn Shape), Empty }
+function main(): i32 { var b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) => { return d.area(); }, Empty => { return 0; } } }`); err != nil {
+		t.Fatalf("implicit concrete->dyn coercion in a variant payload should check: %v", err)
+	}
+
 	cases := []struct{ name, src, want string }{
 		{"non-impl coercion",
 			prelude + `struct NoShape { z: i32 }
@@ -3709,6 +3719,11 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 struct Holder { shape: dyn Shape }
 function main(): i32 { var h: Holder = Holder { shape: NoShape { z: 1 } }; return 0; }`,
 			"expected dyn Shape, got NoShape"},
+		{"non-impl in dyn variant payload",
+			prelude + `struct NoShape { z: i32 }
+enum Box { Wrap(dyn Shape) }
+function main(): i32 { var b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
+			"payload 0 type NoShape, expected dyn Shape"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
