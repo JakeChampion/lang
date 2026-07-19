@@ -4093,7 +4093,12 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
 pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprNumber(n) => { return n.is_float; },
-        parser.ExprIdent(id) => { return s.is_f64_slot(s.slot_of(id.name)); },
+        parser.ExprIdent(id) => {
+            if (s.is_f64_slot(s.slot_of(id.name))) { return true; }
+            // A bare CONST reference lowers to a call — its f64-ness comes from
+            // the const fn's return type (`const HALF: f64` used bare, #4801).
+            return s.slot_of(id.name) < 0 && s.is_const_fn(id.name) && s.is_f64_ret_fn(id.name);
+        },
         parser.ExprBinary(b) => {
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
                 return expr_is_f64(b.left, s) || expr_is_f64(b.right, s);
@@ -4538,6 +4543,12 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         },
         parser.ExprIdent(id) => {
             if (s.is_i64_slot(s.slot_of(id.name))) { return 64; }
+            // A bare CONST reference (`BIG` — a zero-arg fn per the parser's
+            // desugar) is the call it lowers to, so its width comes from the
+            // const fn's return type. Without this an i64 const used bare
+            // (`print_int(BIG + 1)`) stayed on the 32-bit path and emitted an
+            // i64-vs-i32 type mismatch on wasm (#4801).
+            if (s.slot_of(id.name) < 0 && s.is_const_fn(id.name) && s.is_i64_ret_fn(id.name)) { return 64; }
             return 32;
         },
         parser.ExprBinary(b) => {
@@ -7016,6 +7027,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // An argument bound to an i64 param must be lowered as
                             // an i64 value (so an i64 literal / i32 source widens).
                             sc = lower_i64(c.args[ai], sc);
+                        } else if (sc.param_is_f64(cid.name, ai) && !expr_is_f64(c.args[ai], sc)) {
+                            // An INTEGER argument at an f64 param widens via
+                            // f64.convert_i32_s (`addhalf(3)` passes 3.0, #4801);
+                            // an already-f64 argument keeps the plain path below.
+                            sc = lower_expr(c.args[ai], sc);
+                            if (!sc.ok) { return sc; }
+                            sc = sc.emit(ir.op_i32_to_f64());
                         } else if (sc.callee_param_is_typevar(cid.name, ai)
                                    && !expr_is_f64(c.args[ai], sc) && infer_expr_width(c.args[ai], sc) == 64) {
                             // A 64-bit (i64/u64) argument at a BARE-TYPEVAR
@@ -11123,6 +11141,15 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // a plain slot and `inner(x)` called the box pointer as code
                     // — SIGSEGV on the nested closure-of-closure factory.
                     else if (s.is_closure_local(cid.name) && (v.type_name == "fn" || is_fn_payload_spelling(v.type_name))) { clo_init = true; }
+                },
+                // A METHOD-returned closure (`var f = m.make()` where
+                // Maker.make returns a capturing lambda): the registry keys
+                // methods "<BaseType>.<method>" — bind f a closure local so
+                // its call dispatches env-first instead of bare-calling the
+                // env box pointer as a table index (#4801).
+                parser.ExprFieldAccess(cfa) => {
+                    var mrty: string = expr_struct_type(cfa.obj, s);
+                    if (mrty.len() > 0 && util.index_of_str(s.closure_fns, mrty + "." + cfa.field) >= 0) { clo_init = true; }
                 },
                 _ => { }
             }
@@ -31474,7 +31501,16 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
         changed = false;
         var fi: i32 = 0;
         while (fi < funcs.len()) {
-            if (util.index_of_str(out, funcs[fi].name) < 0) {
+            // Free functions key by bare name; METHODS by the qualified
+            // "<BaseType>.<method>" the call site dispatches to (the same
+            // convention as i64_ret_fns_of) — so `var f = m.make()` can bind f
+            // a closure local. Previously a closure-returning method registered
+            // under its BARE name, which no method call site ever looks up, so
+            // the binding stayed a plain slot and `f(21)` bare-called the env
+            // box pointer as a table index — `undefined element` trap (#4801).
+            var fkey: string = funcs[fi].name;
+            if (funcs[fi].receiver_type.len() > 0) { fkey = util.base_type_name(funcs[fi].receiver_type) + "." + funcs[fi].name; }
+            if (util.index_of_str(out, fkey) < 0) {
                 var b: parser.Stmt[] = funcs[fi].body;
                 // With a declared fn return type, check EVERY return in the
                 // body (branch / loop / match-arm returns included — see
@@ -31544,13 +31580,13 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                         }
                         ri = ri + 1;
                     }
-                    if (hit) { out = out.append(funcs[fi].name); changed = true; }
+                    if (hit) { out = out.append(fkey); changed = true; }
                 } else if (b.len() > 0) {
                     match (b[b.len() - 1]) {
                         parser.StmtReturn(r) => {
                             match (r.value) {
                                 parser.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, gfns)) { out = out.append(funcs[fi].name); changed = true; }
+                                    if (!lambda_has_no_captures(lam, gfns)) { out = out.append(fkey); changed = true; }
                                 },
                                 _ => { }
                             }
@@ -32416,6 +32452,11 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         var pj: i32 = 0;
         while (pj < funcs[k].params.len()) {
             if (funcs[k].params[pj].type_name == "i64" || funcs[k].params[pj].type_name == "u64") { flags = flags + "1"; any = true; }
+            // An f64/f32 PARAM flags '4' so param_is_f64 can widen an INTEGER
+            // argument at the call site (`addhalf(3)` → 3.0 via i32_to_f64,
+            // #4801). Read by NOTHING else — is_i64_ret_fn wants '1'/'2',
+            // param_is_i64 wants '1' — so it never perturbs 64-bit lowering.
+            else if (funcs[k].params[pj].type_name == "f64" || funcs[k].params[pj].type_name == "f32") { flags = flags + "4"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -34506,6 +34547,15 @@ pub function (s: LowerState) param_is_i64(name: string, idx: i32): boolean {
     var sig: string = s.i64_sig_of(name);
     var pos: i32 = idx + 1;   // skip the ret flag
     return pos < sig.len() && sig[pos] == 49;   // 49 = '1'
+}
+
+// param_is_f64 reports whether arg index `idx` of a call to `name` targets an
+// f64/f32 param (flag '4' in the same registry) — so an INTEGER argument there
+// widens via i32_to_f64 instead of passing a type-mismatched i32 (#4801).
+pub function (s: LowerState) param_is_f64(name: string, idx: i32): boolean {
+    var sig: string = s.i64_sig_of(name);
+    var pos: i32 = idx + 1;   // skip the ret flag
+    return pos < sig.len() && sig[pos] == 52;   // 52 = '4'
 }
 
 // callee_param_is_fn reports whether callee `name`'s param `idx` is a function
