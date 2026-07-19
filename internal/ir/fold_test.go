@@ -83,26 +83,51 @@ func TestFoldReassociatesI64ConstantChain(t *testing.T) {
 	}
 }
 
-// Reassociation is restricted to a single associative op repeated.
-// A mixed `add` then `sub` chain (`x + 1 - 2`) must NOT combine — sub is
-// not associative in this shape — so both constants and both ops survive.
-func TestFoldDoesNotReassociateMixedOps(t *testing.T) {
-	p := loweredAndFolded(t, `function f(x: i32): i32 { return x + 1 - 2; }`)
-	adds, subs, consts := 0, 0, 0
-	for _, op := range findFunc(p, "f").Ops {
-		switch op.Kind {
-		case OpAdd:
-			adds++
-		case OpSub:
-			subs++
-		case OpConstI32:
-			consts++
+// Additive chains combine even when + and - mix: `(x ±a c1) ±b c2` folds
+// to `x + net` with a single add. Each collapses to `load ; const net ;
+// add ; return`, where net carries the signed sum.
+func TestFoldCombinesAdditiveChain(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int32
+	}{
+		{"sub-sub", `function f(x: i32): i32 { return x - 1 - 2; }`, -3},
+		{"add-sub", `function f(x: i32): i32 { return x + 8 - 4; }`, 4},
+		{"sub-add", `function f(x: i32): i32 { return x - 8 + 4; }`, -4},
+		{"chain4", `function f(x: i32): i32 { return x + 1 - 2 + 3; }`, 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := loweredAndFolded(t, c.src)
+			fn := findFunc(p, "f")
+			if len(fn.Ops) != 4 {
+				t.Fatalf("expected 4 ops after additive fold, got %d:\n%s", len(fn.Ops), p)
+			}
+			if fn.Ops[1].Kind != OpConstI32 || fn.Ops[1].I32 != c.want {
+				t.Errorf("op[1] = %s %d, want OpConstI32 %d:\n%s",
+					fn.Ops[1].Kind, fn.Ops[1].I32, c.want, p)
+			}
+			if fn.Ops[2].Kind != OpAdd {
+				t.Errorf("op[2] = %s, want OpAdd (a mixed chain always surfaces as add):\n%s", fn.Ops[2].Kind, p)
+			}
+		})
+	}
+}
+
+// A net-zero additive chain (`x + 5 - 5`) folds to `const 0 ; add`, which
+// the strength-reduction pass in OptimizeCleanup then drops entirely — the
+// function reduces to just returning its argument.
+func TestFoldNetZeroAdditiveChainReducesToArg(t *testing.T) {
+	p := lowerSource(t, `function f(x: i32): i32 { return x + 5 - 5; }`)
+	OptimizeCleanup(p)
+	fn := findFunc(p, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpConstI32 || op.Kind == OpAdd || op.Kind == OpSub {
+			t.Errorf("net-zero chain should reduce to just the arg, found leftover %s:\n%s", op.Kind, p)
 		}
 	}
-	if adds != 1 || subs != 1 || consts != 2 {
-		t.Errorf("mixed add/sub chain should be left intact (1 add, 1 sub, 2 consts), got %d/%d/%d:\n%s",
-			adds, subs, consts, p)
-	}
+	mustContainOp(t, p, "f", OpLoadLocal)
 }
 
 // Shifts must NOT reassociate: the runtime masks the shift count to the
