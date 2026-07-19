@@ -159,6 +159,13 @@ pub function is_fern_helper(name: string): boolean {
         // chr(n)'s 1-char-string-box helper (stack-arg body under
         // __fn___fern_chr; allocates, so it needs the heap runtime).
         || name == "__fern_chr"
+        // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
+        // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
+        // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
+        // emitted in emit_ir_runtime (x86) / asm_arm64.emit_runtime (arm64). Only
+        // irlower's lower_arr_str_join emits the call. wasm defers to its AST path
+        // ($__fern_str_join) — see wasm_ir_deferrals_ok.
+        || name == "__fern_arr_str_join"
         // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
         // superseded old box (rc-guarded shallow free) unless it is `new` or the
         // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
@@ -4437,6 +4444,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
             // chr allocates its 1-char box, so pull in the heap runtime too.
             if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
+            // arr.join(sep) needs its own body + the heap + str_concat runtime it
+            // builds the result with (mark_arr_str_join sets all three). #5328.
+            if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
             // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
             // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
             // must not carry them, since the strarrarr body's inner
@@ -5893,6 +5903,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("str_concat")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), all_structs, s);
+    }
+    // arr.join(sep) — a Fern runtime function (#5328) lowered through the IR
+    // pipeline: `var r = ""` accumulator, concatenating each element with `sep`
+    // via `+` (str_concat, present above via the arr_str_join need's deps). Heap-
+    // dependent (present above). .text since the heap runtime left us in .bss.
+    if (s.has_need("arr_str_join")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), all_structs, s);
     }
     // i32_to_string — backs (n).to_string(), Tier-2 via the intrinsics (#2649):
     // digit-buffer build. Heap-dependent (present above).
