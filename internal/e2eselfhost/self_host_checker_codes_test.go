@@ -279,13 +279,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// bound-derive-ok carries `impl Ord for i32`: the derived `cmp`
 		// dispatches per-field to the FIELD type's impl (synthOrd emits
 		// `self.x.cmp(other.x)` — the ord_struct_enum e2e fixture is the
-		// design reference), so without it the synthesized body is
-		// ill-typed and the Go checker reports a position-less E043 that
-		// diag.Format used to swallow (the pre-#5391 rendering hole made
-		// the old impl-less expectation vacuously "pass"). The self-host
-		// checker does not yet type-check derived bodies at all — that
-		// gap is #5392.
+		// design reference), so without it the derive is rejected by the
+		// E021 field-conformance pre-check below (#5392).
 		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		// E021 @derive field conformance (#5392): deriving Eq / Ord / Hash
+		// for a type whose field (or enum variant payload) type does not
+		// implement the trait — no impl, no derive of its own, no method
+		// set — draws ONE positioned E021 at the deriving decl instead of
+		// the position-less per-field E043 garbage the ill-typed
+		// synthesized body used to surface. With the impl present the
+		// derive is clean; a two-field gap still reports a single error.
+		{"derive-field-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; return p.x; }\n", []string{"E021"}},
+		{"derive-field-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; return p.x; }\n", nil},
+		{"derive-enum-payload-no-impl", "trait Eq { function eq(self: Self, other: Self): boolean; }\n@derive(Eq)\nenum E { A, B(i32) }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-two-fields-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct P { x: i32, y: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not

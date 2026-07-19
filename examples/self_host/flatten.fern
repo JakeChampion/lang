@@ -659,6 +659,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             name: mangle_bare(mod.structs[j].name, ctx),
             fields: rewrite_struct_fields(mod.structs[j].fields, ctx),
             type_params: mod.structs[j].type_params,
+            derives: mod.structs[j].derives,
             line: mod.structs[j].line,
             col: mod.structs[j].col,
             enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),

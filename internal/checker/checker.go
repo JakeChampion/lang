@@ -9,6 +9,7 @@ package checker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3331,6 +3332,117 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 	return fmt.Sprintf("map key type %s is not yet supported (use i32, string, or a struct/enum with `@derive(Eq, Hash)`)", k)
 }
 
+// deriveConf answers "does type <tn> implement trait <dn>?" at
+// derive-synthesis time — BEFORE the conformance pass fills
+// c.info.Impls. Three sources count, mirroring how the later E021
+// bound check resolves conformance: an explicit `impl dn for tn`
+// (prog.Impls, including stdlib-merged ones — primitives conform only
+// this way), a pending `@derive(dn)` on tn itself (it will synthesise
+// its own impl in this same pass, in either order), and an existing
+// receiver-method set covering every required trait method (the
+// conformance pass's "adopt the existing method" rule). Drives the
+// @derive(Eq/Ord/Hash) field pre-check in synthesizeDerives.
+type deriveConf struct {
+	impls   map[string]map[string]bool // trait name -> type name
+	methods map[string]map[string]bool // type name -> receiver-method name
+}
+
+func newDeriveConf(prog *ast.Program) *deriveConf {
+	dc := &deriveConf{impls: map[string]map[string]bool{}, methods: map[string]map[string]bool{}}
+	add := func(m map[string]map[string]bool, k1, k2 string) {
+		if m[k1] == nil {
+			m[k1] = map[string]bool{}
+		}
+		m[k1][k2] = true
+	}
+	for _, im := range prog.Impls {
+		if tn, ok := methodTypeName(im.Type); ok {
+			add(dc.impls, im.Trait, tn)
+		}
+	}
+	for _, sd := range prog.Structs {
+		for _, dn := range sd.Derives {
+			add(dc.impls, dn, sd.Name)
+		}
+	}
+	for _, ed := range prog.Enums {
+		for _, dn := range ed.Derives {
+			add(dc.impls, dn, ed.Name)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil {
+			continue
+		}
+		if tn, ok := methodTypeName(fn.Receiver.Type); ok {
+			add(dc.methods, tn, fn.Name)
+		}
+	}
+	return dc
+}
+
+// conforms reports whether type name tn implements trait td (declared
+// under name dn): via impl/derive, or by providing every required
+// (abstract) trait method as a receiver method. A trait with no
+// required methods conforms only via an explicit impl.
+func (dc *deriveConf) conforms(td *ast.TraitDecl, dn, tn string) bool {
+	if dc.impls[dn][tn] {
+		return true
+	}
+	required := false
+	for _, m := range td.Methods {
+		if m.Body != nil {
+			continue
+		}
+		required = true
+		if !dc.methods[tn][m.Name] {
+			return false
+		}
+	}
+	return required
+}
+
+// deriveFieldGap returns the first (label, type) among the given
+// field/payload types that does NOT conform to trait td — the
+// @derive(Eq/Ord/Hash) pre-check that replaces the position-less
+// garbage a broken synthesised body would surface (#5392). Types the
+// check cannot name (arrays, tuples, maps, closures — methodTypeName
+// fails) and type parameters of the deriving decl are skipped: the
+// former keep their historical behaviour, the latter are bound-checked
+// per instantiation via the parametric impl.
+func (dc *deriveConf) deriveFieldGap(td *ast.TraitDecl, dn string, labels []string, types []ast.Type, typeParams []string) (string, string, bool) {
+	for i, t := range types {
+		tn, ok := methodTypeName(t)
+		if !ok || slices.Contains(typeParams, tn) {
+			continue
+		}
+		if !dc.conforms(td, dn, tn) {
+			return labels[i], tn, true
+		}
+	}
+	return "", "", false
+}
+
+// preCheckDeriveFields runs the deriveFieldGap pre-check for one
+// derive of a field-wise-comparing trait (Eq / Ord / Hash — the kinds
+// whose synthesised bodies call the trait method on every field) and
+// reports the E021 at the deriving decl's position. labels[i] names
+// types[i] for the message ("field x" / "variant B payload"). Returns
+// true when the derive is broken, in which case the caller must skip
+// synthesis — no method beats an ill-typed one.
+func (c *checker) preCheckDeriveFields(dc *deriveConf, td *ast.TraitDecl, dn, kind, what string, p ast.Position, labels []string, types []ast.Type, typeParams []string) bool {
+	if kind != "Eq" && kind != "Ord" && kind != "Hash" {
+		return false
+	}
+	label, tn, bad := dc.deriveFieldGap(td, dn, labels, types, typeParams)
+	if !bad {
+		return false
+	}
+	c.errfCode(p, "E021", "cannot @derive(%s) for %s: %s of type %s does not implement %s — add `impl %s for %s` (or remove the derive)",
+		demangle(dn), demangle(what), label, demangle(tn), demangle(dn), demangle(dn), demangle(tn))
+	return true
+}
+
 // synthesizeDerives expands every struct's `@derive(Trait, …)` into a
 // field-wise `impl Trait for Struct`: the generated method bodies call
 // the corresponding trait method on each field (`self.f.eq(other.f)`,
@@ -3340,6 +3452,21 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 // ImplDecl to prog.Impls, ahead of the receiver-hoist + conformance
 // passes. See docs/TRAITS.md.
 func (c *checker) synthesizeDerives(prog *ast.Program) {
+	var dc *deriveConf
+	for _, sd := range prog.Structs {
+		if len(sd.Derives) > 0 {
+			dc = newDeriveConf(prog)
+			break
+		}
+	}
+	if dc == nil {
+		for _, ed := range prog.Enums {
+			if len(ed.Derives) > 0 {
+				dc = newDeriveConf(prog)
+				break
+			}
+		}
+	}
 	for _, sd := range prog.Structs {
 		if len(sd.Derives) == 0 {
 			continue
@@ -3363,10 +3490,18 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				c.errfCode(sd.P, "E021", "@derive(%s): unknown trait", demangle(dn))
 				continue
 			}
-			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
 				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", demangle(dn))
+				continue
+			}
+			labels := make([]string, len(sd.Fields))
+			types := make([]ast.Type, len(sd.Fields))
+			for i, f := range sd.Fields {
+				labels[i] = "field " + f.Name
+				types[i] = f.Type
+			}
+			if c.preCheckDeriveFields(dc, td, dn, kind, sd.Name, sd.P, labels, types, sd.TypeParams) {
 				continue
 			}
 			var method *ast.FuncDecl
@@ -3437,8 +3572,20 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 		// rendering payloads via the bound. See docs/TRAITS.md.
 		recvType, implTypeParams := deriveRecvEnum(ed)
 		for _, dn := range derives {
-			if _, ok := c.info.Traits[dn]; !ok {
+			td, ok := c.info.Traits[dn]
+			if !ok {
 				c.errfCode(ed.P, "E021", "@derive(%s): unknown trait", demangle(dn))
+				continue
+			}
+			var labels []string
+			var types []ast.Type
+			for _, v := range ed.Variants {
+				for _, pt := range v.Payloads {
+					labels = append(labels, "variant "+v.Name+" payload")
+					types = append(types, pt)
+				}
+			}
+			if c.preCheckDeriveFields(dc, td, dn, deriveKind(dn), ed.Name, ed.P, labels, types, ed.TypeParams) {
 				continue
 			}
 			var method *ast.FuncDecl
