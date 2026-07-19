@@ -562,11 +562,14 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
 }
 
 // module_has_wide_map_val_cached reports whether any function emits a map_set
-// (125) or map_get_or (129) carrying an 8-byte i64/u64 VALUE (i64_imm == 1, set
-// by irlower's valwide flag). The wasm $__fern_map_set / $__fern_map_get runtime
-// takes an i32 value, so an i64 on wasm's typed value stack would fail
-// validation — such a map must stay on the AST backend (full i64 maps work
-// there), unlike the register backends whose 8-byte store handles it. #5253.
+// (125), map_get_or (129), or map_values (132) op carrying an 8-byte
+// i64/u64/f64 VALUE column (i64_imm == 1, set by irlower's valwide flag). The
+// wasm $__fern_map_set / $__fern_map_get / $__fern_map_values runtime is
+// i32-celled, so an i64/f64 on wasm's typed value stack (or an 8-byte
+// arr_get on a values() column) would fail validation — such a map must stay
+// on the AST backend, unlike the register backends whose 8-byte stores
+// handle it. The map_values leg also catches f64-valued maps, whose inserts
+// are NOT valwide-flagged (f64 rides its own lowering path). #5253.
 pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -574,7 +577,7 @@ pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boole
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var o: ir.Op = r.ops[i];
-            if ((o.kind_tag == 125 || o.kind_tag == 129) && o.i64_imm != 0) { return true; }
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132) && o.i64_imm != 0) { return true; }
             i = i + 1;
         }
         fi = fi + 1;

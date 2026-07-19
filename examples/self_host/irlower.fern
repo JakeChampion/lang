@@ -1339,6 +1339,14 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
+// map_value_wide (#5253): the map's VALUE column is an 8-byte scalar, so its
+// values() column elements read with the 8-byte arr_get forms and the
+// op_map_values op carries the valwide flag (which keeps such modules off the
+// i32-celled wasm map runtime — wasm_ir_deferrals_ok).
+function map_value_wide(vt: string): boolean {
+    return vt == "i64" || vt == "u64" || vt == "f64";
+}
+
 // get_or_recv_map_type (#5253 follow-up): resolve the Map[K, V] type of a
 // `.get_or(k, d)` RECEIVER for the width/sign predicates (infer_expr_width /
 // expr_is_u64 / lower_i64), mirroring the receiver shapes the map-op LOWERING
@@ -7545,7 +7553,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mvs.ok) { return mvs; }
                             var mvs_vf: i32 = map_kv_elem_flag(mtype, "values");
                             if (mvs_vf == 2) { mvs_vf = 1; }
-                            return mvs.emit(ir.op_map_values(mvs_vf));
+                            return mvs.emit(ir.op_map_values(mvs_vf, map_value_wide(map_value_of(mtype))));
                         }
                         if (fa.field == "iter" && c.args.len() == 0) {
                             // m.iter() -> a fresh MapIter box [map_ptr@0, cursor@8].
@@ -13165,7 +13173,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             if (!mkf.ok) { return mkf; }
             var mki_flag: i32 = map_kv_elem_flag(mkimty, mki_method);
             if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag)); }
-            else { mkf = mkf.emit(ir.op_map_values(mki_flag)); }
+            else { mkf = mkf.emit(ir.op_map_values(mki_flag, map_value_wide(map_value_of(mkimty)))); }
             mkf = mkf.emit(ir.op_store_local(mkisslot));
             // hidden index
             var mkidxn: string = "$formki" + util.i32_to_string(mkf.locals.len());
@@ -13173,10 +13181,17 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             var mkidxslot: i32 = mkf.slot_of(mkidxn);
             mkf = mkf.emit(ir.op_const_i32(0 - 1));
             mkf = mkf.emit(ir.op_store_local(mkidxslot));
-            // the single binding (string element marks the slot str)
+            // the single binding (string element marks the slot str; a
+            // 64-bit values() element width/sign-marks it — #5253, the
+            // single-var twin of the `for k, v in m` value binding)
+            var mki_vw: string = "";
+            if (mki_method == "values") { mki_vw = map_value_of(mkimty); }
             mkf = mkf.add_local(fr.var_name);
             var mkivslot: i32 = mkf.slot_of(fr.var_name);
             if (mki_elem_str) { mkf = mkf.mark_str(mkivslot, true); }
+            else if (mki_vw == "i64") { mkf = mkf.mark_i64(mkivslot, true); }
+            else if (mki_vw == "u64") { mkf = mkf.mark_u64(mkivslot, true); }
+            else if (mki_vw == "f64") { mkf = mkf.mark_f64(mkivslot, true); }
             // counted loop, advance-at-top so `continue` re-advances.
             mkf = mkf.emit(ir.op_block(0)).enter_loop();
             mkf = mkf.emit(ir.op_loop(0));
@@ -13192,7 +13207,11 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             mkf = mkf.emit(ir.op_brif(1));
             mkf = mkf.emit(ir.op_load_local(mkisslot));
             mkf = mkf.emit(ir.op_load_local(mkidxslot));
-            mkf = mkf.emit(ir.op_arr_get(32));
+            // 64-bit values() column: full 8-byte element read (#5253) —
+            // arr_get_i64 for i64/u64, arr_get width 64 (f64.load) for f64.
+            if (mki_vw == "i64" || mki_vw == "u64") { mkf = mkf.emit(ir.op_arr_get_i64()); }
+            else if (mki_vw == "f64") { mkf = mkf.emit(ir.op_arr_get(64)); }
+            else { mkf = mkf.emit(ir.op_arr_get(32)); }
             mkf = mkf.emit(ir.op_store_local(mkivslot));
             mkf = lower_block(fr.body, mkf);
             if (!mkf.ok) { return mkf; }
@@ -13370,7 +13389,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         fm = fm.add_local(vsn);
         var vsslot: i32 = fm.slot_of(vsn);
         fm = fm.emit(ir.op_load_local(mslot));
-        fm = fm.emit(ir.op_map_values(mkv_vflag));
+        fm = fm.emit(ir.op_map_values(mkv_vflag, map_value_wide(vty)));
         fm = fm.emit(ir.op_store_local(vsslot));
         // hidden index
         var idxn: string = "$foridx" + util.i32_to_string(fm.locals.len());
@@ -13378,13 +13397,19 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         var idxslot2: i32 = fm.slot_of(idxn);
         fm = fm.emit(ir.op_const_i32(0 - 1));   // idx = -1 (advance-at-top, #2788)
         fm = fm.emit(ir.op_store_local(idxslot2));
-        // k, v bindings (carry string-ness for downstream dispatch)
+        // k, v bindings (carry string-ness / 64-bit width+sign for downstream
+        // dispatch — a Map[K, i64/u64] value column stores 8-byte elements, so
+        // `v` must width-track i64 (and sign-track u64: `v >> 58` in the body
+        // selects shr_u) or the body reads a truncated/signed i32 (#5253).
         fm = fm.add_local(kname);
         var kslot: i32 = fm.slot_of(kname);
         if (kkind == 0) { fm = fm.mark_str(kslot, true); }
         fm = fm.add_local(vname);
         var vslot: i32 = fm.slot_of(vname);
         if (vty == "string") { fm = fm.mark_str(vslot, true); }
+        else if (vty == "i64") { fm = fm.mark_i64(vslot, true); }
+        else if (vty == "u64") { fm = fm.mark_u64(vslot, true); }
+        else if (vty == "f64") { fm = fm.mark_f64(vslot, true); }
         // loop: idx++ (top) ; idx < keys.len() ; bind k/v ; body ; back-edge.
         // The increment is at the top so a `continue` (br-to-header)
         // re-runs it instead of skipping it (#2788).
@@ -13406,7 +13431,12 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         fm = fm.emit(ir.op_store_local(kslot));
         fm = fm.emit(ir.op_load_local(vsslot));
         fm = fm.emit(ir.op_load_local(idxslot2));
-        fm = fm.emit(ir.op_arr_get(32));
+        // 64-bit value column: read the full 8-byte element — arr_get_i64
+        // (i64.load) for i64/u64, arr_get width 64 (f64.load) for f64 —
+        // not a 32-bit slice of it (#5253).
+        if (vty == "i64" || vty == "u64") { fm = fm.emit(ir.op_arr_get_i64()); }
+        else if (vty == "f64") { fm = fm.emit(ir.op_arr_get(64)); }
+        else { fm = fm.emit(ir.op_arr_get(32)); }
         fm = fm.emit(ir.op_store_local(vslot));
         fm = lower_block(fr.body, fm);
         if (!fm.ok) { return fm; }

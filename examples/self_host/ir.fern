@@ -786,7 +786,16 @@ pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { kind_ta
 // wasm always snapshots (hash map, no raw column) and ignores the flag.
 // Order is backend-defined, so consumers must be order-independent.
 pub function op_map_keys(elemptr: i32): Op { return Op { kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
-pub function op_map_values(elemptr: i32): Op { return Op { kind_tag: 132, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// op_map_values: `i64_imm` = 1 (valwide) when the map's VALUE column is an
+// 8-byte scalar (i64/u64/f64) — the column elements are then read with the
+// 8-byte arr_get forms, which the i32-celled wasm map runtime can't back, so
+// wasm_ir_deferrals_ok keeps such modules on the wasm AST path (the values()
+// sibling of op_map_set/op_map_get_or's valwide flag). #5253.
+pub function op_map_values(elemptr: i32, valwide: boolean): Op {
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 132, i32_imm: elemptr, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 // Map iteration (the parallel-array backends, x86-64 / arm64). `map_iter` pops
 // [map] and pushes a fresh 16-byte iterator box [map_ptr@0, cursor@8] (cursor 0)
 // — the ONLY allocating op of the cluster. `mapiter_has_next` pops [iter] -> i32
