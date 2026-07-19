@@ -25,8 +25,18 @@ function test_is_sorted(): test.TestOutcome { return test.assert_true(cmp.is_sor
 function test_is_sorted_false(): test.TestOutcome { return test.assert_false(cmp.is_sorted([3, 1])); }
 
 function test_contains(): test.TestOutcome { return test.assert_true(cmp.contains([10, 20, 30], 20)); }
-function test_index_of(): test.TestOutcome { return test.assert_eq(cmp.index_of([10, 20, 30], 20), 1); }
-function test_index_of_absent(): test.TestOutcome { return test.assert_eq(cmp.index_of([10, 20, 30], 99), 0 - 1); }
+function test_index_of(): test.TestOutcome {
+    match (cmp.index_of([10, 20, 30], 20)) {
+        Some(i) => { return test.assert_eq(i, 1); },
+        None => { return test.fail("index_of expected Some(1), got None"); }
+    }
+}
+function test_index_of_absent(): test.TestOutcome {
+    match (cmp.index_of([10, 20, 30], 99)) {
+        Some(i) => { return test.fail("index_of expected None for absent value"); },
+        None => { return test.assert_true(true); }
+    }
+}
 
 function test_distinct(): test.TestOutcome {
     var d = cmp.distinct([1, 1, 2, 3, 3, 3]);

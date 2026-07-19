@@ -443,12 +443,12 @@ pub function sort[T: Ord](arr: T[]): T[] {
 // primitive — so they cover the primitive impls above and any user
 // type that impls `Eq`. Like the `Ord` verbs, a bounded generic whose
 // body calls `x.eq(y)` monomorphises to a direct call, so these lower
-// on the self-host IR path too (#2689 / #2691). These are the
-// element-type-generic counterparts to the i32[]/string[]-specific
-// `contains` / `index_of` Array methods in std/array — which std/array
-// can't generalise to `T: Eq` itself without importing core/cmp (a
-// std/array → core/cmp → std/string → std/array import cycle), so the
-// Eq-bounded forms live here with the trait they depend on.
+// on the self-host IR path too (#2689 / #2691). They live here with
+// the `Eq` trait they depend on — the single home for the generic
+// equality-driven sequence verbs (the std/array duplicates were removed
+// in #5348). They are element-type-generic, so unlike the i32[]/string[]-
+// specific `contains` / `index_of` Array receiver methods in std/array
+// they cover any `T: Eq`, including a `@derive(Eq)` struct or enum.
 
 // contains reports whether `xs` holds a value equal to `target`.
 pub function contains[T: Eq](xs: T[], target: T): boolean {
@@ -458,15 +458,17 @@ pub function contains[T: Eq](xs: T[], target: T): boolean {
     return false;
 }
 
-// index_of returns the 0-based position of the first value equal to
-// `target`, or -1 if no value matches.
-pub function index_of[T: Eq](xs: T[], target: T): i32 {
+// index_of returns `Some(i)` for the 0-based position of the first value
+// equal to `target`, or `None` if no value matches. The `Option` return
+// keeps "not found" out of band rather than leaning on a `-1` sentinel
+// (the modern shape unified from std/array in #5348).
+pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
     var i = 0;
     for x in xs {
-        if (x.eq(target)) { return i; }
+        if (x.eq(target)) { return Some(i); }
         i = i + 1;
     }
-    return 0 - 1;
+    return None;
 }
 
 // distinct returns a new array with duplicate values removed, keeping

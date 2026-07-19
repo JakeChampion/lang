@@ -56,12 +56,14 @@ function main(): i32 {
     }
 
     // sort_by: comparator-driven stable sort, ascending and descending.
-    var sa: i32[] = array.sort_by([3, 1, 2], asc);
+    // (The std/array xs.sort_by(cmp) method delegates to std/sort's generic
+    // sort_by; the free function lives in std/sort, not std/array -- #5348.)
+    var sa: i32[] = [3, 1, 2].sort_by(asc);
     if (sa[0] != 1 || sa[1] != 2 || sa[2] != 3) { return 11; }
     var sd: i32[] = [3, 1, 2].sort_by(desc);
     if (sd[0] != 3 || sd[1] != 2 || sd[2] != 1) { return 12; }
     // sort_by leaves an already-sorted run alone and handles duplicates.
-    var sdup: i32[] = array.sort_by([2, 1, 2, 1], asc);
+    var sdup: i32[] = [2, 1, 2, 1].sort_by(asc);
     if (sdup[0] != 1 || sdup[1] != 1 || sdup[2] != 2 || sdup[3] != 2) { return 13; }
 
     return 0;

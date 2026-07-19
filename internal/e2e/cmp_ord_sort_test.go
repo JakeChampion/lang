@@ -93,12 +93,11 @@ func TestNativeOrdSortArm64(t *testing.T) {
 	}
 }
 
-// TestNativeOrdSortModule exercises the shipped `import "std/array"` body: the
+// TestNativeOrdSortModule exercises the shipped `import "core/cmp"` body: the
 // `sort` verb over the primitive `impl Ord for i32` / `string` AND a user Ord
-// struct.
+// struct. (The generic `sort[T: Ord]` verb's single home is core/cmp — #5348.)
 func TestNativeOrdSortModule(t *testing.T) {
-	src := `import "std/array" as arr;
-import "core/cmp" as cmp;
+	src := `import "core/cmp" as cmp;
 struct P { v: i32 }
 impl cmp.Ord for P {
     function cmp(self: Self, other: Self): i32 {
@@ -109,11 +108,11 @@ impl cmp.Ord for P {
 }
 function main(): i32 {
     var r = 0;
-    var s = arr.sort([3, 1, 2]);
+    var s = cmp.sort([3, 1, 2]);
     if (s[0] == 1 && s[1] == 2 && s[2] == 3) { r = r + 1; }
-    var ss = arr.sort(["banana", "apple", "cherry"]);
+    var ss = cmp.sort(["banana", "apple", "cherry"]);
     if (ss[0] == "apple" && ss[1] == "banana" && ss[2] == "cherry") { r = r + 2; }
-    var ps = arr.sort([P { v: 2 }, P { v: 1 }, P { v: 3 }]);
+    var ps = cmp.sort([P { v: 2 }, P { v: 1 }, P { v: 3 }]);
     if (ps[0].v == 1 && ps[1].v == 2 && ps[2].v == 3) { r = r + 4; }
     return r;
 }
