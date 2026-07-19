@@ -10655,7 +10655,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             // i32 return slot. A u64[] ARRAY ident reports width 64 via the
             // overloaded is_u64 flag (scalar u64 and u64[] share it), but an array
             // return is a pointer MOVE, not a scalar — exclude array values so
-            // `return <u64[]>` (e.g. sort_u64_asc) reaches the move-on-return path
+            // `return <u64[]>` (e.g. a u64[]-returning sort) reaches the move-on-return path
             // instead of bailing. (i64[] uses the separate is_i64arr flag, so it
             // already reports width 32 here.)
             var ret_val_is_arr: boolean = false;

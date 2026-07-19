@@ -254,17 +254,17 @@ pub function __method_Array_every_positive(arr: i32[]): boolean {
     return true;
 }
 
-// `(arr: i32[]) sorted_asc()` / `sorted_desc()` — method
-// wrappers around the existing `sort_i32_asc` / `sort_i32_desc`
-// free functions. The receiver-style call reads better in
-// pipelines (`arr.sorted_asc().take(3)`) and matches the
-// shape we'll converge on once generic Ord methods land.
+// `(arr: i32[]) sorted_asc()` / `sorted_desc()` — method wrappers around
+// `core/cmp`'s generic `sort` / `sort_desc` (the retired per-width
+// `sort_i32_asc` / `sort_i32_desc`, #5397). The receiver-style call reads
+// better in pipelines (`arr.sorted_asc().take(3)`) and matches the shape
+// we'll converge on once generic Ord methods land.
 pub function __method_Array_sorted_asc(arr: i32[]): i32[] {
-    return sort.sort_i32_asc(arr);
+    return cmp.sort(arr);
 }
 
 pub function __method_Array_sorted_desc(arr: i32[]): i32[] {
-    return sort.sort_i32_desc(arr);
+    return cmp.sort_desc(arr);
 }
 
 // `(arr: i32[]) cumsum()` — running sum: out[i] is the sum
@@ -305,7 +305,7 @@ pub function __method_Array_sum_squared(arr: i32[]): i32 {
 pub function __method_Array_median(arr: i32[]): Option[i32] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    var sorted: i32[] = sort.sort_i32_asc(arr);
+    var sorted: i32[] = cmp.sort(arr);
     return Some(sorted[(n - 1) / 2]);
 }
 
@@ -643,16 +643,17 @@ pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolea
     return true;
 }
 
-// `(arr: string[]) sorted_str_asc()` / `sorted_str_desc()` —
-// method wrappers around `sort_strings_asc` / `sort_strings_desc`.
-// Companion to the i32[] sorted_asc/desc above; collapses to
+// `(arr: string[]) sorted_str_asc()` / `sorted_str_desc()` — method wrappers
+// around `core/cmp`'s generic `sort` / `sort_desc` over the lexicographic
+// `impl Ord for string` (the retired `sort_strings_asc` / `sort_strings_desc`,
+// #5397). Companion to the i32[] sorted_asc/desc above; collapses to
 // `sorted()` once generic Ord methods land.
 pub function __method_Array_sorted_str_asc(arr: string[]): string[] {
-    return sort.sort_strings_asc(arr);
+    return cmp.sort(arr);
 }
 
 pub function __method_Array_sorted_str_desc(arr: string[]): string[] {
-    return sort.sort_strings_desc(arr);
+    return cmp.sort_desc(arr);
 }
 
 // `(arr: string[]) join_with_last(sep, last_sep)` — like
@@ -878,7 +879,7 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
 pub function median_f64(arr: f64[]): Option[f64] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    var sorted: f64[] = sort.sort_f64_asc(arr);
+    var sorted: f64[] = cmp.sort(arr);
     if (n % 2 == 1) { return Some(sorted[n / 2]); }
     var hi: i32 = n / 2;
     return Some((sorted[hi - 1] + sorted[hi]) * 0.5);

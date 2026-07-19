@@ -9,26 +9,26 @@ import (
 	"testing"
 )
 
-// sortIRCases exercise std/sort through the self-host IR path on x86-64 + wasm
-// (the `std/sort` row's self-host `S` column was blank — native was covered by
-// the `prop_sort_i32` fixture across all four backends, but the self-hosted
-// compiler had never been pinned to lower the sorts through its IR path). The
+// sortIRCases exercise the merge-sort SHAPE through the self-host IR path on
+// x86-64 + wasm. The per-width monomorphic sort zoo (`sort_i32_asc` etc.)
+// retired to core/cmp's generic `sort` / `sort_desc` (#5397), but the
 // single-program driver resolves no imports, so the relevant sort surface is
-// inlined verbatim from `internal/stdlib/std/sort.fern`: the i32 ascending /
-// descending stable bottom-up merge sorts (monomorphic, direct scalar
-// compares), the byte-lexicographic `string_cmp` three-way comparator, and
-// the string ascending / descending merge sorts built on it. This verifies
-// the constructs std/sort lowers to compile on the IR path: scalar (`i32[]`)
-// and pointer (`string[]`) array build via `.append` (the per-pass scratch
-// buffer is materialized fresh — NOT aliased + CoW, which the self-host
-// non-IR paths mutate through in place; see std/sort's sort_i32_asc doc
-// comment), element rewrite via `.with`, indexed scalar + string-byte
-// reads, `.len()`, numeric `<`/`>` comparisons, the nested `while` merge
-// loops, and the n < 2 return-borrowed-param early-out
+// inlined verbatim as monomorphic i32 / string merge sorts matching the
+// fresh-copy shape `cmp.sort` / `cmp.sort_desc` and std/sort's `sort_by`-based
+// string sorts now ship: the i32 ascending / descending stable bottom-up merge
+// sorts (direct scalar compares), the byte-lexicographic `string_cmp` three-way
+// comparator, and the string ascending / descending merge sorts built on it.
+// This verifies the constructs those sorts lower to compile on the IR path:
+// scalar (`i32[]`) and pointer (`string[]`) array build via `.append` (the
+// per-pass scratch buffer is materialized FRESH — NOT aliased + CoW, which the
+// self-host AST/non-IR paths mutate through in place; see core/cmp's `sort` doc
+// comment and the #5397 AST-corruption finding), element rewrite via `.with`,
+// indexed scalar + string-byte reads, `.len()`, numeric `<`/`>` comparisons,
+// the nested `while` merge loops, and the n < 2 return-borrowed-param early-out
 // (executed by the i32-empty / string-singleton cases). Each program
 // returns a small deterministic int (kept <= 126), pinned to the `"ir"`
 // path; expectations are oracle-checked against the native interpreter.
-// FEATURE-AUDIT std/sort row.
+// FEATURE-AUDIT std/sort + core/cmp sort row.
 const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
