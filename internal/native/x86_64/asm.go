@@ -56,9 +56,18 @@ type relFixup struct {
 }
 
 // ripFixup records a rip-relative disp32 field (lea/mov [rip+sym]) to be
-// resolved against a .rodata label once the section layout is final.
+// resolved against a .rodata label once the section layout is final. `end`
+// is the text offset of the END of the containing instruction — the
+// runtime RIP the displacement is relative to. It is stamped by the
+// assemble loop once the instruction finishes encoding: for most forms
+// that's at+4, but mem,imm forms (`add qword ptr [rip+sym], 1`,
+// `mov qword ptr [rip+sym], 0`) place the immediate AFTER the disp32, and
+// resolving against at+4 pointed the access `immLen` bytes past the
+// symbol (the ×256 rc-underflow / leakcheck counter drift and the
+// strbuf_take length-reset miss on the in-process-assembled path).
 type ripFixup struct {
 	at  int
+	end int
 	sym string
 }
 
@@ -185,8 +194,15 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		if sec != "text" {
 			return nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
 		}
+		nRip := len(a.ripFixups)
 		if err := a.insn(line); err != nil {
 			return nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+		}
+		// Stamp every rip fixup this instruction produced with the
+		// instruction's end offset — the runtime RIP its disp32 is
+		// relative to (see the ripFixup comment).
+		for i := nRip; i < len(a.ripFixups); i++ {
+			a.ripFixups[i].end = len(a.text)
 		}
 	}
 	// Resolve rel32 branch/call targets now that all labels are placed.
@@ -244,7 +260,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else {
 			return nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
-		disp := int32(symOff - (f.at + 4))
+		disp := int32(symOff - f.end)
 		putLE32(a.text, f.at, uint32(disp))
 	}
 	// Fill ".quad <symbol>" pointer-table slots. In a PIE these values are
