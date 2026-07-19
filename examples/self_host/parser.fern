@@ -3835,7 +3835,17 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             if (dpa.peek_keyword() == "dyn") {
                 var (dpw_name, dpw_ret_arr, dpw_fn_ret, dpw_p) = parse_type_name(dpa);
                 if (dpw_p.peek_punct() == ")") {
-                    return consume_array_suffix(dpw_p.advance(), dpw_name);
+                    // `(dyn T) => R` is a FUNCTION type whose PARAMETER is a
+                    // trait object, not a grouped trait-object array — the arrow
+                    // follows the parens. Leave it to the char-collect + `=> R`
+                    // path below (which coarsens it to "fn"); only unwrap a
+                    // genuine `(dyn T)` / `(dyn T)[]`. Without this guard the
+                    // arrow + return type are dropped and `(dyn T) => R` params
+                    // fail to parse (#5267 regressed this shape).
+                    var dpw_after: Par = dpw_p.advance();   // past `)`
+                    if (dpw_after.peek_punct() != "=>") {
+                        return consume_array_suffix(dpw_after, dpw_name);
+                    }
                 }
             }
             var tbuf: string = "";

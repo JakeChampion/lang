@@ -95,6 +95,39 @@ func TestSelfHostDynArrayParamIRX86_64(t *testing.T) {
 	}
 }
 
+// TestSelfHostDynFnTypeParamParsesX86_64 guards a parse regression introduced
+// by #5267's paren-unwrap. A `(dyn Trait) => R` FUNCTION type — the arrow
+// follows the parens, so the parenthesized `dyn Trait` is the fn's PARAMETER,
+// not a grouped trait-object array — must still parse. #5267 unwrapped any
+// `(dyn T)` unconditionally, swallowing the `)` and dropping the trailing
+// `=> R`, so the shape failed to parse (P001, zero bytes emitted). The fix
+// only unwraps when `=>` does NOT follow the `)`, otherwise falling through to
+// the `(T) => R` fn-type path (coarse "fn").
+//
+// Runtime dispatch through a dyn-trait-typed fn param is a separate pre-existing
+// gap (the module routes to the AST emitter and miscompiles), so this asserts
+// the module PARSES + COMPILES (non-empty asm), not its exit value.
+func TestSelfHostDynFnTypeParamParsesX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	asmRun, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), asmRun, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	src := []byte(dynArrayParamPrelude +
+		"function apply(f: (dyn Sh) => i32, x: dyn Sh): i32 { return f(x); }\n" +
+		"function area_of(s: dyn Sh): i32 { return s.area(); }\n" +
+		"function main(): i32 { var q: dyn Sh = R { w: 2, h: 5 }; return apply(area_of, q); }\n")
+	asm := runCapture(t, gcc, runner, driverBin, src)
+	if len(asm) == 0 {
+		t.Fatal("self-host compiler emitted 0 bytes for a `(dyn Trait) => R` param — parse regression (#5267 follow-up)")
+	}
+}
+
 // TestSelfHostDynArrayParamIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostDynArrayParamIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
