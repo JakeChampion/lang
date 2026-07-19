@@ -31124,9 +31124,8 @@ function variant_payload_field_type(pv: parser.PatVariant, name: string, structs
     if (pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) { return decl_field_type(structs, vname, "__ev"); }
     var k: i32 = 0;
     while (k < pv.extra_bindings.len()) {
-        if (pv.extra_bindings[k].len() > 0 && pv.extra_bindings[k] != "_" && pv.extra_bindings[k] == name) {
-            return decl_field_type(structs, vname, "__ev" + util.i32_to_string(k + 1));
-        }
+        var eb: string = pv.extra_bindings[k];
+        if (eb.len() > 0 && eb != "_" && eb == name) { return decl_field_type(structs, vname, "__ev" + util.i32_to_string(k + 1)); }
         k = k + 1;
     }
     return "";
