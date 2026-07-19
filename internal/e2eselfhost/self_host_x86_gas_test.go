@@ -118,6 +118,18 @@ func TestSelfHostX86GasByteRegRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasbytereg42", x86GasByteRegDriverMain, 42)
 }
 
+// TestSelfHostX86GasRuntimeOpsRuns exercises the mnemonics asm.fern's
+// mmap-era alloc/RC runtime emits that the front-end grew for #4801:
+// unsuffixed movabs, shrq, btq + jc (the RC sentinel-bit test), incl
+// sym(%rip) + movl sym(%rip) (the rc-underflow counter), movl $imm →
+// mem (refcount zeroing), and store-form cmpq %reg, mem (the array-push
+// capacity check). Before, unknown mnemonics were silently dropped and
+// the two mis-dispatched forms encoded a WRONG instruction — the
+// assembled runtime then died in __fern_alloc's exit-137 bounds trap.
+func TestSelfHostX86GasRuntimeOpsRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasruntimeops42", x86GasRuntimeOpsDriverMain, 42)
+}
+
 // runX86GasNativeDriver concatenates x86_encode.fern + x86_gas.fern +
 // elf.fern + driverMain, compiles it through the self-host wasm emitter,
 // runs the WAT under wasmtime to get the raw ELF the driver assembled and
@@ -318,6 +330,22 @@ function main(): i32 {
     var src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasRuntimeOpsDriverMain: the #4801 runtime-mnemonic battery. rcx =
+// (1<<34) >> 30 = 16 (movabs + shrq); btq $4 sets CF (bit 4 of 16) so jc
+// takes the good path; counter(%rip) is incl'd twice and movl-loaded
+// (eax=2); movl $24 lands in a movq-zeroed stack slot and reloads as 24;
+// 24 + 2 + 16 = 42; store-form cmpq (24 vs 16) makes ja skip the
+// failure overwrite. Any dropped/mis-encoded instruction exits != 42.
+const x86GasRuntimeOpsDriverMain = `
+function main(): i32 {
+    var src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    var entry: i32 = x86_label_off(a, "_start");
+    write(string_from_bytes(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
     return 0;
 }
 `

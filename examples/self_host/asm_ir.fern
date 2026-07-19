@@ -6279,41 +6279,28 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns"), all_structs, s);
     }
-    // stat — now a Fern runtime function (#2649), lowered through the IR pipeline:
-    // stat(2) into __fern_scratch via __syscall3, then build Ok(FileStat{...}) /
-    // Err(NotFound(path)). The first syscall leaf returning a user-typed
-    // Result/struct. Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat")) {
+    // The fs-syscall leaves (stat / read_file / remove_file / write_file /
+    // temp_dir) are now Fern runtime functions (#2649) that share ONE errno→IoError
+    // classifier, __fern_io_error, instead of each inlining the five-way branch.
+    // They are emitted as a SINGLE bundle module (io_error + only the needed
+    // helpers), so the standard inter-procedural RC analysis threads each helper's
+    // call to io_error as an ordinary call-graph edge (io_error consumes its fresh
+    // path arg; the helpers hand it a fresh copy, never their borrowed `path`).
+    // This is the #2649 "dependencies are the call graph" model in miniature.
+    // io_error is emitted once (bundled), gated on the union of the needs; the
+    // arm64 / AST backends keep the register-ABI hand-asm __fern_io_error. temp_dir
+    // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
+    // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
+    // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
+    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("remove_file") || s.has_need("write_file") || s.has_need("temp_dir")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_stat(), all_structs, s);
-    }
-    // read_file — now a Fern runtime function (#2649), lowered through the IR
-    // pipeline: openat/lseek/read/close via __syscall3, the sized read buffer
-    // becomes the Ok(string). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("read_file")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_file(), all_structs, s);
-    }
-    // remove_file — now a Fern runtime function (#2649): unlinkat via __syscall3,
-    // returns Option[IoError]. Heap-dependent (present above); x86-64-only.
-    if (s.has_need("remove_file")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_remove_file(), all_structs, s);
-    }
-    // write_file — now a Fern runtime function (#2649): openat(O_CREAT) via
-    // __syscall4 + write/close via __syscall3, returns Option[IoError].
-    // Heap-dependent (present above); x86-64-only.
-    if (s.has_need("write_file")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_write_file(), all_structs, s);
-    }
-    // temp_dir — now a Fern runtime function (#2649): builds /tmp/<prefix>-<ns>
-    // with the raw intrinsics + mkdirat via __syscall3, returns Result[string,
-    // IoError]. Calls the (Fern) monotonic_ns helper (its need is marked by the
-    // op handler, so __fn___fern_monotonic_ns is present). x86-64-only.
-    if (s.has_need("temp_dir")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_temp_dir(), all_structs, s);
+        var fs_src: string = asmcore.rt_src_io_error();
+        if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(); }
+        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(); }
+        if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(); }
+        if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(); }
+        if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(); }
+        s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     if (s.has_need("poll")) { s = emit_ir_poll(s); }
     if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }

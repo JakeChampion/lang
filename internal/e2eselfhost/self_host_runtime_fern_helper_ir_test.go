@@ -303,6 +303,54 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			}
 		})
 	}
+
+	// Consolidation lock-in (#2649): the fs-syscall leaves share ONE errno→IoError
+	// classifier, __fern_io_error, instead of each inlining the five-way branch.
+	// A program touching all four must emit __fn___fern_io_error exactly once, and
+	// each fs helper's body must CALL it (an ordinary call-graph edge) rather than
+	// inline the variant construction — so no fs-helper body names PermissionDenied.
+	t.Run("io_error_shared", func(t *testing.T) {
+		const prog = `function main(): i32 {
+    var r: i32 = 0;
+    match (stat("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (read_file("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (remove_file("/nope")) { Some(_) => { r = r + 1; }, None => {} }
+    match (write_file("/nope-dir/x", "y")) { Some(_) => { r = r + 1; }, None => {} }
+    match (temp_dir("/nope-parent/p")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    return r;
+}`
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(prog))
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("driver run: %v", err)
+		}
+		got := string(out)
+		if n := strings.Count(got, "\n__fn___fern_io_error:"); n != 1 {
+			t.Errorf("__fn___fern_io_error defined %d times, want exactly 1 (shared classifier)", n)
+		}
+		if !strings.Contains(got, "call __fn___fern_io_error") {
+			t.Error("no `call __fn___fern_io_error` — the fs helpers are not calling the shared classifier")
+		}
+		// Each fs helper delegates its error path to io_error: its body must CALL
+		// the shared classifier (an ordinary call-graph edge) rather than inline the
+		// five-way branch. A silent revert to inlining drops the call.
+		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir"} {
+			body := extractFuncBody(got, sym)
+			if body == "" {
+				t.Errorf("%s not defined in the fs bundle", sym)
+				continue
+			}
+			if !strings.Contains(body, "call __fn___fern_io_error") {
+				t.Errorf("%s does not call __fern_io_error — it is inlining the errno mapping instead of delegating", sym)
+			}
+		}
+	})
 }
 
 // extractFuncBody returns the asm text of the named function: from its

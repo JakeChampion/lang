@@ -312,6 +312,93 @@ func TestFoldHandlesNestedControlFlow(t *testing.T) {
 	}
 }
 
+// A constant loop condition folds the exit br_if. `while (false)`
+// lowers its exit test to `<cond> ; OpNot ; OpBrIf breakD`; with a
+// literal `false` that collapses to `OpConstI32 1 ; OpBrIf breakD`
+// (branch always taken), which Fold turns into an unconditional
+// OpBr — the loop exits at the top and no br_if survives.
+func TestFoldConstBrIfAlwaysTaken(t *testing.T) {
+	src := `function f(): i32 { var i: i32 = 0; while (false) { i = i + 1; } return i; }`
+	// Before Fold the exit test is a real br_if on a constant.
+	pre := lowerSource(t, src)
+	if !hasOpKind(pre, "f", OpBrIf) {
+		t.Fatalf("test premise broken: expected an OpBrIf before fold:\n%s", pre)
+	}
+	p := loweredAndFolded(t, src)
+	fn := findFunc(p, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpBrIf {
+			t.Fatalf("constant-true br_if should fold to an unconditional OpBr:\n%s", p)
+		}
+	}
+	mustContainOp(t, p, "f", OpBr)
+	assertScopesBalanced(t, p)
+}
+
+// `while (true)` lowers its exit test to `OpConstI32 1 ; OpNot ;
+// OpBrIf breakD`; folding `const ; not` first yields `OpConstI32 0 ;
+// OpBrIf breakD` (branch never taken), which Fold drops entirely. The
+// only OpBrIf that could remain here is one from inside the body — this
+// loop's body branches via an OpBr (`break`), so none survives.
+func TestFoldConstBrIfNeverTaken(t *testing.T) {
+	src := `function f(): i32 {
+		var i: i32 = 0;
+		while (true) { i = i + 1; if (i >= 5) { break; } }
+		return i;
+	}`
+	pre := lowerSource(t, src)
+	if !hasOpKind(pre, "f", OpBrIf) {
+		t.Fatalf("test premise broken: expected an OpBrIf before fold:\n%s", pre)
+	}
+	p := loweredAndFolded(t, src)
+	fn := findFunc(p, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpBrIf {
+			t.Fatalf("constant-false exit br_if should be dropped, not survive:\n%s", p)
+		}
+	}
+	assertScopesBalanced(t, p)
+}
+
+// hasOpKind reports whether function fn in p contains an op of kind k.
+func hasOpKind(p *Program, fn string, k OpKind) bool {
+	f := findFunc(p, fn)
+	if f == nil {
+		return false
+	}
+	for _, op := range f.Ops {
+		if op.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+// assertScopesBalanced fails the test if any function's structured
+// control scopes (block / loop / if vs. end) don't balance — a
+// rewrite that dropped or added a scope boundary would break wasm
+// validation.
+func assertScopesBalanced(t *testing.T, p *Program) {
+	t.Helper()
+	for _, fn := range p.Funcs {
+		depth := 0
+		for i, op := range fn.Ops {
+			switch op.Kind {
+			case OpBlock, OpLoop, OpIf:
+				depth++
+			case OpEnd:
+				depth--
+				if depth < 0 {
+					t.Fatalf("%s: op %d (%s): scope depth went negative", fn.Name, i, op.Kind)
+				}
+			}
+		}
+		if depth != 0 {
+			t.Errorf("%s: ended at scope depth %d, want 0", fn.Name, depth)
+		}
+	}
+}
+
 // The fold pass is idempotent: running it a second time on already-
 // folded ops produces identical output. This is what lets backends
 // rely on a single Fold call.

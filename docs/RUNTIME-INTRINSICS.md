@@ -45,11 +45,25 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > heap buffer — correct for regular files ≤ 2 GiB read without interruption. And
 > **`remove_file`** (`rt_src_remove_file` → `Option[IoError]`): `unlinkat` via
 > `__syscall3`, `None` on success / the errno-mapped `Some(IoError)` on failure.
-> `stat`, `read_file` and `remove_file` all use the **same** five-way errno→variant
-> classification (`ENOENT→NotFound`, `EACCES→PermissionDenied`,
-> `EEXIST→AlreadyExists`, `EINTR→Interrupted`, else `Other`), inlined per helper
-> (the self-contained `emit_ir_runtime_fern_fn` can't yet call a shared
-> `__fern_io_error` in Fern) — matching native + the arm64 hand-asm.
+> `write_file` (`rt_src_write_file` → `Option[IoError]`, the first `__syscall4`
+> user) followed.
+>
+> **Status update (2026-07, dependencies-as-the-call-graph): the fs leaves share a
+> Fern `__fern_io_error`.** `stat` / `read_file` / `remove_file` / `write_file` /
+> `temp_dir` no longer *inline* the five-way errno→variant classification
+> (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
+> `EINTR→Interrupted`, else `Other`) — they **call** a single Fern classifier,
+> `rt_src_io_error`. The needed helpers + `io_error` are emitted as one bundle
+> module (only the needed ones, gated on the union of their needs), so the standard
+> inter-procedural RC analysis threads each helper→`io_error` call as an ordinary
+> call-graph edge (`io_error` consumes its fresh path arg; the helpers hand it a
+> fresh copy, never their borrowed `path`). This is the #2649 end-state in
+> miniature — a helper's dependency is a real call, not a hand-tracked inline.
+> (`temp_dir` additionally calls the `monotonic_ns` builtin, op-mediated, so it
+> composes in the bundle unchanged.) The arm64 / AST backends keep the register-ABI
+> hand-asm `__fern_io_error`; this is x86-64 IR only. Verified RC-neutral against
+> the pre-consolidation inlined bodies (identical arena growth) and byte-identical
+> on the self-compile fixpoint.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
