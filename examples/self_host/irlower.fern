@@ -2204,6 +2204,26 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
     return "";
 }
 
+// decl_field_fn_ret returns the recorded fn RETURN tag of struct_name.field
+// (StructFieldDecl.fn_ret — set by the parser for an fn-typed field whose
+// `(…) => R` return is a struct/nominal/string spelling), or "". The string
+// case drives expr_is_str's fn-field-call arm (#5306 gap 2).
+pub function decl_field_fn_ret(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].name == field) { return structs[i].fields[fi].fn_ret; }
+                fi = fi + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // field_access_is_closurearr returns true when `e` is a struct-field read
 // `obj.field` whose field is a closure/fn ARRAY — spelled "fn[]"
 // (parse_type_name coarsens `(() => T)[]` to "fn[]"). Its element is a closure
@@ -3044,6 +3064,17 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                             _ => {}
                         }
                     }
+                    // A call THROUGH a string-returning fn-typed struct FIELD
+                    // (`h.f(1)` where H.f: (i32) => string): the field's declared
+                    // type coarsens to "fn" but its fn_ret keeps the string
+                    // return, so the call result feeds `.len()` / concat as a
+                    // string. Without this the chained `h.f(1).len()` mis-
+                    // dispatched and read 0 even though the closure returned the
+                    // string correctly (#5306 gap 2 — an annotated rebind
+                    // `var r: string = h.f(1)` already worked).
+                    var ffrty: string = expr_struct_type(cfa.obj, s);
+                    if (ffrty != "" && decl_field_type(s.structs, ffrty, cfa.field) == "fn"
+                        && decl_field_fn_ret(s.structs, ffrty, cfa.field) == "string") { return true; }
                     // `it.key()` / `it.value()` on a `MapIter[K, V]` receiver returns
                     // the key / value box; when that side is `string` the result
                     // feeds `.len()` / concat as a string. Without this `.len()`
@@ -11452,6 +11483,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
             else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
             else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
+            // A TUPLE element (`var (p, c) = t` over ((string, i32), i32): p's
+            // tag is the nested tuple's spelling): record p's element tags so a
+            // SECOND-level destructure `var (s, b) = p` (and `p.N` reads)
+            // resolve their element types. Without this the nested tuple bound
+            // untyped and its STRING element read as an unmarked i32 — empty
+            // (#5306 gap 1; the all-i32 shape only worked because the untyped
+            // fallback happens to be i32).
+            else if (dtag.len() >= 2 && dtag[0:1] == "(") { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
             // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
             // slot as an array (the op_tuple_get above read its pointer) so
             // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
@@ -28534,6 +28573,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // here so this registration is byte-identical to before (they are read
         // only via the StructFieldDecl.fn_ret path in the monomorphiser).
         if (fn.params[pri].type_name == "fn" && fn.params[pri].fn_ret.len() > 0
+            && fn.params[pri].fn_ret != "string"
             && !util.contains(fn.params[pri].fn_ret, "[")) {
             struct_ret_fns_aug = struct_ret_fns_aug.append(fn.params[pri].name + "|" + fn.params[pri].fn_ret);
         }
