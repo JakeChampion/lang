@@ -57,7 +57,8 @@ Rules:
   `[]`. (Migration: a warning-only mode first — see phases.)
 - **Attenuation, not amplification.** A dependency may grant its own
   deps at most the capabilities it holds itself. Checked at
-  resolve time from the manifests alone.
+  load time from the manifests alone (see phase 3 for why load, not
+  `-resolve`).
 - **Enforcement is reachability.** For each package, the checker
   walks its functions' call graphs; reaching a capability-tagged
   builtin (directly or through a transitive callee in the same or a
@@ -112,6 +113,27 @@ Rules:
    the default-deny flip is the pending follow-up; the root package
    is never enforced or warned.
 3. **Attenuation.** Transitive subset rule at `-resolve` time.
+
+   **Status: shipped (#5361).** Checked at LOAD time (modload's
+   `capGrants`) rather than `-resolve`, because `-resolve` only walks
+   the versioned (MVS) slice of the graph while the load reads every
+   dependency form's manifest — path / url / workspace / versioned /
+   vendored — so one check covers them all. Each granting edge is
+   held to ITS grantor's holdings independently: a manifest whose own
+   package is governed (some parent's dependency entry grants it a
+   `capabilities` key; holdings = the union of those grants) granting
+   a dependency a capability outside that union is a load error in
+   the manifest-error family, naming the granting `fern.toml` —
+   `dependency "b" of "a" is granted 'net' but "a" itself holds only
+   [fs] (attenuation: a dependency may grant at most what it holds)`
+   — with all violations reported at once in deterministic order
+   (manifest dir, dep name, capability). An ungoverned grantor
+   imposes no ceiling (that's the warn-and-allow era; the root, which
+   nothing declares, falls out as ungoverned and stays unrestricted).
+   Diamonds keep phase 2's union: a package granted by several
+   parents holds the union of the granting edges, but each edge must
+   pass its own grantor's ceiling — a sibling's legitimate grant of
+   the same capability never excuses an amplifying edge.
 4. **Runtime alignment.** When the WASI component path matures
    (#4315–#4320 lane), derive the component's requested WASI imports
    from the same table, so the compile-time story and the runtime

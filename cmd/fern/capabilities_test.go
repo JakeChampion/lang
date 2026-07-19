@@ -193,8 +193,10 @@ func TestEnforceCapabilitiesRootSilent(t *testing.T) {
 // (e) Transitive: a dependency whose OWN dependency reaches net is
 // held to its own grant — the violation attributes to every governed
 // package that reaches the builtin, with the cross-package chain.
-// Here `a` (granted fs only) reaches net through `b` (granted net by
-// a's manifest, so b itself is clean).
+// Here `a` (granted fs only) reaches net through `b`. a cannot grant
+// b 'net' itself — attenuation (phase 3) forbids granting what the
+// grantor doesn't hold — so b stays ungoverned and warns while a's
+// transitive reach is the E070 error.
 func TestEnforceCapabilitiesTransitiveAttribution(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\"] }\n",
@@ -203,7 +205,7 @@ function main(): i32 {
   a.fetch("x");
   return 0;
 }`,
-		"a/fern.toml": "[package]\nname = \"a\"\nlib = \"a.fern\"\n[dependencies]\nb = { path = \"../b\", capabilities = [\"net\"] }\n",
+		"a/fern.toml": "[package]\nname = \"a\"\nlib = \"a.fern\"\n[dependencies]\nb = { path = \"../b\" }\n",
 		"a/a.fern": `import "b";
 pub function fetch(s: string): void {
   write_file("/tmp/fern-caps-out.txt", s);
@@ -223,10 +225,37 @@ pub function fetch(s: string): void {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
 	}
 	if strings.Contains(err.Error(), `package "b"`) {
-		t.Errorf("b holds a net grant and must not be reported: %q", err.Error())
+		t.Errorf("b is ungoverned (warn-and-allow) and must not be an error: %q", err.Error())
 	}
-	if warns != "" {
-		t.Errorf("all packages governed; no warnings expected, got %q", warns)
+	wantWarn := "warning: package \"b\" reaches 'net' (tcp_connect) but no capabilities key governs it: b__send → tcp_connect; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
+	if warns != wantWarn {
+		t.Errorf("warnings:\ngot  %q\nwant %q", warns, wantWarn)
+	}
+}
+
+// Attenuation (phase 3): an amplifying grant — a governed dependency
+// granting its own dep a capability it doesn't hold — fails the LOAD,
+// so every user-facing path (-check here) reports it before any
+// reachability analysis runs. The load-level semantics live in
+// internal/modload's TestLoadAttenuation* suite.
+func TestEnforceCapabilitiesAttenuationSurfacesInCheck(t *testing.T) {
+	root := writeCapsTree(t, map[string]string{
+		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\"] }\n",
+		"app/main.fern": `import "a";
+function main(): i32 { return a.one(); }`,
+		"a/fern.toml": "[package]\nname = \"a\"\nlib = \"a.fern\"\n[dependencies]\nb = { path = \"../b\", capabilities = [\"net\"] }\n",
+		"a/a.fern": `import "b";
+pub function one(): i32 { return b.one(); }`,
+		"b/fern.toml": "[package]\nname = \"b\"\nlib = \"b.fern\"\n",
+		"b/b.fern":    "pub function one(): i32 { return 1; }",
+	})
+	err := runCheck(filepath.Join(root, "app", "main.fern"))
+	if err == nil {
+		t.Fatal("expected the amplifying grant to fail -check, got none")
+	}
+	want := `dependency "b" of "a" is granted 'net' but "a" itself holds only [fs] (attenuation: a dependency may grant at most what it holds)`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error:\ngot  %q\nwant substring %q", err.Error(), want)
 	}
 }
 
