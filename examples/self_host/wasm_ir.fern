@@ -139,13 +139,18 @@ pub function str_offset(vals: string[], idx: i32): i32 {
 }
 
 // offset_of_value returns the data-section offset of literal value `v`.
+// A miss means the literal escaped the collection pre-pass — a compiler
+// bug; returning the scratch base (24) silently pointed the emitted code
+// at the iovec scratch area (SH-008's wasm-IR sibling), so fail loudly.
 function offset_of_value(vals: string[], v: string): i32 {
     var i: i32 = 0;
     while (i < vals.len()) {
         if (vals[i] == v) { return str_offset(vals, i); }
         i = i + 1;
     }
-    return 24;
+    eprint("wasm-ir: string literal not interned: " + v);
+    exit(1);
+    return 0 - 1;
 }
 
 // fl_base_for / heap_base_for recompute the freelist + heap bases including the
