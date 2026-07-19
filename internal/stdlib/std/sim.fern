@@ -1,0 +1,121 @@
+// std/sim — the deterministic simulation driver for std/async
+// (docs/DST-PLATFORM-BRIEF.md, slice 1). A `Sim` implements
+// `async.Driver` over a VIRTUAL clock: pass it to `async.gather_on` /
+// `race_on` / `with_deadline_on` and the whole fan-out runs under
+// simulated time — identically on every backend, including the
+// interpreter (where fd-backed Pending futures never resolve). Every
+// nondeterministic choice (tie order between equally-ready futures)
+// comes from a seeded PRNG, so a run is a pure function of the seed:
+// a concurrency bug is a seed you replay, not a flake.
+//
+// TOKEN ENCODING: a sim readiness token IS its ready-at virtual time,
+// in MILLISECONDS (`tok = ready_at_ns / 1000000`), so the driver needs
+// no token table and `drop_token` is a no-op. Negative tokens are
+// never ready (mirroring poll(2), which ignores negative fds).
+//
+// Time advances ONLY inside `poll_ready` — a busy loop that never
+// waits is a hang in simulation exactly as in production.
+import "std/async";
+
+// Sim — the simulation driver: virtual clock (ns, starts at 0) +
+// explicit PRNG state. Construct with `sim.new(seed)`.
+pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64] }
+
+// new(seed) — a fresh simulation at virtual time 0. Equal seeds give
+// bit-identical runs; a zero seed is remapped (the PRNG state must be
+// in [1, 2^31-2]).
+pub function new(seed: i64): Sim {
+    var s: i64 = seed % 2147483646;
+    if (s < 0) { s = s + 2147483646; }
+    if (s == 0) { s = 48271; }
+    return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(s) };
+}
+
+// __roll(drv, n) — deterministic pick in [0, n): one Park-Miller
+// step (x' = 48271*x mod 2^31-1; no i64 overflow) on the explicit
+// PRNG state. NOT std/math.random_int — determinism is the point.
+function __roll(drv: Sim, n: i32): i32 {
+    var x: i64 = (drv.rng.get() * 48271) % 2147483647;
+    drv.rng.set(x);
+    return (x % (n as i64)) as i32;
+}
+
+impl async.Driver for Sim {
+    // poll_ready — the virtual wait, honouring the real `poll`
+    // contract (internal/codegen/x86_64/x86_64.go emitPollRuntime):
+    // the index of the first token to become ready, or -1 on
+    // timeout / empty set / no waitable token. The clock advances to
+    // whichever of (earliest ready-at, now + timeout) comes first —
+    // on a tie the token wins, matching with_deadline's timer-slot
+    // convention (the deadline reads as the timer firing, ready ==
+    // nfds, not a bare -1). Ties between equally-ready tokens are
+    // broken by the seeded PRNG.
+    function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32 {
+        if (toks.len() == 0) { return -1; }
+        var best: i32 = -1;
+        var i: i32 = 0;
+        while (i < toks.len()) {
+            if (toks[i] >= 0) {
+                if (best < 0 || toks[i] < best) { best = toks[i]; }
+            }
+            i = i + 1;
+        }
+        var now: i64 = self.clock_ns.get();
+        if (timeout_ms >= 0) {
+            var timeout_at: i64 = now + (timeout_ms as i64) * 1000000;
+            if (best < 0 || timeout_at < (best as i64) * 1000000) {
+                self.clock_ns.set(timeout_at);
+                return -1;
+            }
+        }
+        if (best < 0) { return -1; }
+        var ready_ns: i64 = (best as i64) * 1000000;
+        if (ready_ns > now) { self.clock_ns.set(ready_ns); }
+        var ties: i32[] = [];
+        var k: i32 = 0;
+        while (k < toks.len()) {
+            if (toks[k] == best) { ties = ties.append(k); }
+            k = k + 1;
+        }
+        if (ties.len() == 1) { return ties[0]; }
+        return ties[__roll(self, ties.len())];
+    }
+    function now_ns(self: Self): i64 {
+        return self.clock_ns.get();
+    }
+    function timer(self: Self, ns: i64): i32 {
+        return ((self.clock_ns.get() + ns) / 1000000) as i32;
+    }
+    function drop_token(self: Self, tok: i32): i32 {
+        return 0;
+    }
+}
+
+// __pend(tok, next) — a Pending resolving to `next` when `tok` fires.
+// (The indirection exists because a closure may capture a Future[T]
+// but not a bare T — E044.)
+function __pend[T](tok: i32, next: async.Future[T]): async.Future[T] {
+    return Pending(tok, (woken: i32) => next);
+}
+
+// future_at(drv, at_ns, v) — a Pending future resolving to `v` at
+// virtual time `at_ns` (absolute, ns).
+pub function future_at[T](drv: Sim, at_ns: i64, v: T): async.Future[T] {
+    var done: async.Future[T] = Ready(v);
+    return __pend((at_ns / 1000000) as i32, done);
+}
+
+// future_chain(drv, at_ns, step_ns, resuspends, v) — a Pending future
+// first ready at `at_ns` whose resume RE-SUSPENDS `resuspends` times,
+// each `step_ns` later, before resolving to `v` at virtual time
+// `at_ns + resuspends * step_ns`. The multi-step read shape
+// (fetch_future's __fetch_drain) under the virtual clock.
+pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32, v: T): async.Future[T] {
+    var f: async.Future[T] = Ready(v);
+    var i: i32 = resuspends;
+    while (i >= 0) {
+        f = __pend(((at_ns + (i as i64) * step_ns) / 1000000) as i32, f);
+        i = i - 1;
+    }
+    return f;
+}
