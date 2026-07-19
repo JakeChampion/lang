@@ -90,6 +90,10 @@ wasmtime run factorial.wasm
 ./fern -fmt -d examples/factorial.fern     # print a unified diff against
                                            # the file; exits 1 when they differ
 
+# Per-package capability report (net / fs / env / subprocess / time / random;
+# see docs/PACKAGE-CAPABILITIES-BRIEF.md)
+./fern -capabilities app/main.fern
+
 # Literate programming (Knuth-style named chunks; see docs/LITERATE.md)
 ./fern -interp examples/literate/fizzbuzz.fern.md   # tangle in memory, then run
 ./fern -tangle examples/literate/fizzbuzz.fern.md   # emit plain Fern source

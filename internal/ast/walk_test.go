@@ -299,3 +299,23 @@ func TestWalk_DeepestNodeAtPosition(t *testing.T) {
 		t.Fatalf("deepest node at %v: got %T (%+v)", want, hit, hit)
 	}
 }
+
+func TestWalk_LambdaBody(t *testing.T) {
+	// A Lambda's body is part of the enclosing tree: the Call inside
+	// must be visited (capability reporting attributes closure bodies
+	// to their definition site through this descent).
+	root := &Lambda{
+		P: Position{1, 1},
+		Body: &Block{Stmts: []Stmt{
+			&ExprStmt{Expr: &Call{
+				P:      Position{1, 5},
+				Callee: &Ident{P: Position{1, 5}, Name: "f"},
+			}},
+		}},
+	}
+	got := collectKinds(root)
+	want := []string{"*ast.Lambda", "*ast.Block", "*ast.ExprStmt", "*ast.Call", "*ast.Ident"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("lambda walk: got %v, want %v", got, want)
+	}
+}
