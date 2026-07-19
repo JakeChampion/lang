@@ -37,6 +37,91 @@ func TestFoldChainedArithmetic(t *testing.T) {
 	}
 }
 
+// Constant reassociation: `x + 1 + 2` lowers to `load ; const 1 ; add ;
+// const 2 ; add` — the two constants are separated by the first add, so
+// the plain two-adjacent-constant fold can't reach them. Reassociation
+// combines them into `load ; const 3 ; add`. Verified for each
+// associative op (add / mul / and / or / xor) and a 3-constant chain.
+func TestFoldReassociatesConstantChain(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int32
+	}{
+		{"add", `function f(x: i32): i32 { return x + 1 + 2; }`, 3},
+		{"mul", `function f(x: i32): i32 { return x * 3 * 5; }`, 15},
+		{"and", `function f(x: i32): i32 { return (x & 12) & 10; }`, 8},
+		{"or", `function f(x: i32): i32 { return x | 1 | 4; }`, 5},
+		{"xor", `function f(x: i32): i32 { return x ^ 6 ^ 3; }`, 5},
+		{"chain3", `function f(x: i32): i32 { return x + 1 + 2 + 3; }`, 6},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := loweredAndFolded(t, c.src)
+			fn := findFunc(p, "f")
+			// Expect exactly: OpLoadLocal, OpConstI32 <want>, <op>, OpReturn.
+			if len(fn.Ops) != 4 {
+				t.Fatalf("expected 4 ops after reassociation, got %d:\n%s", len(fn.Ops), p)
+			}
+			if fn.Ops[1].Kind != OpConstI32 || fn.Ops[1].I32 != c.want {
+				t.Errorf("op[1] = %s %d, want OpConstI32 %d:\n%s",
+					fn.Ops[1].Kind, fn.Ops[1].I32, c.want, p)
+			}
+		})
+	}
+}
+
+// i64 constant chains reassociate the same way, keeping the wide width.
+func TestFoldReassociatesI64ConstantChain(t *testing.T) {
+	p := loweredAndFolded(t, `function f(x: i64): i64 { return x + 10i64 + 20i64; }`)
+	fn := findFunc(p, "f")
+	if len(fn.Ops) != 4 {
+		t.Fatalf("expected 4 ops, got %d:\n%s", len(fn.Ops), p)
+	}
+	if fn.Ops[1].Kind != OpConstI64 || fn.Ops[1].I64 != 30 {
+		t.Errorf("op[1] = %s %d, want OpConstI64 30:\n%s", fn.Ops[1].Kind, fn.Ops[1].I64, p)
+	}
+}
+
+// Reassociation is restricted to a single associative op repeated.
+// A mixed `add` then `sub` chain (`x + 1 - 2`) must NOT combine — sub is
+// not associative in this shape — so both constants and both ops survive.
+func TestFoldDoesNotReassociateMixedOps(t *testing.T) {
+	p := loweredAndFolded(t, `function f(x: i32): i32 { return x + 1 - 2; }`)
+	adds, subs, consts := 0, 0, 0
+	for _, op := range findFunc(p, "f").Ops {
+		switch op.Kind {
+		case OpAdd:
+			adds++
+		case OpSub:
+			subs++
+		case OpConstI32:
+			consts++
+		}
+	}
+	if adds != 1 || subs != 1 || consts != 2 {
+		t.Errorf("mixed add/sub chain should be left intact (1 add, 1 sub, 2 consts), got %d/%d/%d:\n%s",
+			adds, subs, consts, p)
+	}
+}
+
+// Shifts must NOT reassociate: the runtime masks the shift count to the
+// operand width, so folding `<< a` then `<< b` into `<< (a+b)` would
+// diverge once a+b reaches 32. `(x << 30) << 30` is 0 at runtime but
+// `x << 60` masks to `x << 28` — the two must stay two shifts.
+func TestFoldDoesNotReassociateShifts(t *testing.T) {
+	p := loweredAndFolded(t, `function f(x: i32): i32 { return (x << 30) << 30; }`)
+	shifts := 0
+	for _, op := range findFunc(p, "f").Ops {
+		if op.Kind == OpShl {
+			shifts++
+		}
+	}
+	if shifts != 2 {
+		t.Errorf("shift chain must not reassociate, expected 2 OpShl, got %d:\n%s", shifts, p)
+	}
+}
+
 // Comparison ops fold the same way as arithmetic. `5 < 3` collapses
 // to a single OpConstI32 0.
 func TestFoldComparison(t *testing.T) {
