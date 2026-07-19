@@ -14156,7 +14156,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_u32(bslot, true);
                         } else if (ev_ty == "f64") {
                             ms = ms.mark_f64(bslot, true);
-                        } else if (ev_ty == "fn") {
+                        } else if (ev_ty == "fn" || is_fn_payload_spelling(ev_ty) || ev_ty == "clo") {
                             // A function-typed payload (`Pending(i32,
                             // (i32) => Future)`): the i32 read above is the
                             // closure ENV box the constructor side wrapped
@@ -14168,6 +14168,11 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // the enum/struct branch below: is_enum_like_name
                             // ("fn") is true, so it would otherwise claim the
                             // payload as a struct type and emit a bare call.
+                            // A monomorphised GENERIC enum (`Opt[(i32) => i32]`,
+                            // #5298) keeps the payload's FULL fn spelling
+                            // `(i32) => i32` rather than the coarse "fn", so
+                            // accept is_fn_payload_spelling here too (the
+                            // built-in Option/Result fn-payload arm's sibling).
                             ms = ms.mark_closure_local(bname);
                         } else if (decl_is_struct(ms.structs, ev_ty) || is_enum_like_name(ev_ty, ms.structs)) {
                             ms = ms.mark_struct_type(bslot, ev_ty);
