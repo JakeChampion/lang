@@ -37142,7 +37142,16 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var ci: i32 = 0;
     while (ci < caps.len()) {
         var t: string = cap_type(caps[ci], fd, structs, mfuncs);
-        if (t.len() == 0 || util.index_of_str(assigns, caps[ci]) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+        // A capture REASSIGNED in the enclosing body does NOT decline the lift:
+        // the param-lift passes each capture at the CALL SITE, so every call
+        // reads the binding's current value — exactly the interpreter's
+        // by-reference capture semantics (#5301 pointer captures, #5300
+        // outer-mutated scalars; the old decline sent these shapes to the AST
+        // path, which snapshots at make time and diverges from the oracle).
+        // Closure-side writes never reach here un-shared: a written scalar
+        // capture is already a boxed cell (box_mutated_scalar_captures runs
+        // first), and a written pointer capture is checker-rejected (E049).
+        if (t.len() == 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
         ctypes = ctypes.append(t);
         ci = ci + 1;
     }

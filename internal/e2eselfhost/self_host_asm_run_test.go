@@ -720,9 +720,12 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			"closure-capture-by-value",
+			// Outer reassignment after the closure is created is visible to the
+			// closure — by-reference capture, matching the interpreter (#5301;
+			// the pre-fix pin of 5 froze the by-value make-time snapshot).
+			"closure-capture-by-reference",
 			"function main(): i32 { var n = 5; var f = function (): i32 { return n; }; n = 99; return f(); }",
-			5,
+			99,
 			"",
 			"",
 		},

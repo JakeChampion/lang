@@ -2630,7 +2630,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// shadowrename (names are unique, so a closure's reference to a boxed name
 	// is unambiguous) and before closureconv (which then captures the cell
 	// pointer by reference). No-op for functions without such a capture.
-	closureconv.BoxMutatedScalarCaptures(prog, info)
+	closureconv.BoxMutatedCaptures(prog, info)
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
@@ -9559,6 +9559,13 @@ func (b *builder) exprStaticType(e ast.Expr) ast.Type {
 		}
 	case *ast.Call:
 		return b.callReturnType(x)
+	case *ast.CaptureRef:
+		// A captured value inside a closure body: closure conversion
+		// stamps the resolved outer-scope type. Without this,
+		// `capturedArr[i].field` — including a boxcapture cell's
+		// `cell[0].field` — peels nothing and fieldOwner errors with
+		// `field access on unresolved struct ""`.
+		return x.Type
 	}
 	return nil
 }

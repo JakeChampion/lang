@@ -46,7 +46,7 @@ func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
-	// BoxedCells names the locals that closureconv.BoxMutatedScalarCaptures
+	// BoxedCells names the locals that closureconv.BoxMutatedCaptures
 	// rewrote into 1-element array cells for by-reference scalar capture. Such a
 	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
 	// outer scope observe each other's writes), so an `cell[0] = v` store must
