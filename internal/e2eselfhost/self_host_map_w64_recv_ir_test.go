@@ -54,6 +54,22 @@ function main(): i32 { var m: Map[i32, i32] = Map { 1: 10, 2: 20 }; m = m.insert
 	// String-valued map regression (get_or on string values unchanged). 7.
 	{"strval-regress", `import "core/map";
 function main(): i32 { var m: Map[string, string] = Map { "a": "hello" }; return m.get_or("a", "x").len() + m.get_or("z", "yy").len(); }`},
+	// f64-VALUED map get_or chained in a float op: expr_is_f64's get_or arm
+	// (the f64 sibling of the u64 arm) — without it `* 2.0` lowered as an
+	// integer op on the double's bits (255, want 5). #5253.
+	{"f64-getor-mul", `import "core/map";
+function main(): i32 { var m: Map[i32, f64] = Map { 1: 2.5 }; return (m.get_or(1, 0.0) * 2.0) as i32; }`},
+	// Unannotated f64 map binding: the structural/binding vtag inference now
+	// records "f64" so the read side float-tracks it. 5.
+	{"f64-unannot-getor", `import "core/map";
+function main(): i32 { var m = Map { 1: 2.5 }; return (m.get_or(1, 0.0) * 2.0) as i32; }`},
+	// f64 map STRUCT FIELD receiver. 5.
+	{"f64-structfield-getor", `import "core/map";
+struct C { m: Map[i32, f64] }
+function main(): i32 { var c: C = C { m: Map { 1: 2.5 } }; return (c.m.get_or(1, 0.0) * 2.0) as i32; }`},
+	// f64 DEFAULT on the miss path. 6.
+	{"f64-default-miss", `import "core/map";
+function main(): i32 { var m: Map[i32, f64] = Map { 9: 1.0 }; return (m.get_or(1, 3.25) * 2.0) as i32; }`},
 }
 
 func TestSelfHostMapW64RecvIRX86_64(t *testing.T) {
