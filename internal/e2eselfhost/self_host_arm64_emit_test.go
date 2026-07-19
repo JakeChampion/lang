@@ -547,6 +547,11 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// Pins the LEGACY AST arm64 backend (this table runs the driver
+			// without -ir): it snapshots captures at make time, so the outer
+			// n = 99 is invisible. The oracle (interp) and the IR path are
+			// by-reference and return 99 (#5301) — a known legacy-AST-only
+			// divergence, kept here only to freeze that backend's behavior.
 			"closure-capture-by-value",
 			"function main(): i32 { var n = 5; var f = function (): i32 { return n; }; n = 99; return f(); }",
 			5,

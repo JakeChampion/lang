@@ -3874,10 +3874,11 @@ function main(): i32 {
 }
 
 // Closure created inside a loop body captures the iteration's
-// per-iteration `ic` snapshot — each closure value reads its
-// own captured slot, NOT the loop variable's final value. The
-// language's by-value-at-make-time capture semantics is what
-// gives the per-iteration shape.
+// per-iteration `ic` binding — each closure value reads its
+// own captured slot, NOT the loop variable's final value. `ic`
+// is re-DECLARED (never assigned) each iteration, so it is not
+// boxed into a shared cell (#5301 boxes only captured-and-
+// assigned locals) and every closure keeps its own binding.
 func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
 	src := `function main(): i32 {
     var arr: ((i32) => i32)[] = [];
