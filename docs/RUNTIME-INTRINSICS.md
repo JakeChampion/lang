@@ -60,9 +60,25 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > parses independently); the record fields are read via `__raw_load8(buf, pos+k)`,
 > which offsets in the emitter.
 >
+> **`remove_dir_all`** (`rt_src_remove_dir_all` → `Option[IoError]`) closed out the
+> fs leaves — a best-effort recursive `rm -rf`. It classifies the target with
+> `openat(O_DIRECTORY)` (ENOENT → `None`, ENOTDIR → `unlinkat` the file, else
+> `Some(io_error)`), then for a directory **drains it inline** with the same
+> `getdents64`-per-fresh-buffer loop as `read_dir`, builds each child path
+> (`path + "/" + name`) directly in a raw buffer, and recurses, then rmdirs.
+> Notably it does **not** reuse the `read_dir` builtin: `read_dir` returns an
+> RC-managed `string[]`, and **holding that array live across the recursive call —
+> which allocates heavily — corrupts it** (the held array's backing memory gets
+> reused by the recursion's allocations; SIGSEGV on any tree with a subdirectory).
+> A raw `getdents` buffer + raw child-path buffers are `__raw_alloc`'d (bump-only,
+> never freed → never reused), so they survive the recursion untouched; the only
+> RC value crossing the recursion is the returned `Option[IoError]`, which is safe.
+> This RC/arena interaction (a heap array held live across a recursive allocating
+> call) is a latent self-host bug worth a standalone fix — noted on #2649.
+>
 > **Status update (2026-07, dependencies-as-the-call-graph): the fs leaves share a
 > Fern `__fern_io_error`.** `stat` / `read_file` / `remove_file` / `write_file` /
-> `temp_dir` / `read_dir` no longer *inline* the five-way errno→variant classification
+> `temp_dir` / `read_dir` / `remove_dir_all` no longer *inline* the five-way errno→variant classification
 > (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
 > `EINTR→Interrupted`, else `Other`) — they **call** a single Fern classifier,
 > `rt_src_io_error`. The needed helpers + `io_error` are emitted as one bundle
