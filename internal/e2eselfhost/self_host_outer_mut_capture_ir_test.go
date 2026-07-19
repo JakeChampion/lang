@@ -129,6 +129,72 @@ function main(): i32 {
     }
     return f() + 1;
 }`, 42},
+	// #5394: ESCAPING closures (returned — the make_closure env-box path).
+	// The env used to snapshot the capture at creation; the capture now boxes
+	// into a shared cell (any type), so the outer reassignment stores through
+	// the cell and the escaped closure reads the live value. (Closures stored
+	// in ARRAY containers are excluded here — that shape hits the pre-existing
+	// closure-array + array-capture crash #5405, unrelated to reassignment.)
+	{"escape-array-reassign",
+		`function mk(): () => i32 {
+    var a: i32[] = [10, 1];
+    var f: () => i32 = function (): i32 { return a[0]; };
+    a = [42, 1];
+    return f;
+}
+function main(): i32 {
+    var g: () => i32 = mk();
+    return g();
+}`, 42},
+	{"escape-string-reassign",
+		`function mk(): () => i32 {
+    var s: string = "aa";
+    var f: () => i32 = function (): i32 { return s.len(); };
+    s = "abcdef";
+    return f;
+}
+function main(): i32 {
+    var g: () => i32 = mk();
+    return g() + 36;
+}`, 42},
+	{"escape-struct-reassign",
+		`struct B { v: i32 }
+function mk(): () => i32 {
+    var b: B = B { v: 10 };
+    var f: () => i32 = function (): i32 { return b.v; };
+    b = B { v: 42 };
+    return f;
+}
+function main(): i32 {
+    var g: () => i32 = mk();
+    return g();
+}`, 42},
+	{"escape-i32-reassign",
+		`function mk(): () => i32 {
+    var n: i32 = 10;
+    var f: () => i32 = function (): i32 { return n; };
+    n = 42;
+    return f;
+}
+function main(): i32 {
+    var g: () => i32 = mk();
+    return g();
+}`, 42},
+	// The escaped closure also WRITES the shared cell: outer sets 38 before
+	// returning f; each call adds 2 — the second call reads the first call's
+	// write through the same cell (40 + 2 = 42).
+	{"escape-mixed-write",
+		`function mk(): () => i32 {
+    var n: i32 = 0;
+    var f: () => i32 = function (): i32 { n = n + 2; return n; };
+    n = 38;
+    return f;
+}
+function main(): i32 {
+    var g: () => i32 = mk();
+    var r1: i32 = g();
+    return g();
+}`, 42},
 }
 
 // TestSelfHostOuterMutCaptureIRX86_64 cross-checks native (now oracle-
@@ -251,7 +317,8 @@ func TestSelfHostOuterMutCaptureIRArm64(t *testing.T) {
 
 	for _, tc := range outerMutCaptureIRCases {
 		switch tc.name {
-		case "array-reassign", "string-reassign", "struct-reassign", "outer-and-inner-write":
+		case "array-reassign", "string-reassign", "struct-reassign", "outer-and-inner-write",
+			"escape-array-reassign", "escape-mixed-write":
 		default:
 			continue
 		}
