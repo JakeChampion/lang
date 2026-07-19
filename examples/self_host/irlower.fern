@@ -12911,8 +12911,16 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // would land in the dyn slot unboxed and mis-dispatch
     // (docs/DYN-TRAITS.md §4.3). Non-dyn assignments fall through to the
     // generic paths below.
+    // A dyn ARRAY slot (`var ds: (dyn Trait)[]`) is marked struct_type with
+    // the ELEMENT type "dyn Trait" (the `[]` stripped at its init/param bind),
+    // so it is indistinguishable from a SCALAR dyn slot by the string alone —
+    // but it is ALSO is_arr. Gate on !is_arr so a dyn-array reassign
+    // (`ds = ds.append(x)`) falls through to the array append path below
+    // instead of coercing the whole grown ARRAY into a single dyn cell
+    // [shape, array] and storing THAT into ds (which mis-typed ds and made
+    // every later `ds[i].method()` read a garbage self → 0 / SIGSEGV).
     var asg_dty: string = s.struct_type_of_slot(slot);
-    if (asg_dty.len() > 4 && asg_dty[0:4] == "dyn " && !is_array_type_name(asg_dty)) {
+    if (asg_dty.len() > 4 && asg_dty[0:4] == "dyn " && !is_array_type_name(asg_dty) && !s.is_arr_slot(slot)) {
         var das: LowerState = lower_dyn_arg(a.value, s);
         if (!das.ok) { return das; }
         return das.emit(ir.op_store_local(slot));
