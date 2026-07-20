@@ -5814,9 +5814,13 @@ func (b *builder) emitStructMatch(n *ast.Match) error {
 			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 				bt = arm.BindingTypes[i]
 			}
-			off, ok := offMap[name]
+			field := name
+			if i < len(arm.FieldNames) && arm.FieldNames[i] != "" {
+				field = arm.FieldNames[i]
+			}
+			off, ok := offMap[field]
 			if !ok {
-				return fmt.Errorf("ir: struct match field %q not in %s layout (compiler bug)", name, st.Name)
+				return fmt.Errorf("ir: struct match field %q not in %s layout (compiler bug)", field, st.Name)
 			}
 			slot, restore := b.bindingSlotScoped(name, bt)
 			armRestores = append(armRestores, restore)
@@ -6077,9 +6081,13 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 				bt = arm.BindingTypes[i]
 			}
-			off, ok := offMap[name]
+			field := name
+			if i < len(arm.FieldNames) && arm.FieldNames[i] != "" {
+				field = arm.FieldNames[i]
+			}
+			off, ok := offMap[field]
 			if !ok {
-				return fmt.Errorf("ir: struct match-expr field %q not in %s layout (compiler bug)", name, st.Name)
+				return fmt.Errorf("ir: struct match-expr field %q not in %s layout (compiler bug)", field, st.Name)
 			}
 			slot, restore := b.bindingSlotScoped(name, bt)
 			armRestores = append(armRestores, restore)

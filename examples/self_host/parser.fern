@@ -2168,10 +2168,12 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
 // the field reads + ifs lower through the ordinary paths.
 struct StructArm { is_wild: boolean, binds: string[], fields: string[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
-// parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields; a trailing
-// `..` marks omitted fields), the cursor on the struct-name ident. Returns the
-// parallel binding + field name lists (equal, shorthand). The struct name is
-// not retained — the scrutinee's type drives field resolution at lowering.
+// parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields) or
+// `S { x: a, y: b }` (renamed: field `x` bound to local `a`); a trailing
+// `..` marks omitted fields, the cursor on the struct-name ident. Returns the
+// parallel binding + field name lists (fields[i] is the projected field,
+// binds[i] the local it binds). The struct name is not retained — the
+// scrutinee's type drives field resolution at lowering.
 function parse_struct_arm_pattern(p: Par): (string[], string[], Par) {
     var binds: string[] = [];
     var fields: string[] = [];
@@ -2181,7 +2183,14 @@ function parse_struct_arm_pattern(p: Par): (string[], string[], Par) {
         if (p.peek_punct() == "..") { p = p.advance(); break; }
         var fld: string = p.peek_ident();
         if (fld.len() > 0) { p = p.advance(); }
-        binds = binds.append(fld);
+        var bind: string = fld;
+        if (p.peek_punct() == ":") {
+            p = p.advance();
+            var lc: string = p.peek_ident();
+            if (lc.len() > 0) { p = p.advance(); }
+            bind = lc;
+        }
+        binds = binds.append(bind);
         fields = fields.append(fld);
         if (p.peek_punct() == ",") { p = p.advance(); }
     }

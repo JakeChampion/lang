@@ -119,6 +119,51 @@ function tag(n: Named): string {
 function main(): i32 { return tag(Named { id: 1, label: "hello" }).len() + tag(Named { id: 0, label: "x" }).len(); }`,
 		want: 9, // len("hello")=5 + len("none")=4
 	},
+	{
+		// Field renaming: `x: a` projects field `x` into local `a`. The
+		// local name is independent of the field it binds.
+		name: "rename_stmt",
+		src: `struct Point { x: i32, y: i32 }
+function f(p: Point): i32 { match (p) { Point { x: a, y: b } => { return a * 10 + b; } } return 0; }
+function main(): i32 { return f(Point { x: 3, y: 7 }); }`,
+		want: 37,
+	},
+	{
+		// Renaming in expression form, with a guard referencing the renamed
+		// locals.
+		name: "rename_expr",
+		src: `struct Point { x: i32, y: i32 }
+function area(p: Point): i32 {
+  return match (p) {
+    Point { x: a, y: b } when a == b => a * 10,
+    Point { x: a, y: b } => a + b,
+  };
+}
+function main(): i32 { return area(Point { x: 4, y: 4 }) + area(Point { x: 3, y: 5 }); }`,
+		want: 48, // 40 + 8
+	},
+	{
+		// Partial rename: bind a single field under a fresh local.
+		name: "rename_partial",
+		src: `struct P { x: i32, y: i32, z: i32 }
+function f(p: P): i32 { match (p) { P { y: m } => { return m; } } return 0; }
+function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`,
+		want: 42,
+	},
+	{
+		// Mixed shorthand + rename across fields and arms.
+		name: "rename_mixed",
+		src: `struct Named { id: i32, label: string }
+function f(n: Named): i32 {
+  match (n) {
+    Named { id: k, label } when k > 5 => { return label.len() + 10; },
+    Named { id, label: s } => { return s.len(); },
+  }
+  return 0;
+}
+function main(): i32 { return f(Named { id: 9, label: "abcd" }) * 10 + f(Named { id: 1, label: "ab" }); }`,
+		want: 142, // (4+10)*10 + 2
+	},
 }
 
 func TestStructMatchX86_64(t *testing.T) {

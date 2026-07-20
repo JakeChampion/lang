@@ -2425,8 +2425,15 @@ type MatchArm struct {
 	// every later stage treats them positionally like a `Rect(w, h)`
 	// pattern. False for the positional form.
 	NamedFields bool
-	IsWildcard  bool // `_ => …`
-	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	// FieldNames runs parallel to Bindings for a named-field pattern
+	// (`S { field: local }`): FieldNames[i] is the struct/variant field
+	// projected, Bindings[i] the local it binds. For the shorthand
+	// `S { x }`, FieldNames[i] == Bindings[i]. nil for non-named patterns.
+	// (Rename is supported for struct matches; enum named-field variant
+	// patterns stay shorthand — the checker rejects a rename there.)
+	FieldNames []string
+	IsWildcard bool // `_ => …`
+	Literal    Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
 	// RangeHi, when non-nil, marks a range pattern `lo..hi => …` /
 	// `lo..=hi => …` on a scalar scrutinee: Literal holds the low bound,
 	// RangeHi the high bound, and RangeInclusive distinguishes `..=`
@@ -2481,7 +2488,8 @@ type MatchExprArm struct {
 	VariantModule string // optional `mod.` qualifier — same semantics as MatchArm.VariantModule
 	Bindings      []string
 	BindingTypes  []Type
-	NamedFields   bool // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
+	NamedFields   bool     // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
+	FieldNames    []string // parallel to Bindings for named-field patterns — see MatchArm.FieldNames
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see

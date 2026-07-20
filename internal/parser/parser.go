@@ -3524,7 +3524,7 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
-		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, Guard: guard, Body: body,
+		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames, Guard: guard, Body: body,
 	}
 }
 
@@ -3677,11 +3677,11 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 	}
 	innerMatch := &ast.Match{P: gp, Tag: &ast.Ident{P: gp, Name: tmps[pos]}, Arms: innerArms}
 	return &ast.MatchArm{
-		P:           gp,
-		VariantName: V,
+		P:             gp,
+		VariantName:   V,
 		VariantModule: mod,
-		Bindings:    tmps,
-		Body:        &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
+		Bindings:      tmps,
+		Body:          &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
 	}, nil
 }
 
@@ -3710,9 +3710,11 @@ func (p *parser) rebindStmtBody(pat matchPattern, pos int, tmps []string, body *
 // name — with the cursor just after the variant name. Returns ok=true
 // (and the field-name bindings) when a `{` was present; ok=false with no
 // error when the next token isn't `{` (a positional or payloadless arm).
-func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error) {
+// Returns parallel field / binding lists: for the shorthand `S { x }` the
+// two are equal; `S { x: nx }` renames field x to local nx.
+func (p *parser) parseNamedFieldPattern() (fields, bindings []string, ok bool, err error) {
 	if _, isBrace := p.accept(lexer.Punct, "{"); !isBrace {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	if !p.match(lexer.Punct, "}") {
 		for {
@@ -3724,11 +3726,22 @@ func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error
 				p.advance()
 				break
 			}
-			nameTok, err := p.expect(lexer.Ident, "")
+			fieldTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
-				return nil, false, err
+				return nil, nil, false, err
 			}
-			bindings = append(bindings, nameTok.Text)
+			bind := fieldTok.Text
+			// `field: local` renames the bound field (struct matches only —
+			// the checker rejects a rename in an enum named-field pattern).
+			if _, isRename := p.accept(lexer.Punct, ":"); isRename {
+				bindTok, err := p.expect(lexer.Ident, "")
+				if err != nil {
+					return nil, nil, false, err
+				}
+				bind = bindTok.Text
+			}
+			fields = append(fields, fieldTok.Text)
+			bindings = append(bindings, bind)
 			if _, c := p.accept(lexer.Punct, ","); c {
 				if p.match(lexer.Punct, "}") {
 					break
@@ -3739,9 +3752,9 @@ func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error
 		}
 	}
 	if _, e := p.expect(lexer.Punct, "}"); e != nil {
-		return nil, false, e
+		return nil, nil, false, e
 	}
-	return bindings, true, nil
+	return fields, bindings, true, nil
 }
 
 // matchPattern is the pattern half of a match arm — the fields that
@@ -3771,6 +3784,9 @@ type matchPattern struct {
 	// atBinding is the `n` in an `@`-pattern `n @ <pattern>`: the whole
 	// matched value is also bound to `n`. Empty for plain patterns.
 	atBinding string
+	// fieldNames runs parallel to Bindings for a named-field pattern:
+	// the field projected for each binding (== Bindings for shorthand).
+	fieldNames []string
 }
 
 // hasNestedSub reports whether any payload slot of this pattern is a
@@ -3964,11 +3980,12 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return pat, err
 			}
-		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
+		} else if fields, bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
 			return pat, err
 		} else if ok {
 			pat.NamedFields = true
 			pat.Bindings = bindings
+			pat.fieldNames = fields
 		}
 	} else {
 		return pat, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
@@ -4139,7 +4156,7 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
-		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, Guard: guard, Body: body,
+		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames, Guard: guard, Body: body,
 	}
 }
 
