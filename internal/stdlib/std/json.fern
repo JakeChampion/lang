@@ -833,84 +833,19 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
     return None;
 }
 
-// __json_number_to_f64 parses a JSON number's raw text into an f64.
-// Mirrors std/string.parse_float (also f64 since #5363); kept as a
-// private twin because the self-host pipeline does not yet emit
-// cross-module method references from json to string — dedupe the two
-// when that gap closes. The mantissa collects into an i64
-// with a 1e15 saturation cap — beyond that, extra integer digits bump
-// exp_adj and extra fraction digits are dropped — then the value is
-// `mantissa * 10^exp_adj`. The caller only reaches here with a
-// parser-validated JNumber, so there is no trailing-garbage check.
-function __json_number_to_f64(s: string): f64 {
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    var neg: boolean = false;
-    if (n > 0 && s[0] == 45) { neg = true; i = 1; }   // '-'
-    var mantissa: i64 = 0;
-    var exp_adj: i32 = 0;
-    // Single `b` reused across the integer / fraction / exponent
-    // loops — re-declaring it per scope collides in the wasm emitter
-    // (same footgun parse_float documents).
-    var b: i32 = 0;
-    // Integer digits.
-    while (i < n) {
-        b = s[i];
-        if (b < 48 || b > 57) { break; }
-        if (mantissa < 1000000000000000) {
-            mantissa = mantissa * 10 + ((b - 48) as i64);
-        } else {
-            exp_adj = exp_adj + 1;
-        }
-        i = i + 1;
-    }
-    // Fraction: '.' then digits.
-    if (i < n && s[i] == 46) {
-        i = i + 1;
-        while (i < n) {
-            b = s[i];
-            if (b < 48 || b > 57) { break; }
-            if (mantissa < 1000000000000000) {
-                mantissa = mantissa * 10 + ((b - 48) as i64);
-                exp_adj = exp_adj - 1;
-            }
-            i = i + 1;
-        }
-    }
-    // Exponent: (e|E)[+-]?digits.
-    if (i < n && (s[i] == 101 || s[i] == 69)) {
-        i = i + 1;
-        var exp_neg: boolean = false;
-        if (i < n && s[i] == 43) { i = i + 1; }
-        else if (i < n && s[i] == 45) { exp_neg = true; i = i + 1; }
-        var exp: i32 = 0;
-        while (i < n) {
-            b = s[i];
-            if (b < 48 || b > 57) { break; }
-            if (exp < 1000) { exp = exp * 10 + (b - 48); }
-            i = i + 1;
-        }
-        if (exp_neg) { exp_adj = exp_adj - exp; }
-        else { exp_adj = exp_adj + exp; }
-    }
-    var v: f64 = mantissa as f64;
-    while (exp_adj > 0) { v = v * 10.0; exp_adj = exp_adj - 1; }
-    while (exp_adj < 0) { v = v / 10.0; exp_adj = exp_adj + 1; }
-    if (neg) { v = 0.0 - v; }
-    return v;
-}
-
 // `json_get_f64(obj, key)` — typed-extract a JNumber as f64. The
 // float accessor JSON needs but lacked: `3.14` parses fine but the
 // integer getters reject it, so before this there was no way to read
 // a fractional field back out (#4384 item 4). Returns None when the
 // key is missing or the value isn't a number; any JSON number (int,
-// fraction, or exponent form) decodes.
+// fraction, or exponent form) decodes via std/string's parse_float
+// (#5420 — the raw text of a parser-validated JNumber is a valid
+// parse_float input, so the Some/None split falls out for free).
 pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
     match (json_get(obj, key)) {
         Some(v) => {
             match (v) {
-                JNumber(s) => { return Some(__json_number_to_f64(s)); },
+                JNumber(s) => { return s.parse_float(); },
                 _ => { return None; }
             }
         },
