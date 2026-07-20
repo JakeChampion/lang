@@ -72,7 +72,13 @@ function (t: StrTable) offset_of(v: string): i32 {
         if (t.values[i] == v) { return t.offsets[i]; }
         i = i + 1;
     }
-    return 24;
+    // A miss means the literal was never interned by the collection
+    // pre-pass — a compiler bug. Returning the scratch base (24) here
+    // silently pointed the emitted code at the iovec scratch area
+    // (SH-008); fail loudly instead.
+    eprint("wasm: string literal not interned: " + v);
+    exit(1);
+    return 0 - 1;
 }
 
 // Ctx is the read-only emission context threaded through emit_expr: the

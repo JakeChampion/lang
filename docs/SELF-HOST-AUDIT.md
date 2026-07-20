@@ -120,9 +120,15 @@ These are not just smells — they can produce wrong output today.
   instead of silently calling slot 0. (`watbin`'s copy stays local — it's a
   deliberately self-contained module; it already returned −1.)
 
-- [ ] **SH-008 — `wasm` `StrTable.offset_of` returns scratch base on miss.**
-  `wasm.fern:50-71` returns `24` for an un-interned string → silent wrong offset.
-  Severity **Med**. _Fix:_ hard error on missing string; back the table with a map.
+- [x] **SH-008 — `wasm` `StrTable.offset_of` returns scratch base on miss.**
+  _Done:_ both the AST backend's `StrTable.offset_of` and the IR path's
+  `offset_of_value` (`wasm_ir.fern` — the same bug, independently) now
+  `eprint` the missing literal and `exit(1)` instead of silently
+  returning 24 (the iovec scratch base). A miss is a compiler bug (the
+  literal escaped the collection pre-pass), so it should halt the
+  compile, not point the emitted code at scratch memory. (The map-backed
+  table remains a possible perf follow-up; correctness no longer
+  depends on it.)
 
 - [x] **SH-009 — Dead duplicate `movl` branch.** `x86_gas.fern:703-708` was
   unreachable (the `movl` at `:667` returns first) and additionally used the
