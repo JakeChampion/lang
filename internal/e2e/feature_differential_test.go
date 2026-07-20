@@ -456,6 +456,38 @@ function main(): i32 {
     return 0;
 }`},
 
+		// Nested arrays whose FIRST element is a call / ident rather than a
+		// literal (#5326): the self-host IR path classified arr-of-arr by
+		// literal shape only, so these stride-miscompiled there; native must
+		// stay the type-driven oracle on every backend.
+		{"nested_arr_call_first_elem", `import "std/i32";
+function mkf(): f64[] { return [1.5, 2.5]; }
+function mks(): string[] { return ["ab", "cde"]; }
+function main(): i32 {
+    var mf = [mkf(), [0.25]];
+    print((((mf[0][0] + mf[0][1] + mf[1][0]) * 4.0) as i32).to_string());
+    var inner = mkf();
+    var mi = [inner, [0.5]];
+    print((((mi[0][0] + mi[1][0]) * 2.0) as i32).to_string());
+    var ms = [mks(), ["f"]];
+    print((ms[0][0].len() + ms[0][1].len() + ms[1][0].len()).to_string());
+    return 0;
+}`},
+		// Unannotated array-returning functions (#5326, second cluster): the
+		// self-host ret-type inferencer had no ExprArray arm, so these never
+		// entered the element-kind registries and a[i] took the 4-byte
+		// default stride there. Native must agree everywhere.
+		{"unannotated_arr_ret_fn", `import "std/i32";
+function mk2() { return [1.5, 2.5]; }
+function mk3() { return ["ab", "cde"]; }
+function main(): i32 {
+    var a = mk2();
+    print((((a[0] + a[1]) * 2.0) as i32).to_string());
+    var b = mk3();
+    print((b[0].len() + b[1].len()).to_string());
+    return 0;
+}`},
+
 		// ---- stdlib: json / hex / base64 / math / format ----
 		{"stdlib_json", `import "std/json";
 import "std/i32";
