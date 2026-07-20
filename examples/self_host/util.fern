@@ -20,6 +20,12 @@
 // vm / wasm / ssa backends each used to carry their own copy of.
 pub function i32_to_string(n: i32): string {
     if (n == 0) { return "0"; }
+    // INT32_MIN has no i32 negation (0 - n wraps back to n), so the
+    // generic sign flip below would skip the digit loop and render a bare
+    // "-". Reachable from const_f64's `.long` halves: an f64 constant
+    // whose 32-bit half is exactly 0x80000000 (e.g. 1 + 2^-21) hit this
+    // and emitted `.long -, …`, which GNU as rejects.
+    if (n < 0 && 0 - n == n) { return "-2147483648"; }
     var neg: boolean = false;
     if (n < 0) { neg = true; n = 0 - n; }
     var out: string = "";
