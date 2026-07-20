@@ -15422,6 +15422,15 @@ function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], tty
             s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
             s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
             s = s.emit(ir.op_drop());
+        } else if (tag == "string") {
+            // A STRING element position (#4353 item 2, probe p4): construction
+            // str_box's every string element into a fresh sole-owned copy
+            // (#5443), and admission (tuple_arg_payload_fresh) only credits a
+            // literal / fresh-producer element, so the rc-aware __fern_str_free
+            // (immortal skips, shared decs, unique frees) is exactly balanced.
+            s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
+            s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
+            s = s.emit(ir.op_drop());
         } else if (tag.len() >= 2 && tag[0:1] == "(") {
             var cpt: i32[] = path_child(path, k);
             s = emit_tuple_type_child_drops(s, slot, cpt, tag);      // inner children first
@@ -15474,6 +15483,13 @@ function tuple_field_deep_droppable(t: string, structs: parser.StructDecl[]): bo
             // stays un-admitted (leak-safe) — the drop only handles field-reclaim structs.
             if (!struct_has_reclaim_array_field(structs, tag)) { return false; }
             any_arr = true;
+        } else if (tag == "string") {
+            // A STRING element (#4353 item 2, probe p4): construction str_box's
+            // every string element into a fresh sole-owned copy (#5443), so the
+            // type-driven drop's rc-aware __fern_str_free is deep-droppable —
+            // gated at admission (tuple_arg_payload_fresh) on a literal / fresh
+            // producer element expression.
+            any_arr = true;
         } else if (!is_scalar_type_name(tag)) { return false; }
         k = k + 1;
     }
@@ -15497,6 +15513,17 @@ function tuple_arg_payload_fresh(ttype: string, arg: parser.Expr, structs: parse
                     var isarr: boolean = false;
                     match (tl.elements[k]) { parser.ExprArray(_) => { isarr = true; }, _ => {} }
                     if (!isarr) { return false; }
+                } else if (tag == "string") {
+                    // A string position must be a LITERAL (construction copies it
+                    // fresh) or a fresh producer (concat / .to_string(),
+                    // tuple_str_elem_fresh) — a bare-ident element would put a
+                    // live local's box under the blind type-driven str_free.
+                    var isfs: boolean = false;
+                    match (tl.elements[k]) {
+                        parser.ExprString(_) => { isfs = true; },
+                        _ => { isfs = tuple_str_elem_fresh(tl.elements[k]); }
+                    }
+                    if (!isfs) { return false; }
                 } else if (tag.len() >= 2 && tag[0:1] == "(") {
                     if (!tuple_arg_payload_fresh(tag, tl.elements[k], structs)) { return false; }
                 } else if (decl_is_struct(structs, tag)) {
