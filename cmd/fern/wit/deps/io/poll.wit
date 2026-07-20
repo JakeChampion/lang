@@ -1,11 +1,27 @@
 package wasi:io@0.2.0;
 
-// Vendored subset of wasi:io/poll@0.2.0 — only `pollable.block`
-// and `[resource-drop]pollable`, which the wasm backend uses to
-// wait for a wasi:sockets `tcp-socket.accept` to become ready.
+// Vendored subset of wasi:io/poll@0.2.0 — the `pollable` resource
+// (`block` + `[resource-drop]pollable`), which the wasm backend uses to
+// wait for a wasi:sockets `tcp-socket.accept` to become ready, plus the
+// top-level `poll` multiplexer.
+//
+// `poll` is what the self-host wasm backend's wasm_poll lowers to
+// (#4316). It has to be declared here even though the NATIVE backend
+// emits the same import: native never runs wasm-tools, composing in Go
+// instead (component.ClassifyCore -> component.Compose) and hand-writing
+// the canonical-ABI adapters, so it resolves the import without any WIT.
+// The self-host path goes through `wasm-tools component embed` +
+// `component new`, which resolves imports against THIS file — and a
+// list-typed import cannot be inferred from the core signature alone, so
+// omitting it fails the compose with "import interface
+// wasi:io/poll@0.2.0 is missing function poll that is required by the
+// module".
+//
 // Source: https://github.com/WebAssembly/wasi-io
 interface poll {
     resource pollable {
         block: func();
     }
+
+    poll: func(in: list<borrow<pollable>>) -> list<u32>;
 }

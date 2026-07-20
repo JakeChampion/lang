@@ -986,40 +986,22 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // `wasm-tools component new`. wasm_block makes a wasm_timer_pollable timer
         // observably block (subscribe → block → the duration elapses).
         // wasm_poll (the wasi:io/poll.poll list<pollable> -> list<u32> readiness
-        // multiplexer) does NOT lower on the wasm IR path yet (#4316). Its LIST
-        // params/results do need component-type metadata — the scalar pollable
-        // ops above compose without it, a list-typed import cannot — but the
-        // blocker is NOT a metadata-emission subsystem, as this comment used to
-        // claim. Measured 2026-07-20:
+        // multiplexer) NOW lowers on the wasm IR path (#4316) — no exclusion
+        // here. It is the first LIST-typed component import the self-host
+        // emits, which is why it needed more than an import line: a list-typed
+        // import cannot be inferred from the core signature alone, so the
+        // module carries component-type metadata (the `wasm-tools component
+        // embed` step in the compose pipeline) and cmd/fern/wit/deps/io/
+        // poll.wit had to declare the function — it was a subset carrying only
+        // pollable.block. See wasi_poll_import / wasm_poll_func.
         //
-        //   - `wasm-tools component embed <wit> -w fern` + `component new`
-        //     composes a core module importing `wasi:io/poll@0.2.0` "poll" at
-        //     the canonical (ptr, len, retptr) core signature — no hand-written
-        //     encoder needed. The payload is world-specific and module-
-        //     independent (see internal/wasm/componenttype/doc.go).
-        //   - What actually fails first is the VENDORED WIT: cmd/fern/wit/deps/
-        //     io/poll.wit is a deliberate subset carrying only `pollable.block`
-        //     + the resource drop, so the embed reports "import interface
-        //     wasi:io/poll@0.2.0 is missing function poll". Declaring
-        //     `poll: func(in: list<borrow<pollable>>) -> list<u32>;` there makes
-        //     the compose succeed.
-        //
-        // So the remaining work is: enrich the vendored WIT, regenerate the
-        // fern.bin / http.bin payloads per componenttype/doc.go (and update
-        // world_lift_test.go, which asserts the current subset), emit the import
-        // + a $__fern_wasm_poll helper here (native's buildWasmPollBody in
-        // wasmbin/wasi.go is ~20 instructions and is the reference), and add the
-        // embed step to the compose pipeline — the self-host path runs
-        // `component new` alone today, with no metadata attached at all.
-        //
-        // NOTE the native backend does NOT take this route: it never invokes
-        // wasm-tools, composing in Go instead (component.ClassifyCore ->
-        // component.Compose), which hand-writes the canonical-ABI adapters. That
-        // is why native's wasm_poll works end-to-end against the same subset WIT.
-        //
-        // wasm_poll DOES lower on every other backend (native x86-64/arm64 +
-        // interp + the self-host register IR paths) as a -1 portability shim.
-        && !module_emits_op_cached(cache, "wasm_poll")
+        // NOTE when reading the native backend for guidance on the REST of this
+        // surface (the tcp set below): it does NOT take this route. Native never
+        // invokes wasm-tools, composing in Go instead (component.ClassifyCore ->
+        // component.Compose) and hand-writing the canonical-ABI adapters, which
+        // is why native resolves these imports against the same subset WIT that
+        // blocks the self-host — and why its array layout differs too (see
+        // wasm_poll_func).
         // tcp_* client primitives: native lowers them via the IR (socket
         // syscalls + the self-host string ABI for recv/send), but the
         // self-host wasm backend has no socket runtime (wasm sockets need the
@@ -1084,6 +1066,45 @@ pub function wasi_pollable_drop_import(): string {
 // wasm_timer_pollable observably block. Same wasi:io/poll interface as the drop.
 pub function wasi_pollable_block_import(): string {
     return "  (import \"wasi:io/poll@0.2.0\" \"[method]pollable.block\" (func $__fern_wasi_pollable_block (param i32)))\n";
+}
+// wasm_poll: the wasi:io/poll.poll readiness multiplexer (#4316). Unlike the
+// scalar pollable ops above, this one is LIST-typed —
+// `poll: func(in: list<borrow<pollable>>) -> list<u32>` — so at the canonical
+// ABI it takes (data-ptr, len) and writes its returned list into an 8-byte
+// return area: data ptr @ +0, count @ +4. A list-typed import cannot be
+// inferred from the core signature alone, so the module must carry
+// component-type metadata (the `wasm-tools component embed` step) and the
+// vendored cmd/fern/wit/deps/io/poll.wit must declare the function.
+pub function wasi_poll_import(): string {
+    return "  (import \"wasi:io/poll@0.2.0\" \"poll\" (func $__fern_wasi_poll (param i32 i32 i32)))\n";
+}
+// $__fern_wasm_poll(pollables: i32[]) -> i32: behaviourally the sibling of
+// native's buildWasmPollBody (internal/codegen/wasmbin/wasi.go) — call
+// wasi:io/poll.poll over the pollable handles and return the FIRST ready index,
+// or -1 when the ready list came back empty.
+//
+// The ARRAY LAYOUT differs from native's, so do not copy that body verbatim.
+// A self-host wasm array pointer `p` (from $__fern_arr_box, which returns
+// base+8 of a 16-byte rc-headered block) has its element COUNT at p+0 and its
+// elements starting at p+8 — not native's "count at p-4, elements at p+0".
+// Reading it native-style makes poll see a garbage length and return
+// immediately without blocking.
+//
+// Elements are contiguous i32 from p+8, which is exactly the canonical
+// list<borrow<pollable>> data pointer, so no copy is needed. The returned
+// list<u32> is written into an 8-byte return area: data ptr @ +0, count @ +4.
+pub function wasm_poll_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_wasm_poll (param $arr i32) (result i32)\n";
+    o = o + "    (local $retptr i32)\n";
+    o = o + "    (local.set $retptr (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "    (call $__fern_wasi_poll (i32.add (local.get $arr) (i32.const 8))\n";
+    o = o + "      (i32.load (local.get $arr))\n";
+    o = o + "      (local.get $retptr))\n";
+    o = o + "    (if (result i32) (i32.load offset=4 (local.get $retptr))\n";
+    o = o + "      (then (i32.load (i32.load (local.get $retptr))))\n";
+    o = o + "      (else (i32.const -1))))\n";
+    return o;
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
@@ -1418,6 +1439,16 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // the other pollable ops. The pollable handle is already on the stack.
             out = out + "    call $__fern_wasi_pollable_block\n";
             out = out + "    i32.const 0\n";
+        } else if (o.kind_tag == 192) {  // wasm_poll
+            // wasm_poll(ps: i32[]) -> i32. The readiness multiplexer: block until
+            // at least one pollable in the array is ready, then push the FIRST
+            // ready index (-1 if the ready list came back empty). The array
+            // pointer is already on the stack; $__fern_wasm_poll unpacks it into
+            // the canonical (data-ptr, len) list pair and supplies the return
+            // area. Unlike the scalar pollable ops above this is a LIST-typed
+            // import, so the module additionally needs component-type metadata
+            // (see wasi_poll_import) — #4316.
+            out = out + "    call $__fern_wasm_poll\n";
         } else if (o.kind_tag == 174) {  // temp_dir
             // temp_dir(prefix) -> create a unique `<prefix>-<ns>` directory under
             // the preopen, push a Result[string, IoError] box. $__fern_temp_dir
