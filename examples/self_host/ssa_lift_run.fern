@@ -29,14 +29,14 @@ function int_str(n: i32): string {
 }
 
 // count_kind counts SSA instructions of a given kind across all blocks.
-function count_kind(f: ssa.SFunc, kind: string): i32 {
+function count_kind(f: ssa.SFunc, kind_tag: i32): i32 {
     var n: i32 = 0;
     var b: i32 = 0;
     while (b < f.blocks.len()) {
         var blk: ssa.SBlock = f.blocks[b];
         var k: i32 = 0;
         while (k < blk.insts.len()) {
-            if (blk.insts[k].kind == kind) { n = n + 1; }
+            if (blk.insts[k].kind_tag == kind_tag) { n = n + 1; }
             k = k + 1;
         }
         b = b + 1;
@@ -100,10 +100,10 @@ function main(): i32 {
     fails = fails + check_eval("ifelse c=0", 3, 4, ife_ops, [0, 10, 20], 22);
     // structural: the merge must carry a phi for r.
     var ife_f: ssa_lift.LResult = ssa_lift.lift_from_ir("ifelse", 3, 4, ife_ops, no_structs);
-    if (ife_f.ok && count_kind(ife_f.func, "phi") == 1) {
+    if (ife_f.ok && count_kind(ife_f.func, 8) == 1) {
         print("ok - ifelse builds exactly one phi");
     } else {
-        print("not ok - ifelse phi count = " + int_str(count_kind(ife_f.func, "phi")));
+        print("not ok - ifelse phi count = " + int_str(count_kind(ife_f.func, 8)));
         fails = fails + 1;
     }
 
@@ -131,7 +131,7 @@ function main(): i32 {
         ir.op_return()
     ];
     var call_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("usef", 1, 1, call_ops, no_structs);
-    if (call_lr.ok && count_kind(call_lr.func, "call") == 1) {
+    if (call_lr.ok && count_kind(call_lr.func, 11) == 1) {
         print("ok - call_direct lifts to one call inst");
     } else {
         print("not ok - call_direct lift");

@@ -189,34 +189,34 @@ function f_cc(op: string): string {
 }
 
 function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[], fname: string, out: string): string {
-    if (ins.kind == "const_str") {
+    if (ins.kind_tag == 5) {  // const_str
         // Pointer to the static [len, bytes…] string constant (64-bit; stored
         // via store_reg so it honours the value's register/slot home).
         out = out + "    adrp x9, " + sconst_label(fname, ins.result) + "\n";
         out = out + "    add x9, x9, :lo12:" + sconst_label(fname, ins.result) + "\n";
         return store_reg(reg_of, ins.result, "x9", 64, out);
     }
-    if (ins.kind == "const_float") {
+    if (ins.kind_tag == 4) {  // const_float
         out = out + "    adrp x9, " + fconst_label(fname, ins.result) + "\n";
         out = out + "    ldr d0, [x9, :lo12:" + fconst_label(fname, ins.result) + "]\n";
         return out + "    str d0, " + slot(ins.result) + "\n";
     }
-    if (ins.kind == "const_int" || ins.kind == "const_bool") {
+    if (ins.kind_tag == 1 || ins.kind_tag == 2) {
         out = emit_const(ins.imm, "w9", out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "const_i64") {
+    if (ins.kind_tag == 3) {  // const_i64
         // A 64-bit integer literal: `ldr x9, =TEXT` lets the assembler splice
         // the full-width value into a literal-pool entry (any i64/u64 pattern),
         // then store at the value's 64-bit home. compute_widths marks it 64-bit.
         out = out + "    ldr x9, =" + ins.str + "\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "copy") {
+    if (ins.kind_tag == 7) {  // copy
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "binary") {
+    if (ins.kind_tag == 9) {  // binary
         // Float arithmetic (f64 result) and comparison (f64 operands, i32
         // result) over the values' stack slots, using the d registers.
         if (isfloat[ins.result] == 1) {
@@ -236,7 +236,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = emit_binary(ins.str, widths[ins.args[0]], out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "unary") {
+    if (ins.kind_tag == 10) {  // unary
         if (ins.str == "-" && isfloat[ins.args[0]] == 1) {
             out = out + "    ldr d0, " + slot(ins.args[0]) + "\n    fneg d0, d0\n";
             return out + "    str d0, " + slot(ins.result) + "\n";
@@ -283,7 +283,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         else { out = out + "    cmp w9, #0\n    cset w9, eq\n"; }
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "call") {
+    if (ins.kind_tag == 11) {  // call
         // AAPCS64: integer/pointer args fill x0…, f64 args fill d0… (two
         // independent sequences).
         var ii: i32 = 0;
@@ -311,13 +311,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         if (widths[ins.result] == 64) { rsrc = "x0"; }
         return store_reg(reg_of, ins.result, rsrc, widths[ins.result], out);
     }
-    if (ins.kind == "funcaddr") {
+    if (ins.kind_tag == 13) {  // funcaddr
         // Function address (closure code pointer) via adrp/add; pointer-width.
         out = out + "    adrp x9, __fn_" + ins.str + "\n";
         out = out + "    add x9, x9, :lo12:__fn_" + ins.str + "\n";
         return store_reg(reg_of, ins.result, "x9", 64, out);
     }
-    if (ins.kind == "call_indirect") {
+    if (ins.kind_tag == 12) {  // call_indirect
         // args[0] = code pointer (→ x9, a scratch outside x12-x15/x0-x7);
         // args[1..] = call args into x0… ; branch-with-link through x9.
         if (reg_of[ins.args[0]] >= 0) { out = out + "    mov x9, " + regn(reg_of, ins.args[0], 64) + "\n"; }
@@ -334,7 +334,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         if (widths[ins.result] == 64) { risrc = "x0"; }
         return store_reg(reg_of, ins.result, risrc, widths[ins.result], out);
     }
-    if (ins.kind == "alloc") {
+    if (ins.kind_tag == 14) {  // alloc
         // Bump-allocate 8-byte word slots (a pointer element fits; i32
         // elements use the low 4 bytes); result = old hp. The slot count is
         // imm (compile-time) unless args[0] is present — a runtime size
@@ -357,7 +357,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    str x11, [x10]\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "load_elem") {
+    if (ins.kind_tag == 15) {  // load_elem
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (x9)
         out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (w10)
         // Byte offset = idx * 8 (word stride); a w-access can't use the
@@ -368,7 +368,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         else { out = out + "    ldr w9, [x9, x10]\n"; }
         return store_res(reg_of, widths, ins.result, "a", out);
     }
-    if (ins.kind == "store_elem") {
+    if (ins.kind_tag == 16) {  // store_elem
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (x9)
         out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (w10)
         out = load_op(reg_of, widths, ins.args[2], "d", out);   // value (w11/x11)
@@ -376,30 +376,30 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         if (ins.imm == 64) { return out + "    str x11, [x9, x10]\n"; }
         return out + "    str w11, [x9, x10]\n";
     }
-    if (ins.kind == "print") {
+    if (ins.kind_tag == 19) {  // print
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle → x9
         out = out + "    mov x0, x9\n";
         out = out + "    mov x1, #" + util.i32_to_string(ins.imm) + "\n";   // fd (1=stdout,2=stderr)
         return out + "    bl __fern_ssa_print\n";
     }
-    if (ins.kind == "exit") {
+    if (ins.kind_tag == 21) {  // exit
         // exit(code): terminate via the exit syscall (93); code (i32) in x0.
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // code → x9
         out = out + "    mov x0, x9\n";
         out = out + "    mov x8, #93\n";
         return out + "    svc #0\n";
     }
-    if (ins.kind == "strbuf_reset") { return out + "    bl __fern_ssa_strbuf_reset\n"; }
-    if (ins.kind == "strbuf_append") {
+    if (ins.kind_tag == 23) { return out + "    bl __fern_ssa_strbuf_reset\n"; }
+    if (ins.kind_tag == 24) {  // strbuf_append
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // string → x9
         out = out + "    mov x0, x9\n";
         return out + "    bl __fern_ssa_strbuf_append\n";
     }
-    if (ins.kind == "strbuf_take") {
+    if (ins.kind_tag == 25) {  // strbuf_take
         out = out + "    bl __fern_ssa_strbuf_take\n";
         return store_reg(reg_of, ins.result, "x0", 64, out);   // result string ptr
     }
-    if (ins.kind == "concat") {
+    if (ins.kind_tag == 17) {  // concat
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // a → x9
         out = out + "    mov x0, x9\n";
         out = load_op(reg_of, widths, ins.args[1], "a", out);   // b → x9
@@ -407,7 +407,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    bl __fern_ssa_concat\n";
         return store_reg(reg_of, ins.result, "x0", 64, out);
     }
-    if (ins.kind == "streq") {
+    if (ins.kind_tag == 18) {  // streq
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         out = out + "    mov x0, x9\n";
         out = load_op(reg_of, widths, ins.args[1], "a", out);
@@ -415,14 +415,14 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    bl __fern_ssa_streq\n";
         return store_reg(reg_of, ins.result, "w0", 32, out);
     }
-    if (ins.kind == "read_file") {
+    if (ins.kind_tag == 26) {  // read_file
         // read_file(path) → Result box; __fern_ssa_read_file(x0 = path) → x0.
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // path → x9
         out = out + "    mov x0, x9\n";
         out = out + "    bl __fern_ssa_read_file\n";
         return store_reg(reg_of, ins.result, "x0", 64, out);    // Result box ptr ← x0
     }
-    if (ins.kind == "write_file") {
+    if (ins.kind_tag == 27) {  // write_file
         // write_file(path, content) → Option box; __fern_ssa_write_file(x0 =
         // path, x1 = content) → x0.
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // path → x9
@@ -432,13 +432,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    bl __fern_ssa_write_file\n";
         return store_reg(reg_of, ins.result, "x0", 64, out);    // Option box ptr ← x0
     }
-    if (ins.kind == "write") {
+    if (ins.kind_tag == 20) {  // write
         // write(handle): like print but no trailing newline (fd 1).
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle → x9
         out = out + "    mov x0, x9\n";
         return out + "    bl __fern_ssa_write\n";
     }
-    if (ins.kind == "args") {
+    if (ins.kind_tag == 22) {  // args
         // args() → string[] of argv; __fern_ssa_args() → x0.
         out = out + "    bl __fern_ssa_args\n";
         return store_reg(reg_of, ins.result, "x0", 64, out);    // string[] ptr ← x0
@@ -454,7 +454,7 @@ function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], widths: i32[], pred: i32, t
     var k: i32 = 0;
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
-        if (ins.kind == "phi") {
+        if (ins.kind_tag == 8) {  // phi
             out = load_op(reg_of, widths, ins.args[sl], "a", out);
             out = store_res(reg_of, widths, ins.result, "a", out);
         }
@@ -469,7 +469,7 @@ function blk_label(name: string, id: i32): string {
 
 function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], isfloat: i32[], blk: ssa.SBlock, out: string): string {
     var t: ssa.STerm = blk.term;
-    if (t.kind == "ret") {
+    if (t.kind_tag == 1) {  // const_int
         // An f64 return goes in d0; otherwise w0/x0.
         if (isfloat[t.value] == 1) {
             out = out + "    ldr d0, " + slot(t.value) + "\n";
@@ -486,11 +486,11 @@ function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], isfloat: i32[], b
         out = out + "    ldp x29, x30, [sp], #16\n";
         return out + "    ret\n";
     }
-    if (t.kind == "br") {
+    if (t.kind_tag == 2) {  // const_bool
         out = emit_phi_moves(f, reg_of, widths, blk.id, t.target, out);
         return out + "    b " + blk_label(f.name, t.target) + "\n";
     }
-    if (t.kind == "brif") {
+    if (t.kind_tag == 3) {  // const_i64
         out = load_op(reg_of, widths, t.cond, "a", out);
         out = out + "    cbnz w9, " + blk_label(f.name, t.t) + "\n";
         return out + "    b " + blk_label(f.name, t.f) + "\n";
@@ -540,7 +540,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
-            if (ins.kind != "param" && ins.kind != "phi") {
+            if (ins.kind_tag != 6 && ins.kind_tag != 8) {
                 chunks = chunks.append(emit_inst(ins, reg_of, widths, isfloat, f.name, ""));
             }
             k = k + 1;
@@ -573,7 +573,7 @@ function emit_float_consts(funcs: ssa.SFunc[]): string {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: ssa.SInst = blk.insts[k];
-                if (ins.kind == "const_float") {
+                if (ins.kind_tag == 4) {  // const_float
                     out = out + "    .align 8\n" + fconst_label(funcs[i].name, ins.result) + ":\n    .double " + ins.str + "\n";
                 }
                 k = k + 1;
@@ -598,7 +598,7 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: ssa.SInst = blk.insts[k];
-                if (ins.kind == "const_str") {
+                if (ins.kind_tag == 5) {  // const_str
                     var sv: string = ins.str;
                     var parts: string[] = [];
                     parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + util.i32_to_string(sv.len()) + "\n");
