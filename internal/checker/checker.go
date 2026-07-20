@@ -8970,6 +8970,12 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 					arm.Bindings[i] = arm.FieldNames[i]
 				}
 			}
+			// Enum variant patterns never project through FieldNames (only
+			// struct matches do), and resolveVariantBindings reorders
+			// Bindings into declaration order — leaving FieldNames stale.
+			// Clear it so a re-check (post-monomorph) doesn't misfire the
+			// rename guard on a legitimately reordered shorthand pattern.
+			arm.FieldNames = nil
 		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
@@ -9718,6 +9724,12 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 					arm.Bindings[i] = arm.FieldNames[i]
 				}
 			}
+			// Enum variant patterns never project through FieldNames (only
+			// struct matches do), and resolveVariantBindings reorders
+			// Bindings into declaration order — leaving FieldNames stale.
+			// Clear it so a re-check (post-monomorph) doesn't misfire the
+			// rename guard on a legitimately reordered shorthand pattern.
+			arm.FieldNames = nil
 		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
