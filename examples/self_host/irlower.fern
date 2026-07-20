@@ -11125,6 +11125,64 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
     return s.fail();
 }
 
+// lower_struct_destructure expands `let Point { x, y } = E;` (encoded by
+// parse_struct_destructure as a StmtVar with type_name "@sd:<Struct>:<fields>"
+// and name = comma-joined bindings). It lowers E once into a struct-typed temp,
+// then synthesises `var <bind> = <tmp>.<field>;` for each field and lowers each
+// through the ordinary StmtVar path — so all the field-read typing + RC dup-on-
+// projection (a pointer field's binding co-owns the box alongside the temp,
+// balanced by the temp's scope-exit deep-drop) is reused, not re-implemented.
+function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState {
+    // Decode "@sd:<StructName>:<f0,f1,…>" — the struct name runs to the first
+    // ':' after the "@sd:" prefix, the rest is the comma-joined field list.
+    var rest: str = v.type_name[4 : v.type_name.len()];
+    var colon: i32 = 0 - 1;
+    var ri: i32 = 0;
+    while (ri < rest.len()) {
+        if (rest[ri] == 58 && colon < 0) { colon = ri; }
+        ri = ri + 1;
+    }
+    if (colon < 0) { return s.fail(); }
+    var struct_name: str = rest[0 : colon];
+    var fields_csv: str = rest[colon + 1 : rest.len()];
+    var fields: string[] = split_commas(fields_csv);
+    var bindings: string[] = split_commas(v.name);
+    // Lower E once into a fresh struct-typed temp, so a call-valued init isn't
+    // re-evaluated per field and the box is owned/reclaimed like any struct local.
+    var dt: LowerState = lower_expr(v.init, s);
+    if (!dt.ok) { return dt; }
+    var tmp: string = "$sdst" + util.i32_to_string(dt.locals.len());
+    dt = dt.add_local(tmp);
+    var tmp_slot: i32 = dt.slot_of(tmp);
+    dt = dt.mark_struct_type(tmp_slot, struct_name);
+    dt = dt.emit(ir.op_store_local(tmp_slot));
+    var i: i32 = 0;
+    while (i < bindings.len()) {
+        var fa: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: tmp, line: 0, col: 0 }, field: fields[i], line: 0, col: 0 };
+        var sv: parser.Stmt = parser.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_str: false };
+        dt = lower_stmt(sv, dt);
+        if (!dt.ok) { return dt; }
+        i = i + 1;
+    }
+    return dt;
+}
+
+// split_commas splits `csv` on top-level commas into its fields (no nesting
+// awareness — struct destructure field/binding names never contain commas).
+function split_commas(csv: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= csv.len()) {
+        if (i == csv.len() || csv[i] == 44) {
+            out = out.append(csv[start : i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // lower_stmt_var: the parser.StmtVar arm of lower_stmt, split out so no single
 // function's per-function emit accumulation can exhaust the fixed bump
 // arena on the whole-compiler per-module emits (a ~3,000-line lower_stmt
@@ -11140,6 +11198,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // alias-inc and broke `__rc`. Kept out of line so this huge arm
     // doesn't grow (oversized functions miscompile — cf. #2720).
     if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
+    // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
+    // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
+    // whose name is the comma-joined bindings. Expand it into per-field binds.
+    if (v.type_name.len() >= 4 && v.type_name[0:4] == "@sd:") {
+        return lower_struct_destructure(v, s);
+    }
     // Binding a SCALAR-element array struct field (`var y = h.items`,
     // items: i32[]/f64[]/i64[]) aliases the array: `y` becomes a second
     // owner of the field's buffer. Lower it via the IR with a Perceus dup
