@@ -29,6 +29,33 @@ TestSelfHostStage2FixedPoint 27
 TestSelfHostModloadFixpointX86_64 18
 TestSelfHostStdTestE2E 18
 
+# The watbin / wit / component family, un-quarantined from #4801 (measured on
+# the x86-64 lane, qemu-x86_64 + wasmtime v46.0.1, drivers warm). Each runs a
+# `wasm-tools component new` compose plus a wasmtime run; the four heaviest
+# also cold-build their own driver. The rest of the family sits at ~4s.
+TestSelfHostWasmComponentEndToEnd 54
+TestSelfHostWasmComponentAdapter 30
+TestSelfHostWasmComponentReadFile 29
+TestSelfHostWasmComponentStdout 28
+TestSelfHostComposeFromWorld 6
+TestSelfHostWitClassify 5
+TestSelfHostWitPrefixLayout 5
+TestSelfHostWasmComponentRandom 5
+TestSelfHostWasmComponentEnv 5
+TestSelfHostWasmComponentWriteFile 5
+TestSelfHostWasmComponentReadWriteFile 4
+TestSelfHostWasmComponentArgs 4
+TestSelfHostWasmComponentClock 4
+TestSelfHostWasmComponentClockMono 4
+TestSelfHostWasmComponentReadEnv 4
+TestSelfHostWasmComponentReadWriteEnv 4
+TestSelfHostWasmComponentRandomWrite 4
+TestSelfHostWasmComponentEprint 4
+TestSelfHostWasmComponentExit 4
+TestSelfHostWasmComponentArgsRead 4
+TestSelfHostWasmComponentArgsReadWrite 4
+TestSelfHostWasmComponent 4
+
 # Driver builds not (yet) warmed + heavier IR/wasm e2e legs.
 TestSelfHostWriteFileIRX86_64 16
 TestSelfHostCallOnCallIRX86_64 14
