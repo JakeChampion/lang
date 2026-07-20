@@ -77,7 +77,7 @@ func buildStreamEOFProducerComponent(producerCore []byte, tramp2, fixup2 []byte,
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
 
 	buf = PutAliasSectionCoreExportFunc(buf, 2, "prod")    // core func 10 (prod)
-	buf = PutTypeSectionOneFuncResultIdx(buf, nil, nil, 0) // component type 1: () -> stream<elem>(type 0)
+	buf = PutTypeSectionOneFuncResultIdxAsync(buf, nil, nil, 0) // component type 1: () -> stream<elem>(type 0)
 	buf = PutCanonSectionLiftAsync(buf, 10, 1)             // component func 0
 	buf = PutExportSectionOneFunc(buf, "prod", 0)
 	return buf
@@ -94,31 +94,32 @@ func buildStreamEOFProducerComponent(producerCore []byte, tramp2, fixup2 []byte,
 // Proven to return its value under `wasmtime -W
 // component-model-async,component-model-async-stackful`.
 func BuildStreamCollectComponent(producerCore, consumerCore, memCore, tramp2, fixup2 []byte, elemValtype, resultValtype byte) []byte {
-	buf := PutComponentHeader(nil)
-	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype)) // component type 0: stream<elem> (for stream.read)
-
-	// Nested producer → component 0, instance 0, alias prod → component func 0.
-	buf = PutComponentSection(buf, buildStreamEOFProducerComponent(producerCore, tramp2, fixup2, elemValtype))
-	buf = PutInstanceSectionInstantiateComponent(buf, 0)
-	buf = PutAliasSectionInstanceExportFunc(buf, 0, "prod") // component func 0
+	// Sibling composition (v46 — see buildAsyncConsumerComponent): the consumer
+	// half is a nested component importing `dep0: async func() -> stream<elem>`;
+	// the outer links a sibling EOF-producer instance.
+	inner := PutComponentHeader(nil)
+	inner = PutTypeSectionOneDefined(inner, InnerTypeStream(elemValtype)) // component type 0: stream<elem>
+	// component type 1: imported producer functype `async () -> stream<elem>`.
+	inner = PutTypeSectionOneFuncResultIdxAsync(inner, nil, nil, 0)
+	inner = PutComponentImportSectionFuncs(inner, []string{"dep0"}, []uint32{1}) // component func 0 (prod)
 
 	// Externalised consumer memory → core memory 0.
-	buf = PutCoreModuleSection(buf, memCore)                     // core module 0
-	buf = PutCoreInstanceSectionInstantiate(buf, 0)              // core instance 0
-	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 0, "m") // core memory 0
+	inner = PutCoreModuleSection(inner, memCore)                     // core module 0
+	inner = PutCoreInstanceSectionInstantiate(inner, 0)              // core instance 0
+	inner = PutAliasSectionCoreExport(inner, CoreSortMemory, 0, "m") // core memory 0
 
 	// Consumer canon glue over memory 0 (externalised — no consumer-side trampolines).
-	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0 (tr)
-	buf = PutCanonSectionLowerAsync(buf, 0, 0)         // core func 1 (prodl: lower prod over mem 0)
-	buf = PutCanonStreamRead(buf, 0, 0)                // core func 2 (sr; stream type 0 over mem 0)
-	buf = PutCanonStreamDropReadable(buf, 0)           // core func 3 (sdr)
-	buf = PutCanonWaitableSetNew(buf)                  // core func 4 (wsn)
-	buf = PutCanonWaitableJoin(buf)                    // core func 5 (wj)
-	buf = PutCanonWaitableSetWait(buf, 0)              // core func 6 (wsw over mem 0)
-	buf = PutCanonWaitableSetDrop(buf)                 // core func 7 (wsd)
+	inner = PutCanonTaskReturnSingle(inner, resultValtype) // core func 0 (tr)
+	inner = PutCanonSectionLowerAsync(inner, 0, 0)         // core func 1 (prodl: lower prod over mem 0)
+	inner = PutCanonStreamRead(inner, 0, 0)                // core func 2 (sr; stream type 0 over mem 0)
+	inner = PutCanonStreamDropReadable(inner, 0)           // core func 3 (sdr)
+	inner = PutCanonWaitableSetNew(inner)                  // core func 4 (wsn)
+	inner = PutCanonWaitableJoin(inner)                    // core func 5 (wj)
+	inner = PutCanonWaitableSetWait(inner, 0)              // core func 6 (wsw over mem 0)
+	inner = PutCanonWaitableSetDrop(inner)                 // core func 7 (wsd)
 
-	buf = PutCoreModuleSection(buf, consumerCore) // core module 1
-	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+	inner = PutCoreModuleSection(inner, consumerCore) // core module 1
+	inner = PutCoreInstanceSectionFromExports(inner, []CoreInstanceExport{
 		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
 		{Name: "prodl", Sort: CoreSortFunc, Idx: 1},
 		{Name: "sr", Sort: CoreSortFunc, Idx: 2},
@@ -128,13 +129,15 @@ func BuildStreamCollectComponent(producerCore, consumerCore, memCore, tramp2, fi
 		{Name: "wsw", Sort: CoreSortFunc, Idx: 6},
 		{Name: "wsd", Sort: CoreSortFunc, Idx: 7},
 	}) // core instance 1
-	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
+	inner = PutCoreInstanceSectionInstantiateWithInstanceArgs(inner, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
 
-	buf = PutAliasSectionCoreExportFunc(buf, 2, "run")        // core func 8
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1: () -> resultValtype
-	buf = PutCanonSectionLiftAsync(buf, 8, 1)                 // component func 1
-	buf = PutExportSectionOneFunc(buf, "run", 1)
-	return buf
+	inner = PutAliasSectionCoreExportFunc(inner, 2, "run")             // core func 8
+	inner = PutTypeSectionOneFuncAsync(inner, nil, nil, resultValtype) // component type 2: () -> resultValtype
+	inner = PutCanonSectionLiftAsync(inner, 8, 2)                      // component func 1
+	inner = PutExportSectionOneFunc(inner, "run", 1)
+
+	producer := buildStreamEOFProducerComponent(producerCore, tramp2, fixup2, elemValtype)
+	return buildAsyncImportsAwaitOuter(inner, []AsyncImportSpec{{Provider: producer, ProviderExportName: "prod"}}, "run")
 }
 
 // BuildAsyncStreamImportComponent is the real-Fern integration of the colorless
@@ -154,18 +157,31 @@ func BuildStreamCollectComponent(producerCore, consumerCore, memCore, tramp2, fi
 func BuildAsyncStreamImportComponent(consumerCore, producerCore, tramp2, fixup2 []byte,
 	importIface, importWITName, consumerAsyncExport, liftExportName string,
 	elemValtype, resultValtype byte) []byte {
+	// Sibling composition (required on wasmtime v46 — see
+	// buildAsyncConsumerComponent): the consumer machinery is a nested
+	// component importing the producer's `dep0: async func() -> stream<elem>`,
+	// and the outer links a sibling EOF-producer instance to it.
+	inner := buildStreamImportConsumerComponent(consumerCore, importIface, importWITName, consumerAsyncExport, liftExportName, elemValtype, resultValtype)
+	producer := buildStreamEOFProducerComponent(producerCore, tramp2, fixup2, elemValtype)
+	return buildAsyncImportsAwaitOuter(inner, []AsyncImportSpec{{Provider: producer, ProviderExportName: "prod"}}, liftExportName)
+}
+
+func buildStreamImportConsumerComponent(consumerCore []byte,
+	importIface, importWITName, consumerAsyncExport, liftExportName string,
+	elemValtype, resultValtype byte) []byte {
 	buf := PutComponentHeader(nil)
-	var cf, ci, cm, ct, compc, compi, compf uint32
+	var cf, ci, cm, ct, compf, compType uint32
 
-	// Component type 0: stream<elem> (referenced by stream.read).
+	// Component type 0: stream<elem> (referenced by stream.read + the import type).
 	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype))
+	compType++ // stream type 0
 
-	// Phase 1: nest the EOF producer, instantiate, alias its `prod` export.
-	buf = PutComponentSection(buf, buildStreamEOFProducerComponent(producerCore, tramp2, fixup2, elemValtype))
-	buf = PutInstanceSectionInstantiateComponent(buf, compc)
-	compc++
-	buf = PutAliasSectionInstanceExportFunc(buf, compi, "prod")
-	compi++
+	// Component type 1: the imported producer functype `async () -> stream<elem>`
+	// (result references stream type 0), imported as component func depCFunc.
+	buf = PutTypeSectionOneFuncResultIdxAsync(buf, nil, nil, 0)
+	importTypeIdx := compType
+	compType++
+	buf = PutComponentImportSectionFuncs(buf, []string{"dep0"}, []uint32{importTypeIdx})
 	depCFunc := compf
 	compf++
 
@@ -284,12 +300,14 @@ func BuildAsyncStreamImportComponent(consumerCore, producerCore, tramp2, fixup2 
 	fixup(wsWaitTrampInst, wsWaitRealF, wsWaitParams, wsWaitResults)
 	fixup(srTrampInst, srRealF, srParams, srResults)
 
-	// Phase 10: lift the consumer's async export.
+	// Phase 10: lift the consumer's async export (functype at component type
+	// index compType, after the stream + import functypes).
 	buf = PutAliasSectionCoreExportFunc(buf, consumerInst, consumerAsyncExport)
 	runCoreF := cf
 	cf++
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1
-	buf = PutCanonSectionLiftAsync(buf, runCoreF, 1)
+	buf = PutTypeSectionOneFuncAsync(buf, nil, nil, resultValtype)
+	buf = PutCanonSectionLiftAsync(buf, runCoreF, compType)
+	compType++
 	liftCompF := compf
 	compf++
 	buf = PutExportSectionOneFunc(buf, liftExportName, liftCompF)
@@ -346,7 +364,7 @@ func buildStreamSinkProviderComponent(sinkCore []byte, tramp2, fixup2 []byte, el
 
 	buf = PutAliasSectionCoreExportFunc(buf, 2, "sink") // core func 9 (sink)
 	// component type 1: func(s: stream<elem>(type 0)) -> resultValtype.
-	buf = PutTypeSectionOneFuncGeneral(buf, []string{"s"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
+	buf = PutTypeSectionOneFuncGeneralAsync(buf, []string{"s"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
 	buf = PutCanonSectionLiftAsync(buf, 9, 1) // component func 0
 	buf = PutExportSectionOneFunc(buf, "sink", 0)
 	return buf
@@ -365,18 +383,30 @@ func buildStreamSinkProviderComponent(sinkCore []byte, tramp2, fixup2 []byte, el
 func BuildAsyncStreamParamImportComponent(consumerCore, sinkCore, tramp2, fixup2 []byte,
 	importIface, importWITName, consumerAsyncExport, liftExportName string,
 	elemValtype, resultValtype byte) []byte {
+	// Sibling composition (v46 — see buildAsyncConsumerComponent): the consumer
+	// imports `dep0: async func(s: stream<elem>) -> result`; the outer links a
+	// sibling host-sink instance.
+	inner := buildStreamParamImportConsumerComponent(consumerCore, importIface, importWITName, consumerAsyncExport, liftExportName, elemValtype, resultValtype)
+	sink := buildStreamSinkProviderComponent(sinkCore, tramp2, fixup2, elemValtype, resultValtype)
+	return buildAsyncImportsAwaitOuter(inner, []AsyncImportSpec{{Provider: sink, ProviderExportName: "sink"}}, liftExportName)
+}
+
+func buildStreamParamImportConsumerComponent(consumerCore []byte,
+	importIface, importWITName, consumerAsyncExport, liftExportName string,
+	elemValtype, resultValtype byte) []byte {
 	buf := PutComponentHeader(nil)
-	var cf, ci, cm, ct, compc, compi, compf uint32
+	var cf, ci, cm, ct, compf, compType uint32
 
-	// Component type 0: stream<elem> (referenced by stream.write).
+	// Component type 0: stream<elem> (referenced by stream.write + the import).
 	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype))
+	compType++ // stream type 0
 
-	// Phase 1: nest the host sink, instantiate, alias its `sink` export.
-	buf = PutComponentSection(buf, buildStreamSinkProviderComponent(sinkCore, tramp2, fixup2, elemValtype, resultValtype))
-	buf = PutInstanceSectionInstantiateComponent(buf, compc)
-	compc++
-	buf = PutAliasSectionInstanceExportFunc(buf, compi, "sink")
-	compi++
+	// Component type 1: the imported sink functype `async func(s: stream<elem>)
+	// -> result` (param references stream type 0); imported as func depCFunc.
+	buf = PutTypeSectionOneFuncGeneralAsync(buf, []string{"s"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
+	importTypeIdx := compType
+	compType++
+	buf = PutComponentImportSectionFuncs(buf, []string{"dep0"}, []uint32{importTypeIdx})
 	depCFunc := compf
 	compf++
 
@@ -499,12 +529,13 @@ func BuildAsyncStreamParamImportComponent(consumerCore, sinkCore, tramp2, fixup2
 	fixup(wsWaitTrampInst, wsWaitRealF, wsWaitParams, wsWaitResults)
 	fixup(swTrampInst, swRealF, swParams, swResults)
 
-	// Phase 10: lift the consumer's async export.
+	// Phase 10: lift the consumer's async export (functype at type index compType).
 	buf = PutAliasSectionCoreExportFunc(buf, consumerInst, consumerAsyncExport)
 	runCoreF := cf
 	cf++
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1
-	buf = PutCanonSectionLiftAsync(buf, runCoreF, 1)
+	buf = PutTypeSectionOneFuncAsync(buf, nil, nil, resultValtype)
+	buf = PutCanonSectionLiftAsync(buf, runCoreF, compType)
+	compType++
 	liftCompF := compf
 	compf++
 	buf = PutExportSectionOneFunc(buf, liftExportName, liftCompF)

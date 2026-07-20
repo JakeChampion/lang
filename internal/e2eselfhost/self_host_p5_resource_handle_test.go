@@ -82,11 +82,15 @@ func TestSelfHostExternResourceHandle(t *testing.T) {
 	prog := `@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): i32;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: i32);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: i32): boolean;
 
 function main(): i32 {
     var p: i32 = subscribe(0 as u64);
+    block(p);
     if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
     return 0;
 }`
@@ -199,11 +203,15 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
     var p: own Pollable = subscribe(0 as u64);
+    block(p);
     if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
     return 0;
 }`
@@ -313,6 +321,9 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
@@ -321,6 +332,7 @@ function drop_pollable(h: own Pollable): void;
 
 function main(): i32 {
     var p: own Pollable = subscribe(0 as u64);
+    block(p);
     if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
     drop_pollable(p);
     return 0;
@@ -434,11 +446,15 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
     var p: own Pollable = subscribe(0 as u64);
+    block(p);
     if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
     return 0;
 }`

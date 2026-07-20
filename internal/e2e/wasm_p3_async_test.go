@@ -47,7 +47,7 @@ func TestWasmP3AsyncExportAssembly(t *testing.T) {
 	buf = component.PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0: provides task-return
 	buf = component.PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1: the user module
 	buf = component.PutAliasSectionCoreExportFunc(buf, 1, "run")                                         // core func 1: the export
-	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                          // type 0: () -> u32
+	buf = component.PutTypeSectionOneFuncAsync(buf, nil, nil, component.CValtypeU32)                          // type 0: () -> u32
 	buf = component.PutCanonSectionLiftAsync(buf, 1, 0)                                                  // component func 0: lift async
 	buf = component.PutExportSectionOneFunc(buf, "run", 0)
 
@@ -456,11 +456,17 @@ function main(): i32 { return 0; }
 	)
 
 	// The async-lowered import is `(a, b, retptr) -> status` = (i32,i32,i32)->(i32).
-	comp := component.BuildAsyncImportAwaitComponent(
-		core, "test:dep/d", "add",
-		provider, "add",
+	// The import's component functype is `add: async func(a: u32, b: u32) -> u32`.
+	comp := component.BuildAsyncImportsAwaitComponent(
+		core, []component.AsyncImportSpec{{
+			Iface: "test:dep/d", WITName: "add",
+			Provider: provider, ProviderExportName: "add",
+			LowerParams:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+			LowerResults: []byte{encode.ValtypeI32},
+			ImportParamNames: []string{"a", "b"},
+			ImportParamVals:  [][]byte{{component.CValtypeU32}, {component.CValtypeU32}},
+		}},
 		"__async_run", "run",
-		[]byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32}, []byte{encode.ValtypeI32},
 		component.CValtypeU32,
 	)
 
@@ -653,11 +659,19 @@ function main(): i32 { return 0; }
 
 	// The async-lowered import is `(retptr) -> status` = (i32) -> (i32); the u64
 	// result is delivered through the 8-byte return area (read as i64).
-	comp := component.BuildAsyncImportAwaitComponent(
-		core, "test:dep/d", "big",
-		provider, "big",
+	// The import `big` returns u64 while the consumer export `run` returns
+	// i32, so the import's component functype must be declared `() -> u64`
+	// independently of the lift's `() -> u32` — hence the spec form with
+	// ImportResultValtype set.
+	comp := component.BuildAsyncImportsAwaitComponent(
+		core, []component.AsyncImportSpec{{
+			Iface: "test:dep/d", WITName: "big",
+			Provider: provider, ProviderExportName: "big",
+			LowerParams:  []byte{encode.ValtypeI32},
+			LowerResults: []byte{encode.ValtypeI32},
+			ImportResultValtype: component.CValtypeU64,
+		}},
 		"__async_run", "run",
-		[]byte{encode.ValtypeI32}, []byte{encode.ValtypeI32},
 		component.CValtypeU32, // run's own (export) result stays i32
 	)
 
@@ -724,24 +738,38 @@ func TestWasmP3AsyncImportAwait(t *testing.T) {
 
 	provider := component.BuildAsyncLiftedExportComponent(p3AsyncCoreModule, "run", "dep", component.CValtypeU32)
 
-	buf := component.PutComponentHeader(nil)
-	buf = component.PutComponentSection(buf, provider)                                 // component 0
-	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)                     // component instance 0
-	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")                   // component func 0 (dep)
-	buf = component.PutCoreModuleSection(buf, p3MemModule)                             // core module 0
-	buf = component.PutCoreInstanceSectionInstantiate(buf, 0)                          // core instance 0 (mem)
-	buf = component.PutAliasSectionCoreExport(buf, component.CoreSortMemory, 0, "mem") // core memory 0
-	buf = component.PutCanonSectionLowerAsync(buf, 0, 0)                               // core func 0 (dep-lower)
-	buf = component.PutCanonTaskReturnSingle(buf, component.CValtypeU32)               // core func 1 (task.return)
-	buf = component.PutCoreModuleSection(buf, p3AsyncConsumerCore)                     // core module 1
-	buf = component.PutCoreInstanceSectionFromExports(buf, []component.CoreInstanceExport{
-		{Name: "task-return", Sort: component.CoreSortFunc, Idx: 1},
-		{Name: "dep-lower", Sort: component.CoreSortFunc, Idx: 0},
+	// v46 requires the consumer→provider call to cross a component-instance
+	// boundary (a consumer that lowers a provider bundled in its OWN instance
+	// traps "cannot enter component instance"). So the consumer machinery is
+	// its own nested component ($C) that IMPORTS "dep0", and the outer wires a
+	// sibling provider instance into it — the same shape the composer's
+	// BuildAsyncImportsAwaitComponent now emits.
+	inner := component.PutComponentHeader(nil)
+	inner = component.PutTypeSectionOneFuncAsync(inner, nil, nil, component.CValtypeU32) // comp type 0 (import type)
+	inner = component.PutComponentImportSectionFuncs(inner, []string{"dep0"}, []uint32{0}) // comp func 0 (dep)
+	inner = component.PutCoreModuleSection(inner, p3MemModule)                             // core module 0
+	inner = component.PutCoreInstanceSectionInstantiate(inner, 0)                          // core instance 0 (mem)
+	inner = component.PutAliasSectionCoreExport(inner, component.CoreSortMemory, 0, "mem") // core memory 0
+	inner = component.PutCanonTaskReturnSingle(inner, component.CValtypeU32)               // core func 0 (task.return)
+	inner = component.PutCanonSectionLowerAsync(inner, 0, 0)                               // core func 1 (dep-lower): lower comp func 0 over mem 0
+	inner = component.PutCoreModuleSection(inner, p3AsyncConsumerCore)                     // core module 1
+	inner = component.PutCoreInstanceSectionFromExports(inner, []component.CoreInstanceExport{
+		{Name: "task-return", Sort: component.CoreSortFunc, Idx: 0},
+		{Name: "dep-lower", Sort: component.CoreSortFunc, Idx: 1},
 	}) // core instance 1 (cli)
-	buf = component.PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (ci)
-	buf = component.PutAliasSectionCoreExportFunc(buf, 2, "run")                                                   // core func 2 (run)
-	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                                    // type 0
-	buf = component.PutCanonSectionLiftAsync(buf, 2, 0)                                                            // component func 1 (run)
+	inner = component.PutCoreInstanceSectionInstantiateWithInstanceArgs(inner, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (ci)
+	inner = component.PutAliasSectionCoreExportFunc(inner, 2, "run")                                                   // core func 2 (run)
+	inner = component.PutTypeSectionOneFuncAsync(inner, nil, nil, component.CValtypeU32)                                // comp type 1 (lift type)
+	inner = component.PutCanonSectionLiftAsync(inner, 2, 1)                                                            // comp func 1 (run)
+	inner = component.PutExportSectionOneFunc(inner, "run", 1)
+
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutComponentSection(buf, provider)                                                  // component 0 (provider)
+	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)                                      // component instance 0
+	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")                                    // component func 0 (dep)
+	buf = component.PutComponentSection(buf, inner)                                                     // component 1 (consumer)
+	buf = component.PutInstanceSectionInstantiateComponentWithFuncArgs(buf, 1, []string{"dep0"}, []uint32{0}) // component instance 1
+	buf = component.PutAliasSectionInstanceExportFunc(buf, 1, "run")                                    // component func 1 (run)
 	buf = component.PutExportSectionOneFunc(buf, "run", 1)
 
 	dir := t.TempDir()

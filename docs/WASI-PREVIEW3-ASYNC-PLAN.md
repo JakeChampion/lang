@@ -27,6 +27,42 @@ For Fern's edge-handler use case this means a handler could `await`
 overlapped outbound fetches directly, without the explicit `Step[T]`/
 `wasm_poll` reactor.
 
+## Migration to wasmtime v46 / wasm-tools 1.253 (2026-07)
+
+The pinned toolchain was bumped from wasmtime v37 → **v46.0.1** and
+wasm-tools v1.240 → **1.253.0** (CI `.github/actions/setup-fern/action.yml`,
+`.claude/hooks/session-start.sh`). v46 makes two breaking
+component-model-async ABI changes that the composer + emitters were ported
+to match; all P3 async/stream/future e2e tests pass under v46:
+
+1. **Async functype tag `0x40` → `0x43`.** A component function type
+   referenced by `canon lift async` / `canon lower async` must now use the
+   async functype form (`0x43`); a plain `0x40` functype fails validation
+   with *"the `async` canonical option requires an async function type"*
+   (and an older wasmtime rejects the `0x43` byte with *"invalid leading
+   byte (0x43) for component defined type"*). `internal/wasm/component`
+   grew `PutTypeSectionOneFuncAsync` / `...GeneralAsync` / `...ResultIdxAsync`
+   (tag `0x43`) and every async lift/lower type site was switched to them.
+
+2. **Component instances are non-reentrant.** A consumer core module that
+   `canon lower`s a provider bundled in its OWN component instance and calls
+   it now traps at runtime with *"cannot enter component instance"* (even
+   for a fully-synchronous call). The fix is structural: the async-import
+   composer emits the consumer machinery as its own **nested component that
+   imports** each awaited async function (`dep<i>`), and the outer component
+   links a **sibling** provider instance into it — so the consumer→provider
+   call crosses a component-instance boundary. See
+   `buildAsyncConsumerComponent` / `buildAsyncImportsAwaitOuter` and the
+   `PutComponentImportSectionFuncs` /
+   `PutInstanceSectionInstantiateComponentWithFuncArgs` emitters. All the
+   import/stream/future consumer builders (`BuildAsyncImportsAwaitComponent`,
+   `BuildAsyncStreamImportComponent`, `BuildAsyncStreamParamImportComponent`,
+   `BuildStreamCollectComponent`, `BuildStreamExportImportComponent`,
+   `BuildFutureExportImportComponent`, `BuildPendingAwaitComponent`) were
+   converted to this sibling shape.
+
+The v37 probe notes below are retained for history.
+
 ## Toolchain probe (2026-06, this environment)
 
 - **wasmtime 37.0.1** — `component-model-async` is present:

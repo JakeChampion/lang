@@ -97,39 +97,41 @@ runs:
       with:
         path: |
           ~/.wasmtime
-          ~/wasm-tools-1.240.0-${{ steps.wasm-arch.outputs.arch }}
+          ~/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}
           ~/wasi-adapter
-        key: wasm-${{ runner.arch }}-1.240.0-v37.0.1
+        key: wasm-${{ runner.arch }}-1.253.0-v46.0.1
 
     - name: Install wasmtime + wasm-tools + adapter (cache miss)
       if: inputs.wasmtime == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        # wasmtime — pinned to v37.0.1 (matching the cache key + the WASI
+        # wasmtime — pinned to v46.0.1 (matching the cache key + the WASI
         # adapter below). `wasmtime.dev/install.sh` with no version installs
         # *latest*, which drifts from the pinned toolchain and recently 504'd
         # fetching a new release — failing every wasm job on a cache miss.
         # Download the pinned archive directly, like wasm-tools below.
-        # v37 is backward-compatible with the Preview-2 component path (the
-        # whole wasm suite passes under it; verified locally) and adds
-        # component-model-async (off by default), the prerequisite for the
-        # WASI Preview 3 work — see docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+        # v46 is the current release; the whole wasm suite passes under it,
+        # including the WASI Preview-3 async/stream/future surface. The
+        # component-model-async ABI changed vs the previous v37 pin (async
+        # functype tag 0x40->0x43; component instances are now non-reentrant,
+        # so the async-import composer emits a sibling-nested structure) — the
+        # composer was ported to match. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
         mkdir -p "$HOME/.wasmtime/bin"
-        curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v37.0.1/wasmtime-v37.0.1-${{ steps.wasm-arch.outputs.arch }}.tar.xz" \
+        curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}.tar.xz" \
           | tar -xJ -C "$HOME"
-        install -m 0755 "$HOME/wasmtime-v37.0.1-${{ steps.wasm-arch.outputs.arch }}/wasmtime" "$HOME/.wasmtime/bin/wasmtime"
-        curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.240.0/wasm-tools-1.240.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
+        install -m 0755 "$HOME/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}/wasmtime" "$HOME/.wasmtime/bin/wasmtime"
+        curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.253.0/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
           | tar -xz -C "$HOME"
         mkdir -p "$HOME/wasi-adapter"
         curl -sSfL -o "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" \
-          "https://github.com/bytecodealliance/wasmtime/releases/download/v37.0.1/wasi_snapshot_preview1.command.wasm"
+          "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.command.wasm"
 
     - name: Wire wasmtime PATH + adapter env
       if: inputs.wasmtime == 'true'
       shell: bash
       run: |
         echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
-        echo "$HOME/wasm-tools-1.240.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
+        echo "$HOME/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
         echo "FERN_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
     - name: Cache gotestsum binary

@@ -174,7 +174,7 @@ func BuildAsyncLiftedExportComponent(coreBytes []byte, coreExportName, exportNam
 	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
 	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                // core func 1
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                                  // type 0: () -> result
+	buf = PutTypeSectionOneFuncAsync(buf, nil, nil, resultValtype)                             // type 0: async () -> result
 	buf = PutCanonSectionLiftAsync(buf, 1, 0)                                                  // component func 0
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
@@ -194,7 +194,7 @@ func BuildAsyncLiftedExportComponentParams(coreBytes []byte, coreExportName, exp
 	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
 	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                // core func 1
-	buf = PutTypeSectionOneFunc(buf, paramNames, paramValtypes, resultValtype)                 // type 0: (params) -> result
+	buf = PutTypeSectionOneFuncAsync(buf, paramNames, paramValtypes, resultValtype)            // type 0: async (params) -> result
 	buf = PutCanonSectionLiftAsync(buf, 1, 0)                                                  // component func 0
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
@@ -218,8 +218,8 @@ func BuildAsyncLiftedExportComponentTupleParam(coreBytes []byte, coreExportName,
 	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
 	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                // core func 1
-	// component type 1: func(p: tuple<elems…>(type 0)) -> resultValtype.
-	buf = PutTypeSectionOneFuncGeneral(buf, []string{"p"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
+	// component type 1: async func(p: tuple<elems…>(type 0)) -> resultValtype.
+	buf = PutTypeSectionOneFuncGeneralAsync(buf, []string{"p"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
 	buf = PutCanonSectionLiftAsync(buf, 1, 1) // component func 0 (functype 1)
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
