@@ -261,6 +261,22 @@ var interpProgs = []struct {
 	{"i64-compare", "function main(): i32 { var x: i64 = 5000000000; if (x > 4000000000) { return 1; } return 0; }", 1},
 	// i32 arithmetic is unchanged — overflow still wraps via the 32-bit path.
 	{"i32-overflow-unchanged", "function main(): i32 { var x: i32 = 100000; return x * 100000; }", 0},
+	// Typed u32 / f32 carriers (#4348 final slice). VUint tags a u32 bit
+	// pattern so div / rem / compares / `>>` run UNSIGNED (logical shift,
+	// count masked &31 — docs/INTEGER-SEMANTICS.md); previously u32 ops ran
+	// signed through VInt. VFloat32 tags an f32-precision value (stored as
+	// the already-rounded f64, the #4366 model): arithmetic computes at f64
+	// then rounds the result to single precision, sticky through chains —
+	// previously f32 arithmetic ran at full f64. Each src pinned natively.
+	{"u32-shr-logical", "function main(): i32 { var x: u32 = 4294967288 as u32; var y = x >> 2; if (y == (1073741822 as u32)) { return 42; } return 7; }", 42},
+	{"u32-div-unsigned", "function main(): i32 { var x: u32 = 4294967290 as u32; var y: u32 = 5 as u32; if (x / y > (100 as u32)) { return 42; } return 7; }", 42},
+	{"u32-cmp-unsigned", "function main(): i32 { var x: u32 = 4294967290 as u32; if (x > (5 as u32)) { return 42; } return 7; }", 42},
+	{"f32-round-2p24", "function main(): i32 { var a: f32 = 16777216.0 as f32; var b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 42; } return 7; }", 42},
+	// Sticky chain: 2^24 + 1.5 rounds up to 2^24+2 at f32; +1 more lands
+	// midway and ties-to-even up to 2^24+4 — only true single-precision
+	// rounding at EVERY step (incl. the mixed f32 + f64-literal add)
+	// produces 16777220.
+	{"f32-sticky-chain", "function main(): i32 { var a: f32 = 16777216.0; var b = a + 1.5; var c = b + (1.0 as f32); if ((c as f64) == 16777220.0) { return 42; } return 7; }", 42},
 	// defer runs at SCOPE EXIT, not at its source position (#4348 item 1):
 	// eval_module now runs lower_defers_module itself, so the stdin driver —
 	// which feeds the raw module straight in — no longer executes the deferred
