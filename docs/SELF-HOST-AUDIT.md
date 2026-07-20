@@ -97,11 +97,15 @@ These are not just smells — they can produce wrong output today.
   correctly-rounding decimal parser, or thread the front-end's already-parsed
   bits through.
 
-- [ ] **SH-005 — `x86_gas` silently drops unsupported mnemonics.**
-  `x86_gas.fern:619, 715` `return a; // skip` produces a corrupt executable with
-  no diagnostic. Severity **High**. _Fix:_ record on an `X86Asm.unknown` list and
-  fail the driver (the arm64 path already does this — `fern.fern:69` checks
-  `p.unknown`).
+- [x] **SH-005 — `x86_gas` silently drops unsupported mnemonics.** _Done:_
+  `X86Asm` grew an `unknown: string[]` list; the three silent-skip sites in
+  `x86_gas_emit` (unknown single-operand mnemonic, the final two-operand
+  fallthrough, and `cmpb`'s non-`$imm` operand form) record instead of
+  dropping, and every ELF-writing driver (the capstone + x86_gas test
+  mains) fails on a non-empty list before writing the executable —
+  mirroring the arm64 path's `p.unknown` check in `fern.fern`. Pinned by
+  the x86_gas unit driver (unknown one-operand / two-operand / cmpb-form
+  each recorded; clean programs record nothing).
 
 - [ ] **SH-006 — `arm64_gas_reg` defaults unknown registers to x0.**
   `arm64_native.fern:1219-1231` returns `0` (=x0) for any unrecognised register

@@ -3682,6 +3682,16 @@ function main(): i32 { var h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }
 		t.Fatalf("implicit concrete->dyn coercion in a struct field should check: %v", err)
 	}
 
+	// Accepted: a concrete value coerces to a `dyn Trait` USER-ENUM variant
+	// payload with no explicit `as dyn Shape` — the variant-payload position
+	// was also missing from the boxing-site list, so this reported a spurious
+	// E036 even though the builtin Ok/Some/Err payloads and struct fields
+	// accept it.
+	if err := checkSource(t, prelude+`enum Box { Wrap(dyn Shape), Empty }
+function main(): i32 { var b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) => { return d.area(); }, Empty => { return 0; } } }`); err != nil {
+		t.Fatalf("implicit concrete->dyn coercion in a variant payload should check: %v", err)
+	}
+
 	cases := []struct{ name, src, want string }{
 		{"non-impl coercion",
 			prelude + `struct NoShape { z: i32 }
@@ -3709,6 +3719,11 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 struct Holder { shape: dyn Shape }
 function main(): i32 { var h: Holder = Holder { shape: NoShape { z: 1 } }; return 0; }`,
 			"expected dyn Shape, got NoShape"},
+		{"non-impl in dyn variant payload",
+			prelude + `struct NoShape { z: i32 }
+enum Box { Wrap(dyn Shape) }
+function main(): i32 { var b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
+			"payload 0 type NoShape, expected dyn Shape"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -4957,4 +4972,45 @@ func TestPointerReinterpretFromI32Rejected(t *testing.T) {
 	// The forward pointer->i32 narrowing (the __memcpy escape hatch) is not
 	// this rule's target and stays allowed.
 	mustOK(`function main(): i32 { var s: string = "x"; return s as i32; }`)
+}
+
+// TestFloatAliasAndDefaultWidth pins the #5363 decision on the checker
+// surface: `float` is the width-unqualified alias for f64, and a bare
+// float literal with no expected-type pressure defaults to f64. The
+// mismatch messages must name f64 (proving both the alias's width and
+// the literal's default), while `float`-annotated code type-checks and
+// dispatches like f64.
+func TestFloatAliasAndDefaultWidth(t *testing.T) {
+	mustErr := func(src, want string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected an error for %q, got none", src)
+			return
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("for %q: want error containing %q, got: %v", src, want, err)
+		}
+	}
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	// The alias type-checks: annotation, param, return, cast, array elem.
+	mustOK(`function f(x: float): float { return x as float; } function main(): i32 { var v: float = 1.5; var xs: float[] = [v, f(v)]; return xs.len(); }`)
+	// `float` IS f64: it flows into an f64 destination both ways.
+	mustOK(`function main(): i32 { var x: float = 1.5; var y: f64 = x; var z: float = y; return 0; }`)
+	// ... and is NOT f32: the mismatch names f64.
+	mustErr(`function main(): i32 { var x: float = 1.5; var y: f32 = x; return 0; }`,
+		"cannot assign f64 to variable of type f32")
+	// A bare literal defaults to f64 — the unsettled-literal mismatch
+	// message names f64, not f32.
+	mustErr(`function main(): i32 { var s: string = 1.5; return 0; }`,
+		"cannot assign f64 to variable of type string")
+	// `float` is no longer an unknown type name, so E064's old
+	// `float` hint path is gone; `double` still draws the f64 hint.
+	mustErr(`function f(a: double): i32 { return 0; } function main(): i32 { return 0; }`,
+		"did you mean `f64`?")
 }

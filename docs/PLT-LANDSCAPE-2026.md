@@ -161,15 +161,16 @@ returns (`-1`, `""`) stands, and sentinel APIs no longer have the
 "error-type friction" excuse. That cleanup is tracked stdlib work,
 not a new mechanism, so this survey files nothing new for it.
 
-### 2.7 f64-by-default: decide it
+### 2.7 f64-by-default: decided — f64 (#5363)
 
-Not a new development, but the survey's "most expensive to defer"
-flag: `FLOAT-SEMANTICS.md` leaves default-float as an explicit open
-owner decision, and every month of f32-default accretes more code
-against the eventual answer. The JSON/edge workload, the scripting
-expectation, and the shrink-the-surface argument (one default width +
-suffix opt-in) all point to f64. Filed as a decision issue so it
-stops being ambient: #5363.
+Resolved 2026-07: the owner decided **f64**. The runtime had in fact
+already defaulted unsettled float literals to f64 on every backend
+(`ast.FloatType.NormalWidth` + the interp / IR mirrors) — the work
+was formalization, not a behavior flip: `float` became a first-class
+f64 alias in the native front-end (matching the self-host, which had
+resolved it that way all along), `parse_float` moved to `Option[f64]`,
+and the previously-unpinned default is now under test on both
+compilers. See `FLOAT-SEMANTICS.md` "Default float width".
 
 ### 2.8 Multicore: the one frontier with no Fern story at all
 
@@ -259,7 +260,7 @@ reality" caveat in `CLAUDE.md` cuts both ways):
 | 1 | DST simulation driver for `std/async` (slice 1: virtual clock + deterministic reactor) | build now | #5360 |
 | 2 | Package capability grants, report-mode first | build next | #5361 |
 | 3 | Debug-build cycle/leak detector | build next | #5362 |
-| 4 | f64-default decision | owner decision | #5363 |
+| 4 | f64-default decision | owner decision — **decided f64**; runtime already defaulted to f64, the work was formalization (alias + pins + docs) | #5363 |
 | 5 | Suspension-primitive design note (await/generators/lazy iterators, one IR construct) | design, gated on #4315–#4320 lane | #5364 |
 | 6 | Mode-lattice unification write-up, folded into the goal-2 Perceus port | design with goal 2 | #5365 |
 | 7 | Multicore research doc (share-nothing workers) | research | #5366 |

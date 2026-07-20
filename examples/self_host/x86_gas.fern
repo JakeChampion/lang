@@ -695,7 +695,10 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
     var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {
-        return a; // unknown / unsupported single-operand mnemonic: skip
+        // Unknown / unsupported single-operand mnemonic: RECORD it (SH-005).
+        // Dropping the instruction silently produced a corrupt executable
+        // with no diagnostic; drivers check `a.unknown` after assembly.
+        return X86Asm { ...a, unknown: a.unknown.append(mnem) };
     }
     var src: string = x86_gas_trim(rest[0:ci]);
     var dst: string = x86_gas_trim(rest[ci + 1:rest.len()]);
@@ -762,6 +765,12 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "subsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 92, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     if (mnem == "mulsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     if (mnem == "divsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    // minsd (0x5D) / maxsd (0x5F): asm.fern's float runtime (fmin/fmax
+    // helpers) emits these; they were silently DROPPED until the SH-005
+    // unknown check caught them in the capstone — the helpers assembled
+    // corrupt but the happy path never executed them.
+    if (mnem == "minsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 93, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "maxsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 95, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     if (mnem == "ucomisd") { a = X86Asm { ...a, code: x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     if (mnem == "xorpd") { a = X86Asm { ...a, code: x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     if (mnem == "sqrtsd") { a = X86Asm { ...a, code: x86_sqrtsd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
@@ -807,10 +816,16 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "cmpb") {
         if (src.len() > 0 && src[0] == 36) {
             a = X86Asm { ...a, code: x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
+            return a;
         }
-        return a;
+        // Only the $imm, %reg8 form is encoded; any other operand shape
+        // was silently dropped (SH-005) — record it.
+        return X86Asm { ...a, unknown: a.unknown.append("cmpb " + src) };
     }
-    return a; // unsupported mnemonic: skip (grown in later slices)
+    // Unsupported two-operand mnemonic (grown in later slices): RECORD it
+    // (SH-005) — a dropped instruction means the byte stream is corrupt,
+    // so drivers fail on `a.unknown` instead of writing the executable.
+    return X86Asm { ...a, unknown: a.unknown.append(mnem) };
 }
 
 // x86_gas_assemble parses a whole GAS program and returns the resolved

@@ -423,13 +423,13 @@ pub function (rad: f64) to_degrees(): f64 {
     return rad * (180.0 / 3.141592653589793);
 }
 
-// f32 mirror methods. Lang's float literals default to f32
-// (`3.14` is `f32`, not `f64`), so callers writing
-// `(3.14).sqrt()` reach for the f32 receiver method. Each
-// wraps the f64 primitive — promote to f64, apply, demote
-// back. Float precision in the final answer is bounded by
-// the f32 input + the operation's f64-domain accuracy;
-// the demotion-to-f32 rounds the result to the nearest f32.
+// f32 mirror methods for explicitly-f32 values (a bare `3.14`
+// is f64 — the language's default float, #5363 — and takes the
+// f64 receiver methods above). Each wraps the f64 primitive —
+// promote to f64, apply, demote back. Float precision in the
+// final answer is bounded by the f32 input + the operation's
+// f64-domain accuracy; the demotion-to-f32 rounds the result
+// to the nearest f32.
 
 pub function (x: f32) abs(): f32 { return __abs_f64(x as f64) as f32; }
 pub function (x: f32) floor(): f32 { return __floor_f64(x as f64) as f32; }

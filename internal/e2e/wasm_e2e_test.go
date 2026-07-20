@@ -2055,7 +2055,7 @@ function main(): i32 {
 	}
 }
 
-// `s.parse_float(): Option[f32]` — accepts integer-only,
+// `s.parse_float(): Option[f64]` — accepts integer-only,
 // integer.fraction, .fraction, and exponent forms. The
 // helper bumps a saturating mantissa accumulator to avoid
 // overflow on very-long inputs while keeping the magnitude
@@ -2066,12 +2066,12 @@ function main(): i32 {
 func TestWASMParseFloat(t *testing.T) {
 	src := `
 import "std/string";
-function near(actual: f32, expected: f32, eps: f32): boolean {
-		var diff: f32 = actual - expected;
+function near(actual: f64, expected: f64, eps: f64): boolean {
+		var diff: f64 = actual - expected;
 		if (diff < 0.0) { diff = 0.0 - diff; }
-		var bound: f32 = expected;
+		var bound: f64 = expected;
 		if (bound < 0.0) { bound = 0.0 - bound; }
-		var rel: f32 = bound * eps;
+		var rel: f64 = bound * eps;
 		if (rel < eps) { rel = eps; }
 		return diff < rel;
 	}
@@ -6753,14 +6753,14 @@ function main(): i32 {
 		var g: f64 = 1.5;
 		if (g.to_string() != "1.5") { return 21; }
 
-		// Round-trip through parse_float for tolerance check.
+		// Round-trip through parse_float (f64 domain) for tolerance check.
 		match ("3.14".parse_float()) {
 			Some(x) => {
 				// x.to_string() should produce something that
-				// parses back to ≈ 3.14 (within f32 epsilon).
+				// parses back to ≈ 3.14.
 				match (x.to_string().parse_float()) {
 					Some(y) => {
-						var diff: f32 = y - 3.14;
+						var diff: f64 = y - 3.14;
 						if (diff < 0.0) { diff = 0.0 - diff; }
 						if (diff > 0.001) { return 30; }
 					},
