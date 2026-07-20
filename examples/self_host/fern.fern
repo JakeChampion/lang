@@ -324,7 +324,7 @@ function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
                 var k: i32 = 0;
                 while (k < blk.insts.len()) {
                     var ins: ssa.SInst = blk.insts[k];
-                    if (ins.kind == "call" || ins.kind == "funcaddr") {
+                    if (ins.kind_tag == 11 || ins.kind_tag == 13) {   // call / funcaddr
                         if (!util.has_str(known, ins.str) && !util.has_str(unknown, ins.str)) {
                             unknown = unknown.append(ins.str);
                         }
