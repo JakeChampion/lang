@@ -13094,6 +13094,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (slot_is_reclaimable_structarr(sb, slot)) {
         return emit_structarr_reclaim_store(sb, slot);
     }
+    // A reclaimable string[] LOOP-LOCAL (`while { var xs: string[] = [pre + "x",
+    // pre + "y"]; … }`, #4353 item 4 / #4355 loop-rebind follow-up): the
+    // re-declaration must free the prior iteration's ELEMENT strings AND buffer
+    // via __fern_str_arr_free before the store, else every element box leaks per
+    // iteration — the shallow emit_arr_store dec below frees only the buffer. The
+    // exit sweep already frees the FINAL value with the same helper (16565); this
+    // is the missing per-iteration sibling (str reinit at 12958 covers a scalar
+    // string, structarr above covers struct elements — string elements had no
+    // reinit branch). Cow-guarded + null-guarded like every store above.
+    if (slot_is_reclaimable_strarr(sb, slot)) {
+        return emit_strarr_reclaim_store(sb, slot);
+    }
     // A reclaimable MAP loop-local (`while { var m = map_new(8); m =
     // m.insert(..); … }`, #4357): free the prior iteration's keys/values
     // buffers + mapbox BEFORE the store, else one box leaks per iteration —
@@ -14916,6 +14928,33 @@ function emit_arrarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_if(0));
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, slot), 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// emit_strarr_reclaim_store stores `new` (on the operand stack) into a
+// reclaimable string[] LOOP-LOCAL (#4353 item 4) and frees the slot's PRIOR
+// value — the ELEMENT strings AND the buffer — via __fern_str_arr_free before
+// the store (the loop-rebind reclamation), cow-guarded so a self-store never
+// frees the live value. The string[] sibling of emit_arrarr_reclaim_store, and
+// the per-iteration counterpart of the exit sweep's string[] reclaim (16565,
+// same helper); the first binding sees old = the zero-initialised slot →
+// __fern_str_arr_free's null guard no-ops. Without this a re-declared
+// `var xs: string[]` per iteration took the shallow emit_arr_store dec (buffer
+// only) and leaked every element string.
+function emit_strarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$sarea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = st.emit(ir.op_load_local(slot));        // OLD value the slot holds
+    st = st.emit(ir.op_load_local(tmp));         // new value
+    st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));
