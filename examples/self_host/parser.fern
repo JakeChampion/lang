@@ -296,7 +296,7 @@ pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
 // from an `@import("iface", "wit-resource-name")` attribute (empty for an
-// unbound resource). insert_resource_drops uses the binding to synthesize the
+// unbound resource). lower_defers_prepass_module uses the binding to synthesize the
 // `[resource-drop]` import an owned handle is released through.
 pub struct ResourceDecl { name: string, iface: string, wit: string }
 
@@ -4270,7 +4270,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // docs/WIT-BRING-YOUR-OWN.md). Preserved as "own <R>" / "borrow <R>"
         // (mirroring `dyn <trait>`): it lowers to i32 everywhere (a handle is an
         // opaque scalar — see wat_extern_valtype and the local/param valtype
-        // defaults), and the spelling lets insert_resource_drops find owned
+        // defaults), and the spelling lets lower_defers_prepass_module find owned
         // handles and tell own from borrow for its move analysis.
         p = p.advance(); // consume `own` / `borrow`
         var (hinner_name, hinner_ret_arr, hinner_fn_ret, hinner_p) = parse_type_name(p);
@@ -9497,7 +9497,7 @@ pub function lower_defers_module(mod: Module): Module {
 // Mirrors the Go internal/ir/insert_resource_drops.go. For each owned `own R`
 // top-level local that is not moved (returned, or passed to an `own`
 // parameter), insert `defer __resource_drop_R(local);` right after the
-// declaration — lower_defers_module then runs it on every exit path — and
+// declaration — the fused defer expansion then runs it on every exit path — and
 // synthesize one body-less `@import("<iface>","[resource-drop]<wit>")` drop
 // function per dropped resource (which the world-driven composer wires).
 // Borrowed handles are never dropped. Sound over complete: a handle whose
@@ -9636,14 +9636,23 @@ function handle_own_consumed(stmts: Stmt[], funcs: FuncDecl[], name: string): bo
     return false;
 }
 
-pub function insert_resource_drops(mod: Module): Module {
-    if (mod.resources.len() == 0) { return mod; }
+// lower_defers_prepass_module fuses insert-resource-drops + lower_defers
+// (#4394 lever 3 / #5352) into ONE module rebuild, the desugar_prepass_module
+// argument applied to the next adjacent pair: both are per-function body
+// rewrites, already order-locked (an owned handle's inserted `defer` must
+// exist before the defer expansion runs), and the one list mutation — the
+// synthesized body-less `[resource-drop]` import funcs — commutes with the
+// body rewrite, which is applied to them exactly as the two-pass sequence
+// did. With no `resource` decls the fast path is exactly lower_defers_module
+// (one rebuild either way).
+pub function lower_defers_prepass_module(mod: Module): Module {
+    if (mod.resources.len() == 0) { return lower_defers_module(mod); }
     var out_funcs: FuncDecl[] = [];
     var needed: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: FuncDecl = mod.funcs[i];
-        if (f.import_iface.len() > 0) { out_funcs = out_funcs.append(f); i = i + 1; continue; }
+        if (f.import_iface.len() > 0) { out_funcs = out_funcs.append(lower_defers_func(f)); i = i + 1; continue; }
         var nbody: Stmt[] = [];
         var j: i32 = 0;
         while (j < f.body.len()) {
@@ -9667,7 +9676,7 @@ pub function insert_resource_drops(mod: Module): Module {
             }
             j = j + 1;
         }
-        out_funcs = out_funcs.append(FuncDecl { ...f, body: nbody });
+        out_funcs = out_funcs.append(lower_defers_func(FuncDecl { ...f, body: nbody }));
         i = i + 1;
     }
     var no_tp: string[] = [];
@@ -9678,11 +9687,11 @@ pub function insert_resource_drops(mod: Module): Module {
         var iface2: string = resource_binding_iface(mod.resources, rn);
         var wit2: string = resource_binding_wit(mod.resources, rn);
         var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
-        out_funcs = out_funcs.append(FuncDecl {
+        out_funcs = out_funcs.append(lower_defers_func(FuncDecl {
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
             type_params: no_tp, params: hp, ret_type: "void", body: no_body,
             line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0, bound_traits: [], fip: false, ret_str: false
-        });
+        }));
         k = k + 1;
     }
     return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
@@ -11310,15 +11319,14 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
 }
 
 pub function module_with_builtins(mod: Module): Module {
-    // Automatic drop for owned WIT resource handles (P5 slice 3): insert a
-    // `defer <drop>(h);` for each kept `own R` local and synthesize the
-    // `[resource-drop]` import functions — BEFORE lower_defers_module so the
-    // inserted defers expand to drops on every exit path
-    // (docs/WIT-BRING-YOUR-OWN.md).
     // #4394 lever 3: the three leading desugar passes (resolve_labels →
     // fill_default_args → desugar_ranges) are fused into desugar_prepass_module,
-    // one module rebuild instead of three (byte-identical — see its doc comment).
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))))))));
+    // and the adjacent defer pair — owned-WIT-resource drop insertion (P5
+    // slice 3, docs/WIT-BRING-YOUR-OWN.md: the inserted defers must exist
+    // before the defer expansion runs) + lower_defers — into
+    // lower_defers_prepass_module. One module rebuild each instead of
+    // three + two (byte-identical — see their doc comments).
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(infer_ret_types_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
@@ -12667,7 +12675,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 } else if (p.peek_ident() == "resource") {
                     // `@import(iface, wit) resource Name;` binds a WIT resource
                     // handle type to its WIT identity (P5). Record it so
-                    // insert_resource_drops can synthesize the [resource-drop].
+                    // lower_defers_prepass_module can synthesize the [resource-drop].
                     var (rnr_name, rnr_p) = parse_resource_decl_name(p);
                     p = rnr_p;
                     resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit });
