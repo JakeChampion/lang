@@ -1259,7 +1259,8 @@ function kind_id_4(name: string): i32 {
     if (name == "tcp_pollable") { return 197; }
     // Extension tags beyond kind_count() (like struct_copy=198 / store_i64=199):
     // the server-half tcp ops (#4371). Not in the 1..kind_count() bijection
-    // sweep, but nameable so module_emits_op_cached / the backends see them.
+    // sweep (ir_kind_run sweeps them separately by name), but nameable so
+    // module_emits_op_cached / the backends see them.
     if (name == "tcp_listen") { return 200; }
     if (name == "tcp_accept") { return 201; }
     if (name == "writer_write") { return 202; }
@@ -1435,8 +1436,6 @@ function kind_name_3(id: i32): string {
     if (id == 139) { return "struct_get"; }
     if (id == 140) { return "struct_set"; }
     if (id == 141) { return "struct_set_shape"; }
-    if (id == 198) { return "struct_copy"; }
-    if (id == 199) { return "store_i64"; }
     if (id == 142) { return "tuple_make"; }
     if (id == 143) { return "tuple_get"; }
     if (id == 144) { return "tuple_set"; }
@@ -1496,6 +1495,8 @@ function kind_name_4(id: i32): string {
     if (id == 195) { return "tcp_recv"; }
     if (id == 196) { return "tcp_close"; }
     if (id == 197) { return "tcp_pollable"; }
+    if (id == 198) { return "struct_copy"; }
+    if (id == 199) { return "store_i64"; }
     if (id == 200) { return "tcp_listen"; }
     if (id == 201) { return "tcp_accept"; }
     if (id == 202) { return "writer_write"; }
@@ -1509,14 +1510,15 @@ function kind_name_4(id: i32): string {
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
-// check routes to the owning chunk.
+// check routes to the owning chunk; everything past 160 — including the
+// extension tags beyond kind_count() (struct_copy=198 … raw_environ=207)
+// — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
     if (id <= 80) { return kind_name_1(id); }
     if (id <= 120) { return kind_name_2(id); }
     if (id <= 160) { return kind_name_3(id); }
-    if (id <= 197) { return kind_name_4(id); }
-    return "invalid";
+    return kind_name_4(id);
 }
 
 // ---- int-keyed classifier predicates -----------------------------------

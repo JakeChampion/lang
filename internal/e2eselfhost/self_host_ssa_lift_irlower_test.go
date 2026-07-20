@@ -1,6 +1,8 @@
 package e2eselfhost
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,8 +42,11 @@ import (
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
+	// x86 tooling is required test-wide (the driver is an x86-64 binary);
+	// arm64 tooling only by the arm64 subtests, so it is acquired inside them
+	// — a top-level arm64Tooling skip silently took the x86_64 legs with it
+	// on CI's x86 shards, which carry no aarch64 cross toolchain (#5452).
 	x86gcc, x86runner := x86_64Tooling(t)
-	armgcc, qemu := arm64Tooling(t)
 
 	dir := t.TempDir()
 	for _, name := range []string{
@@ -71,7 +76,19 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		cmd.Stdin = strings.NewReader(src)
 		out, err := cmd.Output()
 		if err != nil {
-			t.Fatalf("emit driver failed for %q: %v", src, err)
+			// cmd.Output captures stderr into ExitError.Stderr — surface it plus
+			// the driver binary's hash, so a lift/irlower bail reports its reason
+			// and the exact driver build is comparable across environments
+			// (#5452), not a bare exit 4.
+			var stderr []byte
+			if ee, ok := err.(*exec.ExitError); ok {
+				stderr = ee.Stderr
+			}
+			hash := "?"
+			if b, rerr := os.ReadFile(bin); rerr == nil {
+				hash = fmt.Sprintf("%x", sha256.Sum256(b))
+			}
+			t.Fatalf("emit driver failed for %q: %v\nstderr: %s\ndriver sha256: %s", src, err, stderr, hash)
 		}
 		return out
 	}
@@ -261,6 +278,7 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 			}
 		})
 		t.Run("arm64/"+tc.name, func(t *testing.T) {
+			armgcc, qemu := arm64Tooling(t)
 			mk := func(b string, a ...string) *exec.Cmd { return runArm64Bin(qemu, b, a...) }
 			if got := run(t, emit(t, tc.src, "-target", "arm64"), armgcc, false, mk, "arm-"+tc.name); got != ref {
 				t.Errorf("arm64 irlower->lift %s = %d, interp = %d", tc.name, got, ref)
