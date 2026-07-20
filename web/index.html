@@ -599,7 +599,7 @@
     <option value="hello">hello, world</option>
     <option value="fact">factorial</option>
     <option value="strings">string methods</option>
-    <option value="sort">sort_i32_asc</option>
+    <option value="sort">sort</option>
     <option value="union">union types + match</option>
     <option value="result">Result error handling</option>
     <option value="interp">lex+parse arithmetic</option>
@@ -746,7 +746,7 @@ function main(): i32 {
     return s.len();
 }`,
   sort: `
-import "std/sort";
+import "core/cmp";
 import "std/i32";
 import "std/array";
 function join_i32s(arr: i32[]): string {
@@ -763,9 +763,9 @@ function join_i32s(arr: i32[]): string {
 function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
     print("input:  [" + join_i32s(xs) + "]");
-    var asc: i32[] = sort.sort_i32_asc(xs);
+    var asc: i32[] = cmp.sort(xs);
     print("sorted: [" + join_i32s(asc) + "]");
-    var desc: i32[] = sort.sort_i32_desc(xs);
+    var desc: i32[] = cmp.sort_desc(xs);
     print("desc:   [" + join_i32s(desc) + "]");
     return asc.len();
 }`,
