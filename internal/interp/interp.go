@@ -2738,6 +2738,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 					if !matched {
 						continue
 					}
+					if arm.AtBinding != "" {
+						armEnv.declare(arm.AtBinding, arr)
+					}
 					for k, el := range arm.TupleElems {
 						if el.Name != "" {
 							armEnv.declare(el.Name, arr[k])
@@ -3435,6 +3438,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 					}
 					if !matched {
 						continue
+					}
+					if arm.AtBinding != "" {
+						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
 						if el.Name != "" {

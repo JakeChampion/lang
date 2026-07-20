@@ -18,6 +18,11 @@ import (
 // Struct `@`: struct matches desugar at parse time (build_struct_match), so
 // the at-name is emitted as `var w = <cached scrutinee>;` in the arm's bind
 // list — ahead of the guard — no lowering change needed.
+//
+// Tuple `@`: tuple matches also desugar at parse time (build_tuple_match).
+// When any arm binds `@`, the whole tuple is cached in a `_w` temp (single
+// scrutinee eval) that the element destructure reads from, and the at-name
+// aliases it in the arm's bind list.
 var selfHostAtBindingCases = []struct {
 	name string
 	src  string
@@ -65,6 +70,21 @@ function main(): i32 { return f(P { a: 2, b: 8 }); }`},
 	{"struct_at_with_rename", `struct Point { x: i32, y: i32 }
 function f(p: Point): i32 { match (p) { w @ Point { x: nx, y: ny } => { return w.x * 100 + nx * 10 + ny; } } return 0; }
 function main(): i32 { return f(Point { x: 1, y: 2 }); }`},
+	{"tuple_whole_and_elems", `function f(t: (i32, i32)): i32 {
+  match (t) {
+    w @ (1, x) => { return w.0 * 10 + x; },
+    _ => { return 0; },
+  }
+  return 0 - 1;
+}
+function main(): i32 { return f((1, 5)); }`},
+	{"tuple_expr_guard_uses_at", `function f(t: (i32, i32)): i32 {
+  return match (t) {
+    w @ (a, b) when w.1 > 0 => a + b,
+    _ => 0,
+  };
+}
+function main(): i32 { return f((4, 6)); }`},
 }
 
 func TestSelfHostAtBindingX86_64(t *testing.T) {

@@ -9120,6 +9120,10 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 			continue
 		}
 		armScope := newScope(s)
+		// `@` binding: the whole matched tuple, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tup
+		}
 		irrefutable := true
 		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
 		seen := map[string]bool{}
@@ -9435,6 +9439,10 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 			continue
 		}
 		armScope := newScope(s)
+		// `@` binding: the whole matched tuple, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tup
+		}
 		irrefutable := true
 		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
 		seen := map[string]bool{}

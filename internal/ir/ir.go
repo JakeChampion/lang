@@ -6295,6 +6295,14 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 		}
 		// Bind BEFORE the guard so the guard sees the arm's names.
 		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		// `@` binding: the whole matched tuple (scrutinee pointer), borrowed.
+		restoreAt := func() {}
+		if arm.AtBinding != "" {
+			atSlot, r := b.bindingSlotScoped(arm.AtBinding, tup)
+			restoreAt = r
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+		}
 		if arm.Guard != nil {
 			if err := b.expr(arm.Guard); err != nil {
 				return err
@@ -6304,6 +6312,7 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 		if err := b.stmt(arm.Body); err != nil {
 			return err
 		}
+		restoreAt()
 		restoreBinds()
 		b.brTo(exitDepth, false)
 		if arm.Guard != nil {
@@ -6386,6 +6395,14 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 			b.openIf(BlockTypeVoid)
 		}
 		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		// `@` binding: the whole matched tuple (scrutinee pointer), borrowed.
+		restoreAt := func() {}
+		if arm.AtBinding != "" {
+			atSlot, r := b.bindingSlotScoped(arm.AtBinding, tup)
+			restoreAt = r
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+		}
 		if arm.Guard != nil {
 			if err := b.expr(arm.Guard); err != nil {
 				return err
@@ -6395,6 +6412,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 		if err := b.emitCountedYield(arm.Body); err != nil {
 			return err
 		}
+		restoreAt()
 		restoreBinds()
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 		b.brTo(exitDepth, false)
