@@ -468,11 +468,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             }
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 88) {  // arr_get
-            // pop idx (top), base; element at [data + (idx+1)*8].
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+            // pop idx (top), base; element at [data + (idx+1)*8]. Bounds check
+            // first (docs/ARRAY-BOUNDS.md): idx vs the length prefix at [data].
+            // The UNSIGNED compare (b.hs) catches both idx >= len and a negative
+            // idx (a huge unsigned) with one branch to the shared abort.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x0]\n    cmp x1, x2\n    b.hs __fern_oob_abort\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 89) {  // arr_set
-            // pop val (top), idx, base; store at [data + (idx+1)*8].
-            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
+            // pop val (top), idx, base; store at [data + (idx+1)*8]. Same bounds
+            // check as arr_get: an out-of-range write aborts, never corrupts.
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x3, [x0]\n    cmp x1, x3\n    b.hs __fern_oob_abort\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
         } else if (o.kind_tag == 90) {  // arr_len
             // pop base; length header at [data].
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");

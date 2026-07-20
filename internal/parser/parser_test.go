@@ -801,6 +801,40 @@ func TestFloatLiteralAndType(t *testing.T) {
 	}
 }
 
+// `float` is the width-unqualified alias for f64 (#5363) — a
+// contextual Ident in type position (like `str`), producing
+// FloatType{Width:64, Spelling:"float"}. A `float.`-qualified name
+// stays a module struct reference.
+func TestFloatAliasType(t *testing.T) {
+	prog, err := Parse(`function f(x: float): float { var xs: float[] = [x]; return xs[0] as float; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	for _, ty := range []ast.Type{fn.ReturnType, fn.Params[0].Type} {
+		ft, ok := ty.(ast.FloatType)
+		if !ok {
+			t.Fatalf("type = %T, want FloatType", ty)
+		}
+		if ft.Width != 64 || ft.Spelling != "float" {
+			t.Errorf("got FloatType{Width:%d, Spelling:%q}, want {64, \"float\"}", ft.Width, ft.Spelling)
+		}
+	}
+	at, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.(ast.ArrayType)
+	if !ok || at.Elem.(ast.FloatType).Width != 64 {
+		t.Errorf("var type = %#v, want float[] with f64 elem", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type)
+	}
+
+	prog, err = Parse(`function g(v: float.Vec): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := prog.Funcs[0].Params[0].Type.(ast.StructType)
+	if !ok || st.Name != "float.Vec" {
+		t.Errorf("qualified type = %#v, want StructType{Name:\"float.Vec\"}", prog.Funcs[0].Params[0].Type)
+	}
+}
+
 func TestCompoundAssignDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 { var x: i32 = 1; x += 2; return x; }`)
 	if err != nil {

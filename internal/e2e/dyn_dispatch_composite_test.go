@@ -48,12 +48,23 @@ const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
     return xs[0].message().len();
 }`
 
+// (d) receiver bound from a USER-enum variant payload whose value coerces
+// IMPLICITLY (no `as dyn Error`): the variant-payload position was also
+// missing from the dyn boxing-site list, so this reported a spurious E036.
+// Now the concrete boxes into the payload; dispatch still reads "ab" (len 2).
+const dynDispatchEnumPayloadImplicit = dynDispatchHdr + `enum Wrapped { Wrap(dyn Error), Bare }
+function main(): i32 {
+    var w: Wrapped = Wrap(NotFound { what: "ab" });
+    return match (w) { Wrap(e) => e.message().len(), Bare => 0 };
+}`
+
 func dynDispatchCases() map[string]string {
 	return map[string]string{
-		"match-arm":      dynDispatchMatchArm,
-		"field":          dynDispatchField,
-		"field-implicit": dynDispatchFieldImplicit,
-		"array":          dynDispatchArrayElem,
+		"match-arm":             dynDispatchMatchArm,
+		"field":                 dynDispatchField,
+		"field-implicit":        dynDispatchFieldImplicit,
+		"enum-payload-implicit": dynDispatchEnumPayloadImplicit,
+		"array":                 dynDispatchArrayElem,
 	}
 }
 

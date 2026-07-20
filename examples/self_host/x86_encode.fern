@@ -1110,11 +1110,17 @@ struct X86Asm {
     lab_offs: i32[],
     fix_offs: i32[],
     fix_names: string[],
+    // Mnemonics (or mnemonic+operand shapes) the GAS front-end did not
+    // recognise. A non-empty list means the byte stream is INCOMPLETE —
+    // instructions were dropped — so drivers must fail instead of writing
+    // the corrupt executable (SH-005; the arm64 assembler's `p.unknown`
+    // is the model — see fern.fern's -target arm64 check).
+    unknown: string[],
 }
 
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], bss_size: 0, lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [] };
+    return X86Asm { code: [], rodata: [], bss_size: 0, lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [], unknown: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata

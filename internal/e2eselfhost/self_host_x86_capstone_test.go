@@ -154,6 +154,9 @@ function main(): i32 {
     match (read_file("in.s")) {
         Ok(asmtext) => {
             var a: X86Asm = x86_gas_assemble(asmtext);
+            if (a.unknown.len() > 0) {
+                return 2;
+            }
             var entry: i32 = x86_label_off(a, "_start");
             write(string_from_bytes(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
             return 0;
