@@ -12374,12 +12374,15 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])) { is_arrarr = true; }
     match (v.init) {
         parser.ExprArray(aarr) => {
-            if (aarr.elements.len() > 0) {
-                match (aarr.elements[0]) {
-                    parser.ExprArray(_) => { is_arrarr = true; },
-                    _ => {}
-                }
-            }
+            // Type-driven (#5326): the first element is an array by ANY
+            // classification expr_is_arr_src knows — a nested literal, an
+            // array-marked local (`var m = [inner, …]`), or a registered
+            // T[]-returning call (`var m = [mk(), …]`). The literal-shape-only
+            // match this replaces silently left `m` un-arr-arr-marked for the
+            // call/ident shapes, so nested reads m[i][j] took the 4-byte
+            // default stride — a wrong-value miscompile for f64/string inner
+            // elements (caught differentially vs the interp oracle).
+            if (aarr.elements.len() > 0 && expr_is_arr_src(aarr.elements[0], se)) { is_arrarr = true; }
         },
         parser.ExprIdent(aaid) => { if (se.is_arrarr_slot(se.slot_of(aaid.name))) { is_arrarr = true; } },
         _ => {}

@@ -10049,6 +10049,18 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
             return irt_guess(b.left, params, funcs);
         },
         ExprStructLit(s) => { return s.type_name; },
+        // A non-empty array literal infers `T[]` from its first element
+        // (#5326): without this an unannotated array-returning function never
+        // enters the `*_ret_fns_of` registries, so a `var a = f()` binding
+        // left the slot's element kind untracked and a[i] silently took the
+        // 4-byte default stride — a wrong-value miscompile for f64/string
+        // elements on the self-host IR path.
+        ExprArray(al) => {
+            if (al.elements.len() == 0) { return ""; }
+            var el: string = irt_guess(al.elements[0], params, funcs);
+            if (el == "") { return ""; }
+            return el + "[]";
+        },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
