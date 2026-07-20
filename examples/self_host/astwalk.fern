@@ -95,6 +95,52 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
     return acc;
 }
 
+// subst_ident_expr returns `e` with every identifier READ named `from`
+// rewritten to `to`. Used to rewrite an `@`-binding reference (`n`) to the
+// cached scrutinee local in a match-arm guard, where the whole-value binding
+// isn't yet in scope. Structural mirror of collect_idents_expr; unhandled
+// leaves pass through unchanged.
+pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.Expr {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (id.name == from) { return parser.ExprIdent { name: to, line: id.line, col: id.col }; }
+            return e;
+        },
+        parser.ExprBinary(b) => {
+            return parser.ExprBinary { op: b.op, left: subst_ident_expr(b.left, from, to), right: subst_ident_expr(b.right, from, to), line: b.line, col: b.col };
+        },
+        parser.ExprUnary(u) => {
+            return parser.ExprUnary { op: u.op, operand: subst_ident_expr(u.operand, from, to), line: u.line, col: u.col };
+        },
+        parser.ExprCall(c) => {
+            var nargs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { nargs = nargs.append(subst_ident_expr(c.args[i], from, to)); i = i + 1; }
+            return parser.ExprCall { callee: subst_ident_expr(c.callee, from, to), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        parser.ExprFieldAccess(fa) => {
+            return parser.ExprFieldAccess { obj: subst_ident_expr(fa.obj, from, to), field: fa.field, line: fa.line, col: fa.col };
+        },
+        parser.ExprIndex(x) => {
+            return parser.ExprIndex { array: subst_ident_expr(x.array, from, to), index: subst_ident_expr(x.index, from, to), unchecked: x.unchecked };
+        },
+        parser.ExprArray(a) => {
+            var na: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { na = na.append(subst_ident_expr(a.elements[i], from, to)); i = i + 1; }
+            return parser.ExprArray { elements: na };
+        },
+        parser.ExprTuple(t) => {
+            var nt: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { nt = nt.append(subst_ident_expr(t.elements[i], from, to)); i = i + 1; }
+            return parser.ExprTuple { elements: nt, line: t.line, col: t.col };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
 pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         // StmtDefer is eliminated before emit (lower_defers); the arm is here

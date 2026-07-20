@@ -1,0 +1,99 @@
+package e2eselfhost
+
+import (
+	"os/exec"
+	"testing"
+)
+
+// `@` bindings on the self-host IR path (#5356): `match (b) { n @ Full(v) => … }`
+// binds the whole matched value to `n` alongside the payload. The self-host
+// parser records at_binding on PatVariant; lower_stmt_match prepends
+// `var n = <cached scrutinee>;` to the arm body and rewrites any guard
+// reference to `n` to the cached scrutinee (astwalk.subst_ident_expr) so a
+// guard sees the value before the body-prepended bind. The expression form
+// delegates to lower_stmt_match via lower_iife_match, so it inherits both.
+var selfHostAtBindingCases = []struct {
+	name string
+	src  string
+}{
+	{"stmt_whole_and_payload", `enum Box { Full(i32), Empty }
+function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
+function f(b: Box): i32 {
+  match (b) {
+    n @ Full(v) => { return total(n) * 10 + v; },
+    Empty => { return 0; },
+  }
+  return 0;
+}
+function main(): i32 { return f(Full(3)); }`},
+	{"expr_no_guard", `enum Box { Full(i32), Empty }
+function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
+function f(b: Box): i32 { return match (b) { n @ Full(v) => total(n) * 10 + v, Empty => 0 }; }
+function main(): i32 { return f(Full(3)); }`},
+	{"expr_guard_uses_at", `enum Box { Full(i32), Empty }
+function is_full(b: Box): boolean { match (b) { Full(v) => { return true; }, Empty => { return false; } } return false; }
+function f(b: Box): i32 {
+  return match (b) {
+    n @ Full(v) when is_full(n) => v + 2,
+    Full(v) => v,
+    Empty => 0,
+  };
+}
+function main(): i32 { return f(Full(3)); }`},
+}
+
+func TestSelfHostAtBindingX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "flatten.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range selfHostAtBindingCases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := []byte(tc.src + "\n")
+			want := interpExit(t, interpBin, string(prog))
+			asm := runCapture(t, gcc, runner, driverBin, prog, "-ir")
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
+	}
+}
+
+func TestSelfHostAtBindingArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "flatten.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range selfHostAtBindingCases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := []byte(tc.src + "\n")
+			want := interpExit(t, interpBin, string(prog))
+			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64", "-ir")
+			if len(asm) == 0 {
+				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
+			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
+	}
+}

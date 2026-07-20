@@ -144,7 +144,7 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // parser desugars a nested arm into a flat outer arm whose body re-matches the
 // payload on an inner `match` (desugar_nested_arms), so the checker / codegen
 // only ever see flat arms; empty (the common case) means a plain binder.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[] }
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -683,7 +683,7 @@ function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, 
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
-    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested };
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "" };
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
@@ -2859,6 +2859,16 @@ function parse_block_or_stmt(p: Par): (Stmt[], Par) {
 
 function parse_pattern(p: Par): (Pattern, Par) {
     var name: string = p.peek_ident();
+    // `n @ Variant(...)` — bind the whole matched value to `n` while also
+    // matching the variant. Consume the `IDENT @` prefix; the variant name
+    // follows. Only meaningful before a variant pattern.
+    var at_binding: string = "";
+    if (name.len() > 0 && name != "_" && p.peek2_punct() == "@") {
+        at_binding = name;
+        p = p.advance();  // binder name
+        p = p.advance();  // `@`
+        name = p.peek_ident();
+    }
     // `true` / `false` arms (and other keyword-named patterns) arrive as
     // keyword tokens, not idents — fall back to the keyword text.
     if (name.len() == 0) { name = p.peek_keyword(); }
@@ -2937,7 +2947,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested }, p);
+    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding }, p);
 }
 
 // prepend_stmt returns a fresh statement list with `s` in front of `body`.
@@ -3066,7 +3076,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
     var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
-    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested };
+    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "" };
     var body: Stmt[] = [inner_match];
     return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
 }
@@ -3859,7 +3869,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 rest = rest.append(rr_stmt);
             }
             var le_no_nested: Pattern[] = [];
-            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested };
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "" };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
@@ -8319,7 +8329,7 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
             var j: i32 = 0;
             while (j < vn.len()) {
                 if (vn[j] == simple) {
-                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested };
+                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested, at_binding: pv.at_binding };
                 }
                 j = j + 1;
             }

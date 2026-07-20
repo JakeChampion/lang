@@ -14066,6 +14066,26 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
     var mi: i32 = 0;
     while (mi < m.arms.len()) {
         var arm: parser.MatchArm = m.arms[mi];
+        // `@` binding `n @ Variant(...)`: bind the whole matched value. The
+        // scrutinee was cached in `scrut` above, so prepend `var n = scrut;`
+        // to the arm body (the ordinary var-binding path handles the enum-
+        // typed alias + its RC), and rewrite any guard reference to `n` to
+        // `scrut` — the guard is lowered before the body-prepended bind, so it
+        // reads the cached scrutinee directly.
+        match (arm.pattern) {
+            parser.PatVariant(pv_at) => {
+                if (pv_at.at_binding.len() > 0) {
+                    var at_init: parser.Expr = parser.ExprIdent { name: scrut, line: 0, col: 0 };
+                    var at_body: parser.Stmt[] = [parser.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_str: false }];
+                    var at_bi: i32 = 0;
+                    while (at_bi < arm.body.len()) { at_body = at_body.append(arm.body[at_bi]); at_bi = at_bi + 1; }
+                    var at_guard: parser.Expr = arm.guard;
+                    if (arm.has_guard) { at_guard = astwalk.subst_ident_expr(arm.guard, pv_at.at_binding, scrut); }
+                    arm = parser.MatchArm { pattern: arm.pattern, body: at_body, line: arm.line, col: arm.col, guard: at_guard, has_guard: arm.has_guard };
+                }
+            },
+            _ => {}
+        }
         match (arm.pattern) {
             parser.PatVariant(pv) => {
                 if (is_builtin_pattern(pv.type_name)) {
