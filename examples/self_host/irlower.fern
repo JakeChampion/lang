@@ -15266,11 +15266,15 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
                 s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
                 s = s.emit(ir.op_drop());
             },
-            // A fresh-string producer element (`(i, "x" + s)` / `.to_string()`,
-            // #4353 item 1): the tuple box sole-owns the fresh box, so the
-            // rc-aware __fern_str_free (immortal skips, shared decs, unique
-            // frees) is exactly balanced. A string LITERAL element points at an
-            // immortal box and takes the default skip below — nothing to free.
+            // A string element (#4353 item 1): tuple construction str_box's
+            // every string element into a FRESH copy — literal or produced —
+            // so the tuple box sole-owns it and the rc-aware __fern_str_free
+            // (immortal skips, shared decs, unique frees) is exactly balanced.
+            parser.ExprString(_) => {
+                s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
+                s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
+                s = s.emit(ir.op_drop());
+            },
             parser.ExprBinary(_) => {
                 if (tuple_str_elem_fresh(tup.elements[k])) {
                     s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
@@ -17518,12 +17522,6 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
                     parser.ExprNumber(_) => {},
                     parser.ExprBool(_) => {},
                     parser.ExprIdent(_) => {},
-                    // A string LITERAL element points at an immortal box
-                    // (negative rc — never freed), so the shallow box dec
-                    // is exactly as safe as for a scalar element (#4353
-                    // item 1; previously the whole tuple was rejected and
-                    // even its box leaked).
-                    parser.ExprString(_) => {},
                     _ => { return false; }
                 }
                 i = i + 1;
@@ -17575,17 +17573,18 @@ function tuple_str_elem_fresh(e: parser.Expr): boolean {
 }
 
 // tuple_lit_rc_reclaimable reports whether `e` is a tuple literal whose every
-// element is either a flat scalar (Number / Bool / Ident), a string LITERAL
-// (immortal box — nothing to free), a FRESH-string producer (concat /
-// `.to_string()`, tuple_str_elem_fresh), OR a FRESH array LITERAL (`[..]`),
-// with AT LEAST ONE rc child to free. Such a `(i, [i, i+1])` / `(i, "x" + s)`
-// builds a fresh sole-owner tuple box whose rc element is itself sole-owned
-// (rc=1, a fresh box aliased nowhere), so a DEEP loop-rebind reclaim — arr_dec /
-// rc-aware str_free each fresh element, then the box — is exactly balanced
-// (#4357 tuple sibling of the fresh-string struct reclaim). A bare array or
-// string IDENT element (`(i, xs)`) is EXCLUDED (it aliases a live local, so
-// freeing it would double-release) — that tuple stays on the SHALLOW
-// scalar-tuple path (leak-safe).
+// element is either a flat scalar (Number / Bool / Ident), a STRING element —
+// literal or fresh producer (concat / `.to_string()`, tuple_str_elem_fresh);
+// construction str_box's every string element into a fresh sole-owned copy —
+// OR a FRESH array LITERAL (`[..]`), with AT LEAST ONE rc child to free. Such
+// a `(i, [i, i+1])` / `(i, "x" + s)` / `(i, "abc")` builds a fresh sole-owner
+// tuple box whose rc element is itself sole-owned (rc=1, a fresh box aliased
+// nowhere), so a DEEP loop-rebind reclaim — arr_dec / rc-aware str_free each
+// fresh element, then the box — is exactly balanced (#4357 tuple sibling of
+// the fresh-string struct reclaim). A bare array or string IDENT element
+// (`(i, xs)`) is EXCLUDED (it aliases a live local, so freeing it would
+// double-release) — that tuple stays on the SHALLOW scalar-tuple path
+// (leak-safe).
 function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
@@ -17597,12 +17596,14 @@ function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]):
                     parser.ExprNumber(_) => {},
                     parser.ExprBool(_) => {},
                     parser.ExprIdent(_) => {},
-                    // Immortal literal box: admitted, but frees nothing —
-                    // does not by itself make the tuple worth the deep walk.
-                    parser.ExprString(_) => {},
+                    // A string LITERAL element: tuple construction str_box's
+                    // every string element into a FRESH copy (even a
+                    // literal), so the copy is a sole-owned rc child the
+                    // deep walk must free.
+                    parser.ExprString(_) => { any_arr = true; },
                     // A fresh-string producer element (`(i, "x" + s)`): the
-                    // deep walk routes it through the rc-aware
-                    // __fern_str_free, so it counts as an rc child.
+                    // construction copy is likewise fresh and routed through
+                    // the rc-aware __fern_str_free.
                     parser.ExprBinary(_) => {
                         if (!tuple_str_elem_fresh(tl.elements[i])) { return false; }
                         any_arr = true;
@@ -17657,6 +17658,7 @@ function tuple_lit_has_array(tup: parser.ExprTuple, structs: parser.StructDecl[]
             parser.ExprArray(_) => { return true; },
             parser.ExprTuple(inner) => { if (tuple_lit_has_array(inner, structs)) { return true; } },
             parser.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
+            parser.ExprString(_) => { return true; },
             parser.ExprBinary(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
             parser.ExprCall(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
             _ => {}

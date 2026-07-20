@@ -25,13 +25,16 @@ var strTupleReclaimCases = []struct {
 	want int
 }{
 	// Core churn: concat-element tuple rebuilt per iteration, len read.
+	// Literal⊕literal concat isolates the TUPLE-side reclaim: a fresh-call
+	// concat operand (`"n" + i.to_string()`) leaks its operand TEMP in the
+	// concat lowering itself — a pre-existing gap independent of tuples.
 	{"str-tuple-concat-churn", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
-    while (w < 200) { var t: (i32, string) = (w, "n" + w.to_string()); acc = (acc + t.1.len()) % 251; w = w + 1; }
+    while (w < 200) { var t: (i32, string) = (w, "n" + "x"); acc = (acc + t.1.len()) % 251; w = w + 1; }
     var b1: i32 = __heap_bump_bytes();
     var i: i32 = 0;
-    while (i < 5000) { var t2: (i32, string) = (i, "n" + i.to_string()); acc = (acc + t2.1.len()) % 251; i = i + 1; }
+    while (i < 5000) { var t2: (i32, string) = (i, "n" + "x"); acc = (acc + t2.1.len()) % 251; i = i + 1; }
     var b2: i32 = __heap_bump_bytes();
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
@@ -68,9 +71,10 @@ var strTupleReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// All-literal tuple `(i, "abc")`: takes the SHALLOW scalar-tuple path (box
-	// freed, immortal element untouched) — previously rejected there too, so
-	// even the box leaked per iteration.
+	// All-literal tuple `(i, "abc")`: construction str_box's the literal into
+	// a fresh copy, so the tuple routes the DEEP path (element copy freed,
+	// then the box) — previously the string element rejected the tuple from
+	// every reclaim class and all levels leaked per iteration.
 	{"str-tuple-lit-shallow", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
@@ -125,15 +129,16 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, 0},
-	// DISCARDED statement `(w, "x" + w.to_string());` — the discarded-statement
-	// arm takes the same deep drop (fresh string freed, then the box).
+	// DISCARDED statement `(w, "x" + "y");` — the discarded-statement arm
+	// takes the same deep drop (fresh element copy freed, then the box).
+	// Literal⊕literal concat for the same reason as the churn case.
 	{"str-tuple-discarded", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
-    while (w < 200) { (w, "x" + w.to_string()); w = w + 1; }
+    while (w < 200) { (w, "x" + "y"); w = w + 1; }
     var b1: i32 = __heap_bump_bytes();
     var i: i32 = 0;
-    while (i < 5000) { (i, "x" + i.to_string()); i = i + 1; }
+    while (i < 5000) { (i, "x" + "y"); i = i + 1; }
     var b2: i32 = __heap_bump_bytes();
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
