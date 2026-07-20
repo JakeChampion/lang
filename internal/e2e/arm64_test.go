@@ -6086,37 +6086,37 @@ function main(): i32 {
 	}
 }
 
-// `sort_i32_asc` / `sort_i32_desc` — non-mutating stable merge
+// `cmp.sort` / `cmp.sort_desc` over i32 — non-mutating stable merge
 // sort (input untouched; n < 2 inputs are returned as-is, larger
-// ones as a fresh array). Locks the first sort helper's behavioral
-// contract: ordering, empty/singleton, and the input-preserved
-// property.
+// ones as a fresh array). Locks the generic sort's behavioral
+// contract on arm64: ordering, empty/singleton, and the input-preserved
+// property (the retired `sort_i32_asc` / `sort_i32_desc`, #5397).
 func TestArm64SortI32(t *testing.T) {
 	src := `
-import "std/sort";
+import "core/cmp";
 function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
-    var asc: i32[] = sort.sort_i32_asc(xs);
+    var asc: i32[] = cmp.sort(xs);
     if (asc.len() != 9) { return 1; }
     if (asc[0] != 1) { return 2; }
     if (asc[1] != 1) { return 3; }
     if (asc[8] != 9) { return 4; }
     if (xs[0] != 3) { return 5; }  // input untouched
 
-    var desc: i32[] = sort.sort_i32_desc(xs);
+    var desc: i32[] = cmp.sort_desc(xs);
     if (desc[0] != 9) { return 6; }
     if (desc[8] != 1) { return 7; }
 
     var empty: i32[] = [];
-    if ((sort.sort_i32_asc(empty)).len() != 0) { return 8; }
+    if ((cmp.sort(empty)).len() != 0) { return 8; }
 
     var one: i32[] = [42];
-    var one_sorted: i32[] = sort.sort_i32_asc(one);
+    var one_sorted: i32[] = cmp.sort(one);
     if (one_sorted.len() != 1) { return 9; }
     if (one_sorted[0] != 42) { return 10; }
 
     var negs: i32[] = [3, 0 - 5, 0, 0 - 1, 2];
-    var n_sorted: i32[] = sort.sort_i32_asc(negs);
+    var n_sorted: i32[] = cmp.sort(negs);
     if (n_sorted[0] != 0 - 5) { return 11; }
     if (n_sorted[4] != 3) { return 12; }
     return 0;
@@ -7724,6 +7724,7 @@ func TestArm64StdlibBundle10(t *testing.T) {
 	src := `
 import "std/math";
 import "std/sort";
+import "core/cmp";
 function main(): i32 {
     // Range constants
     if (math.i32_max() != 2147483647) { return 1; }
@@ -7749,20 +7750,20 @@ function main(): i32 {
     if ("hello".starts_with_ci("WORLD")) { return 15; }
     if ("hello".ends_with_ci("WORLD")) { return 16; }
 
-    // string_cmp + sort_strings_asc/desc
+    // string_cmp + generic string sort (cmp.sort / cmp.sort_desc)
     if (sort.string_cmp("apple", "banana") != (0 - 1)) { return 17; }
     if (sort.string_cmp("banana", "apple") != 1) { return 18; }
     if (sort.string_cmp("same", "same") != 0) { return 19; }
     if (sort.string_cmp("short", "shorter") != (0 - 1)) { return 20; }   // shorter <
 
     var unsorted: string[] = ["banana", "apple", "cherry"];
-    var asc: string[] = sort.sort_strings_asc(unsorted);
+    var asc: string[] = cmp.sort(unsorted);
     if (asc[0] != "apple" || asc[1] != "banana" || asc[2] != "cherry") { return 21; }
     if (unsorted[0] != "banana") { return 22; }   // original untouched
-    var desc: string[] = sort.sort_strings_desc(unsorted);
+    var desc: string[] = cmp.sort_desc(unsorted);
     if (desc[0] != "cherry" || desc[2] != "apple") { return 23; }
     var empty: string[] = [];
-    if ((sort.sort_strings_asc(empty)).len() != 0) { return 24; }
+    if ((cmp.sort(empty)).len() != 0) { return 24; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)

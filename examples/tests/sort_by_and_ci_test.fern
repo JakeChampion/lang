@@ -1,11 +1,12 @@
 import "std/test";
 import "std/sort";
+import "core/cmp";
 // examples/tests/sort_by_and_ci_test.fern — pure-Fern coverage of the
 // std/sort surface NOT exercised by sort_wider_test (which does the
-// monomorphic wider-int + ascending-string sorts). This covers the
+// generic `cmp.sort` wider-int + string sorts). This covers the
 // comparator / case-insensitive / projection-key half:
 //   string_cmp / string_cmp_ci  (the ordering primitives)
-//   sort_strings_desc           (descending monomorphic string sort)
+//   cmp.sort_desc               (generic descending sort over string Ord)
 //   sort_strings_asc_ci         (case-insensitive ascending)
 //   sort_by[T]                  (generic comparator-driven sort — closure arg)
 //   is_sorted_by[T]             (the verification companion)
@@ -33,7 +34,7 @@ function test_string_cmp_ci(): test.TestOutcome {
 
 function test_sort_strings_desc(): test.TestOutcome {
     var xs: string[] = ["banana", "apple", "cherry"];
-    return test.assert_eq_array(sort.sort_strings_desc(xs), ["cherry", "banana", "apple"]);
+    return test.assert_eq_array(cmp.sort_desc(xs), ["cherry", "banana", "apple"]);
 }
 
 function test_sort_strings_asc_ci(): test.TestOutcome {

@@ -1,76 +1,39 @@
-// std/sort — free `sort_*` functions for scalar and string arrays.
+// std/sort — comparator-driven and case-insensitive string sorts, the
+// `own`-consuming in-place i32 sorts, and the byte-lexicographic string
+// comparators. The per-width *monomorphic* sort zoo (`sort_i32_asc` /
+// `sort_i64_asc` / `sort_u32_asc` / `sort_u64_asc` / `sort_f64_asc` and their
+// `_desc` mirrors, plus `sort_strings_asc` / `sort_strings_desc`) was retired
+// in #5397 in favour of `core/cmp`'s generic `sort[T: Ord]` / `sort_desc[T:
+// Ord]`: one body dispatching `.cmp`, monomorphised per element type on the
+// self-host IR path (so an `i32` element still lowers to the direct scalar
+// three-way, a `u32` to the unsigned compare, a `string` to the lexicographic
+// byte compare — no comparator-closure indirection), covering every `Ord`
+// element type incl. `@derive(Ord)` structs / enums. Call `cmp.sort(xs)` /
+// `cmp.sort_desc(xs)` where you used to call `sort_i32_asc(xs)` etc.
 //
-// All the non-consuming sorts are stable bottom-up (iterative) merge
-// sorts, O(n log n) comparisons — the same shape as the generic
-// `sort_by` below and `core/cmp`'s `sort[T: Ord]` (#4387 item 3), so
-// the monomorphic entry points are safe on arbitrary / large inputs,
-// not just the compiler's small-list use cases (sorted field offsets,
-// declaration orders, capacity hints). Stability: on a tie the left
-// run's element is emitted first (the merge only takes from the right
-// run when it compares *strictly* less), so equal keys keep their
-// input order. The `own`-consuming in-place variants remain insertion
-// sorts: `fip` functions must not allocate, and a merge sort needs a
-// scratch buffer. (Like `sort_by`, the i32 pass arithmetic assumes
-// n <= 2^30 — beyond that `lo + width + width` would wrap. Unreachable
-// today: no target's heap arena can hold such an array plus its merge
-// scratch.)
+// What still lives here (no generic `Ord` equivalent):
+//   - `sort_by[T](arr, cmp)` — comparator form for ANY element type / custom
+//     ordering without an `Ord` bound (sort by a projected key, reverse order,
+//     any relation). `sort_by_i32_key` / `sort_key` are its Schwartzian-transform
+//     key-projection siblings.
+//   - `sort_strings_asc_ci(arr)` — case-insensitive string sort (no generic
+//     case-folding `Ord`); a `sort_by` delegation over `string_cmp_ci`.
+//   - `sort_i32_inplace_asc` / `_desc` — `own`-consuming, zero-allocation
+//     insertion sorts (`fip`); no generic consuming equivalent.
+//   - `string_cmp` / `string_cmp_ci` — the byte-lex comparators, exported so
+//     `impl Ord for string` (core/cmp) and callers that need a direct ordering
+//     check (without a full sort) can reuse the tested three-way.
 //
-// The scalar entry points (`sort_i32_*` / `sort_i64_*` / `sort_u32/u64_*`)
-// keep monomorphic bodies so the hot-loop compare is the direct scalar
-// `<` / `>` — no per-element comparator-closure indirection (their
-// allocation profile matches `sort_by`'s: one scratch copy per merge
-// pass, materialized explicitly — see sort_i32_asc's doc comment for
-// why it must not alias). The string sorts, by contrast, are now
-// one-line `sort_by` delegations: a string compare is a call either
-// way, so routing it through the generic comparator costs nothing. The
-// full enabler chain has landed — modload rewrites module-local
-// comparator references from arg positions and lambda bodies of a
-// mangled module (#4802), the `call_indirect` signature seam accepts
-// two-slot `string` params (#4804), the `__fern_box_free` funcidx
-// collision is fixed (#4816), and the wasm closure-target ABI now
-// reconciles a function that is BOTH direct-called and used as a
-// closure value — a bare comparator like `string_cmp` — by pushing a
-// dummy env_ptr at its direct-call sites (#4829). The generic
-// comparator form `sort_by[T](arr, cmp)` (below) covers any element
-// type / custom ordering.
+// AST-safety contract (shared by every merge sort in this file and by
+// `cmp.sort`): each merge pass materializes its scratch buffer as a FRESH copy
+// (an `.append` loop), never `var dst = src;`. On the self-host AST emitter path
+// (the >512-function-bundle fallback) there is no Perceus, so `.with` writes
+// through an alias in place — an aliased merge reads its own writes and
+// corrupts. Verified empirically (#5397). Do NOT "optimize" any of these back
+// to an aliased copy-on-write buffer.
 //
-// No prelude: a program now `import "std/sort";` explicitly to
-// call `sort_i32_asc(arr)` etc. (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
-//
-// `string_cmp` / `string_cmp_ci` are the underlying byte-
-// lex comparators the string sorts use; exporting them so
-// callers that need direct ordering checks (without a full
-// sort) don't have to roll their own.
-
-// `sort_i32_asc(arr)` — return `arr`'s elements ascending-sorted.
-// Stable bottom-up merge sort, O(n log n). The input is never
-// mutated; an already-trivially-sorted input (n < 2) is returned
-// as-is (same as `sort_by`), otherwise the result is a fresh array.
-// `sort_i32_desc` flips the comparison direction. (For an
-// arbitrary element type or ordering, see generic `sort_by`.)
-//
-// Free function rather than a method: lang's receiver
-// syntax only accepts struct, enum, or built-in types —
-// not array types. A future PR can add array-method
-// dispatch and re-spell these as `arr.sort_asc()`.
-//
-// Functional shape (returns a new array) matches the rest
-// of std/array's conventions (`arr.push` returns a
-// new array); the input is not mutated — each merge pass
-// materializes `dst` as a FRESH copy of `src` (append loop)
-// before overwriting it slot by slot. Do not "optimize" this
-// back to `var dst = src;` + copy-on-write: the self-hosted
-// compiler has Perceus only on its IR paths, so on the AST paths `.with`
-// writes through an alias in place, and an aliased merge
-// corrupts (reads see this pass's writes — caught by
-// TestSelfHostSortX86_64 / TestSelfHostAuditStdArray in CI).
-// Native and the self-host IR path handle the aliased CoW
-// shape correctly (generic `sort_by` below still uses it, and
-// is green in its own gates), but the monomorphic bodies keep
-// the explicit copy so they are correct on every path. Under
-// native RC the fresh buffer is rc==1, so the merge's `.with`
-// writes stay in-place — same cost as the CoW copy.
+// No prelude: a program `import "std/sort";` explicitly. The generic sorts live
+// in `core/cmp`, so reach for `cmp.sort` via `import "core/cmp";`.
 
 // std/sort's case-insensitive string comparison dispatches
 // (string) `.to_lower()` — declare std/string so the receiver
@@ -85,319 +48,6 @@ import "std/string";
 // impls transitively, so `sort_key` needs no extra import at the call
 // site.
 import "core/cmp";
-
-pub function sort_i32_asc(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: i32[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: i32[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] < src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-// i64 / u32 / u64 variants. Same stable bottom-up merge-sort
-// shape as sort_i32_asc, monomorphised per element width so
-// the compare is the plain scalar `<` / `>` for that type.
-
-pub function sort_i64_asc(arr: i64[]): i64[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: i64[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: i64[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] < src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-pub function sort_i64_desc(arr: i64[]): i64[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: i64[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: i64[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] > src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-pub function sort_u32_asc(arr: u32[]): u32[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: u32[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: u32[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] < src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-pub function sort_u64_asc(arr: u64[]): u64[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: u64[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: u64[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] < src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-// `sort_f64_asc(arr)` / `sort_f64_desc(arr)` — stable bottom-up merge sort of
-// an f64[] (O(n log n)), the floating-point siblings of the integer sorts.
-// NaN ordering is unspecified: IEEE comparisons against NaN are all false, so
-// any NaN elements are left roughly where they started rather than moved to an
-// end — callers that care should filter NaNs out first.
-pub function sort_f64_asc(arr: f64[]): f64[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: f64[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: f64[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] < src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-pub function sort_f64_desc(arr: f64[]): f64[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: f64[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: f64[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] > src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
-
-pub function sort_i32_desc(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
-    var src: i32[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: i32[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (src[j] > src[i]) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
-}
 
 // `string_cmp(a, b)` — lexicographic byte-order comparator.
 // Returns -1 / 0 / 1. Lang's `<` / `>` operators only work
@@ -418,31 +68,6 @@ pub function string_cmp(a: string, b: string): i32 {
     if (n < m) { return 0 - 1; }
     if (n > m) { return 1; }
     return 0;
-}
-
-// `sort_strings_asc(arr)` / `sort_strings_desc(arr)` —
-// lexicographic byte-order sort of a string array. Stable
-// bottom-up merge sort over `string_cmp`, O(n log n) — safe
-// for large listings as well as the small-list use cases
-// (config keys, sorted output for stable tests, alphabetised
-// CLI flags).
-//
-// One-line delegations to the generic `sort_by`: a string compare
-// is a call either way, so routing it through the comparator costs
-// nothing, and the whole enabler chain (#4802/#4804/#4816/#4829)
-// has landed. `desc` passes an inline lambda that flips the
-// comparison; `asc` passes the bare `string_cmp` comparator —
-// which the wasm closure-target ABI now handles even though
-// `string_cmp` is also called directly (env_ptr reconciliation,
-// #4829). Regression coverage: `prop_sort_strings` (exhaustive
-// property fixture) + `sort_strings_delegation_wasm` (the minimal
-// direct-call + delegation shape).
-pub function sort_strings_asc(arr: string[]): string[] {
-    return sort_by(arr, string_cmp);
-}
-
-pub function sort_strings_desc(arr: string[]): string[] {
-    return sort_by(arr, function (a: string, b: string): i32 { return string_cmp(b, a); });
 }
 
 // `string_cmp_ci(a, b)` — same as string_cmp but ASCII case-
@@ -471,17 +96,20 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 // alphabetical listings where case shouldn't fragment the
 // ordering. Stable (merge sort): strings that compare ci-equal
 // ("Apple" / "apple") keep their input order. One-line `sort_by`
-// delegation like `sort_strings_asc` (#4829).
+// delegation (#4829); no generic `Ord` equivalent, since `Ord for
+// string` is case-sensitive. Passing the bare `string_cmp_ci`
+// comparator also keeps the wasm direct-call + closure-target ABI
+// reconciliation (#4829) exercised through the real std/sort module.
 pub function sort_strings_asc_ci(arr: string[]): string[] {
     return sort_by(arr, string_cmp_ci);
 }
 
 // --- In-place (`own`) sorts ------------------------------------------------
 //
-// The `sort_*_asc`/`_desc` functions above are non-mutating: the input array
-// survives the call unchanged (the merge scratch buffer copies on the first
-// `.with`). That fresh result is pure overhead when the caller is finished
-// with the input and just wants it sorted.
+// The generic `cmp.sort` / `cmp.sort_desc` (and `sort_by` below) are
+// non-mutating: the input array survives the call unchanged (the merge scratch
+// buffer is a fresh copy). That fresh result is pure overhead when the caller is
+// finished with the input and just wants it sorted.
 //
 // `sort_i32_inplace_asc`/`_desc` take the array `own` (consuming): the caller
 // transfers ownership, so the sort permutes the input buffer directly and hands
@@ -494,7 +122,8 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
 // These stay insertion sorts (O(n²) worst case) deliberately: `fip` functions
 // must not allocate, and a merge sort needs a scratch buffer. Reach for them
 // on small inputs where the zero-allocation property matters; for large inputs
-// prefer the O(n log n) non-consuming sorts above.
+// prefer the O(n log n) non-consuming sorts. No generic consuming equivalent
+// exists yet, so these stay monomorphic.
 //
 // This dogfoods the `own` consuming-parameter feature in the stdlib: real code
 // whose ownership transfer (the returned array IS the input box) is pinned by
@@ -543,25 +172,24 @@ pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
 // ANY element type via the comparator, without an `Ord` bound: sort by a
 // projected key, reverse order, or any custom relation.
 //
-// Stable bottom-up (iterative) merge sort, O(n log n) comparisons — the
-// same shape the monomorphic `sort_i32_*` / `sort_strings_*` entry points
-// above use, for arbitrary / large inputs (#4387 item 3). Stability:
+// Stable bottom-up (iterative) merge sort, O(n log n) comparisons. Stability:
 // on a tie the left run's element is emitted first (the merge only takes
 // from the right run when it compares *strictly* less), so equal keys keep
-// their input order. It lowers on the self-host IR path (only `while`,
-// closure calls, `.with`/`.len()`/index, and i32 arithmetic). The input
-// is not mutated: the first `.with` on the aliased scratch buffer
-// copies-on-write, leaving `arr` untouched.
+// their input order. Each merge pass materializes `dst` as a FRESH copy of
+// `src` (the `.append` loop) — REQUIRED for correctness on the self-host AST
+// emitter path (see the file-header AST-safety contract; do NOT alias `dst`
+// to `src`). The input is not mutated. (The i32 pass arithmetic assumes
+// n <= 2^30 — beyond that `lo + width + width` would wrap. Unreachable today:
+// no target's heap arena can hold such an array plus its merge scratch.)
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
     var src: T[] = arr;
     var width: i32 = 1;
     while (width < n) {
-        // Merge adjacent runs of `width` from `src` into `dst`. `dst`
-        // starts aliased to `src`; the first `.with` copies it, so reads
-        // from `src` stay valid while we overwrite `dst` slot by slot.
-        var dst: T[] = src;
+        var dst: T[] = [];
+        var c: i32 = 0;
+        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -611,10 +239,11 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
 // array (a Schwartzian transform — each element's `key` is evaluated a single
 // time, not O(n log n) times), then the elements and their keys are merge-
 // sorted together in lockstep by the precomputed i32 key. Stable bottom-up
-// merge sort, O(n log n) (#4387 item 3); the input is not mutated. (Correct
-// on every backend; on the self-host it currently lowers via the AST emitter
-// rather than the IR path — a closure-typed param over a generic `T[]` isn't
-// yet IR-eligible there.)
+// merge sort, O(n log n) (#4387 item 3); the input is not mutated. Each merge
+// pass materializes fresh `dstv` / `dstk` copies — REQUIRED on the self-host
+// AST emitter path this currently lowers via (a closure-typed param over a
+// generic `T[]` isn't yet IR-eligible there), where an aliased buffer would
+// corrupt (see the file-header AST-safety contract).
 pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
     var srcv: T[] = arr;
     var srck: i32[] = [];
@@ -623,8 +252,10 @@ pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
     if (n < 2) { return srcv; }
     var width: i32 = 1;
     while (width < n) {
-        var dstv: T[] = srcv;
-        var dstk: i32[] = srck;
+        var dstv: T[] = [];
+        var dstk: i32[] = [];
+        var c: i32 = 0;
+        while (c < n) { dstv = dstv.append(srcv[c]); dstk = dstk.append(srck[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;
@@ -670,7 +301,8 @@ pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
 // costly projection is not recomputed O(n log n) times. Stable bottom-
 // up merge sort, O(n log n); the input is not mutated (equal keys keep
 // input order — the merge takes from the right run only on a STRICT
-// `.cmp(...) < 0`).
+// `.cmp(...) < 0`). Fresh scratch copies per pass — see the file-header
+// AST-safety contract.
 pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
     var srcv: T[] = arr;
     var srck: K[] = [];
@@ -679,8 +311,10 @@ pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
     if (n < 2) { return srcv; }
     var width: i32 = 1;
     while (width < n) {
-        var dstv: T[] = srcv;
-        var dstk: K[] = srck;
+        var dstv: T[] = [];
+        var dstk: K[] = [];
+        var c: i32 = 0;
+        while (c < n) { dstv = dstv.append(srcv[c]); dstk = dstk.append(srck[c]); c = c + 1; }
         var lo: i32 = 0;
         while (lo < n) {
             var mid: i32 = lo + width;

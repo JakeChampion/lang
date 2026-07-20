@@ -62,12 +62,14 @@ func TestSelfHostCharMethodsX86_64(t *testing.T) {
 }
 
 // TestSelfHostSortX86_64 proves the self-hosted compiler compiles the
-// real std/sort (which needed i32.to_lower) and the result sorts.
+// real std/sort (which needed i32.to_lower) and the result sorts. Exercises
+// the `own`-consuming `sort_i32_inplace_asc` — one of std/sort's remaining
+// monomorphic sorts after the per-width zoo retired to core/cmp (#5397).
 func TestSelfHostSortX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	main := "import \"./sort\";\n" +
-		"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 9, 3]; var r = sort.sort_i32_asc(xs); return r[0] * 100 + r[5]; }\n"
+		"function main(): i32 { var r = sort.sort_i32_inplace_asc([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
 	asm, progDir := compileStdProgModload(t, runner, driverBin, []string{"sort"}, main)
 	progBin := buildBin(t, gcc, progDir, "sortprog", asm)
 	var cmd *exec.Cmd
@@ -78,7 +80,7 @@ func TestSelfHostSortX86_64(t *testing.T) {
 	}
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 109 { // min 1 * 100 + max 9
-		t.Errorf("sort_i32_asc result exited %d, want 109 (min=1, max=9)", code)
+		t.Errorf("sort_i32_inplace_asc result exited %d, want 109 (min=1, max=9)", code)
 	}
 }
 
@@ -115,12 +117,12 @@ func TestSelfHostSortArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 	main := "import \"./sort\";\n" +
-		"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 9, 3]; var r = sort.sort_i32_asc(xs); return r[0] * 100 + r[5]; }\n"
+		"function main(): i32 { var r = sort.sort_i32_inplace_asc([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
 	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"sort"}, main, "-target", "arm64")
 	progBin := buildBin(t, arm64gcc, progDir, "sortprog", asm)
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 109 {
-		t.Errorf("sort_i32_asc result exited %d, want 109", code)
+		t.Errorf("sort_i32_inplace_asc result exited %d, want 109", code)
 	}
 }
