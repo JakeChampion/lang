@@ -7767,30 +7767,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // the register backends snapshot-copy (the `var ks =
                             // m.keys()` binding is is_arr-marked and exit-swept,
                             // which reclaims the fresh copy — NOT the map's live
-                            // buffer, as the historical alias made it). 1 =
-                            // string/other column → raw-buffer alias.
-                            // NOTE (#4353 slice 3): the string SNAPSHOT (flag 2)
-                            // is emitted ONLY at the `for`-loop positions, where
-                            // the hidden column local is deep-released right
-                            // after the loop (self-balanced). At this
-                            // EXPRESSION / `var ks =` position there is no such
-                            // release, so a retaining snapshot would leak the
-                            // copy + its per-element incs every call — clamp
-                            // string columns back to the raw-buffer alias here
-                            // (unchanged behaviour; a SARR-credited var snapshot
-                            // is a later follow-up).
+                            // buffer, as the historical alias made it). 2 =
+                            // string column → retaining snapshot
+                            // (__fern_map_snapshot_col_str), emitted at THIS
+                            // expression position too since #5335: map_owncols
+                            // now owns string-column maps, whose grow path frees
+                            // the superseded buffer — a raw-buffer alias here
+                            // (the historical clamp to flag 1) would dangle the
+                            // moment a later insert grows the map. The snapshot
+                            // copy + its per-element incs leak at this position
+                            // until a SARR-credited release lands (bounded per
+                            // read — strictly better than the old alias, which
+                            // was also native-divergent: native keys()/values()
+                            // are snapshots). 1 = i64/f64/struct/generic column
+                            // → raw-buffer alias (owncols stays clear).
                             var mks: LowerState = lower_expr(fa.obj, s);
                             if (!mks.ok) { return mks; }
-                            var mks_kf: i32 = map_kv_elem_flag(mtype, "keys");
-                            if (mks_kf == 2) { mks_kf = 1; }
-                            return mks.emit(ir.op_map_keys(mks_kf));
+                            return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys")));
                         }
                         if (fa.field == "values" && c.args.len() == 0) {
                             var mvs: LowerState = lower_expr(fa.obj, s);
                             if (!mvs.ok) { return mvs; }
-                            var mvs_vf: i32 = map_kv_elem_flag(mtype, "values");
-                            if (mvs_vf == 2) { mvs_vf = 1; }
-                            return mvs.emit(ir.op_map_values(mvs_vf, map_value_wide(map_value_of(mtype))));
+                            return mvs.emit(ir.op_map_values(map_kv_elem_flag(mtype, "values"), map_value_wide(map_value_of(mtype))));
                         }
                         if (fa.field == "iter" && c.args.len() == 0) {
                             // m.iter() -> a fresh MapIter box [map_ptr@0, cursor@8].
@@ -19213,10 +19211,11 @@ function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // The freshness predicate (str_local_binding_is_fresh) is purely SYNTACTIC (an
 // int `a+b` matches too), so the declared `Map[K, string]` type gate is required
 // to confirm the column really holds strings before freeing them as such. Keys
-// still leak one level (a follow-up); non-fresh-value or unannotated maps stay on
-// the shallow free (sound). NB: this reclaims the VALUE boxes; the map's separate
-// arr_push grow-leak (the abandoned intermediate keys/vals buffers, a documented
-// LOAD-BEARING leak gated on the reuse-analysis routing) is orthogonal and stays.
+// deep-release the same way via "MAPKS:" / __fern_map_free_ks; non-fresh-column
+// or unannotated maps stay on the shallow free (sound). The map's separate
+// arr_push grow-leak is closed for snapshot-kind columns by map_owncols (#5335
+// layer 0: i32/string K/V route grows through __fern_arr_push_owned); only
+// flag-1 alias columns (i64/f64/struct/generic) keep the LOAD-BEARING leak.
 
 // map_decl_value_type: the V of the `var name: Map[K, V] = …` declaration of the
 // map local `name`, found anywhere in `stmts`; "" if unannotated / not found.
@@ -35561,29 +35560,32 @@ function map_value_is_ptr(vt: string): boolean {
     return true;
 }
 
-// map_owncols (#4353 slices 1+2): the map's declared "Map[K, V]" type has i32
-// keys AND i32 values, so BOTH its keys()/values() reads snapshot-copy
-// (map_kv_elem_flag returns 0 for both columns) and the map is therefore the
-// sole owner of its column buffers — op_map_set may free the superseded buffer
-// on a grow (__fern_arr_push_owned) instead of leaking it. Strictly "i32"-tag
-// only: i64/f64 values stay on the alias/leak path (their keys()/values() are
-// not snapshotted — see map_kv_elem_tag's exclusion note), and a generic /
-// unparseable tag ("Map[K, V]", "") is conservatively NOT owned. (A boolean
-// value annotation normalizes to i32 in the type tag before reaching here, so
-// Map[i32, boolean] IS owned — consistently, its keys()/values() reads see the
-// same normalized tag and snapshot.)
+// map_owncols (#4353 layer 0, general case — #5335): BOTH of the map's declared
+// "Map[K, V]" columns read back as SNAPSHOTS (map_kv_elem_flag != 1: an i32
+// column snapshot-copies via __fern_map_snapshot_col, a string column snapshots
+// with per-element retain via __fern_map_snapshot_col_str), so no keys()/values()
+// read can alias the raw keys@0/vals@8 buffers and the map is therefore their
+// sole owner — op_map_set may free the superseded buffer on a grow
+// (__fern_arr_push_owned) instead of leaking it. Defined IN TERMS OF
+// map_kv_elem_flag so the "owned ⇒ every read snapshots" invariant is structural:
+// i64/u64/f64 and struct/generic/unparseable ("Map[K, V]", "") columns are flag 1
+// (raw-buffer alias reads) and stay on the leak-only push — freeing their
+// superseded buffer would dangle a live `var vs = m.values()`. (A boolean
+// annotation normalizes to i32 in the type tag before reaching here, so
+// Map[i32, boolean] IS owned — consistently, its reads see the same normalized
+// tag and snapshot.)
 function map_owncols(mty: string): boolean {
-    if (map_key_kind_of(mty) != 1) { return false; }
-    return map_value_of(mty) == "i32";
+    return map_kv_elem_flag(mty, "keys") != 1 && map_kv_elem_flag(mty, "values") != 1;
 }
 
 // map_kv_elem_flag derives op_map_keys / op_map_values' element-kind flag from
 // the map's "Map[K, V]" type tag: 0 = scalar i32 column (the register backends
-// SNAPSHOT it — a fresh owned rc=1 copy), 1 = pointer/string/i64/f64/generic/
-// unknown column (the register backends keep today's raw-buffer ALIAS; the
-// string-column snapshot is #4353 slice 3). Must stay consistent with
-// map_owncols above: owncols is only sound because BOTH columns of an i32/i32
-// map read back as snapshots, never as buffer aliases.
+// SNAPSHOT it — a fresh owned rc=1 copy), 2 = string column (snapshot with
+// per-element retain), 1 = pointer/i64/f64/generic/unknown column (the register
+// backends keep the raw-buffer ALIAS). map_owncols above is DEFINED from this
+// function (owned ⇔ neither column is flag 1): a flag-1 alias read of an owned
+// map would dangle once the grow path frees the superseded buffer, so any new
+// column kind added here must return 1 until its reads snapshot.
 function map_kv_elem_flag(mty: string, field: string): i32 {
     if (field == "keys") {
         if (map_key_kind_of(mty) == 1) { return 0; }
