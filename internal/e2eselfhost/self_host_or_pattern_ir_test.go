@@ -55,6 +55,34 @@ function main(): i32 { return f(1) * 100 + f(2) * 10 + f(5); }`},
     return 0 - 1;
 }
 function main(): i32 { return f(3) * 100 + f(12) * 10 + f(7); }`},
+	{"tuple-or-literal", `function f(t: (i32, i32)): i32 {
+    match (t) {
+        (1, 2) | (3, 4) => { return 20; },
+        _ => { return 7; },
+    }
+    return 0 - 1;
+}
+function main(): i32 { return f((3, 4)) * 10 + f((5, 6)); }`},
+	{"tuple-or-bind", `function f(t: (i32, i32)): i32 {
+    match (t) {
+        (1, x) | (x, 2) => { return x; },
+        _ => { return 0; },
+    }
+    return 0 - 1;
+}
+function main(): i32 { return f((1, 42)) + f((99, 2)); }`},
+	{"tuple-or-guard", `function f(t: (i32, i32)): i32 {
+    match (t) {
+        (1, x) | (x, 2) when x > 10 => { return x; },
+        _ => { return 0; },
+    }
+    return 0 - 1;
+}
+function main(): i32 { return f((1, 5)) * 100 + f((1, 30)) + f((50, 2)); }`},
+	{"tuple-or-expr", `function f(t: (i32, i32)): i32 {
+    return match (t) { (1, 2) | (2, 1) => 5, _ => 0 };
+}
+function main(): i32 { return f((2, 1)) * 10 + f((9, 9)); }`},
 }
 
 func TestSelfHostOrPatternX86_64(t *testing.T) {
