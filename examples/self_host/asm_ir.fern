@@ -2111,9 +2111,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
     // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
     // emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
-    // __fern_arr_slice (transcribed verbatim from asm.fern): %rdi = src arr,
+    // __fern_arr_slice: %rdi = src arr,
     // %rsi = start, %rdx = end → a fresh array holding src[start:end] (copies the
     // 8-byte element payloads via __fern_arr_box). Drives array `a[start:end]`.
+    // Construction-time bounds check (#5419): two unsigned compares trap unless
+    // 0 <= start <= end <= src len — without them an oversized `end` walked the
+    // copy loop past the source buffer.
     if (s.has_need("arr_slice")) {
         s = s.write("__fern_arr_slice:\n");
         s = s.write("    pushq %rbp\n");
@@ -2125,6 +2128,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdi, %r12\n");
         s = s.write("    movq %rsi, %r13\n");
         s = s.write("    movq %rdx, %r14\n");
+        s = s.write("    cmpq (%r12), %r14\n");    // end > src len (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
+        s = s.write("    cmpq %r14, %r13\n");      // start > end (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
         s = s.write("    movq %r14, %r15\n");
         s = s.write("    subq %r13, %r15\n");
         s = s.write("    movq %r15, %rdi\n");
@@ -3577,9 +3584,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // string field that happens to be a slice/trim VIEW (e.g. the struct
         // string-field alias-inc) is a safe no-op instead of clobbering the previous
         // heap block. r12/r13/r14 (callee-saved) hold end/start/src across alloc.
+        // Construction-time bounds check (#5419): trap unless
+        // 0 <= start <= end <= src len (two unsigned compares) — an oversized
+        // `end` otherwise built a view whose bytes extend past the source.
         s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n");
         s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n");
         s = s.write("    movq %r8, %r12\n    movq %rcx, %r13\n    movq %rdx, %r14\n");
+        s = s.write("    cmpq 8(%r14), %r12\n");   // end > src len (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
+        s = s.write("    cmpq %r12, %r13\n");      // start > end (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
         s = s.write("    movq $24, %rdi\n    call __fern_alloc\n");
         s = s.write("    movq $-1, (%rax)\n");
         s = s.write("    movq (%r14), %rcx\n    addq %r13, %rcx\n    movq %rcx, 8(%rax)\n");

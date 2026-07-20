@@ -67,6 +67,65 @@ function main(): i32 {
     print(s[5].to_string());
     return 0;
 }`},
+		// Slice CONSTRUCTION bounds (#5419): a[lo:hi] with hi > len,
+		// lo > hi, or lo < 0 traps at construction — before this,
+		// the compiled backends built the oversized view and the
+		// access check (against the view's own len) read past the
+		// source.
+		{"slice_construct_high_past_end", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var s: i32 = 0;
+    for x in xs[0:4] { s = s + x; }
+    print(s.to_string());
+    return 0;
+}`},
+		{"slice_construct_high_far_past_end", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var s: i32 = 0;
+    for x in xs[0:100] { s = s + x; }
+    print(s.to_string());
+    return 0;
+}`},
+		{"slice_construct_reversed", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var s: [i32] = xs[2:1];
+    print(s.len().to_string());
+    return 0;
+}`},
+		{"slice_construct_negative_low", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var lo: i32 = 0 - 1;
+    var s: [i32] = xs[lo:2];
+    print(s.len().to_string());
+    return 0;
+}`},
+		{"slice_construct_half_open_low_past_end", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var s: [i32] = xs[7:];
+    print(s.len().to_string());
+    return 0;
+}`},
+		{"subslice_construct_past_end", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30, 40, 50];
+    var s: [i32] = xs[1:4];
+    var t: [i32] = s[0:4];
+    print(t.len().to_string());
+    return 0;
+}`},
+		{"slice_construct_i64_past_end", `import "std/i32";
+import "std/i64";
+function main(): i32 {
+    var xs: i64[] = [5000000000, 6000000000];
+    var s: [i64] = xs[0:5];
+    print(s.len().to_string());
+    return 0;
+}`},
 	}
 	for _, c := range oob {
 		t.Run(c.name, func(t *testing.T) { assertAborts(t, c.src) })
@@ -107,6 +166,21 @@ function main(): i32 {
     print(s.len().to_string());
     print(s[0].to_string());
     print(s[2].to_string());
+    return 0;
+}`},
+		// The length boundary stays legal: lo == hi == len constructs
+		// an empty slice, and a full-width xs[0:len] is unchanged.
+		{"slice_boundary_forms", `import "std/i32";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var empty: [i32] = xs[3:3];
+    print(empty.len().to_string());
+    var full: [i32] = xs[0:3];
+    print(full.len().to_string());
+    var head: [i32] = xs[:2];
+    print(head.len().to_string());
+    var tail: [i32] = xs[1:];
+    print(tail.len().to_string());
     return 0;
 }`},
 		{"u8_and_i64", `import "std/i32";

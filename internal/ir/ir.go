@@ -8307,91 +8307,97 @@ func (b *builder) expr(e ast.Expr) error {
 			break
 		}
 		// Lower `arr[low:high]` to:
-		//   data_ptr = (arr or *slice) + low * 4
-		//   len      = high - low
-		//   slice    = __slice_make(data_ptr, len)
+		//   src      = source (evaluated once)
+		//   len'     = __slice_range(low or 0, high or len(src), len(src))
+		//   data_ptr = (src or *src) + low * stride
+		//   slice    = __slice_make(data_ptr, len')
 		// Both bounds default lazily — `low` falls back to 0,
-		// `high` falls back to len(source). Bounds-check happens
-		// at access time inside `__slice_idx`; constructing a
-		// slice with `low > high` is allowed (the resulting
-		// negative len just fails the next bounds check).
-
-		// Push the source's underlying data pointer.
+		// `high` falls back to len(source). `__slice_range` is the
+		// construction-time bounds check (#5419): it traps (exit
+		// 134) unless 0 <= low <= high <= len(src) and returns
+		// high - low. Without it an oversized `high` materialised a
+		// view past the source, and the access-time `__slice_idx`
+		// check — which compares against the slice's own len —
+		// happily read out of bounds. (The parser reserves the
+		// bare `a[:]` form, so at least one bound is present.)
 		if err := b.expr(n.Source); err != nil {
 			return err
 		}
+		srcSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_src_%d", srcSlot)] = srcSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: srcSlot})
+
+		// Source length: a slice carries its len at header + ptrW
+		// (after the pointer-width data field); an owned array at
+		// the standard data_ptr - 4 prefix.
+		b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
 		if n.SourceIsSlice {
-			// For sub-slicing, dereference: data_ptr lives at
-			// slice + 0. It's a full pointer-width field (8 bytes
-			// on native, 4 on wasm32), so load at WidthPtr — a
-			// plain i32 load would truncate a high .rodata / heap
-			// pointer (the as_bytes-in-.so / arm64-darwin bug).
-			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: 4})
+			b.emit(Op{Kind: OpSub})
+			b.emit(Op{Kind: OpLoad})
 		}
-		// data_ptr += low * stride (skip when low is 0/missing).
-		// Stride defaults to 4 for the historical i32 layout but
-		// drops to 1 / 2 / 8 for byte / halfword / wide-element
-		// slices per ast.ElemSizeBytes. Skip the multiply
-		// entirely when stride == 1 — `low * 1` is just `low`.
-		stride := int32(4)
-		if n.ElemType != nil {
-			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
-		}
+		srcLenSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_srclen_%d", srcLenSlot)] = srcLenSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: srcLenSlot})
+
+		loSlot := int32(-1)
 		if n.Low != nil {
 			if err := b.expr(n.Low); err != nil {
 				return err
 			}
+			loSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__sl_slice_lo_%d", loSlot)] = loSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: loSlot})
+		}
+
+		// len' = __slice_range(lo, hi, srcLen) — checked.
+		lenSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_len_%d", lenSlot)] = lenSlot
+		if loSlot >= 0 {
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+		}
+		if n.High != nil {
+			if err := b.expr(n.High); err != nil {
+				return err
+			}
+		} else {
+			b.emit(Op{Kind: OpLoadLocal, I32: srcLenSlot})
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: srcLenSlot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__slice_range", I32: 3})
+		b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
+
+		// data_ptr = source data + low * stride. For sub-slicing,
+		// dereference first: data_ptr lives at slice + 0. It's a
+		// full pointer-width field (8 bytes on native, 4 on
+		// wasm32), so load at WidthPtr — a plain i32 load would
+		// truncate a high .rodata / heap pointer (the
+		// as_bytes-in-.so / arm64-darwin bug). Stride defaults to 4
+		// for the historical i32 layout but drops to 1 / 2 / 8 for
+		// byte / halfword / wide-element slices per
+		// ast.ElemSizeBytes; skip the multiply when stride == 1.
+		stride := int32(4)
+		if n.ElemType != nil {
+			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+		if n.SourceIsSlice {
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		}
+		if loSlot >= 0 {
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
 			if stride != 1 {
 				b.emit(Op{Kind: OpConstI32, I32: stride})
 				b.emit(Op{Kind: OpMul})
 			}
 			b.emit(Op{Kind: OpAdd})
 		}
-		// Stash the data_ptr for later — we still need to push
-		// the len before calling `$__slice_make`.
-		dataSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__sl_slice_data_%d", dataSlot)] = dataSlot
-		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
-
-		// Compute len = (High or source-len) - (Low or 0).
-		if n.High != nil {
-			if err := b.expr(n.High); err != nil {
-				return err
-			}
-		} else {
-			// Re-evaluate Source's length. Cheap when the source
-			// is an identifier (the common case); a more
-			// expensive source would benefit from evaluating
-			// once into a slot, but we don't have that yet.
-			if err := b.expr(n.Source); err != nil {
-				return err
-			}
-			if n.SourceIsSlice {
-				// len lives at slice + ptrW (after the pointer-width
-				// data field): +8 on native, +4 on wasm32.
-				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
-				b.emit(Op{Kind: OpAdd})
-				b.emit(Op{Kind: OpLoad})
-			} else {
-				// Owned arrays / strings carry their length at
-				// data_ptr - 4 (the standard prefix).
-				b.emit(Op{Kind: OpConstI32, I32: 4})
-				b.emit(Op{Kind: OpSub})
-				b.emit(Op{Kind: OpLoad})
-			}
-		}
-		if n.Low != nil {
-			if err := b.expr(n.Low); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpSub})
-		}
-		// Stack now: [len]. Push data, swap argument order via a
-		// temp local, then call `$__slice_make(data, len)`.
-		lenSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__sl_slice_len_%d", lenSlot)] = lenSlot
-		b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
-		b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 		b.emit(Op{Kind: OpCallDirect, Str: "__slice_make", I32: 2})
 	case *ast.ArrayLit:

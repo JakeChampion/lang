@@ -435,6 +435,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__slice_make":
 					needs.add("__fern_alloc")
 					needs.add("__slice_make")
+				case "__slice_range":
+					needs.add("__slice_range")
 				case "__slice_idx":
 					needs.add("__slice_idx")
 				case "__slice_idx_1":
@@ -1657,6 +1659,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildSliceMakeBody,
+	},
+	"__slice_range": {
+		// (lo, hi, len) → i32 — slice-construction bounds check
+		// (#5419): traps unless 0 <= lo <= hi <= len; returns hi - lo.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceRangeBody,
 	},
 	"__slice_idx": {
 		// Legacy unsuffixed name, stride 4 (default i32 slices).
