@@ -2581,6 +2581,18 @@ function type_label(t: Type): string {
     return "unknown";
 }
 
+// e042_ret_label renders a known-primitive declared return type with the
+// native checker's ast spelling: bool prints "boolean" there (TS-heritage
+// keyword), everything else matches type_label. Callers guard with
+// is_primitive_type, so no other variant reaches the fallthrough.
+function e042_ret_label(t: Type): string {
+    match (t) {
+        TypeBool(_) => { return "boolean"; },
+        _ => { return type_label(t); }
+    }
+    return type_label(t);
+}
+
 // append_diags concatenates two diagnostic lists.
 function append_diags(a: Diag[], b: Diag[]): Diag[] {
     var i: i32 = 0;
@@ -4790,6 +4802,31 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 if (is_primitive_type(trt)) {
                     out = out.append(dg_at("E042", "`?` operator requires an Option or Result value, got " + type_label(trt), u.line, u.col));
                 }
+                // E042 return-shape (#4363 item 1): `?` on a KNOWN
+                // Option/Result operand additionally requires the
+                // surrounding function to return the same builtin enum.
+                // Sound subset of the Go rule: only fires when the
+                // declared return type resolved to a KNOWN primitive —
+                // never a possible Option/Result — so an unknown / union
+                // / struct / undeclared return is left to the Go checker
+                // and every legal `?` (whose return types to the matching
+                // name-only union) is untouched. Mismatched-enum returns
+                // (`?` on Option in a Result-returning fn) are also left
+                // to the Go checker: the name-only union can't render the
+                // return's generic args the way the native message does.
+                else {
+                    match (trt) {
+                        TypeUnion(tu) => {
+                            if (tu.name == "Option" && is_primitive_type(s.ret_type)) {
+                                out = out.append(dg_at("E042", "`?` on Option requires the surrounding function to return Option[_], got " + e042_ret_label(s.ret_type), u.line, u.col));
+                            }
+                            else if (tu.name == "Result" && is_primitive_type(s.ret_type)) {
+                                out = out.append(dg_at("E042", "`?` on Result requires the surrounding function to return Result[_, E], got " + e042_ret_label(s.ret_type), u.line, u.col));
+                            }
+                        },
+                        _ => { }
+                    }
+                }
             }
         },
         parser.ExprArray(a) => {
@@ -4982,6 +5019,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             while (li < lm.params.len()) {
                 lsc = lsc.bind(lm.params[li].name, type_from_name_with_structs_unions(lm.params[li].type_name, s.structs, s.unions));
                 li = li + 1;
+            }
+            // A return inside the lambda returns from the LAMBDA — thread
+            // its declared return type (or unknown when undeclared) so the
+            // E042 return-shape check and the return-value walks don't read
+            // the enclosing function's return type. Mirrors the lambda-body
+            // scope in check_expr's ExprLambda arm.
+            if (lm.ret_type.len() > 0) {
+                lsc = lsc.with_ret_type(type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions));
+            } else {
+                lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
             }
             out = stmts_call_diags(lm.body, lsc);
         },

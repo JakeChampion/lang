@@ -1448,9 +1448,12 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             // `expr?` try operator. Desugar to the unary op `try_`
             // (operand = base); the emitter unwraps a Some/Ok payload
             // or early-returns the None/Err box from the enclosing
-            // (Option/Result-returning) function.
+            // (Option/Result-returning) function. Stamp the `?` token's
+            // position so the E042 diagnostics anchor where native does.
+            var qline: i32 = p.peek_line();
+            var qcol: i32 = p.peek_col();
             p = p.advance();
-            base = e_unary("try_", base);
+            base = e_unary_at("try_", base, qline, qcol);
         } else {
             break;
         }

@@ -724,6 +724,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-i32", "function f(): Option[i32] { var x: i32 = 5; return x?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-string", "function f(): Option[i32] { var s: string = \"x\"; return s?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-option-ok", "function g(): Option[i32] { return Some(1); }\nfunction f(): Option[i32] { var o: Option[i32] = g(); var v: i32 = o?; return Some(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E042 return-shape (#4363 item 1): `?` on a known Option/Result
+		// operand inside a function whose declared return type is a known
+		// primitive draws the return-shape E042 ("requires the surrounding
+		// function to return Option[_]/Result[_, E]"), matching native. The
+		// matching-return shapes stay clean, including inside a lambda whose
+		// own declared return supplies the context (not the enclosing fn's).
+		{"try-option-ret-i32", "function f(): i32 { var o: Option[i32] = Some(1); return o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-i32", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): i32 { return get()?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-string", "function f(): string { return Some(3)?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-bool", "function f(): boolean { var o: Option[i32] = Some(1); var v: i32 = o?; return v > 0; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { var v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = function(): i32 { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = function(): Option[i32] { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
@@ -1129,6 +1142,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"tuple-reassign", "function main(): i32 { var t: (i32, string) = (1, \"a\"); t = (2, \"b\"); return t.0; }\n"},
 		// Generic tuple container (the std/array `zip` shape).
 		{"tuple-generic-array", "function zip(a: i32[], b: string[]): (i32, string)[] { var out: (i32, string)[] = []; return out; }\nfunction main(): i32 { return 0; }\n"},
+		// Lambda bodies see the LAMBDA's declared return type (not the
+		// enclosing function's) — pins the call_diags lambda-scope ret_type
+		// threading (#4363 item 1) on valid array-returning shapes.
+		{"lambda-arr-ret-ok", "function f(): i32[] {\n    var g = function(): string[] { return [\"a\", \"b\"]; };\n    return [1, 2];\n}\nfunction main(): i32 { return 0; }\n"},
+		{"lambda-try-ret-option-ok", "function f(): i32 {\n    var g = function(): Option[i32] { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n"},
 		// Method chains on string / array builtins (valid).
 		{"method-chain-len", "function main(): i32 { var s = \"abc\"; var n = s.len(); return n; }\n"},
 		{"method-chain-array", "function main(): i32 { var a = [1, 2, 3]; return a.len(); }\n"},
