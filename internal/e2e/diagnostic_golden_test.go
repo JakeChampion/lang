@@ -31,8 +31,8 @@ var diagnosticGoldenCases = []struct {
 	name string
 	src  string
 }{
-	// E001 undefined identifier, with the near-miss "did you mean" note and
-	// the multi-char squiggle under the offending name.
+	// E001 undefined identifier, with the near-miss machine-applicable fix
+	// (`help: replace …`) and the multi-char squiggle under the name.
 	{"E001_undefined_suggestion", "function main(): i32 { var count = 1; return kount; }\n"},
 	// E002 return-type mismatch (declared i32, returns string).
 	{"E002_return_type", "function f(): i32 { return \"x\"; }\nfunction main(): i32 { return 0; }\n"},

@@ -363,6 +363,10 @@ func walkChildren(n Node, fn func(Node) bool) {
 		for _, c := range x.Captures {
 			Walk(c, fn)
 		}
+	case *Lambda:
+		if x.Body != nil {
+			Walk(x.Body, fn)
+		}
 	case *MatchExpr:
 		Walk(x.Tag, fn)
 		for _, a := range x.Arms {

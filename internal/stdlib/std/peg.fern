@@ -121,8 +121,19 @@ function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
 // __peg_run matches pattern `p` at `pos`, returning (newPos, state):
 // newPos >= 0 on success, -1 on failure. `depth` counts PRef
 // expansions only (structural recursion into sub-patterns is finite
-// by construction; rule references are what can cycle).
-function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32): (i32, PegState) {
+// by construction; rule references are what can cycle). seen_n/seen_p
+// are the (rule name, position) pairs of the PRef expansions currently
+// ON THE CALL CHAIN (each recursion passes a copy extended with its own
+// entry, so completed expansions fall away naturally): re-entering a
+// rule at the SAME position means no input was consumed in between —
+// left recursion, direct or indirect — and can never make progress, so
+// it fails immediately instead of burning the whole depth budget. The
+// depth cap backstops non-cyclic deep recursion (e.g. `l := "a" l` on
+// a long input); it is sized so the native call stack survives the
+// worst case (~2 frames of ~0.75 KB per expansion against an 8 MB
+// stack — 8192 overflowed it, which is how the left-recursion test
+// SIGSEGV'd natively while the interpreter's growable stack passed).
+function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[]): (i32, PegState) {
     match (p) {
         PLit(s) => {
             var n: i32 = s.len();
@@ -169,7 +180,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
             var s2: PegState = st;
             var i: i32 = 0;
             while (i < ps.len()) {
-                var (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth);
+                var (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p);
                 if (r < 0) { return (r, s3); }
                 cur = r;
                 s2 = s3;
@@ -181,7 +192,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
             var s2: PegState = st;
             var i: i32 = 0;
             while (i < ps.len()) {
-                var (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth);
+                var (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p);
                 if (r >= 0) { return (r, s3); }
                 // Failed alternative: resume from the pre-attempt
                 // trail, keeping only the furthest watermark.
@@ -194,7 +205,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
             var cur: i32 = pos;
             var s2: PegState = st;
             while (true) {
-                var (r, s3) = __peg_run(g, sub, input, cur, s2, depth);
+                var (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p);
                 if (r < 0) { return (cur, __peg_merge_furthest(s2, s3)); }
                 if (r == cur) { return (cur, s3); }  // nullable operand: stop, don't spin
                 cur = r;
@@ -203,17 +214,17 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
             return (cur, s2);
         },
         PPlus(sub) => {
-            var (first, s2) = __peg_run(g, sub, input, pos, st, depth);
+            var (first, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
             if (first < 0) { return (first, s2); }
-            return __peg_run(g, PStar(sub), input, first, s2, depth);
+            return __peg_run(g, PStar(sub), input, first, s2, depth, seen_n, seen_p);
         },
         POpt(sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
             if (r >= 0) { return (r, s2); }
             return (pos, __peg_merge_furthest(st, s2));
         },
         PNot(sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
             if (r >= 0) { return __peg_fail(st, pos); }
             // Note: a failure INSIDE a negative lookahead is the
             // pattern succeeding — don't let the probe's watermark
@@ -221,7 +232,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
             return (pos, st);
         },
         PAnd(sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
             if (r < 0) { return (r, s2); }
             // Zero-width: keep captures from the lookahead's trail
             // discarded — the text isn't consumed, so a capture
@@ -229,14 +240,19 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
             return (pos, st);
         },
         PRef(name) => {
-            if (depth >= 8192) { return __peg_fail(st, pos); }
+            if (depth >= 2048) { return __peg_fail(st, pos); }
+            var si: i32 = 0;
+            while (si < seen_n.len()) {
+                if (seen_p[si] == pos && seen_n[si] == name) { return __peg_fail(st, pos); }
+                si = si + 1;
+            }
             match (g.rules.get(name)) {
-                Some(rp) => { return __peg_run(g, rp, input, pos, st, depth + 1); },
+                Some(rp) => { return __peg_run(g, rp, input, pos, st, depth + 1, seen_n.append(name), seen_p.append(pos)); },
                 None => { return __peg_fail(st, pos); }
             }
         },
         PCap(name, sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth);
+            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
             if (r < 0) { return (r, s2); }
             return (r, PegState {
                 tn: s2.tn.append(name),
@@ -335,7 +351,7 @@ pub function peg_match(g: Grammar, input: string): PegResult {
     var ts: i32[] = [];
     var te: i32[] = [];
     var st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
-    var (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0);
+    var (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0, [], []);
     return __peg_result(r, s2, input);
 }
 

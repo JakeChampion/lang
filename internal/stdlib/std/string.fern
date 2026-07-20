@@ -1,9 +1,8 @@
 // std/string — string receiver methods.
 //
-// Methods were migrated here from the former auto-injected
-// magic prelude per docs/PRELUDE-TO-MODULES.md. The prelude was
-// removed in Phase 5, so a file now `import "std/string";`
-// explicitly to bring the methods into scope.
+// No prelude: a file now `import "std/string";` explicitly to
+// bring these methods into scope (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 import "core/int";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`
@@ -429,6 +428,73 @@ function __case_separator(s: string, sep_byte: i32): string {
     return string_from_bytes(buf);
 }
 
+// `(s: string) camel_case()` / `pascal_case()` — the inverse of
+// `snake_case` / `kebab_case`: fold a separator-delimited name into a
+// medial-capitals identifier. Word boundaries are runs of `_`, `-`, or
+// space (dropped; leading / trailing / consecutive separators collapse);
+// each word is lower-cased and the first letter of every word after the
+// first is upper-cased. `pascal_case` upper-cases the first word's
+// initial too, `camel_case` lower-cases it.
+//
+//   "foo_bar_baz".camel_case()   // "fooBarBaz"
+//   "http-server".pascal_case()  // "HttpServer"
+//   "hello world".camel_case()   // "helloWorld"
+//
+// ASCII-only, and the intended input is separator-delimited (the
+// round-trip partner of `snake_case`): an already-camelCase string has
+// no separators, so its interior case is normalised to lower
+// (`"fooBar".camel_case()` -> `"foobar"`) — pass such names through
+// `snake_case` first if you need to re-fold them.
+pub function (s: string) camel_case(): string {
+    return __case_join(s, false);
+}
+
+pub function (s: string) pascal_case(): string {
+    return __case_join(s, true);
+}
+
+function __case_join(s: string, upper_first: boolean): string {
+    var n: i32 = s.len();
+    // Two-pass exact-size buffer (#4379): separators (`_` `-` space) are
+    // dropped and every other byte emits exactly one byte, so the output
+    // length is just the count of non-separator bytes.
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b != 95 && b != 45 && b != 32) { total = total + 1; }
+        i = i + 1;
+    }
+    var buf: u8[] = __alloc_u8(total);
+    var pos: i32 = 0;
+    var at_word_start: boolean = true;   // start of string begins a word
+    var emitted_any: boolean = false;    // has any non-separator byte been written
+    i = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 95 || b == 45 || b == 32) {
+            at_word_start = true;
+            i = i + 1;
+        } else {
+            var out_b: i32 = b.to_lower();
+            if (at_word_start) {
+                if (!emitted_any) {
+                    // First word's initial: PascalCase upper, camelCase lower.
+                    if (upper_first) { out_b = b.to_upper(); }
+                } else {
+                    out_b = b.to_upper();
+                }
+            }
+            buf = buf.with(pos, out_b as u8);
+            pos = pos + 1;
+            at_word_start = false;
+            emitted_any = true;
+            i = i + 1;
+        }
+    }
+    return string_from_bytes(buf);
+}
+
 // `(s: string) slugify()` — turn arbitrary text into a URL slug: lower-
 // case, with every run of non-`[a-z0-9]` bytes collapsed to a single
 // `-` and no leading/trailing hyphen. `"Hello, World! 2024"` →
@@ -741,6 +807,41 @@ pub function (s: string) is_snake_case(): boolean {
         } else {
             return false;
         }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_camel_case()` / `is_pascal_case()` — case-shape predicates
+// for the two medial-capitals conventions, the classifiers that pair
+// with the `camel_case` / `pascal_case` producers (#5070). True when s
+// is non-empty and every byte is an ASCII letter or digit (any
+// separator — `_`, `-`, space — or other punctuation makes it false),
+// and the first byte has the right case: lowercase for camelCase,
+// uppercase for PascalCase. A single all-lowercase word (`"foo"`) is
+// valid camelCase, mirroring how `is_snake_case` accepts a single word.
+pub function (s: string) is_camel_case(): boolean {
+    return __is_medial_caps(s, false);
+}
+
+pub function (s: string) is_pascal_case(): boolean {
+    return __is_medial_caps(s, true);
+}
+
+function __is_medial_caps(s: string, upper_first: boolean): boolean {
+    var n: i32 = s.len();
+    if (n == 0) { return false; }
+    var f: i32 = s[0];
+    if (upper_first) {
+        if (!(f >= 65 && f <= 90)) { return false; }    // PascalCase starts A-Z
+    } else {
+        if (!(f >= 97 && f <= 122)) { return false; }   // camelCase starts a-z
+    }
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var ok: boolean = (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57);
+        if (!ok) { return false; }   // letters and digits only — no separators
         i = i + 1;
     }
     return true;
@@ -1335,6 +1436,28 @@ pub function (s: string) to_upper(): string {
     return __string_case_fold(s, 97, 65);     // a-z → A-Z
 }
 
+// `s.swap_case()` — toggle the case of every ASCII letter: `A-Z` become `a-z`
+// and vice versa, everything else (digits, punctuation, non-ASCII bytes)
+// passes through unchanged. Python's `str.swapcase`, ASCII-only like
+// `to_upper` / `to_lower`. `swap_case` is its own inverse: `s.swap_case()
+// .swap_case() == s`.
+pub function (s: string) swap_case(): string {
+    var n: i32 = s.len();
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b >= 65 && b <= 90) {        // A-Z → a-z
+            b = b + 32;
+        } else if (b >= 97 && b <= 122) { // a-z → A-Z
+            b = b - 32;
+        }
+        buf = buf.with(i, b as u8);
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // `s.split(sep)` — splits on every non-overlapping
 // occurrence of sep. Empty pieces around adjacent
 // separators are preserved (`",a,b,".split(",")` →
@@ -1645,6 +1768,32 @@ pub function (s: string) pad_end(n: i32, ch: string): string {
     return string_from_bytes(buf);
 }
 
+// `s.zfill(width)` — left-pad a NUMERIC string with `'0'` to at least `width`
+// bytes, keeping a leading sign in front of the zeros: `"-42".zfill(5)` is
+// `"-0042"`, not `pad_start`'s `"00-42"`. `'+'` is preserved the same way.
+// Already-`width`-long (or longer) strings pass through unchanged, and the sign
+// counts toward `width` (Python's `str.zfill`). The formatting shape for
+// fixed-width signed numbers — ledgers, zero-padded ids, timestamps.
+pub function (s: string) zfill(width: i32): string {
+    var sl: i32 = s.len();
+    if (sl >= width) { return s; }
+    var has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);   // '-' or '+'
+    var need: i32 = width - sl;
+    var buf: u8[] = __alloc_u8(width);
+    var pos: i32 = 0;
+    var body_start: i32 = 0;
+    if (has_sign) {
+        buf = buf.with(0, s[0] as u8);
+        pos = 1;
+        body_start = 1;
+    }
+    var z: i32 = 0;
+    while (z < need) { buf = buf.with(pos, 48 as u8); pos = pos + 1; z = z + 1; }  // '0'
+    var j: i32 = body_start;
+    while (j < sl) { buf = buf.with(pos, s[j] as u8); pos = pos + 1; j = j + 1; }
+    return string_from_bytes(buf);
+}
+
 // `s.split_once(sep)` — splits at the FIRST occurrence of
 // sep, returning Some((head, tail)). The separator is dropped
 // from the output. Returns None when sep doesn't appear or
@@ -1660,6 +1809,66 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
             return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
         }
         i = i + 1;
+    }
+    return None;
+}
+
+// `s.partition(sep)` — split at the FIRST occurrence of `sep` into the
+// three-tuple `(head, sep, tail)`, KEEPING the separator in the middle (unlike
+// `split_once`, which drops it). When `sep` is absent (or empty), returns
+// `(s, "", "")` — the whole string in the first slot, matching Python's
+// `str.partition`. Useful when you need to preserve/inspect the delimiter, or
+// to reconstruct the original by concatenation.
+pub function (s: string) partition(sep: string): (string, string, string) {
+    if (sep.len() == 0) { return (s.to_owned(), "", ""); }
+    var n: i32 = s.len();
+    var sLen: i32 = sep.len();
+    var i: i32 = 0;
+    while (i + sLen <= n) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
+        }
+        i = i + 1;
+    }
+    return (s.to_owned(), "", "");
+}
+
+// `s.rpartition(sep)` — the LAST-occurrence mirror of `partition`: split at the
+// FINAL occurrence into `(head, sep, tail)`, keeping the separator. When `sep`
+// is absent (or empty), returns `("", "", s)` — the whole string in the LAST
+// slot (Python's `str.rpartition` convention, the mirror of `partition`'s
+// first-slot fallback).
+pub function (s: string) rpartition(sep: string): (string, string, string) {
+    if (sep.len() == 0) { return ("", "", s.to_owned()); }
+    var n: i32 = s.len();
+    var sLen: i32 = sep.len();
+    var i: i32 = n - sLen;
+    while (i >= 0) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
+        }
+        i = i - 1;
+    }
+    return ("", "", s.to_owned());
+}
+
+// `s.rsplit_once(sep)` — the LAST-occurrence mirror of `split_once`: splits
+// at the FINAL occurrence of `sep`, returning `Some((head, tail))` with the
+// separator dropped. `None` when `sep` doesn't appear or is empty. Where
+// `split_once("a.b.c", ".")` gives `("a", "b.c")`, `rsplit_once` gives
+// `("a.b", "c")` — the shape you want for splitting off a file extension, the
+// last path segment, or a trailing `:port`.
+pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
+    if (sep.len() == 0) { return None; }
+    var n: i32 = s.len();
+    var sLen: i32 = sep.len();
+    // Scan from the last possible start position backwards.
+    var i: i32 = n - sLen;
+    while (i >= 0) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
+        }
+        i = i - 1;
     }
     return None;
 }
@@ -2393,15 +2602,26 @@ pub function (s: string) parse_bin_int(): Option[i32] {
     return int.parse_int_radix(s, 2);
 }
 
-// `s.parse_float()` — decimal f32 parser. Grammar:
+// `s.parse_int_radix(base)` — parse an i32 in an arbitrary `base` (2..36),
+// digits `0-9a-z` (case-insensitive), with an optional leading `+`/`-`. The
+// general form behind `parse_int` (base 10) / `parse_hex_int` (16) /
+// `parse_bin_int` (2) — reach for it to read base-36 ids, octal (`base 8`), or
+// any other radix. `None` on an out-of-range base, empty input, a lone sign, or
+// any digit `>= base`.
+pub function (s: string) parse_int_radix(base: i32): Option[i32] {
+    return int.parse_int_radix(s, base);
+}
+
+// `s.parse_float()` — decimal f64 parser (f64 is the language's
+// primary float, #5363). Grammar:
 //   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
 // At least one of integer or fraction digits required;
 // trailing garbage rejected. Mantissa accumulates into an
 // i64 with a saturation cap at 1e15; beyond that, extra
 // digits are skipped while `exp_adj` keeps the magnitude
-// right. Final value = `(f32) mantissa * 10^exp_adj`,
+// right. Final value = `(f64) mantissa * 10^exp_adj`,
 // sign applied via `0.0 - v`.
-pub function (s: string) parse_float(): Option[f32] {
+pub function (s: string) parse_float(): Option[f64] {
     var n: i32 = s.len();
     if (n == 0) { return None; }
 
@@ -2476,11 +2696,11 @@ pub function (s: string) parse_float(): Option[f32] {
 
     if (i < n) { return None; }   // trailing garbage
 
-    // v = (f32) mantissa * 10^exp_adj
-    var v: f32 = mantissa as f32;
-    while (exp_adj > 0) { v = v * 10.0 as f32; exp_adj = exp_adj - 1; }
-    while (exp_adj < 0) { v = v / 10.0 as f32; exp_adj = exp_adj + 1; }
-    if (neg) { v = 0.0 as f32 - v; }
+    // v = (f64) mantissa * 10^exp_adj
+    var v: f64 = mantissa as f64;
+    while (exp_adj > 0) { v = v * 10.0; exp_adj = exp_adj - 1; }
+    while (exp_adj < 0) { v = v / 10.0; exp_adj = exp_adj + 1; }
+    if (neg) { v = 0.0 - v; }
     return Some(v);
 }
 

@@ -1,7 +1,8 @@
 // std/u64 — unsigned 64-bit integer receiver methods.
 //
-// Counterpart to std/u32 for the wider type. Migrated from the
-// former auto-injected prelude per docs/PRELUDE-TO-MODULES.md.
+// Counterpart to std/u32 for the wider type. No prelude: a
+// program `import "std/u64";` to bring these methods into scope
+// (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 import "core/int";
 
@@ -40,6 +41,14 @@ pub function (n: u64) is_odd(): boolean  { return n % (2 as u64) != (0 as u64); 
 pub function (n: u64) abs_diff(other: u64): u64 {
     if (n >= other) { return n - other; }
     return other - n;
+}
+
+// `(n: u64) midpoint(other)` — the overflow-safe average via
+// `(a & b) + ((a ^ b) >> 1)` (logical shift), the u64 sibling of std/u32's
+// `midpoint`. `(a + b) / 2` wraps for large unsigned operands; this form never
+// does, so it is exact across the whole u64 range.
+pub function (n: u64) midpoint(other: u64): u64 {
+    return (n & other) + ((n ^ other) >> (1 as u64));
 }
 
 // `is_in_range(lo, hi)` — half-open `[lo, hi)`, unsigned. Mirrors std/i64.
@@ -96,4 +105,321 @@ pub function (n: u64) checked_add(other: u64): Option[u64] {
 pub function (n: u64) checked_sub(other: u64): Option[u64] {
     if (other > n) { return None; }
     return Some(n - other);
+}
+
+// `(n: u64) checked_div(other)` — None on divide-by-zero, else Some(n / other).
+// Unsigned division never overflows, so divide-by-zero is the only failure.
+// The u64 sibling of std/i32's `checked_div`.
+pub function (n: u64) checked_div(other: u64): Option[u64] {
+    if (other == (0 as u64)) { return None; }
+    return Some(n / other);
+}
+
+// `(n: u64) checked_rem(other)` — `Some(n % other)`, or `None` on divide-by-zero.
+// Unsigned remainder never overflows, so divide-by-zero is the only failure. The
+// remainder sibling of `checked_div`.
+pub function (n: u64) checked_rem(other: u64): Option[u64] {
+    if (other == (0 as u64)) { return None; }
+    return Some(n % other);
+}
+
+// `(n: u64) div_euclid(rhs)` / `rem_euclid(rhs)` — the unsigned counterparts of
+// std/i32's Euclidean division. For an unsigned type the remainder of `/`/`%`
+// is already non-negative, so these coincide exactly with `/` and `%`; they
+// exist so generic code can call `div_euclid` / `rem_euclid` uniformly across
+// the signed and unsigned integer types. `rhs` must be non-zero.
+pub function (n: u64) div_euclid(rhs: u64): u64 { return n / rhs; }
+pub function (n: u64) rem_euclid(rhs: u64): u64 { return n % rhs; }
+
+// `(n: u64) checked_mul(other)` — `Some(n * other)`, or `None` on u64 overflow.
+// The unsigned u64 sibling of std/i32's `checked_mul`. u64 has no wider type, so
+// it detects overflow with the inverse (unsigned) division: a non-overflowing
+// product divides back exactly (`p / n == other`), a wrap does not. No signed
+// edge case, so a zero short-circuit is the only guard the divide needs.
+pub function (n: u64) checked_mul(other: u64): Option[u64] {
+    if (n == (0 as u64) || other == (0 as u64)) { return Some(0 as u64); }
+    var p: u64 = n * other;
+    if (p / n != other) { return None; }
+    return Some(p);
+}
+
+// `(n: u64) saturating_mul(other)` — `n * other` clamped to u64::MAX on
+// overflow instead of wrapping. The unsigned u64 clamping companion of
+// `checked_mul`; u64 has no wider type, so it reuses the inverse-division
+// overflow test and clamps to the max (no low bound for an unsigned type).
+pub function (n: u64) saturating_mul(other: u64): u64 {
+    if (n == (0 as u64) || other == (0 as u64)) { return 0 as u64; }
+    var p: u64 = n * other;
+    if (p / n != other) { return 18446744073709551615 as u64; }
+    return p;
+}
+
+// `(n: u64) saturating_div(other)` — the unsigned u64 sibling of std/i32's,
+// completing the saturating_ family for `/`. Unsigned division can never
+// overflow, so this equals `n / other`; provided for API parity with the signed
+// types and Rust's u64. Divide-by-zero is the caller's responsibility, as for
+// the bare `/` operator.
+pub function (n: u64) saturating_div(other: u64): u64 {
+    return n / other;
+}
+
+// `(n: u64) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
+// or `None` on u64 overflow; the unsigned u64 sibling of std/i32's `checked_pow`.
+// u64 has no wider type, so each intermediate product is overflow-tested inline
+// with the same inverse (unsigned) division `checked_mul` uses (`base` is
+// non-zero throughout because `n == 0` is handled up front). Negative `exp`
+// returns `None`; `exp == 0` is `Some(1)`. The final base squaring is skipped
+// once the exponent is exhausted, so an exact result never spuriously overflows.
+pub function (n: u64) checked_pow(exp: i32): Option[u64] {
+    if (exp < 0) { return None; }
+    if (n == (0 as u64)) {
+        if (exp == 0) { return Some(1 as u64); }
+        return Some(0 as u64);
+    }
+    var result: u64 = 1 as u64;
+    var base: u64 = n;
+    var e: i32 = exp;
+    while (e > 0) {
+        if (e % 2 == 1) {
+            var p: u64 = result * base;
+            if (p / base != result) { return None; }
+            result = p;
+        }
+        e = e / 2;
+        if (e > 0) {
+            var q: u64 = base * base;
+            if (q / base != base) { return None; }
+            base = q;
+        }
+    }
+    return Some(result);
+}
+
+// `(n: u64) overflowing_add(other)` / `overflowing_sub(other)` /
+// `overflowing_mul(other)` — the wrapped result paired with a did-overflow
+// boolean, the unsigned u64 siblings of std/i32's overflowing_* family. u64 mul
+// has no wider type, so it wraps via `*` and detects overflow with the inverse
+// (unsigned) division `checked_mul` uses.
+pub function (n: u64) overflowing_add(other: u64): (u64, boolean) {
+    var r: u64 = n + other;
+    return (r, r < n);
+}
+pub function (n: u64) overflowing_sub(other: u64): (u64, boolean) {
+    var r: u64 = n - other;
+    return (r, other > n);
+}
+pub function (n: u64) overflowing_mul(other: u64): (u64, boolean) {
+    if (n == (0 as u64) || other == (0 as u64)) { return (0 as u64, false); }
+    var p: u64 = n * other;
+    return (p, p / n != other);
+}
+
+// `(n: u64) overflowing_div(other)` / `overflowing_rem(other)` — the unsigned
+// u64 siblings, completing the overflowing_ family for `/` and `%`. Unsigned
+// division can never overflow, so the flag is always false; the pair form is
+// provided for API parity with the signed types and Rust's u64. Divide-by-zero
+// is the caller's responsibility, as for the bare `/` and `%` operators.
+pub function (n: u64) overflowing_div(other: u64): (u64, boolean) {
+    return (n / other, false);
+}
+pub function (n: u64) overflowing_rem(other: u64): (u64, boolean) {
+    return (n % other, false);
+}
+
+// `(n: u64) checked_shl(rhs)` / `checked_shr(rhs)` — the unsigned u64 siblings
+// of std/i32's checked shifts: `Some(n << rhs)` / `Some(n >> rhs)`, or `None`
+// when the shift amount is out of range (`rhs < 0` or `rhs >= 64`). `>>` is
+// logical (zero-fill) on the unsigned type.
+pub function (n: u64) checked_shl(rhs: i32): Option[u64] {
+    if (rhs < 0 || rhs >= 64) { return None; }
+    return Some(n << (rhs as u64));
+}
+pub function (n: u64) checked_shr(rhs: i32): Option[u64] {
+    if (rhs < 0 || rhs >= 64) { return None; }
+    return Some(n >> (rhs as u64));
+}
+
+// `(n: u64) sqrt_floor()` — floor of the integer square root, via Newton's
+// method. Unsigned, so there are no negative-input cases: `sqrt_floor(0)` is 0,
+// and the iteration converges in O(log n). Exact across the full u64 range,
+// e.g. `sqrt_floor(18446744065119617025)` (which is `(2^32 - 1)^2`) is
+// `4294967295`.
+pub function (n: u64) sqrt_floor(): u64 {
+    if (n < (2 as u64)) { return n; }
+    var x: u64 = n / (2 as u64);
+    while (true) {
+        var y: u64 = (x + n / x) / (2 as u64);
+        if (y >= x) { return x; }
+        x = y;
+    }
+    return x;
+}
+
+// `(n: u64) is_power_of_2()` — true iff `n` is a power of two, via the
+// `n & (n - 1) == 0` bit trick (with `n != 0` ruled out first). `2^63` is the
+// largest power of two a u64 holds, and it reports true.
+pub function (n: u64) is_power_of_2(): boolean {
+    if (n == (0 as u64)) { return false; }
+    return (n & (n - (1 as u64))) == (0 as u64);
+}
+
+// `(n: u64) next_power_of_2()` — the smallest power of two `>= n`. Returns `1`
+// for `n <= 1`. The largest power of two representable in a u64 is 2^63 (built
+// here as `1 << 63` rather than a bare literal, which would exceed the signed
+// range the lexer stores numbers in), so `n` above that returns `0` (the "no
+// representable power" sentinel) — which also keeps the doubling loop from
+// wrapping to zero and spinning forever.
+pub function (n: u64) next_power_of_2(): u64 {
+    if (n <= (1 as u64)) { return 1 as u64; }
+    if (n > ((1 as u64) << (63 as u64))) { return 0 as u64; }
+    var p: u64 = 1 as u64;
+    while (p < n) { p = p * (2 as u64); }
+    return p;
+}
+
+// `(n: u64) log2_floor()` — `floor(log2 n)` for `n >= 1`, returned as an i32
+// (the exponent spans 0..63); `-1` for `n == 0` (no real log; the sentinel
+// lets callers test `>= 0` for "valid"). Counts halvings, so it needs no
+// leading-zeros primitive.
+pub function (n: u64) log2_floor(): i32 {
+    if (n == (0 as u64)) { return 0 - 1; }
+    var r: i32 = 0;
+    var m: u64 = n;
+    while (m > (1 as u64)) { m = m / (2 as u64); r = r + 1; }
+    return r;
+}
+
+// `(n: u64) log10_floor()` — `floor(log10 n)` for `n >= 1`, returned as an i32
+// (the exponent spans 0..19 across the u64 range); `-1` for `n == 0` (the same
+// `>= 0`-means-valid sentinel as `log2_floor`). The base-10 sibling of
+// `log2_floor` and the wide digit-count primitive — a non-zero `n` has
+// `n.log10_floor() + 1` decimal digits. Counts unsigned u64 divisions by ten,
+// so it stays exact past the i64 range where a float `log10` would round.
+pub function (n: u64) log10_floor(): i32 {
+    if (n == (0 as u64)) { return 0 - 1; }
+    var r: i32 = 0;
+    var m: u64 = n;
+    while (m >= (10 as u64)) { m = m / (10 as u64); r = r + 1; }
+    return r;
+}
+
+// === u64 bit ops (the unsigned counterparts to std/i64's) ===
+// Software implementations over u64 shifts/masks, O(64) per call — the
+// same shape as std/i64's, but with no sign bit (unsigned shifts are
+// logical).
+
+// `count_ones()` — the number of set bits in `n`.
+pub function (n: u64) count_ones(): i32 {
+    var u: u64 = n;
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < 64) {
+        if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; }
+        u = u >> (1 as u64);
+        i = i + 1;
+    }
+    return c;
+}
+
+// `count_zeros()` — the number of clear bits (`64 - count_ones()`).
+pub function (n: u64) count_zeros(): i32 { return 64 - n.count_ones(); }
+
+// `leading_zeros()` — the number of zero bits above the highest set bit
+// (`0` → 64).
+pub function (n: u64) leading_zeros(): i32 {
+    if (n == (0 as u64)) { return 64; }
+    var u: u64 = n;
+    var top: u64 = (1 as u64) << (63 as u64);
+    var c: i32 = 0;
+    while ((u & top) == (0 as u64)) {
+        c = c + 1;
+        u = u << (1 as u64);
+    }
+    return c;
+}
+
+// `trailing_zeros()` — the number of zero bits below the lowest set bit
+// (`0` → 64).
+pub function (n: u64) trailing_zeros(): i32 {
+    if (n == (0 as u64)) { return 64; }
+    var u: u64 = n;
+    var c: i32 = 0;
+    while ((u & (1 as u64)) == (0 as u64)) {
+        c = c + 1;
+        u = u >> (1 as u64);
+    }
+    return c;
+}
+
+// `bit_length()` — the position of the highest set bit, plus one
+// (`64 - leading_zeros()`); `0` → 0.
+pub function (n: u64) bit_length(): i32 { return 64 - n.leading_zeros(); }
+
+// `rotate_left(bits)` / `rotate_right(bits)` — cyclic bit rotation.
+// `bits` is taken mod 64.
+pub function (n: u64) rotate_left(bits: i32): u64 {
+    var k: i32 = bits & 63;
+    if (k == 0) { return n; }
+    var left: u64 = n << (k as u64);
+    var right: u64 = n >> ((64 - k) as u64);
+    return left | right;
+}
+
+pub function (n: u64) rotate_right(bits: i32): u64 {
+    var k: i32 = bits & 63;
+    if (k == 0) { return n; }
+    var right: u64 = n >> (k as u64);
+    var left: u64 = n << ((64 - k) as u64);
+    return right | left;
+}
+
+// `byte_swap()` — reverse the 8 bytes of `n` (endianness swap). The
+// unsigned 64-bit sibling of std/i32's `byte_swap`.
+pub function (n: u64) byte_swap(): u64 {
+    var r: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < 8) {
+        var b: u64 = (n >> ((i * 8) as u64)) & (255 as u64);
+        r = r | (b << (((7 - i) * 8) as u64));
+        i = i + 1;
+    }
+    return r;
+}
+
+// `(n: u64) reverse_bits()` — reverse the ORDER of the 64 bits: bit i moves to
+// bit 63-i. The unsigned u64 sibling of std/i32's `reverse_bits` and the
+// bit-level counterpart of `byte_swap`. Round-trips
+// (`n.reverse_bits().reverse_bits() == n`).
+pub function (n: u64) reverse_bits(): u64 {
+    var u: u64 = n;
+    var r: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < 64) {
+        r = (r << (1 as u64)) | (u & (1 as u64));
+        u = u >> (1 as u64);
+        i = i + 1;
+    }
+    return r;
+}
+
+// `bit(i)` / `set_bit(i)` / `clear_bit(i)` / `toggle_bit(i)` — read /
+// set / clear / flip bit `i` (0 = LSB), the unsigned 64-bit siblings of
+// std/i32's accessors. Out-of-range `i` (< 0 or >= 64) reads false /
+// returns `n`.
+pub function (n: u64) bit(i: i32): boolean {
+    if (i < 0 || i >= 64) { return false; }
+    return (n & ((1 as u64) << (i as u64))) != (0 as u64);
+}
+pub function (n: u64) set_bit(i: i32): u64 {
+    if (i < 0 || i >= 64) { return n; }
+    return n | ((1 as u64) << (i as u64));
+}
+pub function (n: u64) clear_bit(i: i32): u64 {
+    if (i < 0 || i >= 64) { return n; }
+    var inv: u64 = (((0 as i64) - (1 as i64)) as u64) ^ ((1 as u64) << (i as u64));
+    return n & inv;
+}
+pub function (n: u64) toggle_bit(i: i32): u64 {
+    if (i < 0 || i >= 64) { return n; }
+    return n ^ ((1 as u64) << (i as u64));
 }

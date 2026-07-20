@@ -220,6 +220,17 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
 	}
+	// Only USER-DECLARED functions qualify (the oracle map keys every decl in
+	// prog.Funcs, true or false). Source-level BUILTINS live in FuncSigs too
+	// without a `__` prefix — e.g. `random_bytes(n)`, whose darwin helper
+	// returns a buffer allocated WITHOUT an rc header, so the is_unique gate
+	// would read a garbage header word and free through it (the
+	// `random_bytes(32).len()` receiver crash). A builtin's allocation
+	// contract is per-helper, not the user-fn return-transfer model this
+	// reclaim's safety argument rests on.
+	if _, isUserFn := b.returnsNoParamEscape[id.Name]; !isUserFn {
+		return nil, false
+	}
 	if strings.HasPrefix(id.Name, "__") {
 		// `__`-prefixed callees are method lowerings. The builtin ones
 		// (`arr.push` / `m.set` / string / Reader / …) return the receiver's
@@ -236,7 +247,24 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 		return nil, false
 	}
 	t := b.exprType(e)
-	if t == nil || !ast.IsPointerType(t) {
+	if t == nil {
+		return nil, false
+	}
+	// A MAP result is only reclaimable when the callee is PROVEN to return a
+	// fresh map (the returnsNoParamEscape oracle — a cow-threaded builder
+	// whose handle never aliases a param). The generic is_unique-gate
+	// argument used for struct/array/enum results ("an aliased return is
+	// rc>=2 via the return-transfer inc") is not relied on for maps, and
+	// emitMapSlotDrop deep-frees the value column, so an unproven callee
+	// returning a still-owned map (e.g. `return m` of a param) must keep its
+	// prior safe-leak.
+	if st, isStruct := t.(ast.StructType); isStruct && st.Name == "Map" {
+		if !b.returnsNoParamEscape[id.Name] {
+			return nil, false
+		}
+		return t, true
+	}
+	if !ast.IsPointerType(t) {
 		return nil, false
 	}
 	return t, true
@@ -383,10 +411,26 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.StructType, ast.EnumType:
+		// A discarded MAP result (`mk(i);` where mk is a proven-fresh map
+		// builder — ownedCallResultType requires the returnsNoParamEscape
+		// oracle for map results) reclaims through the same emitMapSlotDrop
+		// the exit sweep / loop-reinit use: value column + string keys +
+		// buf + handle, every helper self-guarding on the map's own rc==1.
+		// Needs a scratch slot (the drop reads the handle several times),
+		// like the plain-element tuple below. Without this the StructType
+		// arm's dropFnNameFor declined Maps and the flat rc_dec leaked the
+		// whole map every call (#4357's discarded-map shape).
+		if st, isStruct := ty.(ast.StructType); isStruct && st.Name == "Map" {
+			slot := b.allocSlot()
+			b.locals[fmt.Sprintf("__tmpdrop_%d", slot)] = slot
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			b.emitMapSlotDrop(slot, st)
+			break
+		}
 		// A droppable struct / enum recurses through its generated __drop_*
-		// fn (1 arg); types dropFnNameFor declines (Map handles can't be a
-		// literal temp, non-uniform generics) fall back to the flat one-level
-		// rc_dec — leak-but-never-UAF, exactly as the slot-drop sibling.
+		// fn (1 arg); types dropFnNameFor declines (non-uniform generics)
+		// fall back to the flat one-level rc_dec — leak-but-never-UAF,
+		// exactly as the slot-drop sibling.
 		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -1773,7 +1817,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 		{Kind: OpLoadLocal, I32: 3},
 		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
 		{Kind: OpAdd},
-		{Kind: OpCallIndirect, I32: 0, Sig: dropSig},
+		{Kind: OpCallIndirect, I32: 0, Ext: &OpExt{Sig: dropSig}},
 		{Kind: OpDrop},
 		{Kind: OpEnd}, // if drop_fn != 0
 		{Kind: OpEnd}, // if is_unique(p)

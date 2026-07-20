@@ -249,6 +249,9 @@ func (a *Assembler) Bytes() ([]byte, error) {
 		// Offset is measured in instructions (= bytes/4), signed,
 		// relative to the branch itself. Two's-complement low bits go
 		// straight into the immediate field.
+		if err := checkBranchRange(f.kind, target-f.at, f.label); err != nil {
+			return nil, err
+		}
 		off := uint32(target - f.at)
 		switch f.kind {
 		case branchImm26:
@@ -359,7 +362,11 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
 		litAddr := textVAddr + uint64(f.poolIdx)*4
-		imm19 := uint32(int32(int64(litAddr)-int64(insnAddr)) / 4)
+		delta := (int64(litAddr) - int64(insnAddr)) / 4
+		if delta < -(1<<18) || delta >= 1<<18 {
+			return nil, nil, fmt.Errorf("arm64: ldr-literal at insn %d is %d bytes from its pool — outside the ±1 MB imm19 range (missing .ltorg?)", f.at, delta*4)
+		}
+		imm19 := uint32(int32(delta))
 		a.insns[f.at] |= (imm19 & 0x7ffff) << 5
 	}
 
@@ -387,6 +394,9 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 		target, ok := a.labels[f.label]
 		if !ok {
 			return nil, nil, fmt.Errorf("arm64: branch to undefined label %q", f.label)
+		}
+		if err := checkBranchRange(f.kind, target-f.at, f.label); err != nil {
+			return nil, nil, err
 		}
 		off := uint32(target - f.at)
 		switch f.kind {
@@ -440,4 +450,30 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 		text = Put(text, insn)
 	}
 	return text, a.rodata, nil
+}
+
+// checkBranchRange validates a branch fixup's instruction-count offset
+// against its immediate field width. Truncating silently (the previous
+// behaviour) turns an over-long branch into a jump to an unrelated
+// address — a miscompile that only shows up at driver/self-compile
+// scale, where .text outgrows the ±1 MB imm19 span. Loud errors keep
+// the assembler's "error, never miscompile" contract and let harness
+// callers fall back to the external toolchain.
+func checkBranchRange(kind branchKind, offInsns int, label string) error {
+	var bits uint
+	switch kind {
+	case branchImm26:
+		bits = 26
+	case branchImm19:
+		bits = 19
+	case branchImm14:
+		bits = 14
+	default:
+		return nil
+	}
+	lim := int(1) << (bits - 1)
+	if offInsns < -lim || offInsns >= lim {
+		return fmt.Errorf("arm64: branch to %q spans %d instructions — outside the signed %d-bit range", label, offInsns, bits)
+	}
+	return nil
 }

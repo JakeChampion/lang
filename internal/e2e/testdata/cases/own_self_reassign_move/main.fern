@@ -1,0 +1,33 @@
+// E051 self-reassign move admission (#4873 step 0): a LOCAL passed
+// exactly once, directly, in an `own` position of its own reassignment
+// RHS (`a = push_box(a, i)`) is a transfer — the old binding dies at
+// the assignment, the callee consumes (and releases) it, and the
+// rebind owns the result. The churn loop pins the rc soundness end to
+// end: a double free crashes / underflows, a leak is bounded by the
+// arena, and a wrong value breaks the sums. Byte-for-byte verifiable
+// across interp / x86-64 / arm64 / wasm.
+struct Box {
+    xs: i32[],
+}
+
+function push_box(own b: Box, x: i32): Box {
+    var ys: i32[] = b.xs.append(x);
+    return Box { xs: ys };
+}
+
+function main(): i32 {
+    var a: Box = Box { xs: [] };
+    var i: i32 = 0;
+    while (i < 500) {
+        a = push_box(a, i);
+        i = i + 1;
+    }
+    var n: i32 = a.xs.len();
+    var first: i32 = a.xs[0];
+    var last: i32 = a.xs[499];
+    if (n != 500) { print("BAD len"); return 1; }
+    if (first != 0) { print("BAD first"); return 2; }
+    if (last != 499) { print("BAD last"); return 3; }
+    print("ok");
+    return 0;
+}

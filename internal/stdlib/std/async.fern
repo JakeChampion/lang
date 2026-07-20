@@ -38,6 +38,45 @@ pub enum Future[T] {
     Pending(i32, (i32) => Future[T]),
 }
 
+// Driver — the waiting seam (docs/DST-PLATFORM-BRIEF.md). Everything
+// nondeterministic the combinators do funnels through these four
+// primitives; substituting them (std/sim) makes gather / race /
+// with_deadline fully deterministic on every backend, including the
+// interpreter. `poll_ready(toks, timeout_ms)` returns the index of the
+// first ready token, or -1 on timeout / error / no readiness — the
+// same contract as the `poll` builtin.
+pub trait Driver {
+    function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
+    function now_ns(self: Self): i64;
+    function timer(self: Self, ns: i64): i32;
+    function drop_token(self: Self, tok: i32): i32;
+}
+
+// RealDriver — the production Driver: each method is exactly the
+// builtin the combinator loops used to call directly (poll(2) /
+// ppoll(2) on native, wasi:io/poll on wasm, the -1 stubs on interp).
+pub struct RealDriver { }
+
+// real_driver() — the Driver the public combinators run on.
+pub function real_driver(): RealDriver {
+    return RealDriver { };
+}
+
+impl Driver for RealDriver {
+    function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32 {
+        return poll(toks, timeout_ms);
+    }
+    function now_ns(self: Self): i64 {
+        return monotonic_ns();
+    }
+    function timer(self: Self, ns: i64): i32 {
+        return wasm_timer_pollable(ns);
+    }
+    function drop_token(self: Self, tok: i32): i32 {
+        return wasm_pollable_drop(tok);
+    }
+}
+
 // __all_ready(fs) — true once no future is still pending.
 function __all_ready[T](fs: Future[T][]): boolean {
     var i: i32 = 0;
@@ -60,6 +99,12 @@ function __all_ready[T](fs: Future[T][]): boolean {
 // so the caller supplies the fallback (matching the realities of a
 // blocking poll, which otherwise always makes progress).
 pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
+    return gather_on(real_driver(), fs_in, on_incomplete);
+}
+
+// gather_on(drv, fs, on_incomplete) — gather with the waits routed
+// through an explicit Driver (std/sim substitutes a virtual one).
+pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: T): T[] {
     var fs: Future[T][] = fs_in;
     while (true) {
         if (__all_ready(fs)) { break; }
@@ -76,7 +121,7 @@ pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
             }
             i = i + 1;
         }
-        var ready: i32 = poll(fds, -1);
+        var ready: i32 = drv.poll_ready(fds, -1);
         if (ready < 0) { break; }
         var ti: i32 = idxs[ready];
         match (fs[ti]) {
@@ -104,13 +149,13 @@ pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
 // with "resource has children" at teardown. `wasm_pollable_drop` is a no-op on
 // native/interp (a pollable is just an fd there), so this is portable. Pass
 // `winner = -1` to drop every Pending token (no resumed winner).
-function __drop_losers[T](fs: Future[T][], winner: i32): i32 {
+function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 {
     var i: i32 = 0;
     while (i < fs.len()) {
         if (i != winner) {
             match (fs[i]) {
                 Ready(v) => { },
-                Pending(tok, c) => { var d: i32 = wasm_pollable_drop(tok); },
+                Pending(tok, c) => { var d: i32 = drv.drop_token(tok); },
             }
         }
         i = i + 1;
@@ -128,12 +173,18 @@ function __drop_losers[T](fs: Future[T][], winner: i32): i32 {
 // immediately (lowest index). Returns `(-1, none_val)` only if no future
 // can make progress (poll error / no pending fds).
 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
+    return race_on(real_driver(), fs_in, none_val);
+}
+
+// race_on(drv, fs, none_val) — race with the waits routed through an
+// explicit Driver (std/sim substitutes a virtual one).
+pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i32, T) {
     var fs: Future[T][] = fs_in;
     var j: i32 = 0;
     while (j < fs.len()) {
         match (fs[j]) {
             Ready(v) => {
-                var d0: i32 = __drop_losers(fs, j);
+                var d0: i32 = __drop_losers(drv, fs, j);
                 return (j, v);
             },
             Pending(fd, c) => { },
@@ -155,9 +206,9 @@ pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
             i = i + 1;
         }
         if (fds.len() == 0) { return (-1, none_val); }
-        var ready: i32 = poll(fds, -1);
+        var ready: i32 = drv.poll_ready(fds, -1);
         if (ready < 0) {
-            var de: i32 = __drop_losers(fs, -1);
+            var de: i32 = __drop_losers(drv, fs, -1);
             return (-1, none_val);
         }
         var ti: i32 = idxs[ready];
@@ -167,7 +218,7 @@ pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
                 var nx: Future[T] = resume(fd);
                 match (nx) {
                     Ready(v) => {
-                        var dw: i32 = __drop_losers(fs, ti);
+                        var dw: i32 = __drop_losers(drv, fs, ti);
                         return (ti, v);
                     },
                     Pending(nfd, nc) => { fs = fs.with(ti, nx); },
@@ -187,8 +238,15 @@ pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
 // happy-eyeballs with an SLA: fan out to
 // N upstreams, take whatever answers in time, drop the rest.
 pub function with_deadline[T](ms: i32, fs_in: Future[T][]): Option[T][] {
+    return with_deadline_on(real_driver(), ms, fs_in);
+}
+
+// with_deadline_on(drv, ms, fs) — with_deadline with the clock and the
+// waits routed through an explicit Driver (std/sim substitutes a
+// virtual one, making the deadline exact instead of wall-clock).
+pub function with_deadline_on[D: Driver, T](drv: D, ms: i32, fs_in: Future[T][]): Option[T][] {
     var fs: Future[T][] = fs_in;
-    var start_ns: i64 = monotonic_ns();
+    var start_ns: i64 = drv.now_ns();
     var ns_per_ms: i64 = 1000000;
     var deadline_ns: i64 = (ms as i64) * ns_per_ms;
     while (true) {
@@ -206,7 +264,7 @@ pub function with_deadline[T](ms: i32, fs_in: Future[T][]): Option[T][] {
             }
             i = i + 1;
         }
-        var remaining_ns: i64 = deadline_ns - (monotonic_ns() - start_ns);
+        var remaining_ns: i64 = deadline_ns - (drv.now_ns() - start_ns);
         if (remaining_ns <= 0) { break; }
         var remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
         if (remaining_ms <= 0) { remaining_ms = 1; }
@@ -216,18 +274,18 @@ pub function with_deadline[T](ms: i32, fs_in: Future[T][]): Option[T][] {
         // the deadline. A `ready` of `nfds` (the timer's slot) = deadline hit.
         // wasm_timer_pollable is -1 on native/interp, so this stays portable.
         var nfds: i32 = fds.len();
-        var timer: i32 = wasm_timer_pollable(remaining_ns);
+        var timer: i32 = drv.timer(remaining_ns);
         var pollset: i32[] = fds.append(timer);
-        var ready: i32 = poll(pollset, remaining_ms);
+        var ready: i32 = drv.poll_ready(pollset, remaining_ms);
         if (ready < 0) {
-            var dpe: i32 = wasm_pollable_drop(timer);
+            var dpe: i32 = drv.drop_token(timer);
             break;
         }
         if (ready == nfds) {
-            var dpt: i32 = wasm_pollable_drop(timer);
+            var dpt: i32 = drv.drop_token(timer);
             break;
         }
-        var dpr: i32 = wasm_pollable_drop(timer);
+        var dpr: i32 = drv.drop_token(timer);
         var ti: i32 = idxs[ready];
         match (fs[ti]) {
             Ready(v) => { },
@@ -236,7 +294,7 @@ pub function with_deadline[T](ms: i32, fs_in: Future[T][]): Option[T][] {
     }
     // Drop the pollables of any future that timed out (still Pending) so wasm
     // doesn't trap with "resource has children" — no-op on native/interp.
-    var dd: i32 = __drop_losers(fs, -1);
+    var dd: i32 = __drop_losers(drv, fs, -1);
     // Some(v) for a future that resolved in time; None for one that timed out
     // (no sentinel ambiguity — an empty/zero result is distinct from absent).
     var out: Option[T][] = [];

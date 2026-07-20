@@ -345,8 +345,40 @@ function test_pretty_roundtrip(): test.TestOutcome {
     }
 }
 
+// `json_escape` — the now-PUBLIC shared string escaper (#4388 item 4:
+// std/log's JSON-lines mode routes through this same function). Drives
+// it directly: named short escapes, \u00XX for the other C0 controls,
+// and byte-for-byte passthrough for everything else.
+function test_escape_named(): test.TestOutcome {
+    return test.assert_eq(json.json_escape("a\"b\\c\nd\re\tf"), "a\\\"b\\\\c\\nd\\re\\tf");
+}
+
+function test_escape_control_bytes(): test.TestOutcome {
+    // 0x01 and 0x1f are C0 controls without named escapes → lowercase \u00XX.
+    var s: string = string_from_bytes([1 as u8, 31 as u8]);
+    return test.assert_eq(json.json_escape(s), "\\u0001\\u001f");
+}
+
+function test_escape_passthrough(): test.TestOutcome {
+    // Plain ASCII and multi-byte UTF-8 (>= 0x80) pass through untouched;
+    // the empty string stays empty.
+    if (json.json_escape("") != "") { return test.fail("empty string should escape to empty"); }
+    return test.assert_eq(json.json_escape("héllo wörld"), "héllo wörld");
+}
+
+function test_escape_matches_encoder(): test.TestOutcome {
+    // The encoder's string leaf is the same function: quote-wrapping
+    // json_escape must equal json_encode of a JString.
+    var raw: string = "x\"y\\z\n";
+    return test.assert_eq("\"" + json.json_escape(raw) + "\"", json.json_encode(JString(raw)));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/json roundtrip");
+    r = r.it("escape named",      test_escape_named());
+    r = r.it("escape control bytes", test_escape_control_bytes());
+    r = r.it("escape passthrough", test_escape_passthrough());
+    r = r.it("escape matches encoder", test_escape_matches_encoder());
     r = r.it("get_string",        test_get_string());
     r = r.it("get_i32",           test_get_i32());
     r = r.it("get_bool",          test_get_bool());

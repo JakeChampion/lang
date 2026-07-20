@@ -2345,11 +2345,49 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     match (c.callee) {
         parser.ExprIdent(id) => { name = id.name; },
         parser.ExprFieldAccess(fa) => {
+            // s.p.N() — a fn-valued TUPLE ELEMENT call (numeric field = tuple
+            // index), not a method. A method name is never all-digits, so route
+            // it to the generic closure-value call (evaluate the callee to its
+            // box ptr, invoke via the closure convention) instead of
+            // emit_method_call, which found no method "N" and returned the -1
+            // sentinel (exit 255). Reading the element (`var g = s.p.N; g()`)
+            // already works; this is the direct-call sibling.
+            if (util.is_all_digits(fa.field)) {
+                s = emit_expr(c.callee, s);          // push closure box
+                var tla: i32 = c.args.len() - 1;
+                while (tla >= 0) {
+                    s = emit_expr(c.args[tla], s);
+                    tla = tla - 1;
+                }
+                s = s.write("    movq " + util.i32_to_string(c.args.len() * 8) + "(%rsp), %r10\n");
+                s = s.write("    movq (%r10), %rdx\n");
+                s = s.write("    call *%rdx\n");
+                s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             return emit_method_call(c, fa, s);
         },
         _ => {
-            s = s.write("    # call target not ident\n");
-            s = s.write("    pushq $0\n");
+            // Generic closure-VALUE call: any callee expression that
+            // evaluates to a closure box — an array element `arr[i]()`,
+            // a tuple element, a call result — not just a bare
+            // ident / lambda / method. Evaluate the callee to its box
+            // ptr, push args above it, then invoke via the closure
+            // convention (box ptr in %r10, fn_addr = box[0]). Same shape
+            // as the ExprLambda IIFE arm above; the previous `pushq $0`
+            // stub silently compiled such a call to "return 0".
+            s = emit_expr(c.callee, s); // push closure box
+            var cla: i32 = c.args.len() - 1;
+            while (cla >= 0) {
+                s = emit_expr(c.args[cla], s);
+                cla = cla - 1;
+            }
+            s = s.write("    movq " + util.i32_to_string(c.args.len() * 8) + "(%rsp), %r10\n"); // box ptr (below args)
+            s = s.write("    movq (%r10), %rdx\n");
+            s = s.write("    call *%rdx\n");
+            s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n"); // pop args + box
+            s = s.write("    pushq %rax\n");
             return s;
         }
     }
@@ -3563,7 +3601,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
         // StmtDefer is lowered away (lower_defers) before emit; this arm only
         // satisfies exhaustiveness.
-        parser.StmtDefer(_) => { return s.write("    # unsupported: StmtDefer survived lowering\n"); },
+        parser.StmtDefer(_) => { s = s.write("    # unsupported: StmtDefer survived lowering\n"); return s; },
         parser.StmtReturn(r) => {
             // Capture whether we're returning an rc-tracked array BEFORE
             // emitting (the type oracle reads the current locals).
@@ -3957,6 +3995,16 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // (`for x in shapes { x.area() }`) routes through the
             // runtime-shape dispatch instead of the primitive path.
             if (asmcore.ty_is_array(iter_ty)) { elem_ty = asmcore.ty_unknown(); }
+            // `for b in STR` (iterate a string's BYTES): a string box is
+            // { data_ptr @0, len @8 } with byte elements, NOT the array layout
+            // (len @0, 8-byte elements) below. Reading it as an array walks the
+            // header as data (#2822). The IR path desugars in lower_string_
+            // foreach; the AST path needs the string-shaped length + byte loads
+            // (latent here — str_to_i32's `for b in s` routes IR on x86 — but
+            // kept in parity with the arm64 AST fix so an AST-routed string
+            // foreach is correct on both backends). Bytes bind as i32.
+            var is_str_iter: boolean = asmcore.ty_is_string(iter_ty);
+            if (is_str_iter) { elem_ty = asmcore.ty_i32(); }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + util.i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -3975,17 +4023,27 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             var end_lbl: i32 = s.label_n + 2;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 3 };
             s = s.write(".Lfor_top_" + util.i32_to_string(top_lbl) + ":\n");
-            // Condition: __for_i_N < len(__for_arr_N).
+            // Condition: __for_i_N < len(__for_arr_N). String len @8; array @0.
             s = s.write("    movq " + util.i32_to_string(arr_off) + "(%rbp), %rax\n");
-            s = s.write("    movq (%rax), %rcx\n");        // length
+            if (is_str_iter) {
+                s = s.write("    movq 8(%rax), %rcx\n");    // string length @8
+            } else {
+                s = s.write("    movq (%rax), %rcx\n");     // array length @0
+            }
             s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rdx\n");
             s = s.write("    cmpq %rcx, %rdx\n");
             s = s.write("    jge .Lfor_end_" + util.i32_to_string(end_lbl) + "\n");
-            // Bind element: x = arr[i].
+            // Bind element. String: byte-load data_ptr[idx] (data_ptr @0);
+            // array: 8-byte element at (idx+1)*8 (header offset).
             s = s.write("    movq " + util.i32_to_string(arr_off) + "(%rbp), %rax\n");
             s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rcx\n");
-            s = s.write("    incq %rcx\n");
-            s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            if (is_str_iter) {
+                s = s.write("    movq (%rax), %rax\n");      // data_ptr @0
+                s = s.write("    movzbl (%rax,%rcx), %eax\n"); // byte at data[idx] (zero-extends)
+            } else {
+                s = s.write("    incq %rcx\n");
+                s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            }
             s = s.write("    movq %rax, " + util.i32_to_string(elem_off) + "(%rbp)\n");
             // Body — break jumps to .Lfor_end; continue jumps
             // to .Lfor_cont (the i++ block) so the loop still
@@ -4008,15 +4066,15 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         },
         parser.StmtBreak(_) => {
             var lbl: string = s.top_loop_exit();
-            if (lbl.len() == 0) { return s.write("    # break outside loop\n"); }
-            return s.write("    jmp " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    # break outside loop\n"); return s; }
+            s = s.write("    jmp " + lbl + "\n"); return s;
         },
         parser.StmtContinue(_) => {
             var lbl: string = s.top_loop_cont();
-            if (lbl.len() == 0) { return s.write("    # continue outside loop\n"); }
-            return s.write("    jmp " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    # continue outside loop\n"); return s; }
+            s = s.write("    jmp " + lbl + "\n"); return s;
         },
-        parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
+        parser.StmtUnknown(_) => { s = s.write("    # unsupported: StmtUnknown\n"); return s; }
     }
     return s;
 }
@@ -4610,7 +4668,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // static-.bss heap, addressed via `movabs $__fern_heap`, only linked
     // correctly under bfd). No deallocation — leak-everything bump heap.
     if (s.has_need("heap")) {
-        var heap_size: string = "8589934592";   // 0x200000000, 8 GiB — the stage-2 x86 self-compile live set reached 3944 MB of the old 3.875 GiB arena (99.4% full; the #4355 arr-of-arr slice tipped it over the exit-137 alloc trap, previously crossed at 2.5 then 3.5 GiB). 8 GiB needs the mmap length in a 64-bit register (movabs %rsi / %rcx below — the old movl u32 form capped the arena under 4 GiB — an interim main-side bump to 0xFF000000/3.984 GiB was superseded by this), which x86-64 mmap accepts fine; the mapping is lazy so untouched pages cost nothing. Lockstep with asm_ir.fern + the native x86-64 backend; arm64 (asm_arm64.fern) is likewise at 8 GiB (its 32-bit-pointer ceiling was retired — see its heap comment).
+        var heap_size: string = "17179869184";   // 0x400000000, 16 GiB. Raised from 8 GiB (0x200000000) when the stage-2 x86 self-compile crossed the 8 GiB exit-137 alloc trap again — the same wall arm64 hit and cleared: the compiler's live set grows with every compiler-source addition and reached ~8 GiB (0.6% headroom), so an IR-widening addition tipped it. The mmap is MAP_NORESERVE (0x4022 below), so the wider reservation is exempt from overcommit accounting and costs nothing until touched (the ~8 GiB actually touched is unchanged — only the exit-137 ceiling moves); the length loads via movabs (64-bit imm). Lockstep with asm_ir.fern + the native x86-64 backend; arm64 (asm_arm64.fern + native) is already at 16 GiB — this brings x86 up to match (see the native arm64 heapBytes comment for the NORESERVE rationale).
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
@@ -4680,7 +4738,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movl $0x10000000, %edi\n");          // addr hint
         s = s.write("    movabs $" + heap_size + ", %rsi\n"); // length (64-bit imm — 8 GiB exceeds u32)
         s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
-        s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    movl $0x4022, %r10d\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; lockstep with the native x86-64 backend)
         s = s.write("    movq $-1, %r8\n");                   // fd
         s = s.write("    xorl %r9d, %r9d\n");                 // offset
         s = s.write("    movl $9, %eax\n");                   // __NR_mmap

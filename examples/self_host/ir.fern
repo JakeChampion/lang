@@ -233,6 +233,12 @@ pub function op_arr_make(n: i32, width: i32): Op {
     return Op { kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_arr_get(width: i32): Op { return Op { kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+// Unchecked `arr_get` (#4380 lever 3, self-host port): i32_imm == 1 flags a read
+// the emitter has statically proven in bounds — the foreach counted loops, whose
+// `idx < arr_len` guard runs immediately before the read every iteration. The
+// x86 backend skips the bounds compare + oob trap for it; arm64 / wasm read only
+// kind_tag and keep their checks (a safe no-op there until they honour the flag).
+pub function op_arr_get_nc(width: i32): Op { return Op { kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 pub function op_arr_set(width: i32): Op { return Op { kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 // i64-element array ops: an 8-byte stride like f64, but the wasm backend uses
 // i64.load / i64.store (an INTEGER 8-byte slot) instead of f64.load/store. The
@@ -243,6 +249,8 @@ pub function op_arr_make_i64(n: i32): Op {
     return Op { kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 pub function op_arr_get_i64(): Op { return Op { kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+// Unchecked 8-byte `arr_get` (i64/u64 element) — the i64 sibling of op_arr_get_nc.
+pub function op_arr_get_i64_nc(): Op { return Op { kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_set_i64(): Op { return Op { kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
@@ -354,11 +362,13 @@ pub function op_str_index(): Op { return op0("str_index"); }
 // `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
 // x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
 // len = end-start] sharing the source bytes. On wasm, strings are inline blocks
-// (no separate data pointer), so it COPIES via $__fern_substr. No bounds check.
+// (no separate data pointer), so it COPIES via $__fern_substr. Bounds-checked at
+// construction (#5419): traps unless 0 <= start <= end <= len.
 pub function op_str_slice(): Op { return op0("str_slice"); }
 // `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
 // (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
-// payloads via __fern_arr_slice. No bounds check (matches the AST path).
+// payloads via __fern_arr_slice. Bounds-checked at construction (#5419):
+// traps unless 0 <= start <= end <= len.
 // `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
 // elements, 64 for f64): the wasm backend selects the 4-byte or 8-byte copy
 // helper. The register backends copy 8-byte slots regardless and ignore it.
@@ -383,6 +393,28 @@ pub function op_raw_load8(): Op { return op0("raw_load8"); }
 pub function op_raw_store_ptr(): Op { return op0("raw_store_ptr"); }
 pub function op_raw_load_ptr(): Op { return op0("raw_load_ptr"); }
 pub function op_raw_string(): Op { return op0("raw_string"); }
+// syscall3 (#2649 syscall sub-floor): the raw-memory floor's I/O sibling.
+//   syscall3 pops [nr, a1, a2, a3] → the syscall return value.
+// Lowers to a single `syscall`/`svc` (nr→%rax/x8, a1..a3→argregs), no runtime
+// symbol — the primitive the syscall-leaf helpers (random_bytes, the clocks,
+// read_file) are written against so they can move off hand-asm into Fern.
+// Unsafe / unchecked / `__`-prefixed, like the `__raw_*` intrinsics.
+pub function op_syscall3(): Op { return op0("syscall3"); }
+// raw_scratch (#2649 syscall sub-floor, clocks slice): pops [n] → a fixed
+// static (.bss) scratch buffer ptr — the buffer the syscall leaves hand the
+// kernel to write into (timespec, stat), reused/never-freed so no per-call leak
+// (the hand-asm used a stack buffer). `n` is a size hint; the buffer is fixed.
+// Non-reentrant: a leaf helper must finish reading it before another runs.
+// (The i64 read-back of tv_sec/tv_nsec reuses the existing __load_i64/op_load_i64.)
+pub function op_raw_scratch(): Op { return op0("raw_scratch"); }
+// syscall4 (#2649 syscall sub-floor): the 4-arg sibling of syscall3, for the
+// syscalls whose 4th arg is meaningful (openat's mode with O_CREAT, newfstatat's
+// flags). pops [nr, a1, a2, a3, a4] → the syscall return value; a4 → %r10.
+pub function op_syscall4(): Op { return op0("syscall4"); }
+// raw_environ (#2649 syscall sub-floor, env slice): pops nothing → the process
+// envp pointer (the `char **` the kernel handed _start, saved in __fern_envp).
+// A single `movq __fern_envp(%rip), %rax`. The env leaf walks the array from it.
+pub function op_raw_environ(): Op { return op0("raw_environ"); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -571,12 +603,20 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind_tag: 1
 // (__fern_arr_push_owned) instead of leaking it. String/pointer/i64/f64
 // columns keep owncols=0 (their keys()/values() still alias, slice 3). wasm
 // ignores bit 2 (its map already frees old buffers on grow).
-pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, eqfn: string): Op {
+// `valwide` (carried in i64_imm as 1) marks an 8-byte i64/u64 VALUE. The x86-64
+// and arm64 runtimes store the value 8-byte unconditionally (movq / str x), so
+// they ignore it; it exists so the wasm IR deferral gate can keep an i64/u64-VALUE
+// map OFF the wasm path (its $__fern_map_set takes an i32 value — an i64 on the
+// typed stack would fail validation), routing it to the AST backend where full
+// i64 maps already work. #5253.
+pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, eqfn: string, valwide: boolean): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }
     if (kconsume) { w = w + 2; }
     if (owncols) { w = w + 4; }
-    return Op { kind_tag: 125, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 125, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
 }
 pub function op_map_len(): Op { return op0("map_len"); }
 // `print_int` pops an i32 and writes its decimal text to stdout (no newline),
@@ -730,7 +770,14 @@ pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
 pub function op_map_get(keykind: i32, eqfn: string): Op { return Op { kind_tag: 127, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { kind_tag: 128, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
-pub function op_map_get_or(keykind: i32, eqfn: string): Op { return Op { kind_tag: 129, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
+// `valwide` (i64_imm 1) marks an 8-byte i64/u64 result — the wasm-guard twin of
+// op_map_set's flag (register backends return the value full-width regardless;
+// wasm keeps such a map off its path). #5253.
+pub function op_map_get_or(keykind: i32, eqfn: string, valwide: boolean): Op {
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 129, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
+}
 // `map_delete` pops [map, key] → the map with that key removed (Fern's functional
 // `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
 // Key kind in i32_imm.
@@ -749,7 +796,16 @@ pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { kind_ta
 // wasm always snapshots (hash map, no raw column) and ignores the flag.
 // Order is backend-defined, so consumers must be order-independent.
 pub function op_map_keys(elemptr: i32): Op { return Op { kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
-pub function op_map_values(elemptr: i32): Op { return Op { kind_tag: 132, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// op_map_values: `i64_imm` = 1 (valwide) when the map's VALUE column is an
+// 8-byte scalar (i64/u64/f64) — the column elements are then read with the
+// 8-byte arr_get forms, which the i32-celled wasm map runtime can't back, so
+// wasm_ir_deferrals_ok keeps such modules on the wasm AST path (the values()
+// sibling of op_map_set/op_map_get_or's valwide flag). #5253.
+pub function op_map_values(elemptr: i32, valwide: boolean): Op {
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 132, i32_imm: elemptr, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 // Map iteration (the parallel-array backends, x86-64 / arm64). `map_iter` pops
 // [map] and pushes a fresh 16-byte iterator box [map_ptr@0, cursor@8] (cursor 0)
 // — the ONLY allocating op of the cluster. `mapiter_has_next` pops [iter] -> i32
@@ -1208,6 +1264,10 @@ function kind_id_4(name: string): i32 {
     if (name == "tcp_accept") { return 201; }
     if (name == "writer_write") { return 202; }
     if (name == "open_file") { return 203; }
+    if (name == "syscall3") { return 204; }
+    if (name == "raw_scratch") { return 205; }
+    if (name == "syscall4") { return 206; }
+    if (name == "raw_environ") { return 207; }
     return 0;
 }
 
@@ -1440,6 +1500,10 @@ function kind_name_4(id: i32): string {
     if (id == 201) { return "tcp_accept"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
+    if (id == 204) { return "syscall3"; }
+    if (id == 205) { return "raw_scratch"; }
+    if (id == 206) { return "syscall4"; }
+    if (id == 207) { return "raw_environ"; }
     return "invalid";
 }
 

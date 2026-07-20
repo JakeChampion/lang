@@ -1,0 +1,157 @@
+import "std/test";
+import "std/async";
+import "std/sim";
+
+// examples/tests/sim_driver_test.fern — deterministic simulation testing
+// (docs/DST-PLATFORM-BRIEF.md slice 1): the std/sim virtual-clock Driver
+// driving the std/async combinators through gather_on / race_on /
+// with_deadline_on. Every assertion here is EXACT — deadlines are virtual
+// time, not sleeps, and tie order is a pure function of the seed — and the
+// suite runs identically on every backend, including the interpreter
+// (where fd-backed futures never resolve on the real driver).
+//
+// Run:  fern -interp examples/tests/sim_driver_test.fern
+
+// with_deadline: a winner under the virtual deadline is Some, a straggler
+// past it is None, and the clock lands exactly on the deadline.
+function test_deadline_some_and_none(): test.TestOutcome {
+    var d: sim.Sim = sim.new(7);
+    var fs: async.Future[string][] = [
+        sim.future_at(d, 40000000, "late"),
+        sim.future_at(d, 10000000, "early")
+    ];
+    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    match (got[0]) { Some(v) => { return test.fail("late slot resolved under a 25ms deadline"); }, None => { } }
+    match (got[1]) {
+        Some(v) => { if (v != "early") { return test.fail("wrong winner value: " + v); } },
+        None => { return test.fail("early slot timed out under a 25ms deadline"); },
+    }
+    return test.assert_eq(d.now_ns(), 25000000 as i64);
+}
+
+// with_deadline with every future in time: all Some, and the clock stops
+// at the LAST resolution, not the deadline.
+function test_deadline_all_in_time(): test.TestOutcome {
+    var d: sim.Sim = sim.new(7);
+    var fs: async.Future[i32][] = [
+        sim.future_at(d, 20000000, 40),
+        sim.future_at(d, 5000000, 2)
+    ];
+    var got: Option[i32][] = async.with_deadline_on(d, 100, fs);
+    var sum: i32 = 0;
+    match (got[0]) { Some(v) => { sum = sum + v; }, None => { return test.fail("slot 0 timed out"); } }
+    match (got[1]) { Some(v) => { sum = sum + v; }, None => { return test.fail("slot 1 timed out"); } }
+    if (sum != 42) { return test.fail("wrong values gathered"); }
+    return test.assert_eq(d.now_ns(), 20000000 as i64);
+}
+
+// __tie_winner runs a race between two futures ready at the SAME virtual
+// instant; the winner is the seeded PRNG's pick.
+function __tie_winner(seed: i64): i32 {
+    var d: sim.Sim = sim.new(seed);
+    var fs: async.Future[i32][] = [
+        sim.future_at(d, 5000000, 100),
+        sim.future_at(d, 5000000, 200)
+    ];
+    var (w, v) = async.race_on(d, fs, -1);
+    if (w == 0 && v != 100) { return -2; }
+    if (w == 1 && v != 200) { return -3; }
+    return w;
+}
+
+// A race tie is broken deterministically: same seed, same winner, every
+// run — and different seeds do exercise both orders (pinned picks).
+function test_race_tie_seeded(): test.TestOutcome {
+    if (__tie_winner(1) != __tie_winner(1)) { return test.fail("same seed raced to different winners"); }
+    if (__tie_winner(1) != 1) { return test.fail("seed 1 pick drifted"); }
+    if (__tie_winner(2) != 0) { return test.fail("seed 2 pick drifted"); }
+    return test.pass();
+}
+
+// Seed sweep — the property-test seed: every seed yields a valid,
+// self-consistent tie race (winner in range, value matching the winner).
+function test_race_tie_seed_sweep(): test.TestOutcome {
+    var s: i64 = 1;
+    while (s <= 20) {
+        var w: i32 = __tie_winner(s);
+        if (w != 0 && w != 1) { return test.fail("seed " + s.to_string() + " gave invalid winner"); }
+        s = s + 1;
+    }
+    return test.pass();
+}
+
+// gather over out-of-order readiness returns input-order results, and the
+// clock lands on the LAST future's ready time.
+function test_gather_out_of_order(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var fs: async.Future[i32][] = [
+        sim.future_at(d, 30000000, 10),
+        sim.future_at(d, 10000000, 20),
+        sim.future_at(d, 20000000, 30)
+    ];
+    var got: i32[] = async.gather_on(d, fs, -1);
+    if (got[0] != 10 || got[1] != 20 || got[2] != 30) { return test.fail("results not in input order"); }
+    return test.assert_eq(d.now_ns(), 30000000 as i64);
+}
+
+// A chained future re-suspends N times (the __fetch_drain shape) and
+// resolves at at_ns + N * step_ns of virtual time.
+function test_chain_resolves_after_resuspensions(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var fs: async.Future[i32][] = [sim.future_chain(d, 10000000, 5000000, 3, 9)];
+    var got: i32[] = async.gather_on(d, fs, -1);
+    if (got[0] != 9) { return test.fail("chain resolved to wrong value"); }
+    return test.assert_eq(d.now_ns(), 25000000 as i64);
+}
+
+// The chain's suspension structure, drained by hand: N+1 Pendings whose
+// tokens (ready-at ms) step by step_ns, then Ready.
+function test_chain_suspension_count(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var f: async.Future[i32] = sim.future_chain(d, 10000000, 5000000, 3, 9);
+    var wakes: i32 = 0;
+    var toks: i32[] = [];
+    var guard: i32 = 0;
+    while (guard < 10) {
+        match (f) {
+            Ready(v) => {
+                if (v != 9) { return test.fail("wrong resolved value"); }
+                if (wakes != 4) { return test.fail("expected 4 wakes, got " + wakes.to_string()); }
+                if (toks[0] != 10 || toks[1] != 15 || toks[2] != 20 || toks[3] != 25) {
+                    return test.fail("wrong ready-at token schedule");
+                }
+                return test.pass();
+            },
+            Pending(tok, resume) => {
+                toks = toks.append(tok);
+                wakes = wakes + 1;
+                f = resume(tok);
+            },
+        }
+        guard = guard + 1;
+    }
+    return test.fail("chain never resolved");
+}
+
+// Virtual time never moves outside poll_ready: constructing futures and
+// timers leaves the clock at 0.
+function test_time_only_advances_in_poll(): test.TestOutcome {
+    var d: sim.Sim = sim.new(3);
+    var f: async.Future[i32] = sim.future_at(d, 90000000, 1);
+    var t: i32 = d.timer(50000000);
+    if (t != 50) { return test.fail("timer token is not its ready-at ms"); }
+    return test.assert_eq(d.now_ns(), 0 as i64);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/sim driver");
+    r = r.it("with_deadline some and none", test_deadline_some_and_none());
+    r = r.it("with_deadline all in time", test_deadline_all_in_time());
+    r = r.it("race tie seeded", test_race_tie_seeded());
+    r = r.it("race tie seed sweep", test_race_tie_seed_sweep());
+    r = r.it("gather out of order", test_gather_out_of_order());
+    r = r.it("chain resolves after resuspensions", test_chain_resolves_after_resuspensions());
+    r = r.it("chain suspension count", test_chain_suspension_count());
+    r = r.it("time only advances in poll_ready", test_time_only_advances_in_poll());
+    return r.finish();
+}

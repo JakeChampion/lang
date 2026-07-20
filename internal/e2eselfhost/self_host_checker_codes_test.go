@@ -224,6 +224,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// checkers must now flag E064 here, the mirror image of the
 		// subword-int-vars-clean case above.
 		{"unknown-retired-subword-var-type", "function main(): i32 { var x: i8 = q(); return 0; }\n", []string{"E001", "E064"}},
+		// `float` is the width-unqualified f64 alias (#5363). The self-host
+		// checker always resolved it; the Go checker used to reject it with
+		// E064 (+ a "did you mean f64?" hint) — this fixture pins the
+		// reconciled behavior: clean on BOTH checkers, including flowing
+		// into an f64 destination.
+		{"float-alias-ok", "function main(): i32 { var x: float = 1.5; var y: f64 = x; if (y > 1.0) { return 0; } return 1; }\n", nil},
+		// ... and a `float` value in a mismatched destination draws the
+		// same E003 both sides (it is a real float type, not unknown).
+		{"float-alias-mismatch", "function main(): i32 { var x: float = 1.5; var s: string = x; return 0; }\n", []string{"E003"}},
 		// E064 widening (#4363 item 3): an unknown nominal reached through an
 		// array-element (`Nope[]`) or generic-argument (`Map[string, Nope]`)
 		// spelling draws E064 just like a bare `Nope` — the check used to bail on
@@ -276,7 +285,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"bound-struct-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T, b: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p, p); return r.x; }\n", []string{"E021"}},
 		{"bound-prim-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { return pick(3); }\n", []string{"E021"}},
 		{"bound-struct-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nimpl Ord for Foo { function cmp(self: Self, other: Self): i32 { return 0; } }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
-		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		// bound-derive-ok carries `impl Ord for i32`: the derived `cmp`
+		// dispatches per-field to the FIELD type's impl (synthOrd emits
+		// `self.x.cmp(other.x)` — the ord_struct_enum e2e fixture is the
+		// design reference), so without it the derive is rejected by the
+		// E021 field-conformance pre-check below (#5392).
+		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		// E021 @derive field conformance (#5392): deriving Eq / Ord / Hash
+		// for a type whose field (or enum variant payload) type does not
+		// implement the trait — no impl, no derive of its own, no method
+		// set — draws ONE positioned E021 at the deriving decl instead of
+		// the position-less per-field E043 garbage the ill-typed
+		// synthesized body used to surface. With the impl present the
+		// derive is clean; a two-field gap still reports a single error.
+		{"derive-field-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; return p.x; }\n", []string{"E021"}},
+		{"derive-field-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; return p.x; }\n", nil},
+		{"derive-enum-payload-no-impl", "trait Eq { function eq(self: Self, other: Self): boolean; }\n@derive(Eq)\nenum E { A, B(i32) }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-two-fields-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct P { x: i32, y: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
@@ -658,7 +683,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cast-string-to-bool", "function main(): i32 { var s: string = \"x\"; var b: boolean = s as boolean; return 0; }\n", []string{"E033"}},
 		{"cast-numeric-ok", "function main(): i32 { var x: i32 = 1; var y: f64 = x as f64; return 0; }\n", nil},
 		{"cast-string-to-i32-ok", "function main(): i32 { var s: string = \"x\"; return s as i32; }\n", nil},
-		{"cast-i32-to-string-ok", "function main(): i32 { var x: i32 = 1; var s: string = x as string; return 0; }\n", nil},
+		{"cast-i32-to-string-e069", "function main(): i32 { var x: i32 = 1; var s: string = x as string; return 0; }\n", []string{"E069"}},
 		{"cast-bool-to-bool-ok", "function main(): i32 { var b: boolean = true; var c: boolean = b as boolean; return 0; }\n", nil},
 		{"cast-f64-to-string", "function main(): i32 { var f: f64 = 1.0; var s: string = f as string; return 0; }\n", []string{"E033"}},
 		{"cast-string-to-f64", "function main(): i32 { var s: string = \"x\"; var f: f64 = s as f64; return 0; }\n", []string{"E033"}},
@@ -699,6 +724,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-i32", "function f(): Option[i32] { var x: i32 = 5; return x?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-string", "function f(): Option[i32] { var s: string = \"x\"; return s?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-option-ok", "function g(): Option[i32] { return Some(1); }\nfunction f(): Option[i32] { var o: Option[i32] = g(); var v: i32 = o?; return Some(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E042 return-shape (#4363 item 1): `?` on a known Option/Result
+		// operand inside a function whose declared return type is a known
+		// primitive draws the return-shape E042 ("requires the surrounding
+		// function to return Option[_]/Result[_, E]"), matching native. The
+		// matching-return shapes stay clean, including inside a lambda whose
+		// own declared return supplies the context (not the enclosing fn's).
+		{"try-option-ret-i32", "function f(): i32 { var o: Option[i32] = Some(1); return o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-i32", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): i32 { return get()?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-string", "function f(): string { return Some(3)?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-bool", "function f(): boolean { var o: Option[i32] = Some(1); var v: i32 = o?; return v > 0; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { var v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = function(): i32 { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = function(): Option[i32] { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
@@ -893,12 +931,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E057: `cell_new(v)` constructs a Cell[T]; T must be cycle-free —
 		// a scalar (i32/i64/f64/bool) or string. A composite / reference
 		// argument (struct, array, tuple, another cell) is E057, reported
-		// at the argument. The Go checker's type-annotation form
-		// (`Cell[T]` in a field/param) reports E057 at the synthesised Cell
-		// builtin decl (position 0:0), which diag.Format renders without a
-		// code, so the differential keys off the value form (cell_new),
-		// whose diagnostic carries the argument position. Cross-checked
-		// against the Go checker.
+		// at the argument. Cross-checked against the Go checker.
 		{"cellnew-i32-ok", "function main(): i32 { var c = cell_new(5); return 0; }\n", nil},
 		{"cellnew-string-ok", "function main(): i32 { var c = cell_new(\"x\"); return 0; }\n", nil},
 		{"cellnew-bool-ok", "function main(): i32 { var c = cell_new(1 < 2); return 0; }\n", nil},
@@ -906,6 +939,40 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cellnew-array-bad", "function main(): i32 { var a: i32[] = [1]; var c = cell_new(a); return 0; }\n", []string{"E057"}},
 		{"cellnew-tuple-bad", "function main(): i32 { var t = (1, 2); var c = cell_new(t); return 0; }\n", []string{"E057"}},
 		{"cellnew-nested-bad", "function main(): i32 { var c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
+		// E057 ANNOTATION form (#4363 item 2): `Cell[<composite>]` in a
+		// param / field / body-var / return annotation — including a Cell
+		// nested inside a generic argument, tuple element, or array element
+		// spelling — draws E057, anchored at the annotation (the native
+		// checker now reports the use site instead of the synthesised Cell
+		// decl at 0:0, so the code is visible to this differential). A
+		// generic's `Cell[T]` over an in-scope type parameter stays clean
+		// (natively a ParamType element; the self-host scopes the walk to
+		// non-generic decls). Cross-checked against the Go checker.
+		{"cell-annot-param-bad", "struct P { x: i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-field-bad", "struct P { x: i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-var-bad", "struct P { x: i32 }\nfunction main(): i32 { var c: Cell[P] = cell_new(P { x: 1 }); return 0; }\n", []string{"E057"}},
+		{"cell-annot-array-bad", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-tuple-elem-bad", "struct P { x: i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-generic-arg-bad", "struct P { x: i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-cell-array-bad", "struct P { x: i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-str-bad", "function f(c: Cell[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		// E051 self-reassign move admission (#4873 step 0): a LOCAL passed
+		// exactly once, directly, in an `own` position of its OWN
+		// reassignment's RHS is a transfer — admitted by both checkers
+		// (native SelfReassignOwnMoveArg / self-host ow_self_move_admits).
+		// Binding to a different name (old binding kept alive) or a second
+		// read of the local in the same RHS stays E051.
+		{"own-self-reassign-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    a = grow(a, 1);\n    a = grow(a, 2);\n    return a.items.len();\n}\n", nil},
+		{"own-kept-alive-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", []string{"E051"}},
+		{"own-second-read-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [7] };\n    a = grow(a, a.items[0]);\n    return a.items.len();\n}\n", []string{"E051"}},
+		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// `str` inside a generic ARGUMENT keeps its verbatim spelling in the
+		// self-host (a bare `str` is erased to string at the parse
+		// boundary) — a real native type, so no E064 (regression pin for
+		// the generic-arg-widening false positive fixed alongside item 2).
+		{"generic-arg-str-ok", "function f(o: Option[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E063: returning a `[T]` slice that views function-local storage is a
 		// use-after-free (the backing array dies with the frame). The check is
 		// conservative — only slices provably viewing local storage fire.
@@ -966,6 +1033,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
 		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
 		{"e032-use-annotated-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n: i32 <- apply(41);\n    return n + 1;\n}\n", nil},
+		// @inline / @noinline function attributes (#4412 Rec §14): native
+		// consults them in the IR inliner; the self-host parser
+		// parse-tolerates and drops them. Both checkers must accept the
+		// annotated program cleanly.
+		{"inline-hints-ok", "@inline\nfunction fast(x: i32): i32 { return x + x; }\n@noinline\nfunction slow(x: i32): i32 { return x + 1; }\nfunction main(): i32 { return fast(3) + slow(4); }\n", nil},
 		// E067 (@must_consume obligation, docs/MUST-CONSUME.md): a value of a
 		// marked struct/enum type must be consumed on every control-flow path
 		// before its binding leaves scope — call-argument, return, match,
@@ -1070,6 +1142,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"tuple-reassign", "function main(): i32 { var t: (i32, string) = (1, \"a\"); t = (2, \"b\"); return t.0; }\n"},
 		// Generic tuple container (the std/array `zip` shape).
 		{"tuple-generic-array", "function zip(a: i32[], b: string[]): (i32, string)[] { var out: (i32, string)[] = []; return out; }\nfunction main(): i32 { return 0; }\n"},
+		// Lambda bodies see the LAMBDA's declared return type (not the
+		// enclosing function's) — pins the call_diags lambda-scope ret_type
+		// threading (#4363 item 1) on valid array-returning shapes.
+		{"lambda-arr-ret-ok", "function f(): i32[] {\n    var g = function(): string[] { return [\"a\", \"b\"]; };\n    return [1, 2];\n}\nfunction main(): i32 { return 0; }\n"},
+		{"lambda-try-ret-option-ok", "function f(): i32 {\n    var g = function(): Option[i32] { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n"},
 		// Method chains on string / array builtins (valid).
 		{"method-chain-len", "function main(): i32 { var s = \"abc\"; var n = s.len(); return n; }\n"},
 		{"method-chain-array", "function main(): i32 { var a = [1, 2, 3]; return a.len(); }\n"},
@@ -1225,6 +1302,17 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// the bundle harness's reason for existing. `substr` isn't a std/string
 		// method, so both checkers report E043.
 		{"string-unknown-method-e043", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; var t = s.substr(0, 1); return 0; }\n"},
+		// #5205: a bundled helper that `match`es on an Option returned by a
+		// method call (`result.checked_mul(base)` → Option[i32]) binding
+		// `Some(v)` and assigning the payload to a concrete-typed local
+		// (`result = v`). A built-in payload variant has no struct sig, so the
+		// self-host used to bind `v` as the wrapper struct `Some` and spuriously
+		// draw E003 on `result = v` — poisoning the whole bundle's code set for
+		// every program that transitively imports the helper's module. The
+		// helper's payload type is now bound unknown (unrecoverable in the
+		// name-only type system), so both checkers agree the bundle is clean.
+		{"match-method-option-payload-assign-ok", "import \"std/string\";\nfunction trig(base: i32): i32 { var result: i32 = 1; match (result.checked_mul(base)) { Some(v) => { result = v; }, None => { return 0; } } return result; }\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
+		{"match-method-option-payload-assign-array-ok", "import \"std/array\";\nfunction trig(base: i32): i32 { var result: i32 = 1; match (result.checked_mul(base)) { Some(v) => { result = v; }, None => { return 0; } } return result; }\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
 	}
 
 	for _, tc := range progs {

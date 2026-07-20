@@ -75,7 +75,10 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 				sb.WriteString("    asm = asm + \"" + fernEscapeAsmLine(ln) + "\\n\";\n")
 			}
 			sb.WriteString("    var p: Arm64GasProg = arm64_gas_program(asm);\n")
-			sb.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\" + p.unknown.join(\",\")); return 0; }\n")
+			// Loop-write, not `.join` — see asmToMachoDriver: join forces the
+			// driver onto the AST-fallback wasm backend, which miscompiles the
+			// `p = arm64_gas_link(p, …)` rebind and crashes the signature hash.
+			sb.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); var ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
 			sb.WriteString("    var pa: Arm64Asm = p.asm;\n")
 			sb.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), p.data.len());\n")
 			sb.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), p.data.len());\n")

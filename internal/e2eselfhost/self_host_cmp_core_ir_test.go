@@ -33,6 +33,13 @@ var cmpCoreIRCases = []struct {
 	{"clamp", "import \"core/cmp\";\nfunction main(): i32 { return cmp.clamp(9, 1, 5); }\n"},
 	// lt(2,3) true, gt(2,3) false -> 1.
 	{"lt-gt", "import \"core/cmp\";\nfunction main(): i32 { if (cmp.lt(2, 3) && !cmp.gt(2, 3)) { return 1; } return 0; }\n"},
+	// Generic ascending sort (the fresh-copy `sort[T: Ord]`, #5397): [3,1,2] ->
+	// [1,2,3]; s[0]*10 + s[2] = 13. Exercises the real core/cmp merge body
+	// through the multi-module loader on the IR path.
+	{"sort-asc", "import \"core/cmp\";\nfunction main(): i32 { var s = cmp.sort([3, 1, 2]); return s[0] * 10 + s[2]; }\n"},
+	// Generic descending sort (`sort_desc[T: Ord]`, #5397): [3,1,2] -> [3,2,1];
+	// s[0]*10 + s[2] = 31.
+	{"sort-desc", "import \"core/cmp\";\nfunction main(): i32 { var s = cmp.sort_desc([3, 1, 2]); return s[0] * 10 + s[2]; }\n"},
 }
 
 // TestSelfHostCmpCoreIRX86_64 compiles real `import "core/cmp"` programs

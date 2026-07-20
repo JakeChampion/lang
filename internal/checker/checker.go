@@ -9,6 +9,8 @@ package checker
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,10 +22,14 @@ import (
 type Error struct {
 	Pos     ast.Position
 	Span    int    // optional: token length for `^~~~~` underline; 0 = caret only
-	Note    string // optional: "did you mean foo?" hint
+	Note    string // optional: free-text hint rendered as `note:`
 	Msg     string
 	Path    string // source file path; filled by errf from c.current.SourceModule
 	ErrCode string // optional: stable error code (E001…), surfaces in the header + `lang explain` output
+	// Fix is an optional machine-applicable suggestion rendered as a
+	// `help:` line (diag.Suggestion — span + replacement + title). Only
+	// attached when applying the replacement is guaranteed to re-parse.
+	Fix *diag.Suggestion
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
@@ -34,12 +40,14 @@ func (e *Error) File() string           { return e.Path }
 func (e *Error) setFile(p string)       { e.Path = p }
 func (e *Error) Code() string           { return e.ErrCode }
 
+func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
+
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
-	// BoxedCells names the locals that closureconv.BoxMutatedScalarCaptures
+	// BoxedCells names the locals that closureconv.BoxMutatedCaptures
 	// rewrote into 1-element array cells for by-reference scalar capture. Such a
 	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
 	// outer scope observe each other's writes), so an `cell[0] = v` store must
@@ -3324,6 +3332,117 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 	return fmt.Sprintf("map key type %s is not yet supported (use i32, string, or a struct/enum with `@derive(Eq, Hash)`)", k)
 }
 
+// deriveConf answers "does type <tn> implement trait <dn>?" at
+// derive-synthesis time — BEFORE the conformance pass fills
+// c.info.Impls. Three sources count, mirroring how the later E021
+// bound check resolves conformance: an explicit `impl dn for tn`
+// (prog.Impls, including stdlib-merged ones — primitives conform only
+// this way), a pending `@derive(dn)` on tn itself (it will synthesise
+// its own impl in this same pass, in either order), and an existing
+// receiver-method set covering every required trait method (the
+// conformance pass's "adopt the existing method" rule). Drives the
+// @derive(Eq/Ord/Hash) field pre-check in synthesizeDerives.
+type deriveConf struct {
+	impls   map[string]map[string]bool // trait name -> type name
+	methods map[string]map[string]bool // type name -> receiver-method name
+}
+
+func newDeriveConf(prog *ast.Program) *deriveConf {
+	dc := &deriveConf{impls: map[string]map[string]bool{}, methods: map[string]map[string]bool{}}
+	add := func(m map[string]map[string]bool, k1, k2 string) {
+		if m[k1] == nil {
+			m[k1] = map[string]bool{}
+		}
+		m[k1][k2] = true
+	}
+	for _, im := range prog.Impls {
+		if tn, ok := methodTypeName(im.Type); ok {
+			add(dc.impls, im.Trait, tn)
+		}
+	}
+	for _, sd := range prog.Structs {
+		for _, dn := range sd.Derives {
+			add(dc.impls, dn, sd.Name)
+		}
+	}
+	for _, ed := range prog.Enums {
+		for _, dn := range ed.Derives {
+			add(dc.impls, dn, ed.Name)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil {
+			continue
+		}
+		if tn, ok := methodTypeName(fn.Receiver.Type); ok {
+			add(dc.methods, tn, fn.Name)
+		}
+	}
+	return dc
+}
+
+// conforms reports whether type name tn implements trait td (declared
+// under name dn): via impl/derive, or by providing every required
+// (abstract) trait method as a receiver method. A trait with no
+// required methods conforms only via an explicit impl.
+func (dc *deriveConf) conforms(td *ast.TraitDecl, dn, tn string) bool {
+	if dc.impls[dn][tn] {
+		return true
+	}
+	required := false
+	for _, m := range td.Methods {
+		if m.Body != nil {
+			continue
+		}
+		required = true
+		if !dc.methods[tn][m.Name] {
+			return false
+		}
+	}
+	return required
+}
+
+// deriveFieldGap returns the first (label, type) among the given
+// field/payload types that does NOT conform to trait td — the
+// @derive(Eq/Ord/Hash) pre-check that replaces the position-less
+// garbage a broken synthesised body would surface (#5392). Types the
+// check cannot name (arrays, tuples, maps, closures — methodTypeName
+// fails) and type parameters of the deriving decl are skipped: the
+// former keep their historical behaviour, the latter are bound-checked
+// per instantiation via the parametric impl.
+func (dc *deriveConf) deriveFieldGap(td *ast.TraitDecl, dn string, labels []string, types []ast.Type, typeParams []string) (string, string, bool) {
+	for i, t := range types {
+		tn, ok := methodTypeName(t)
+		if !ok || slices.Contains(typeParams, tn) {
+			continue
+		}
+		if !dc.conforms(td, dn, tn) {
+			return labels[i], tn, true
+		}
+	}
+	return "", "", false
+}
+
+// preCheckDeriveFields runs the deriveFieldGap pre-check for one
+// derive of a field-wise-comparing trait (Eq / Ord / Hash — the kinds
+// whose synthesised bodies call the trait method on every field) and
+// reports the E021 at the deriving decl's position. labels[i] names
+// types[i] for the message ("field x" / "variant B payload"). Returns
+// true when the derive is broken, in which case the caller must skip
+// synthesis — no method beats an ill-typed one.
+func (c *checker) preCheckDeriveFields(dc *deriveConf, td *ast.TraitDecl, dn, kind, what string, p ast.Position, labels []string, types []ast.Type, typeParams []string) bool {
+	if kind != "Eq" && kind != "Ord" && kind != "Hash" {
+		return false
+	}
+	label, tn, bad := dc.deriveFieldGap(td, dn, labels, types, typeParams)
+	if !bad {
+		return false
+	}
+	c.errfCode(p, "E021", "cannot @derive(%s) for %s: %s of type %s does not implement %s — add `impl %s for %s` (or remove the derive)",
+		demangle(dn), demangle(what), label, demangle(tn), demangle(dn), demangle(dn), demangle(tn))
+	return true
+}
+
 // synthesizeDerives expands every struct's `@derive(Trait, …)` into a
 // field-wise `impl Trait for Struct`: the generated method bodies call
 // the corresponding trait method on each field (`self.f.eq(other.f)`,
@@ -3333,6 +3452,21 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 // ImplDecl to prog.Impls, ahead of the receiver-hoist + conformance
 // passes. See docs/TRAITS.md.
 func (c *checker) synthesizeDerives(prog *ast.Program) {
+	var dc *deriveConf
+	for _, sd := range prog.Structs {
+		if len(sd.Derives) > 0 {
+			dc = newDeriveConf(prog)
+			break
+		}
+	}
+	if dc == nil {
+		for _, ed := range prog.Enums {
+			if len(ed.Derives) > 0 {
+				dc = newDeriveConf(prog)
+				break
+			}
+		}
+	}
 	for _, sd := range prog.Structs {
 		if len(sd.Derives) == 0 {
 			continue
@@ -3356,10 +3490,18 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				c.errfCode(sd.P, "E021", "@derive(%s): unknown trait", demangle(dn))
 				continue
 			}
-			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
 				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", demangle(dn))
+				continue
+			}
+			labels := make([]string, len(sd.Fields))
+			types := make([]ast.Type, len(sd.Fields))
+			for i, f := range sd.Fields {
+				labels[i] = "field " + f.Name
+				types[i] = f.Type
+			}
+			if c.preCheckDeriveFields(dc, td, dn, kind, sd.Name, sd.P, labels, types, sd.TypeParams) {
 				continue
 			}
 			var method *ast.FuncDecl
@@ -3430,8 +3572,20 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 		// rendering payloads via the bound. See docs/TRAITS.md.
 		recvType, implTypeParams := deriveRecvEnum(ed)
 		for _, dn := range derives {
-			if _, ok := c.info.Traits[dn]; !ok {
+			td, ok := c.info.Traits[dn]
+			if !ok {
 				c.errfCode(ed.P, "E021", "@derive(%s): unknown trait", demangle(dn))
+				continue
+			}
+			var labels []string
+			var types []ast.Type
+			for _, v := range ed.Variants {
+				for _, pt := range v.Payloads {
+					labels = append(labels, "variant "+v.Name+" payload")
+					types = append(types, pt)
+				}
+			}
+			if c.preCheckDeriveFields(dc, td, dn, deriveKind(dn), ed.Name, ed.P, labels, types, ed.TypeParams) {
 				continue
 			}
 			var method *ast.FuncDecl
@@ -4661,12 +4815,12 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			}
 		}
 		if fn.Receiver != nil {
-			c.resolveType(&fn.Receiver.Type, params)
+			c.resolveType(&fn.Receiver.Type, params, orPos(fn.Receiver.NamePos, fn.P))
 		}
 		for i := range fn.Params {
-			c.resolveType(&fn.Params[i].Type, params)
+			c.resolveType(&fn.Params[i].Type, params, orPos(fn.Params[i].NamePos, fn.P))
 		}
-		c.resolveType(&fn.ReturnType, params)
+		c.resolveType(&fn.ReturnType, params, fn.P)
 		if fn.Body != nil {
 			c.resolveTypesInBlock(fn.Body, params)
 		}
@@ -4683,7 +4837,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			}
 		}
 		for i := range sd.Fields {
-			c.resolveType(&sd.Fields[i].Type, params)
+			c.resolveType(&sd.Fields[i].Type, params, orPos(sd.Fields[i].NamePos, sd.P))
 		}
 	}
 	for _, ed := range prog.Enums {
@@ -4696,7 +4850,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		}
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
-				c.resolveType(&ed.Variants[i].Payloads[j], params)
+				c.resolveType(&ed.Variants[i].Payloads[j], params, orPos(ed.Variants[i].P, ed.P))
 			}
 		}
 	}
@@ -4713,7 +4867,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		for _, n := range impl.TypeParams {
 			params[n] = true
 		}
-		c.resolveType(&impl.Type, params)
+		c.resolveType(&impl.Type, params, impl.P)
 	}
 }
 
@@ -4740,7 +4894,7 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 		case *ast.For:
 			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.Var:
-			c.resolveType(&x.Type, params)
+			c.resolveType(&x.Type, params, x.P)
 		case *ast.Match:
 			for _, arm := range x.Arms {
 				c.resolveTypesInBlock(arm.Body, params)
@@ -4753,9 +4907,9 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 			// outer params, so passing the surrounding `params`
 			// set is the conservative right answer here.
 			for i := range x.Params {
-				c.resolveType(&x.Params[i].Type, params)
+				c.resolveType(&x.Params[i].Type, params, orPos(x.Params[i].NamePos, x.P))
 			}
-			c.resolveType(&x.ReturnType, params)
+			c.resolveType(&x.ReturnType, params, x.P)
 			c.resolveTypesInBlock(x.Body, params)
 		}
 	}
@@ -4903,6 +5057,15 @@ func isVoidReturn(t ast.Type) bool {
 // type position. It's nil outside of enum-body contexts. When
 // the name is in `params`, we always rewrite to ParamType —
 // the parameter wins over a same-named enum or struct.
+// orPos returns p unless it is unset (synthetic nodes leave positions
+// zero), in which case it falls back to `fallback`.
+func orPos(p, fallback ast.Position) ast.Position {
+	if p.Line == 0 {
+		return fallback
+	}
+	return p
+}
+
 // isCellElemType reports whether T is permitted as Cell[T] (E057). The
 // element must be cycle-free: a cell over a value that can transitively
 // hold another cell could reconstruct a reference cycle, which the
@@ -4925,7 +5088,13 @@ func isCellElemType(t ast.Type) bool {
 	return false
 }
 
-func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
+// resolveType canonicalises a parsed type annotation in place. `pos` is
+// the closest source anchor for the annotation (the declaring name's
+// position — field / param / var / decl); annotation-position
+// diagnostics (E057) report there. Type nodes carry no positions of
+// their own, so a zero `pos` (synthetic decls) falls back to the
+// offending decl's own position at the report site.
+func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Position) {
 	if slot == nil || *slot == nil {
 		return
 	}
@@ -4936,7 +5105,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		// itself is resolved to its binding later (resolveProjections),
 		// once impl conformance has recorded the bindings.
 		base := t.Base
-		c.resolveType(&base, params)
+		c.resolveType(&base, params, pos)
 		*slot = ast.ProjType{Base: base, Name: t.Name}
 		return
 	case ast.StructType:
@@ -4964,7 +5133,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			args := make([]ast.Type, len(t.Args))
 			copy(args, t.Args)
 			for i := range args {
-				c.resolveType(&args[i], params)
+				c.resolveType(&args[i], params, pos)
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
 		}
@@ -4983,7 +5152,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		args := make([]ast.Type, len(t.Args))
 		copy(args, t.Args)
 		for i := range args {
-			c.resolveType(&args[i], params)
+			c.resolveType(&args[i], params, pos)
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) {
@@ -4997,7 +5166,16 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			// §1-2). v1 allows scalars only; string and richer cycle-free
 			// types wait on the owning-slot RC integration.
 			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
-				c.errfCode(sd.P, "E057",
+				// Anchor at the annotation's use site. Cell's decl is
+				// synthesized (sd.P is 0:0, which diag.Format renders
+				// without the error[E057] prefix), so the fallback only
+				// fires for annotations with no source anchor of their
+				// own (synthetic decls).
+				at := pos
+				if at.Line == 0 {
+					at = sd.P
+				}
+				c.errfCode(at, "E057",
 					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid",
 					args[0])
 			}
@@ -5013,11 +5191,11 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		*slot = ast.EnumType{Name: t.Name, Args: args}
 	case ast.ArrayType:
 		elem := t.Elem
-		c.resolveType(&elem, params)
+		c.resolveType(&elem, params, pos)
 		*slot = ast.ArrayType{Elem: elem}
 	case ast.SliceType:
 		elem := t.Elem
-		c.resolveType(&elem, params)
+		c.resolveType(&elem, params, pos)
 		*slot = ast.SliceType{Elem: elem}
 	case ast.TupleType:
 		// Recurse into each element. Without this, a
@@ -5032,14 +5210,14 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		elems := make([]ast.Type, len(t.Elems))
 		copy(elems, t.Elems)
 		for i := range elems {
-			c.resolveType(&elems[i], params)
+			c.resolveType(&elems[i], params, pos)
 		}
 		*slot = ast.TupleType{Elems: elems}
 	case *ast.FuncType:
 		for i := range t.Params {
-			c.resolveType(&t.Params[i], params)
+			c.resolveType(&t.Params[i], params, pos)
 		}
-		c.resolveType(&t.Result, params)
+		c.resolveType(&t.Result, params, pos)
 	}
 }
 
@@ -5166,7 +5344,7 @@ func unknownTypeHint(name string) string {
 		return " (did you mean `i32`?)"
 	case "uint", "u8":
 		return " (did you mean `u32`?)"
-	case "float", "double":
+	case "double":
 		return " (did you mean `f64`?)"
 	case "str", "String":
 		return " (did you mean `string`?)"
@@ -6073,9 +6251,9 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	// Polymorphic float (an unsettled FloatLit) is
 	// compatible with any concrete FloatType — let the
 	// settle pass stamp the literal's width. Without this,
-	// `var f: f64 = if cond { n.v } else { 0.0 };` rejects
-	// because `0.0` defaults to f32 polymorphic and `n.v`
-	// is concrete f64.
+	// `var f: f32 = if cond { n.v } else { 0.0 };` rejects
+	// because `0.0` is float-polymorphic and `n.v` is
+	// concrete f32.
 	if af, aok := a.(ast.FloatType); aok && af.Polymorphic {
 		if _, ok := b.(ast.FloatType); ok {
 			return b
@@ -6842,9 +7020,12 @@ func (c *checker) needCoreMap(pos ast.Position) {
 }
 
 // errIdent reports an unresolved-name error and tries to attach a
-// "did you mean foo?" hint by scanning every name visible in scope
-// (locals, params, top-level functions). The error span covers the
-// whole identifier so the squiggle underlines the misspelt name.
+// near-miss fix by scanning every name visible in scope (locals,
+// params, top-level functions). The error span covers the whole
+// identifier so the squiggle underlines the misspelt name; the fix is
+// MACHINE-APPLICABLE (diag.Suggestion, Rec §3) — replacing the ident
+// with the candidate always re-parses, so the renderer's `help:` line
+// doubles as the future LSP CodeAction seed.
 func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	cands := c.collectNames(s)
 	suggestion := diag.Suggest(n.Name, cands)
@@ -6856,7 +7037,36 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 		ErrCode: "E001",
 	}
 	if suggestion != "" {
-		e.Note = fmt.Sprintf("did you mean %q?", suggestion)
+		e.Fix = &diag.Suggestion{
+			Pos:         n.P,
+			Length:      len(n.Name),
+			Replacement: suggestion,
+			Title:       fmt.Sprintf("replace `%s` with `%s`", n.Name, suggestion),
+		}
+	}
+	c.errors = append(c.errors, e)
+}
+
+// errUnknownField reports an E043 unknown-field error (struct literal
+// or field access), attaching a machine-applicable respelling fix when
+// a declared field is a near miss — the same sound family as errIdent
+// (replacing one identifier with another always re-parses). namePos is
+// the field NAME token's own position (FieldInit.NamePos /
+// FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
+func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
+	e := &Error{
+		Pos:     pos,
+		Msg:     fmt.Sprintf("struct %s has no field %q", structName, field),
+		Path:    c.currentFile(),
+		ErrCode: "E043",
+	}
+	if s := diag.Suggest(field, declared); s != "" && namePos.Line > 0 {
+		e.Fix = &diag.Suggestion{
+			Pos:         namePos,
+			Length:      len(field),
+			Replacement: s,
+			Title:       fmt.Sprintf("replace `%s` with `%s`", field, s),
+		}
 	}
 	c.errors = append(c.errors, e)
 }
@@ -7311,6 +7521,57 @@ func (c *checker) dynMethodConsumes(trait, field string) bool {
 //
 // No codegen changes here — owned params still lower as borrowed; this only
 // establishes the invariant the transfer + reuse slices rely on.
+// SelfReassignOwnMoveArg recognizes the #4873 step-0 move shape on a
+// self-reassignment `x = f(..., x, ...)`: the assign target is a bare
+// ident whose name occurs EXACTLY ONCE anywhere in the RHS (a second
+// read would observe the consumed value), and that one occurrence is a
+// direct bare-ident argument sitting in an `own` position of the
+// callee's flags. Returns that argument Ident, or nil when the shape
+// doesn't match. Exported because the checker's E051 admission and the
+// IR's move-on-call + overwrite-dec suppression must key on the
+// IDENTICAL recognition — if they drift, either a double free (rc
+// suppresses, checker rejects a shape that then re-lands via another
+// path) or a leak/UAF (checker admits, rc still exit-decs) follows.
+func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
+	tid, ok := asn.Target.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	flags, isOwn := ownFuncs[cid.Name]
+	if !isOwn {
+		return nil
+	}
+	// Count every occurrence of the target name in the RHS, excluding
+	// the callee ident itself (a call position, not a value read).
+	count := 0
+	ast.Walk(call, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id != cid && id.Name == tid.Name {
+			count++
+		}
+		return true
+	})
+	if count != 1 {
+		return nil
+	}
+	for i, a := range call.Args {
+		if id, ok := a.(*ast.Ident); ok && id.Name == tid.Name {
+			if i < len(flags) && flags[i] {
+				return id
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	owned := map[string]bool{}
 	for _, p := range fn.Params {
@@ -7333,6 +7594,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// cannot be transferred (the caller, or someone, still owns it), so passing
 	// it to an `own` parameter is E051. Conservative: anything not provably
 	// owned is rejected.
+	// selfMoveArgs admits specific Ident NODES as owned arguments: the
+	// exactly-once occurrence of `x` inside the RHS of a self-reassign
+	// `x = f(..., x, ...)` where that occurrence is a direct argument in
+	// an `own` position (#4873 step 0). The old binding dies at the
+	// assignment — nothing can read it after the RHS evaluates — so the
+	// caller can transfer it. Keyed by node identity so the SAME name
+	// elsewhere (a second read in the RHS, a non-self-reassign call) is
+	// still rejected. Populated by walkStmts' Assign case; the IR's
+	// move-on-call + overwrite-dec suppression key on the identical
+	// syntactic shape (SelfReassignOwnMoveArg, shared with the IR) so checker and rc
+	// agree bit-for-bit on what moved.
+	selfMoveArgs := map[ast.Expr]bool{}
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		switch x := e.(type) {
@@ -7341,7 +7614,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Binary:
 			return x.IsStringConcat
 		case *ast.Ident:
-			return owned[x.Name]
+			return owned[x.Name] || selfMoveArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
@@ -7607,6 +7880,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// concern; here the reassign just clears the move) — distinct from a
 			// plain read, which recordExprUses would treat as a consume.
 			if asn, ok := x.Expr.(*ast.Assign); ok {
+				// Self-reassign move admission (#4873 step 0): for
+				// `x = f(..., x, ...)` with x a LOCAL passed exactly once,
+				// directly, in an `own` position, admit that occurrence
+				// (see selfMoveArgs). Checked before recordExprUses so
+				// guardCallArgs sees the admission.
+				if id, ok := asn.Target.(*ast.Ident); ok && !owned[id.Name] {
+					if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+						selfMoveArgs[arg] = true
+					}
+				}
 				recordExprUses(asn.Value, moved)
 				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
 					delete(moved, id.Name)
@@ -8271,11 +8554,29 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s", want, got)
 		}
 	case *ast.Defer:
-		// Just type-check the expression; its result is
-		// discarded (defer is statement-shaped, not
-		// expression-shaped). The IR builder is responsible
-		// for replaying the expression at function exits.
-		c.checkExpr(n.Expr, s)
+		// Just type-check the action; its result is discarded (defer is
+		// statement-shaped, not expression-shaped). The IR builder is
+		// responsible for replaying it at function exits.
+		//
+		// A block action `defer { … }` (#5153) is value-less by design, so
+		// check its statements directly rather than through checkBlockExpr —
+		// which would report E061 for the missing trailing value. Only the
+		// immediate block is exempt; any nested value-position block inside
+		// still goes through the normal value-required check.
+		if blk, ok := n.Expr.(*ast.BlockExpr); ok {
+			bs := newScope(s)
+			prevMutualRec := c.mutualRecSiblings
+			c.mutualRecSiblings = nil
+			for _, st := range blk.Stmts {
+				c.checkStmt(st, bs)
+			}
+			c.mutualRecSiblings = prevMutualRec
+			if blk.Tail != nil {
+				c.checkExpr(blk.Tail, bs)
+			}
+		} else {
+			c.checkExpr(n.Expr, s)
+		}
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
@@ -8350,6 +8651,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// can do one evaluation followed by per-name field
 		// loads.
 		got := c.checkExpr(n.Init, s)
+		if n.Fields != nil {
+			c.checkStructDestructure(n, got, s)
+			return
+		}
 		tup, ok := got.(ast.TupleType)
 		if !ok {
 			if got != nil {
@@ -8389,6 +8694,76 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.checkMatch(n, s)
 	case *ast.FuncDecl:
 		c.checkLocalFunc(n, s)
+	}
+}
+
+// checkStructDestructure validates `let Point { x, y } = expr;` — Init
+// (already type-checked to `got`) must be the named struct type, and each
+// field named in the pattern must exist. Names are registered in the
+// enclosing scope with their field types, plus a hidden temp holding the
+// struct pointer for the IR's one-eval-then-per-field-load lowering,
+// exactly like the tuple form.
+func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *scope) {
+	st, ok := got.(ast.StructType)
+	if !ok {
+		if got != nil {
+			c.errfCode(n.P, "E024", "struct destructure needs a struct expression, got %s", got)
+		}
+		return
+	}
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		return
+	}
+	if n.StructName != "" && n.StructName != st.Name {
+		c.errfCode(n.P, "E024", "struct destructure pattern names %s, but the expression is %s", n.StructName, st.Name)
+		return
+	}
+	c.checkOpaqueAccess(sd, n.P, "destructure a field of")
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	tempName := fmt.Sprintf("__destruct_%d_%d", n.P.Line, n.P.Col)
+	n.TempName = tempName
+	tempVar := &ast.Var{P: n.P, Name: tempName, Type: st}
+	s.names[tempName] = st
+	c.info.VarTypes[tempVar] = st
+	c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
+	for i, name := range n.Names {
+		field := n.Fields[i]
+		var ft ast.Type
+		found := false
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				ft = f.Type
+				if sub != nil {
+					ft = substituteType(ft, sub)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			declared := make([]string, 0, len(sd.Fields))
+			for _, df := range sd.Fields {
+				declared = append(declared, df.Name)
+			}
+			c.errUnknownField(n.P, n.P, st.Name, field, declared)
+			continue
+		}
+		if _, dup := s.names[name]; dup {
+			c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
+			continue
+		}
+		v := &ast.Var{P: n.P, Name: name, Type: ft}
+		s.names[name] = ft
+		c.info.VarTypes[v] = ft
+		c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
 	}
 }
 
@@ -8467,6 +8842,14 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if tup, isTup := tagT.(ast.TupleType); isTup {
 			c.checkTupleMatch(n, tup, s)
 			return
+		}
+		// Struct scrutinee: arms are struct patterns `S { x, y }` (or
+		// `_`) — see checkStructMatch.
+		if st, isStruct := tagT.(ast.StructType); isStruct {
+			if _, known := c.info.Structs[st.Name]; known {
+				c.checkStructMatch(n, st, s)
+				return
+			}
 		}
 		// Non-enum scrutinee: every arm must be a literal pattern
 		// or the wildcard. Dispatch via the literal-pattern shape.
@@ -8641,6 +9024,28 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
 		}
+		if arm.RangeHi != nil {
+			// Range pattern `lo..hi`: the low bound is `Literal`, validated
+			// above; the high bound needs the same type + settle. Ranges are
+			// numeric-only — an ordered scalar scrutinee. Unsigned scrutinees
+			// are deferred (the interpreter oracle compares signed), so they
+			// are rejected here to keep native + interp in agreement.
+			tagNum, tagIsNum := tagT.(ast.NumberType)
+			_, tagIsFloat := tagT.(ast.FloatType)
+			if !tagIsNum && !tagIsFloat {
+				c.errfCode(arm.P, "E035", "range patterns require a numeric scrutinee, got %s", tagT)
+			} else if tagIsNum && !tagNum.IsSigned() {
+				c.errfCode(arm.P, "E035", "range patterns are not yet supported on an unsigned scrutinee (%s)", tagT)
+			}
+			hiT := c.checkExpr(arm.RangeHi, s)
+			if hiT != nil {
+				c.settleNumeric(arm.RangeHi, tagT)
+				hiT = c.postSettleType(arm.RangeHi, hiT)
+				if !c.assignable(hiT, tagT) {
+					c.errfCode(arm.P, "E035", "range pattern bound of type %s does not match scrutinee type %s", hiT, tagT)
+				}
+			}
+		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, s)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
@@ -8738,6 +9143,104 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 	}
 }
 
+// checkStructMatch type-checks a `match` on a struct-typed scrutinee.
+// A struct has a single shape, so a struct-pattern arm `S { x, y }` is
+// irrefutable (it always matches, modulo a guard) and binds the named
+// fields into the arm scope — the match reduces to "run the first arm
+// whose guard passes". The pattern names must be the scrutinee struct's
+// fields; the pattern's leading name must be the struct type. A guardless
+// struct-pattern arm (or `_`) makes the match exhaustive.
+func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		return
+	}
+	n.StructMatch = st.Name
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	sawIrrefutable := false
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			} else {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if !arm.NamedFields {
+			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.VariantName != st.Name {
+			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		armScope := newScope(s)
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		seen := map[string]bool{}
+		for k, b := range arm.Bindings {
+			var ft ast.Type
+			found := false
+			for _, f := range sd.Fields {
+				if f.Name == b {
+					ft = f.Type
+					if sub != nil {
+						ft = substituteType(ft, sub)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(arm.P, arm.P, st.Name, b, declared)
+				continue
+			}
+			arm.BindingTypes[k] = ft
+			if seen[b] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
+				continue
+			}
+			seen[b] = true
+			armScope.names[b] = ft
+		}
+		irrefutable := true
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
+	}
+}
+
 // checkLiteralMatchExpr is the expression-form counterpart of
 // checkLiteralMatch. Each arm body is an Expr and the unified
 // arm type is returned as the match-expression's result.
@@ -8799,6 +9302,28 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			litT = c.postSettleType(arm.Literal, litT)
 			if !c.assignable(litT, tagT) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+			}
+		}
+		if arm.RangeHi != nil {
+			// Range pattern `lo..hi`: the low bound is `Literal`, validated
+			// above; the high bound needs the same type + settle. Ranges are
+			// numeric-only — an ordered scalar scrutinee. Unsigned scrutinees
+			// are deferred (the interpreter oracle compares signed), so they
+			// are rejected here to keep native + interp in agreement.
+			tagNum, tagIsNum := tagT.(ast.NumberType)
+			_, tagIsFloat := tagT.(ast.FloatType)
+			if !tagIsNum && !tagIsFloat {
+				c.errfCode(arm.P, "E035", "range patterns require a numeric scrutinee, got %s", tagT)
+			} else if tagIsNum && !tagNum.IsSigned() {
+				c.errfCode(arm.P, "E035", "range patterns are not yet supported on an unsigned scrutinee (%s)", tagT)
+			}
+			hiT := c.checkExpr(arm.RangeHi, s)
+			if hiT != nil {
+				c.settleNumeric(arm.RangeHi, tagT)
+				hiT = c.postSettleType(arm.RangeHi, hiT)
+				if !c.assignable(hiT, tagT) {
+					c.errfCode(arm.P, "E035", "range pattern bound of type %s does not match scrutinee type %s", hiT, tagT)
+				}
 			}
 		}
 		if arm.Guard != nil {
@@ -8923,6 +9448,126 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 	return result
 }
 
+// checkStructMatchExpr is the expression-form counterpart of checkStructMatch:
+// struct-pattern arms bind fields irrefutably, each arm body is an Expr, and
+// the unified arm type is the match-expression's result.
+func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *scope) ast.Type {
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		return nil
+	}
+	n.StructMatch = st.Name
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	sawIrrefutable := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
+		if !ast.Equal(result, armT) {
+			if c.assignable(armT, result) {
+				return
+			}
+			if c.assignable(result, armT) {
+				result = armT
+				return
+			}
+			c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
+		}
+	}
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			} else {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if !arm.NamedFields {
+			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
+			continue
+		}
+		if arm.VariantName != st.Name {
+			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
+			continue
+		}
+		armScope := newScope(s)
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		seen := map[string]bool{}
+		for k, b := range arm.Bindings {
+			var ft ast.Type
+			found := false
+			for _, f := range sd.Fields {
+				if f.Name == b {
+					ft = f.Type
+					if sub != nil {
+						ft = substituteType(ft, sub)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(arm.P, arm.P, st.Name, b, declared)
+				continue
+			}
+			arm.BindingTypes[k] = ft
+			if seen[b] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
+				continue
+			}
+			seen[b] = true
+			armScope.names[b] = ft
+		}
+		irrefutable := true
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
+	}
+	if isFloat(result) {
+		n.IsFloat = true
+	}
+	return result
+}
+
 // checkMatchExpr validates an expression-position `match` and
 // returns the unified arm type. Same scrutinee, payload-binding,
 // guard, and exhaustiveness rules as checkMatch — the difference
@@ -8939,6 +9584,12 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		// Tuple scrutinee: arms are tuple patterns + a wildcard.
 		if tup, isTup := tagT.(ast.TupleType); isTup {
 			return c.checkTupleMatchExpr(n, tup, s)
+		}
+		// Struct scrutinee: arms are struct patterns `S { x, y }` + a wildcard.
+		if st, isStruct := tagT.(ast.StructType); isStruct {
+			if _, known := c.info.Structs[st.Name]; known {
+				return c.checkStructMatchExpr(n, st, s)
+			}
 		}
 		// Non-enum scrutinee: arms are literal patterns + a
 		// wildcard. Delegate to the literal-pattern branch.
@@ -9451,6 +10102,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if nt, ok := inner.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 			switch n.Target.(type) {
 			case ast.ArrayType, ast.StringType, ast.StructType:
+				// A 32-bit-only source (i32 / u32 — NOT usize) reinterpreted as
+				// a pointer-shaped handle is the #5042 truncation footgun: the
+				// high 32 bits of the address were already lost when the value
+				// became i32, so `k as string` / `k as T[]` / `k as Struct`
+				// recovers a corrupt pointer once the heap crosses 4 GiB
+				// (arm64-darwin). A `usize` source carries the full width, so
+				// only the narrow case is flagged. Carry pointer-shaped values
+				// in a `usize` local/param instead.
+				if nt.NormalWidth() == 32 && !nt.IsPointerWidth() {
+					c.errfCode(n.P, "E069", "reinterpreting a 32-bit `%s` value as the pointer-shaped type `%s` via `as` truncates the address: the high 32 bits were lost when the value became `%s`, so this recovers a corrupt pointer once the heap exceeds 4 GiB — carry pointer-shaped values in a `usize` local/param instead", inner, n.Target, inner)
+				}
 				return n.Target
 			}
 		}
@@ -9981,7 +10643,29 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if i >= len(vr.payloads) || at == nil {
 						continue
 					}
-					if !c.unifyType(vr.payloads[i], at, sub) {
+					// Concrete→`dyn Trait` boxing in a variant-payload position.
+					// The dyn boxing-site list (var init / assignment / argument /
+					// array element / return / struct field) omitted the user-enum
+					// variant payload, so `Wrap(Concrete{...})` for a
+					// `Wrap(dyn Trait)` variant reported a spurious E036 even though
+					// the builtin Ok/Some/Err payloads and struct fields accept it.
+					// Record the coercion (so the IR boxes it) and accept it when the
+					// concrete impls every trait in the set — mirroring
+					// assignable()'s / maybeWrapForUnion's dyn branch. A
+					// non-implementing concrete still errors E036.
+					dynPayloadOK := false
+					if dt, ok := substituteType(vr.payloads[i], sub).(ast.DynTraitType); ok {
+						if _, srcDyn := at.(ast.DynTraitType); !srcDyn {
+							if tn, ok2 := methodTypeName(at); ok2 && c.implementsAllDynTraits(dt, tn) {
+								dynPayloadOK = true
+								if c.info.DynCoercions == nil {
+									c.info.DynCoercions = map[ast.Expr]DynCoercion{}
+								}
+								c.info.DynCoercions[a] = DynCoercion{Trait: dt.Trait0(), Traits: dt.Traits, Concrete: tn}
+							}
+						}
+					}
+					if !c.unifyType(vr.payloads[i], at, sub) && !dynPayloadOK {
 						c.errfCode(a.Pos(), "E036", "variant %s payload %d type %s, expected %s",
 							id.Name, i, at, substituteType(vr.payloads[i], sub))
 					}
@@ -10951,9 +11635,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				lambdaParams[tp] = true
 			}
 			for i := range n.Params {
-				c.resolveType(&n.Params[i].Type, lambdaParams)
+				c.resolveType(&n.Params[i].Type, lambdaParams, orPos(n.Params[i].NamePos, n.P))
 			}
-			c.resolveType(&n.ReturnType, lambdaParams)
+			c.resolveType(&n.ReturnType, lambdaParams, n.P)
 		}
 		root := newScope(nil)
 		for _, p := range n.Params {
@@ -11202,7 +11886,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
 			if !present {
-				c.errfCode(n.P, "E043", "struct %s has no field %q", sd.Name, f.Name)
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(n.P, f.NamePos, sd.Name, f.Name, declared)
 				continue
 			}
 			if seen[f.Name] {
@@ -11246,14 +11934,31 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// behaviour. Mutates the real AST slot (Fields are values),
 			// so index rather than the loop copy.
 			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
+			// Concrete→`dyn Trait` boxing in a struct-field position. The
+			// coercion was already recorded by maybeWrapForUnion above, but the
+			// unifyType / ast.Equal checks below don't know the dyn boxing rule
+			// — and assignable()'s boxing-site list (var init / assignment /
+			// argument / array element / return) omitted the struct field, so a
+			// direct `S { d: Concrete{...} }` reported a spurious E043 even
+			// though every other position accepts it (and the self-host checker
+			// already does). Mirror assignable()'s dyn branch here: a concrete
+			// that impls every trait in the set is a valid field value.
+			dynFieldOK := false
+			if dt, ok := fieldExpected.(ast.DynTraitType); ok {
+				if _, srcDyn := vt.(ast.DynTraitType); !srcDyn {
+					if tn, ok2 := methodTypeName(vt); ok2 && c.implementsAllDynTraits(dt, tn) {
+						dynFieldOK = true
+					}
+				}
+			}
 			if sub != nil {
-				if !c.unifyType(expected, vt, sub) {
+				if !c.unifyType(expected, vt, sub) && !dynFieldOK {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, substituteType(expected, sub), vt)
 				}
-			} else if !ast.Equal(vt, expected) {
+			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
 				// concrete widening rules from `unifyIfArms`
 				// — e.g. `struct Node { next: Option[Node] }`
@@ -11433,7 +12138,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return f.Type
 			}
 		}
-		c.errfCode(n.P, "E043", "struct %s has no field %q", st.Name, n.Field)
+		declared := make([]string, 0, len(sd.Fields))
+		for _, df := range sd.Fields {
+			declared = append(declared, df.Name)
+		}
+		// A misspelt METHOD call also lands here (`p.puzh(2)` — method
+		// resolution ran first and missed), so the struct's registered
+		// method names join the near-miss candidates: the fix then
+		// suggests `push` where the field set alone offers nothing.
+		// Sorted so map-iteration order can't flip a distance tie
+		// between runs (diagnostics must be deterministic).
+		prefix := st.Name + "."
+		var methodNames []string
+		for key := range c.info.Methods {
+			if strings.HasPrefix(key, prefix) {
+				methodNames = append(methodNames, key[len(prefix):])
+			}
+		}
+		sort.Strings(methodNames)
+		declared = append(declared, methodNames...)
+		c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
 		return nil
 	}
 	return nil
@@ -11727,9 +12451,9 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 	// hint applies to the inner expression's payload, not
 	// to the TryOp itself. Wrap the hint in the appropriate
 	// enum (Option / Result) so the inner variant-call gets
-	// its payload settled. Without this, `var v: f64 =
-	// Some(3.14)?;` left 3.14 at f32 default and wasm
-	// rejected the f64 destination load.
+	// its payload settled. Without this, `var v: f32 =
+	// Some(3.14)?;` left 3.14 unsettled (defaulting to f64)
+	// and wasm rejected the f32 destination load.
 	if to, ok := e.(*ast.TryOp); ok {
 		switch to.Kind {
 		case ast.TryKindOption:

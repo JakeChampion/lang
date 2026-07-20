@@ -1,0 +1,63 @@
+import "std/test";
+import "std/u32" as u32m;
+// examples/tests/u32_roots_test.fern — pure-Fern coverage of std/u32's
+// sqrt_floor / is_power_of_2 / next_power_of_2 / log2_floor: unsigned root and
+// power helpers, the u32 mirror of the u64 set. sqrt_floor is exact up to
+// (2^16-1)^2, the power helpers reach 2^31, and log2_floor spans 0..31. The
+// Go-side TestU32Roots pins these across all four NATIVE backends; this is the
+// migration-shaped companion. Both interp- AND self-host-gated (x86-64 / arm64 /
+// wasm IR). Formerly interp-only: the u32 root/power methods dispatched to their
+// SIGNED std/i32 namesakes (irlower's expr_recv_prim_type lacked a u32 branch,
+// so a u32 receiver keyed "i32.<method>"), so next_power_of_2 ran the signed
+// version whose `p < n` compare goes negative past 2^31 and spun forever, and
+// sqrt_floor / is_power_of_2 / log2_floor used signed arithmetic near the
+// boundary. Fixed in expr_recv_prim_type — all now match the interpreter.
+
+function test_sqrt_floor(): test.TestOutcome {
+    if ((100 as u32).sqrt_floor() != (10 as u32)) { return test.fail("sqrt 100"); }
+    if ((99 as u32).sqrt_floor() != (9 as u32)) { return test.fail("sqrt 99"); }
+    return test.assert_true((0 as u32).sqrt_floor() == (0 as u32));
+}
+
+function test_sqrt_floor_large(): test.TestOutcome {
+    // (2^16 - 1)^2 = 4294836225; its floor-sqrt is 2^16 - 1 = 65535.
+    return test.assert_true((4294836225 as u32).sqrt_floor() == (65535 as u32));
+}
+
+function test_is_power_of_2(): test.TestOutcome {
+    if (!(2147483648 as u32).is_power_of_2()) { return test.fail("2^31"); }
+    if ((6 as u32).is_power_of_2()) { return test.fail("6"); }
+    if ((0 as u32).is_power_of_2()) { return test.fail("0"); }
+    return test.assert_true((1 as u32).is_power_of_2());
+}
+
+function test_next_power_of_2(): test.TestOutcome {
+    if ((5 as u32).next_power_of_2() != (8 as u32)) { return test.fail("5 -> 8"); }
+    if ((16 as u32).next_power_of_2() != (16 as u32)) { return test.fail("16 -> 16"); }
+    return test.assert_true((1 as u32).next_power_of_2() == (1 as u32));
+}
+
+function test_next_power_of_2_cap(): test.TestOutcome {
+    // 2^31 is the largest representable power; above it returns 0.
+    if ((2147483648 as u32).next_power_of_2() != (2147483648 as u32)) {
+        return test.fail("2^31 unchanged");
+    }
+    return test.assert_true(((2147483648 as u32) + (1 as u32)).next_power_of_2() == (0 as u32));
+}
+
+function test_log2_floor(): test.TestOutcome {
+    if ((2147483648 as u32).log2_floor() != 31) { return test.fail("2^31 -> 31"); }
+    if ((1 as u32).log2_floor() != 0) { return test.fail("1 -> 0"); }
+    return test.assert_true((0 as u32).log2_floor() == (0 - 1));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/u32 roots");
+    r = r.it("sqrt_floor",          test_sqrt_floor());
+    r = r.it("sqrt_floor large",    test_sqrt_floor_large());
+    r = r.it("is_power_of_2",       test_is_power_of_2());
+    r = r.it("next_power_of_2",     test_next_power_of_2());
+    r = r.it("next_power_of_2 cap", test_next_power_of_2_cap());
+    r = r.it("log2_floor",          test_log2_floor());
+    return r.finish();
+}

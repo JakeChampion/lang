@@ -20,18 +20,33 @@
 //  1. Linear arithmetic / comparison folding: a window of
 //     `OpConstI32 a; OpConstI32 b; <binop>` collapses to
 //     `OpConstI32 (a OP b)`; `OpConstI32 a; OpNot` collapses to
-//     `OpConstI32 (a == 0 ? 1 : 0)`.
+//     `OpConstI32 (a == 0 ? 1 : 0)`. A constant separated from a second
+//     constant by an associative op (`x + 1 + 2`, `(m & 12) & 10`)
+//     reassociates so the two constants fold: `(x OP c1) OP c2` becomes
+//     `x OP (c1 OP c2)`.
 //  2. Constant-if pruning: if an OpIf is preceded by a constant
 //     condition, the entire `OpIf … OpElse … OpEnd` block is replaced
-//     with the surviving arm's ops.
+//     with the surviving arm's ops. The same decision applies to a
+//     constant-conditioned OpBrIf (the loop / break / continue shape):
+//     a nonzero condition becomes an unconditional OpBr, a zero one
+//     drops both ops.
 //
-// Division and remainder are deliberately skipped: folding `1 / 0` at
-// compile time would silently swallow a runtime trap. Floats stay
+// Division and remainder ARE folded when the divisor is a nonzero
+// constant — inlining a small `n / K` / `n % K` helper at a constant
+// call site is the common way these reach the IR. The edge shapes are
+// left in place and handled by the runtime: a zero divisor (Fern
+// defines `x / 0 == 0`, `x % 0 == x` via guarded div/rem helpers) and
+// the signed overflow `INT_MIN / -1` (backend-specific). Folding these
+// would duplicate — and risk drifting from — that runtime contract, so
+// they stay as the runtime op; `INT_MIN % -1` is the one exception (it
+// is unambiguously 0 on every backend, so it folds). Floats stay
 // untouched too — the AST optimiser handles them and there's no
-// portable way to round-trip every f32 bit-pattern through the
-// IR's float ops without surprising the user.
+// portable way to round-trip every f32 bit-pattern through the IR's
+// float ops without surprising the user.
 
 package ir
+
+import "math"
 
 // Fold rewrites every function in prog to its constant-folded form.
 // Iterates each function to a fixed point (constant arithmetic can
@@ -69,6 +84,25 @@ func foldOnce(ops []Op) []Op {
 				continue
 			}
 		}
+		// Constant-conditioned br_if: `OpConstI32 c; OpBrIf N`. When the
+		// condition is a compile-time constant the branch is decided —
+		// a nonzero c always branches (→ unconditional OpBr N, dropping
+		// the const), a zero c never branches (→ drop both ops, falling
+		// through). The sibling of the constant-if pruning above, for the
+		// loop / break / continue shape: `while (i < 3)` lowers the exit
+		// test to `<cond> ; OpNot ; OpBrIf breakD`, so a constant cond
+		// (`while (true)`, an inlined predicate, a constprop'd loop guard)
+		// leaves a constant feeding the br_if once `const ; OpNot` folds.
+		// br_if pops its i32 condition on both paths, so removing the
+		// const-push with it keeps the operand stack balanced whatever the
+		// target block's result type is.
+		if i+1 < len(ops) && ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpBrIf {
+			if ops[i].I32 != 0 {
+				out = append(out, Op{Kind: OpBr, I32: ops[i+1].I32, Pos: ops[i+1].Pos})
+			}
+			i++ // consume the OpBrIf; the const is dropped either way
+			continue
+		}
 		// Binary fold (i32): OpConstI32 a; OpConstI32 b; <binop>.
 		if i+2 < len(ops) &&
 			ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpConstI32 &&
@@ -95,6 +129,38 @@ func foldOnce(ops []Op) []Op {
 					out = append(out, Op{Kind: OpConstI64, I64: res, Pos: ops[i+2].Pos})
 				}
 				i += 2
+				continue
+			}
+		}
+		// Constant reassociation across a non-constant operand:
+		//   <x> ; const c1 ; OP ; const c2 ; OP
+		//     →  <x> ; const (c1 OP c2) ; OP
+		// for an associative OP (add / mul / and / or / xor) at matching
+		// width. `(x OP c1) OP c2 == x OP (c1 OP c2)` in fixed-width
+		// wrapping integer arithmetic, so chained constant offsets / masks
+		// — `a + 1 + 2`, `(m & 12) & 10` — collapse to a single op even
+		// though the two constants are separated by the first OP (the plain
+		// binary fold above only fires on two ADJACENT constants). Shifts
+		// are excluded: the runtime masks the shift count to the operand
+		// width, so combining `<< a` then `<< b` into `<< (a+b)` would
+		// diverge once a+b reaches the width.
+		if i+3 < len(ops) &&
+			ops[i].Kind == OpConstI32 && ops[i+2].Kind == OpConstI32 &&
+			isReassocBinary(ops[i+1].Kind) && sameWidthBinary(ops[i+1], ops[i+3]) {
+			if res, ok := foldBinary(ops[i+1].Kind, ops[i+1].Unsigned, ops[i].I32, ops[i+2].I32); ok {
+				out = append(out, Op{Kind: OpConstI32, I32: res, Pos: ops[i+2].Pos})
+				out = append(out, ops[i+1]) // the single surviving OP
+				i += 3                      // consumed: const, OP, const (the trailing OP is the one emitted)
+				continue
+			}
+		}
+		if i+3 < len(ops) &&
+			ops[i].Kind == OpConstI64 && ops[i+2].Kind == OpConstI64 &&
+			isReassocBinary(ops[i+1].Kind) && sameWidthBinary(ops[i+1], ops[i+3]) {
+			if res, _, ok := foldBinary64(ops[i+1].Kind, ops[i+1].Unsigned, ops[i].I64, ops[i+2].I64); ok {
+				out = append(out, Op{Kind: OpConstI64, I64: res, Pos: ops[i+2].Pos})
+				out = append(out, ops[i+1])
+				i += 3
 				continue
 			}
 		}
@@ -280,13 +346,15 @@ func isFoldableConst(k OpKind) bool {
 
 // isFoldableBinary reports whether a binary op produces a deterministic
 // result from two constant inputs of matching width. Division and
-// remainder are excluded because folding them would hide compile-
-// time-detectable runtime traps (zero divisor) and silently change
-// the program's observable behaviour. The Unsigned flag on the op
-// is honoured by foldBinary / foldBinary64.
+// remainder are included, but foldBinary / foldBinary64 bail (ok=false)
+// on the operand pairs whose result the runtime defines specially
+// (zero divisor, signed INT_MIN/-1 div) so those ops stay put and the
+// runtime helper owns the answer. The Unsigned flag on the op is
+// honoured by foldBinary / foldBinary64.
 func isFoldableBinary(k OpKind) bool {
 	switch k {
 	case OpAdd, OpSub, OpMul,
+		OpDivS, OpRemS,
 		OpAnd, OpOr, OpXor,
 		OpShl, OpShrS,
 		OpEq, OpNe,
@@ -296,14 +364,37 @@ func isFoldableBinary(k OpKind) bool {
 	return false
 }
 
+// isReassocBinary reports whether k is an integer op that is
+// associative in fixed-width wrapping arithmetic, so a chain of two
+// with a constant on the outer side of each can combine its constants:
+// `(x OP c1) OP c2 == x OP (c1 OP c2)`. Add / mul / and / or / xor
+// qualify; sub is not associative in this shape, and shifts are excluded
+// because the runtime masks the shift count to the operand width.
+func isReassocBinary(k OpKind) bool {
+	switch k {
+	case OpAdd, OpMul, OpAnd, OpOr, OpXor:
+		return true
+	}
+	return false
+}
+
+// sameWidthBinary reports whether two ops are the same binary op at the
+// same width — the guard for combining an associative constant chain
+// (the two OPs must be identical for the reassociation to hold). The
+// Unsigned flag is not compared: for the reassociable ops the result is
+// bit-identical regardless of signedness.
+func sameWidthBinary(a, b Op) bool {
+	return a.Kind == b.Kind && a.Width == b.Width
+}
+
 // foldBinary computes the result of a fold-eligible binary op on two
 // i32 constants. Shifts mask the count to 0..31 to match the wasm /
 // arm semantics that codegen uses for runtime shifts. The unsigned
 // flag flips OpShrS to a logical right shift and the order-comparison
 // ops to their unsigned variants; signedness-agnostic ops (add, sub,
-// mul, and/or/xor, eq, ne) ignore it. The bool result is reserved for
-// ops that might bail out (none currently — DivS / RemS are excluded
-// above).
+// mul, and/or/xor, eq, ne) ignore it. The bool result is false for the
+// DivS / RemS operand pairs that trap at runtime (zero divisor, signed
+// INT_MIN/-1), so the op is left unfolded and the trap survives.
 func foldBinary(k OpKind, unsigned bool, a, b int32) (int32, bool) {
 	switch k {
 	case OpAdd:
@@ -312,6 +403,28 @@ func foldBinary(k OpKind, unsigned bool, a, b int32) (int32, bool) {
 		return a - b, true
 	case OpMul:
 		return a * b, true
+	case OpDivS:
+		if b == 0 {
+			return 0, false // x / 0 == 0 is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int32(uint32(a) / uint32(b)), true
+		}
+		if a == math.MinInt32 && b == -1 {
+			return 0, false // INT_MIN / -1 is backend-specific — leave the op
+		}
+		return a / b, true
+	case OpRemS:
+		if b == 0 {
+			return 0, false // x % 0 == x is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int32(uint32(a) % uint32(b)), true
+		}
+		if a == math.MinInt32 && b == -1 {
+			return 0, true // INT_MIN % -1 == 0, no trap
+		}
+		return a % b, true
 	case OpAnd:
 		return a & b, true
 	case OpOr:
@@ -395,6 +508,28 @@ func foldBinary64(k OpKind, unsigned bool, a, b int64) (int64, bool, bool) {
 		return a - b, false, true
 	case OpMul:
 		return a * b, false, true
+	case OpDivS:
+		if b == 0 {
+			return 0, false, false // x / 0 == 0 is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int64(uint64(a) / uint64(b)), false, true
+		}
+		if a == math.MinInt64 && b == -1 {
+			return 0, false, false // INT_MIN / -1 is backend-specific — leave the op
+		}
+		return a / b, false, true
+	case OpRemS:
+		if b == 0 {
+			return 0, false, false // x % 0 == x is a runtime helper — leave the op
+		}
+		if unsigned {
+			return int64(uint64(a) % uint64(b)), false, true
+		}
+		if a == math.MinInt64 && b == -1 {
+			return 0, false, true // INT_MIN % -1 == 0, no trap
+		}
+		return a % b, false, true
 	case OpAnd:
 		return a & b, false, true
 	case OpOr:
@@ -496,8 +631,8 @@ func opEqual(a, b Op) bool {
 	if a.Kind != b.Kind || a.I32 != b.I32 || a.I64 != b.I64 ||
 		a.F32 != b.F32 || a.F64 != b.F64 || a.Width != b.Width ||
 		a.Unsigned != b.Unsigned || a.Str != b.Str ||
-		a.Sig != b.Sig || a.Pos != b.Pos {
+		a.Sig() != b.Sig() || a.Str2() != b.Str2() || a.Pos != b.Pos {
 		return false
 	}
-	return len(a.ArgTypes) == len(b.ArgTypes)
+	return len(a.ArgTypes()) == len(b.ArgTypes())
 }

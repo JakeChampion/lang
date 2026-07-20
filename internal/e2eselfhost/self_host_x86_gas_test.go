@@ -118,6 +118,18 @@ func TestSelfHostX86GasByteRegRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasbytereg42", x86GasByteRegDriverMain, 42)
 }
 
+// TestSelfHostX86GasRuntimeOpsRuns exercises the mnemonics asm.fern's
+// mmap-era alloc/RC runtime emits that the front-end grew for #4801:
+// unsuffixed movabs, shrq, btq + jc (the RC sentinel-bit test), incl
+// sym(%rip) + movl sym(%rip) (the rc-underflow counter), movl $imm →
+// mem (refcount zeroing), and store-form cmpq %reg, mem (the array-push
+// capacity check). Before, unknown mnemonics were silently dropped and
+// the two mis-dispatched forms encoded a WRONG instruction — the
+// assembled runtime then died in __fern_alloc's exit-137 bounds trap.
+func TestSelfHostX86GasRuntimeOpsRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasruntimeops42", x86GasRuntimeOpsDriverMain, 42)
+}
+
 // runX86GasNativeDriver concatenates x86_encode.fern + x86_gas.fern +
 // elf.fern + driverMain, compiles it through the self-host wasm emitter,
 // runs the WAT under wasmtime to get the raw ELF the driver assembled and
@@ -221,6 +233,15 @@ function main(): i32 {
     if (!mi2.has_index || mi2.base != 4 || mi2.index != 1 || mi2.scale != 8 || mi2.disp != 8) { return 12; }
     // 8-bit register parsing (slice 2k):
     if (x86_gas_reg8("%al") != 0 || x86_gas_reg8("%dl") != 2 || x86_gas_reg8("%r8b") != 8) { return 13; }
+    // SH-005: an unsupported mnemonic is RECORDED, not silently dropped —
+    // one-operand-shaped, two-operand-shaped, and the cmpb non-imm form.
+    if (a.unknown.len() != 0) { return 14; }
+    var u1: X86Asm = x86_gas_assemble("\tfrobnicate %rax\n");
+    if (u1.unknown.len() != 1) { return 15; }
+    var u2: X86Asm = x86_gas_assemble("\tpaddq %xmm0, %xmm1\n");
+    if (u2.unknown.len() != 1) { return 16; }
+    var u3: X86Asm = x86_gas_assemble("\tcmpb %al, %bl\n");
+    if (u3.unknown.len() != 1) { return 17; }
     if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
     // xmm parsing + float literal parsing (slice 2n):
     if (x86_gas_xmm("%xmm0") != 0 || x86_gas_xmm("%xmm12") != 12) { return 15; }
@@ -264,6 +285,7 @@ const x86GasLoopDriverMain = `
 function main(): i32 {
     var src: string = ".text\n.globl _start\n_start:\n\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes(bin));
     return 0;
@@ -276,6 +298,7 @@ const x86GasRodataDriverMain = `
 function main(): i32 {
     var src: string = ".text\n_start:\n\tleaq answer(%rip), %rax\n\tmovq (%rax), %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nanswer:\n\t.quad 42\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes(bin));
     return 0;
@@ -287,6 +310,7 @@ const x86GasMulDriverMain = `
 function main(): i32 {
     var src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
@@ -297,6 +321,7 @@ const x86GasIncShlDriverMain = `
 function main(): i32 {
     var src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
@@ -307,6 +332,7 @@ const x86GasDivDriverMain = `
 function main(): i32 {
     var src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
@@ -317,7 +343,24 @@ const x86GasExtRegDriverMain = `
 function main(): i32 {
     var src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasRuntimeOpsDriverMain: the #4801 runtime-mnemonic battery. rcx =
+// (1<<34) >> 30 = 16 (movabs + shrq); btq $4 sets CF (bit 4 of 16) so jc
+// takes the good path; counter(%rip) is incl'd twice and movl-loaded
+// (eax=2); movl $24 lands in a movq-zeroed stack slot and reloads as 24;
+// 24 + 2 + 16 = 42; store-form cmpq (24 vs 16) makes ja skip the
+// failure overwrite. Any dropped/mis-encoded instruction exits != 42.
+const x86GasRuntimeOpsDriverMain = `
+function main(): i32 {
+    var src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    var entry: i32 = x86_label_off(a, "_start");
+    write(string_from_bytes(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
     return 0;
 }
 `
@@ -327,6 +370,7 @@ const x86GasExtMemDriverMain = `
 function main(): i32 {
     var src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
@@ -337,6 +381,7 @@ const x86GasIndexDriverMain = `
 function main(): i32 {
     var src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
@@ -347,6 +392,7 @@ const x86GasByteImmDriverMain = `
 function main(): i32 {
     var src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
@@ -357,6 +403,7 @@ const x86GasByteRegDriverMain = `
 function main(): i32 {
     var src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }

@@ -51,10 +51,13 @@ func TestSelfHostClockIRX86_64(t *testing.T) {
 			if strings.TrimSpace(string(probe)) != "ir" {
 				t.Fatalf("%s: path probe = %q, want \"ir\" (clock builtin bailed the module to the AST path)", tc.name, probe)
 			}
-			// (b) compile + run through the IR-default driver.
+			// (b) compile + run through the IR-default driver. The x86-64 IR
+			// path hosts the clock helpers as Fern runtime functions (#2649),
+			// so the op handler calls the stack-ABI __fn_-prefixed symbol
+			// (wasm/arm64 keep the register-ABI __fern_<clock> — not migrated).
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call "+tc.helper)) {
-				t.Fatalf("%s: emitted asm has no `call %s`", tc.name, tc.helper)
+			if !bytes.Contains(asm, []byte("call __fn_"+tc.helper)) {
+				t.Fatalf("%s: emitted asm has no `call __fn_%s`", tc.name, tc.helper)
 			}
 			progBin := buildBin(t, gcc, dir, "clk_"+tc.name, string(asm))
 			var cmd *exec.Cmd

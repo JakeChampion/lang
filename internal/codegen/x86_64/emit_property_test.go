@@ -264,3 +264,16 @@ function main(): i32 {
 		}
 	}
 }
+
+// TestStrSliceSignExtendsBounds pins the #5294 fix: __str_slice must
+// sign-extend its i32 low/high bounds from their low 32 bits (movsxd)
+// before the 64-bit bounds compares. A negative i32 constant materialises
+// zero-extended (mov eax, N → high bits 0), so without the extension a
+// bound like `len + (-2)` reaches the compares as 0x1_0000_0003 and the
+// slice reads out of bounds instead of trapping cleanly.
+func TestStrSliceSignExtendsBounds(t *testing.T) {
+	asm := compile(t, `function main(): i32 { var s: string = "hello"; var sub: str = s[0:2]; return sub.len(); }`)
+	if !strings.Contains(asm, "movsxd r12, esi") || !strings.Contains(asm, "movsxd r13, edx") {
+		t.Fatalf("__str_slice does not sign-extend its i32 bounds (want movsxd r12, esi / movsxd r13, edx)")
+	}
+}

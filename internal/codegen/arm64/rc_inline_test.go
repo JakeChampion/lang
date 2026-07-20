@@ -56,3 +56,35 @@ function main(): i32 { return h(P { xs: [7, 8] }); }`, Options{})
 		}
 	}
 }
+
+// TestRcOpsFallBackToCallInLargeFn pins the opt-2b fall-back: a function
+// whose IR-op count exceeds rcInlineMaxOps drops the inline sequence and
+// calls the (behaviour-identical) runtime helper instead. On arm64 this is
+// load-bearing — inlining the ~1.66M rc ops of the self-host compiler's
+// lowering monster (irlower__lower_expr) pushes its body past aarch64's
+// ±128 MB unconditional-branch reach and the epilogue `b .Lret_…` jumps
+// overflow ("branch out of range"). The threshold is lowered here so a tiny
+// function trips it; production keeps the 1M default.
+func TestRcOpsFallBackToCallInLargeFn(t *testing.T) {
+	saved := rcInlineMaxOps
+	rcInlineMaxOps = 0 // any function with rc ops now exceeds the ceiling
+	defer func() { rcInlineMaxOps = saved }()
+
+	// Same retain shape as TestRcIncInlinesAtSite; with the ceiling at 0, g's
+	// rc inc must lower to the `bl` call form, not the inline RMW.
+	asm := compile(t, `function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
+function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`, Options{})
+	body := fnBody(t, asm, "g")
+	if !strings.Contains(body, "bl __fern_rc_inc") {
+		t.Errorf("over-threshold function must call the rc helper, not inline it, in g:\n%s", body)
+	}
+	// The inline-only marker must be absent from g's body — the below-heap
+	// base materialise is unique to the inline sequence.
+	if strings.Contains(body, "lsl x1, x1, #28") {
+		t.Errorf("over-threshold function must not emit the inline rc guard in g:\n%s", body)
+	}
+	// The helper is still defined (it always is when any rc op is present).
+	if !strings.Contains(asm, "__fern_rc_inc:") {
+		t.Errorf("runtime helper __fern_rc_inc must still be emitted")
+	}
+}

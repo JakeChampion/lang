@@ -169,7 +169,28 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.append(v.name); },
+        parser.StmtVar(v) => {
+            // A tuple-destructure `var (a, b) = t` is encoded comma-joined
+            // ("a,b"); split so each bound name is recognised as an enclosing
+            // local — else a lambda capturing one declines the closure lift
+            // (lambda_captures' encl gate) and the module miscompiles on the
+            // AST path (#5173). A plain name (no comma) appends unchanged.
+            var has_comma: boolean = false;
+            var vci: i32 = 0;
+            while (vci < v.name.len()) { if (v.name[vci] == 44) { has_comma = true; } vci = vci + 1; }
+            if (!has_comma) { return acc.append(v.name); }
+            var start: i32 = 0;
+            var ci2: i32 = 0;
+            while (ci2 <= v.name.len()) {
+                if (ci2 == v.name.len() || v.name[ci2] == 44) {
+                    var piece: string = v.name[start : ci2] + "";
+                    if (piece.len() > 0) { acc = acc.append(piece); }
+                    start = ci2 + 1;
+                }
+                ci2 = ci2 + 1;
+            }
+            return acc;
+        },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
@@ -200,6 +221,23 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
                 match (m.arms[ai].pattern) {
                     parser.PatVariant(pv) => {
                         if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
+                        // Multi-payload variants (`Tag(a, b)`) bind every extra
+                        // payload too — collecting only the main binding left an
+                        // extra binding invisible as an enclosing local, so a
+                        // lambda capturing it (lambda_captures' encl gate)
+                        // declined the lift and the module fell to the
+                        // miscompiling AST path (#5155).
+                        var ebi: i32 = 0;
+                        while (ebi < pv.extra_bindings.len()) {
+                            // Bind the element to a typed local before .len() /
+                            // .append — a direct `pv.extra_bindings[ebi].len()`
+                            // mis-dispatched the string element as i32 (an
+                            // undefined `__fn_i32__len` at single-module link),
+                            // the idiom irlower.fern uses for the same field.
+                            var ebn: string = pv.extra_bindings[ebi];
+                            if (ebn.len() > 0) { acc = acc.append(ebn); }
+                            ebi = ebi + 1;
+                        }
                     },
                     parser.PatWildcard(_) => { }
                 }

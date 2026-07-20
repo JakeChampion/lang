@@ -593,13 +593,33 @@ type Op struct {
 	// Str carries OpConstStr's string value and OpCallDirect's callee
 	// name. For OpConstVtable it carries the Trait name. Empty otherwise.
 	Str string
-	// Str2 carries OpConstVtable's Concrete type name (Str holds the
-	// Trait); together they key the (Trait, Concrete) vtable. Empty
-	// for every other op.
+	// Pos points back at the source position the lowering pass was
+	// processing when this op was emitted. Backends use it to drive
+	// DWARF .loc / WASM debug-line info; the field is zero for ops
+	// the lowering pass synthesised without an obvious source span
+	// (e.g. trailing implicit returns).
+	Pos ast.Position
+	// Ext holds the RARELY-populated payload fields (Str2 / Sig /
+	// ArgTypes / CaptureSlots — see OpExt). On a driver-scale program
+	// under 1% of ops carry any of them, but as inline fields they cost
+	// every op 64 bytes: at ~12.5M ops for a self-host driver that was
+	// ~800 MB of live heap right at the emit's memory peak. Nil for the
+	// overwhelming majority of ops; read through the accessor methods
+	// (Str2() / Sig() / ArgTypes() / CaptureSlots()), which are
+	// nil-safe. The Ext block is written once at construction and never
+	// mutated afterwards, so sharing a pointer across op copies is safe.
+	Ext *OpExt
+}
+
+// OpExt is Op's side-table for rarely-populated fields — see Op.Ext.
+type OpExt struct {
+	// Str2 carries OpConstVtable's Concrete type name (Op.Str holds the
+	// Trait); together they key the (Trait, Concrete) vtable.
 	Str2 string
-	// Sig is set on OpCallIndirect to the static signature of the
-	// function-typed local being dispatched through. Codegen uses it
-	// to resolve the right `(type $tN)` clause in the WAT output.
+	// Sig is set on OpCallIndirect / OpCallDyn to the static signature
+	// of the function-typed local being dispatched through. Codegen uses
+	// it to resolve the right `(type $tN)` clause in the WAT output and
+	// the register classes on the natives.
 	Sig *ast.FuncType
 	// ArgTypes is set on OpCallDirect / OpCallDirectPair to the
 	// static parameter types of the callee, in the same order the
@@ -612,12 +632,6 @@ type Op struct {
 	// Nil is allowed for callees that take no string args — the
 	// backend then treats every arg as 1 slot.
 	ArgTypes []ast.Type
-	// Pos points back at the source position the lowering pass was
-	// processing when this op was emitted. Backends use it to drive
-	// DWARF .loc / WASM debug-line info; the field is zero for ops
-	// the lowering pass synthesised without an obvious source span
-	// (e.g. trailing implicit returns).
-	Pos ast.Position
 	// CaptureSlots is set on OpMakeClosure / OpMakeEnv to the per-capture
 	// env-block slot size in bytes (irCaptureSlotSize of each capture's
 	// type, in capture order) — the packed layout the CaptureRef loads
@@ -627,6 +641,39 @@ type Op struct {
 	// means "one 8-byte slot per capture" (the legacy uniform layout that
 	// hand-built SSA closures assume).
 	CaptureSlots []int32
+}
+
+// Str2 returns Ext.Str2, or "" when the op carries no Ext block.
+func (o *Op) Str2() string {
+	if o.Ext == nil {
+		return ""
+	}
+	return o.Ext.Str2
+}
+
+// Sig returns Ext.Sig, or nil when the op carries no Ext block.
+func (o *Op) Sig() *ast.FuncType {
+	if o.Ext == nil {
+		return nil
+	}
+	return o.Ext.Sig
+}
+
+// ArgTypes returns Ext.ArgTypes, or nil when the op carries no Ext block.
+func (o *Op) ArgTypes() []ast.Type {
+	if o.Ext == nil {
+		return nil
+	}
+	return o.Ext.ArgTypes
+}
+
+// CaptureSlots returns Ext.CaptureSlots, or nil when the op carries no
+// Ext block.
+func (o *Op) CaptureSlots() []int32 {
+	if o.Ext == nil {
+		return nil
+	}
+	return o.Ext.CaptureSlots
 }
 
 // Func is a single lowered function: parameter / local list, ops, and
@@ -649,6 +696,9 @@ type Func struct {
 	// functions. Used by codegen to size the env block + decide
 	// per-capture stride (i32 / i64 / 2-word string ABI).
 	Captures []ast.Param
+	// InlineHint carries the source-level `@inline` / `@noinline`
+	// attribute through to the Inline pass (#4412 Rec §14).
+	InlineHint ast.InlineHint
 }
 
 // ExternFunc is a body-less function bound to a WASM-component import via an
@@ -1601,7 +1651,7 @@ func formatOp(op Op) string {
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
 	case OpConstVtable:
-		return fmt.Sprintf("%s %s/%s", op.Kind, op.Str, op.Str2)
+		return fmt.Sprintf("%s %s/%s", op.Kind, op.Str, op.Str2())
 	case OpCallDyn:
 		return fmt.Sprintf("%s slot=%d", op.Kind, op.I32)
 	case OpMakeClosure, OpMakeEnv:
@@ -2257,10 +2307,10 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 			callArgTypes = append(callArgTypes, concreteType)
 			callArgTypes = append(callArgTypes, argTypes...)
 			emit(Op{
-				Kind:     OpCallDirect,
-				Str:      realImplMethodName(info, vt.Concrete, vm.Method),
-				I32:      int32(1 + len(argTypes)),
-				ArgTypes: callArgTypes,
+				Kind: OpCallDirect,
+				Str:  realImplMethodName(info, vt.Concrete, vm.Method),
+				I32:  int32(1 + len(argTypes)),
+				Ext:  &OpExt{ArgTypes: callArgTypes},
 			})
 			if tm.Result == nil {
 				emit(Op{Kind: OpReturnVoid})
@@ -2409,7 +2459,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			emit(Op{Kind: OpLoadLocal, I32: 1}) // data
 			emit(Op{Kind: OpLoadLocal, I32: 2}) // vtable
-			emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+			emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Ext: &OpExt{Sig: dropSig}})
 			emit(Op{Kind: OpDrop}) // discard the ptr the dtor returns
 			emit(Op{Kind: OpEnd})
 			// __free(cell, 2*ptrW) — reclaim the box cell itself. __free is
@@ -2438,7 +2488,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 		emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 		emit(Op{Kind: OpLoadLocal, I32: 0}) // data
 		emit(Op{Kind: OpLoadLocal, I32: 1}) // vtable
-		emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+		emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Ext: &OpExt{Sig: dropSig}})
 		emit(Op{Kind: OpDrop}) // discard the box ptr the dtor returns
 		emit(Op{Kind: OpEnd})
 		emit(Op{Kind: OpReturnVoid})
@@ -2580,7 +2630,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// shadowrename (names are unique, so a closure's reference to a boxed name
 	// is unambiguous) and before closureconv (which then captures the cell
 	// pointer by reference). No-op for functions without such a capture.
-	closureconv.BoxMutatedScalarCaptures(prog, info)
+	closureconv.BoxMutatedCaptures(prog, info)
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
@@ -2628,6 +2678,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// owned-by-default params are kept borrowed.
 	paramEscapes := inferParamEscapes(prog, info)
 	readOnlyComparators := computeReadOnlyComparators(info)
+	// #4873: per-function param positions whose buffers the callee may grow
+	// in place — drives the caller-side containment bracket in callBody.
+	growParams := computeGrowParams(prog, info)
 	for _, fn := range prog.Funcs {
 		// Body-less `@import` functions are extern WASM-component imports, not
 		// defined functions: record their signature in out.Externs and skip
@@ -2682,7 +2735,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, readOnlyComparators)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, readOnlyComparators, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -3404,9 +3457,99 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
+	// COW self-reassign carve-out (#4357's map-intermediate leak): a
+	// `m = m.set(..)` / `m = m.insert(..)` / `m = m.cleared()` / `a =
+	// a.with(..)` statement — the isSelfMapMutation shape, receiver
+	// occurring EXACTLY once in the RHS — does not end the local's
+	// freshness. The cow mutator returns either the SAME handle (rc==1
+	// in-place) or a fresh copy of it, so by induction a handle that
+	// started fresh (the init check below) stays param-free through any
+	// number of such rebinds.
+	//
+	// What the mutation STORES matters too: Map_set moves keys/values in
+	// UNCOUNTED (the escape-taint model), and the fresh-credit reclaim
+	// (emitMapSlotDrop) deep-frees the value column and string keys —
+	// so a param-derived store would be freed out from under the caller.
+	// Hence every NON-receiver argument must itself be escape-free
+	// against the declared key/value/element slot type (scalar slots
+	// pass trivially — the diagnosed `Map[i32, i32]` builder shape;
+	// `m.insert(k, param_array)` correctly disqualifies). An array
+	// `.with` element is additionally inc'd at the store
+	// (emitArraySet's needsRcIncOnAlias) so its deep walk balances, but
+	// the same escape-free requirement is applied uniformly — simpler
+	// and strictly conservative. An unannotated declaration (no slot
+	// types to check against) rejects the carve-out.
+	//
+	// Cow-assigns to a PARAM can't be admitted here structurally —
+	// params aren't Var decls, so they never enter the candidate set,
+	// and `mk(m: Map..) { m = m.insert(..); return m; }` (whose rc==1
+	// in-place path would hand back the CALLER's handle) stays
+	// unproven. Keyed by node identity so any OTHER occurrence of the
+	// name still taints.
+	cowArgSlots := func(calleeName string, declared ast.Type, nargs int) ([]ast.Type, bool) {
+		switch calleeName {
+		case "__method_Map_clear":
+			return nil, nargs == 1 // receiver only
+		case "__method_Map_set":
+			st, ok := declared.(ast.StructType)
+			if !ok || st.Name != "Map" || len(st.Args) != 2 || nargs != 3 {
+				return nil, false
+			}
+			return []ast.Type{st.Args[0], st.Args[1]}, true // key, value
+		case "__method_Array_set":
+			at, ok := declared.(ast.ArrayType)
+			if !ok || nargs != 3 {
+				return nil, false
+			}
+			return []ast.Type{ast.NumberType{}, at.Elem}, true // index, element
+		}
+		return nil, false
+	}
+	cowUse := map[*ast.Ident]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		asn, ok := n.(*ast.Assign)
+		if !ok {
+			return true
+		}
+		tid, ok := asn.Target.(*ast.Ident)
+		if !ok || !isSelfMapMutation(asn.Value, tid.Name) {
+			return true
+		}
+		decl, isDecl := decls[tid.Name]
+		if !isDecl || decl.Type == nil {
+			return true
+		}
+		call := asn.Value.(*ast.Call)
+		callee := call.Callee.(*ast.Ident)
+		slots, ok := cowArgSlots(callee.Name, decl.Type, len(call.Args))
+		if !ok {
+			return true
+		}
+		for i, slot := range slots {
+			// Args[0] is the receiver; slots align with Args[1:]. No
+			// freshLocals set is passed (empty map) — an argument that is
+			// itself a fresh local is conservatively rejected rather than
+			// entangling this collection with the fixpoint below.
+			if !exprNoParamEscape(call.Args[i+1], slot, info, variantPayloads, q, nil) {
+				return true
+			}
+		}
+		var occurrences []*ast.Ident
+		ast.Walk(asn.Value, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == tid.Name {
+				occurrences = append(occurrences, id)
+			}
+			return true
+		})
+		if len(occurrences) == 1 {
+			cowUse[tid] = true
+			cowUse[occurrences[0]] = true
+		}
+		return true
+	})
 	tainted := map[string]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && !inReturn[id] {
+		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] {
 			tainted[id.Name] = true
 		}
 		return true
@@ -3552,6 +3695,17 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 					return false
 				}
 			}
+			return true
+		}
+		// `map_new(cap)` constructs a FRESH empty map: its handle and bucket
+		// buffer are newly allocated and its arguments are scalars (the cap
+		// hint plus the injected keyKind/valKind tags), so no parameter heap
+		// can flow through the result. Admitting it here is what lets a
+		// cow-threaded map builder (`var m = map_new(8); m = m.insert(..);
+		// return m;`) prove its return fresh (#4357's map-intermediate leak) —
+		// without it the builtin (absent from q) rejected the init and the
+		// local never entered freshLocals.
+		if id.Name == "map_new" {
 			return true
 		}
 		// User function / method call: its result can't contain OUR args iff the
@@ -4155,6 +4309,16 @@ type builder struct {
 	appendOrder     identOrder
 	appendOrderFn   *ast.FuncDecl
 	appendInPlaceOK map[*ast.Call]bool
+	// callArgDies (rebuilt in the same refresh) marks the ident args that
+	// die at each call via the strict self-reassign shape — see
+	// callArgDeaths. Read by the #4873 caller-side grow bracket.
+	callArgDies map[*ast.Call]map[string]bool
+	// growParams[name][i] is the growParamKind bitmask for parameter i of
+	// function `name` — the positions whose argument buffer(s) the callee
+	// may mutate in place through the rc==1 fast paths (computeGrowParams,
+	// #4873). callBody brackets surviving args at those positions with an
+	// rc inc/dec pair so the callee's uniqueness gate takes the copy path.
+	growParams map[string][]uint8
 	// paramEscapes[name][i] is true when parameter i of function `name` can
 	// escape (inferParamEscapes). Borrow inference (BorrowInferEnabled) keeps a
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
@@ -4506,15 +4670,26 @@ func irCaptureSlotSize(t ast.Type, ptrW int) int32 {
 
 // tupleEnumMangler is the shared escape table for tuple + enum
 // instantiation mangling. `[`/`]` carry enum type args, `(`/`)` carry
-// tuple-element lists, and `,` separates either; all four collapse to
-// `[A-Za-z0-9_]` tokens so the result is a valid wasm/asm symbol and
-// no two distinct types compress to the same mangled name.
+// tuple-element lists, and `,` separates either; a fn-typed element
+// (`(i32) => i32`) carries `=>`, a dyn-trait element can carry `+`
+// (trait composition), `=` (pinned associated types), and `:` (a
+// ProjType base); all collapse to `[A-Za-z0-9_]` tokens so the result
+// is a valid wasm/asm symbol and no two distinct types compress to the
+// same mangled name. (`=>` is listed before `=`/`>` so the arrow wins
+// at a position where both would match — strings.Replacer matches in
+// argument order.)
 var tupleEnumMangler = strings.NewReplacer(
 	"[", "_LB_",
 	"]", "_RB_",
 	"(", "_LP_",
 	")", "_RP_",
 	",", "_C_",
+	"=>", "_ARROW_",
+	"=", "_EQ_",
+	"+", "_PLUS_",
+	":", "_CO_",
+	"<", "_LT_",
+	">", "_GT_",
 	" ", "",
 )
 
@@ -4536,13 +4711,14 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, readOnlyComparators map[string]bool) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, readOnlyComparators map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
 		Locals:     info.Locals[fn],
 		ReturnType: fn.ReturnType,
 		Captures:   fn.Captures,
+		InlineHint: fn.InlineHint,
 	}
 	b := &builder{
 		info:                 info,
@@ -4561,6 +4737,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		trmcConsumeSafe:      trmcConsumeSafe,
 		paramEscapes:         paramEscapes,
 		readOnlyComparators:  readOnlyComparators,
+		growParams:           growParams,
 		thisIsPair:           pairForm[fn.Name],
 		dynCoerceDone:        map[ast.Expr]bool{},
 	}
@@ -5293,7 +5470,7 @@ func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
 		setKey = dynVtableSetKey(n.Traits)
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
-	b.emit(Op{Kind: OpConstVtable, Str: setKey, Str2: concrete})
+	b.emit(Op{Kind: OpConstVtable, Str: setKey, Ext: &OpExt{Str2: concrete}})
 	b.emit(Op{Kind: OpEq})
 	// Result Option[T] heap-box pointer, built in either arm into a
 	// shared scratch slot (a void if-block keeps the operand-stack model
@@ -5514,23 +5691,25 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		// Literal arm: build `scrutinee == literal` as a Binary
-		// AST node so the existing OpStrEq / OpEq dispatch
-		// (with IsStringCmp / IsFloat / Width settled by the
-		// checker pass over Literal already) handles each
-		// scrutinee type uniformly.
-		cond := &ast.Binary{
-			P:           arm.P,
-			Op:          "==",
-			Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
-			Right:       arm.Literal,
-			IsStringCmp: isStringType(tagT),
-			IsFloat:     isFloatType(tagT),
+		// Literal / range arm: build the boolean test as a Binary
+		// AST node so the existing OpStrEq / OpEq / OpGeS dispatch
+		// handles each scrutinee type uniformly. A plain literal is
+		// `scrutinee == literal`; a range is `scrutinee >= lo && scrutinee
+		// <op> hi`. The scrutinee is stashed under a synthetic local name
+		// (already in b.locals) so Ident lookup hits scrSlot.
+		var cond ast.Expr
+		if arm.RangeHi != nil {
+			cond = b.rangeMatchCond(arm.P, arm.Literal, arm.RangeHi, arm.RangeInclusive, scrSlot, tagT)
+		} else {
+			cond = &ast.Binary{
+				P:           arm.P,
+				Op:          "==",
+				Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+				Right:       arm.Literal,
+				IsStringCmp: isStringType(tagT),
+				IsFloat:     isFloatType(tagT),
+			}
 		}
-		// Stash the scrutinee under a synthetic local name so
-		// Ident lookup hits scrSlot — saves us a manual
-		// load/eval shape. The synthetic name's slot is already
-		// in b.locals, set above.
 		if err := b.expr(cond); err != nil {
 			return err
 		}
@@ -5561,6 +5740,125 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 
 func literalMatchScrName(slot int32) string {
 	return fmt.Sprintf("__lit_match_scr_%d", slot)
+}
+
+// emitStructMatch lowers a `match` on a struct-typed scrutinee (the checker
+// stamped n.StructMatch). Each arm is a struct pattern `S { x, y }` that
+// binds the named fields irrefutably, so the match is an if-chain: cache the
+// scrutinee pointer, then per arm load each bound field from `[ptr+offset]`
+// into a scoped binding slot, run the optional guard (fall through on false),
+// and run the body on a match. Bindings mirror the enum-match load path
+// (bindingSlotScoped + payloadLoadOpFor), reading the borrowed scrutinee's
+// fields without a transfer inc.
+func (b *builder) emitStructMatch(n *ast.Match) error {
+	tagT := b.exprType(n.Tag)
+	st, ok := tagT.(ast.StructType)
+	if !ok {
+		return fmt.Errorf("ir: struct match scrutinee is not a struct type (compiler bug)")
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok {
+		return fmt.Errorf("ir: struct match on unknown struct %q", st.Name)
+	}
+	offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+	scrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__struct_match_scr_%d", scrSlot)] = scrSlot
+	if tagT != nil {
+		b.scratchType[scrSlot] = tagT
+	}
+	if err := b.expr(n.Tag); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: scrSlot})
+	b.openBlock(BlockTypeVoid)
+	matchEndD := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				b.openBlock(BlockTypeVoid)
+				armEndD := b.depth
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpNot})
+				b.brTo(armEndD, true)
+				if err := b.stmt(arm.Body); err != nil {
+					return err
+				}
+				b.brTo(matchEndD, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			b.brTo(matchEndD, false)
+			continue
+		}
+		b.openBlock(BlockTypeVoid)
+		armEndD := b.depth
+		armRestores := []func(){}
+		for i, name := range arm.Bindings {
+			bt := ast.Type(ast.NumberType{})
+			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				bt = arm.BindingTypes[i]
+			}
+			off, ok := offMap[name]
+			if !ok {
+				return fmt.Errorf("ir: struct match field %q not in %s layout (compiler bug)", name, st.Name)
+			}
+			slot, restore := b.bindingSlotScoped(name, bt)
+			armRestores = append(armRestores, restore)
+			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+			b.emit(Op{Kind: OpConstI32, I32: off})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(payloadLoadOpFor(bt, b.ptrW))
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(armEndD, true)
+		}
+		if err := b.stmt(arm.Body); err != nil {
+			return err
+		}
+		for i := len(armRestores) - 1; i >= 0; i-- {
+			armRestores[i]()
+		}
+		b.brTo(matchEndD, false)
+		b.closeScope()
+	}
+	b.closeScope()
+	return nil
+}
+
+// rangeMatchCond builds the boolean test for a range-pattern arm
+// (`lo..hi` / `lo..=hi`): `scrutinee >= lo && scrutinee <op> hi`, where
+// <op> is `<` for an exclusive `..` and `<=` for an inclusive `..=`. The
+// comparison Binaries are stamped with the scrutinee's integer width /
+// signedness (or float-ness) directly — they bypass the checker, which
+// never sees these synthesised nodes. Both bound expressions were already
+// checked + settled (Literal as the low bound, RangeHi as the high).
+func (b *builder) rangeMatchCond(p ast.Position, lit, rangeHi ast.Expr, inclusive bool, scrSlot int32, tagT ast.Type) ast.Expr {
+	cmp := func(op string, bound ast.Expr) *ast.Binary {
+		c := &ast.Binary{P: p, Op: op, Left: &ast.Ident{P: p, Name: literalMatchScrName(scrSlot)}, Right: bound, IsFloat: isFloatType(tagT)}
+		if nt, ok := tagT.(ast.NumberType); ok {
+			c.IntWidth = nt.Width
+			c.IsUnsigned = !nt.Signed
+		}
+		if ft, ok := tagT.(ast.FloatType); ok {
+			c.FloatWidth = ft.Width
+		}
+		return c
+	}
+	hiOp := "<"
+	if inclusive {
+		hiOp = "<="
+	}
+	return &ast.Binary{P: p, Op: "&&", Left: cmp(">=", lit), Right: cmp(hiOp, rangeHi)}
 }
 
 // emitLiteralMatchExpr is the expression-form counterpart of
@@ -5635,13 +5933,18 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		cond := &ast.Binary{
-			P:           arm.P,
-			Op:          "==",
-			Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
-			Right:       arm.Literal,
-			IsStringCmp: isStringType(tagT),
-			IsFloat:     isFloatType(tagT),
+		var cond ast.Expr
+		if arm.RangeHi != nil {
+			cond = b.rangeMatchCond(arm.P, arm.Literal, arm.RangeHi, arm.RangeInclusive, scrSlot, tagT)
+		} else {
+			cond = &ast.Binary{
+				P:           arm.P,
+				Op:          "==",
+				Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+				Right:       arm.Literal,
+				IsStringCmp: isStringType(tagT),
+				IsFloat:     isFloatType(tagT),
+			}
 		}
 		if err := b.expr(cond); err != nil {
 			return err
@@ -5667,6 +5970,129 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 		b.brTo(exitDepth, false)
+		b.closeScope()
+	}
+	b.closeScope()
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+// emitStructMatchExpr is the expression-form counterpart of emitStructMatch:
+// struct-pattern arms bind fields irrefutably and each arm body is an Expr
+// stored into a result slot (mirroring emitLiteralMatchExpr's result handling).
+func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
+	tagT := b.exprType(n.Tag)
+	st, ok := tagT.(ast.StructType)
+	if !ok {
+		return fmt.Errorf("ir: struct match-expr scrutinee is not a struct type (compiler bug)")
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok {
+		return fmt.Errorf("ir: struct match-expr on unknown struct %q", st.Name)
+	}
+	offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+	scrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__struct_match_scr_%d", scrSlot)] = scrSlot
+	if tagT != nil {
+		b.scratchType[scrSlot] = tagT
+	}
+	if err := b.expr(n.Tag); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: scrSlot})
+
+	resultType := ast.Type(ast.NumberType{})
+	if n.IsFloat {
+		resultType = ast.FloatType{}
+	}
+	for _, arm := range n.Arms {
+		if arm == nil || arm.Body == nil {
+			continue
+		}
+		t := b.exprType(arm.Body)
+		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
+			resultType = nt
+			break
+		}
+		if ft, ok := t.(ast.FloatType); ok && !ft.Polymorphic {
+			resultType = ft
+			break
+		}
+		if _, ok := t.(ast.StringType); ok {
+			resultType = ast.StringType{}
+			break
+		}
+		if _, ok := t.(ast.BoolType); ok {
+			resultType = ast.BoolType{}
+			break
+		}
+	}
+	resultSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
+	b.scratchType[resultSlot] = resultType
+
+	b.openBlock(BlockTypeVoid)
+	matchEndD := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				b.openBlock(BlockTypeVoid)
+				armEndD := b.depth
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpNot})
+				b.brTo(armEndD, true)
+				if err := b.emitCountedYield(arm.Body); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+				b.brTo(matchEndD, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.emitCountedYield(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(matchEndD, false)
+			continue
+		}
+		b.openBlock(BlockTypeVoid)
+		armEndD := b.depth
+		armRestores := []func(){}
+		for i, name := range arm.Bindings {
+			bt := ast.Type(ast.NumberType{})
+			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				bt = arm.BindingTypes[i]
+			}
+			off, ok := offMap[name]
+			if !ok {
+				return fmt.Errorf("ir: struct match-expr field %q not in %s layout (compiler bug)", name, st.Name)
+			}
+			slot, restore := b.bindingSlotScoped(name, bt)
+			armRestores = append(armRestores, restore)
+			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+			b.emit(Op{Kind: OpConstI32, I32: off})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(payloadLoadOpFor(bt, b.ptrW))
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(armEndD, true)
+		}
+		if err := b.emitCountedYield(arm.Body); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+		for i := len(armRestores) - 1; i >= 0; i-- {
+			armRestores[i]()
+		}
+		b.brTo(matchEndD, false)
 		b.closeScope()
 	}
 	b.closeScope()
@@ -6694,22 +7120,59 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// drop's is_unique / null guards no-op on the NULL.
 		b.emitVarReinitDropOld(n.TempName, tempIdx)
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
-		// Recover the tuple element types from the synthetic
-		// temp so we can pick the right per-element load op +
-		// offset.
-		var tup ast.TupleType
-		for _, v := range b.info.Locals[b.fn] {
-			if v.Name == n.TempName {
-				if t, ok := v.Type.(ast.TupleType); ok {
-					tup = t
+		// Recover the per-name element types + offsets. Tuple mode
+		// reads them off the synthetic temp's tuple type; struct mode
+		// (n.Fields set) reads the field offset off the struct layout
+		// and the concrete element type off the checker-registered
+		// binding local. Both feed the identical per-name load loop.
+		var elemTypes []ast.Type
+		var offs []int32
+		if n.Fields != nil {
+			var stName string
+			for _, v := range b.info.Locals[b.fn] {
+				if v.Name == n.TempName {
+					if t, ok := v.Type.(ast.StructType); ok {
+						stName = t.Name
+					}
+					break
 				}
-				break
 			}
+			sd, ok := b.info.Structs[stName]
+			if !ok {
+				return fmt.Errorf("ir: struct destructure temp %q has unknown struct type (compiler bug)", n.TempName)
+			}
+			offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+			for i, fname := range n.Fields {
+				off, ok := offMap[fname]
+				if !ok {
+					return fmt.Errorf("ir: struct destructure field %q not in layout (compiler bug)", fname)
+				}
+				offs = append(offs, off)
+				var et ast.Type
+				for _, v := range b.info.Locals[b.fn] {
+					if v.Name == n.Names[i] {
+						et = v.Type
+						break
+					}
+				}
+				elemTypes = append(elemTypes, et)
+			}
+		} else {
+			var tup ast.TupleType
+			for _, v := range b.info.Locals[b.fn] {
+				if v.Name == n.TempName {
+					if t, ok := v.Type.(ast.TupleType); ok {
+						tup = t
+					}
+					break
+				}
+			}
+			if len(tup.Elems) != len(n.Names) {
+				return fmt.Errorf("ir: destructure arity mismatch (compiler bug)")
+			}
+			offs, _ = tupleElemLayout(tup.Elems, b.ptrW)
+			elemTypes = tup.Elems
 		}
-		if len(tup.Elems) != len(n.Names) {
-			return fmt.Errorf("ir: destructure arity mismatch (compiler bug)")
-		}
-		offs, _ := tupleElemLayout(tup.Elems, b.ptrW)
 		for i, name := range n.Names {
 			nameIdx, ok := b.locals[name]
 			if !ok {
@@ -6718,7 +7181,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: tempIdx})
 			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 			b.emit(Op{Kind: OpAdd})
-			b.emit(payloadLoadOpFor(tup.Elems[i], b.ptrW))
+			b.emit(payloadLoadOpFor(elemTypes[i], b.ptrW))
 			// Dup-on-projection: a pointer-shaped element is extracted by
 			// reference (the load copies the box's stored pointer without
 			// an inc). The binding now co-owns it alongside the tuple box,
@@ -6727,7 +7190,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// deep-drop dec of the same element. Without the dup the
 			// binding and the tuple's drop would both release one
 			// reference for a single count (double free / underflow).
-			if _, isStr := tup.Elems[i].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+			if _, isStr := elemTypes[i].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 				// Two-word string element (wasm + arm64-TwoWordOverride):
 				// dup via __fern_str_inc (consumes + re-pushes the
 				// (data, len) pair) so the binding co-owns the buffer
@@ -6735,12 +7198,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// drop __fern_str_dec would free the buffer under the
 				// still-live binding (UAF).
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
-			} else if _, isStr := tup.Elems[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			} else if _, isStr := elemTypes[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				// Native single-word string element: dup via __fern_rc_inc
 				// so the binding co-owns the buffer alongside the tuple
 				// box's later dec.
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-			} else if arrElemIsRcTracked(tup.Elems[i]) {
+			} else if arrElemIsRcTracked(elemTypes[i]) {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
 			// Loop-body reclamation: like the temp above, a binding declared
@@ -6812,6 +7275,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// arm body, fall through to wildcard.
 		if isLiteralMatch(n.Arms) {
 			if err := b.emitLiteralMatch(n); err != nil {
+				return err
+			}
+			break
+		}
+		// Struct-pattern match: the scrutinee is a struct (the checker
+		// stamped n.StructMatch and dispatched to `checkStructMatch`). A
+		// struct-pattern arm binds fields irrefutably, so lower as an
+		// if-chain — bind fields, run the (optional) guard, fall through
+		// to the next arm on a guard-false, run the body on a match.
+		if n.StructMatch != "" {
+			if err := b.emitStructMatch(n); err != nil {
 				return err
 			}
 			break
@@ -7111,7 +7585,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// byte-identical to before; for a multi-trait `dyn A + B`
 			// coercion it selects the MERGED (concatenated) vtable
 			// collectVtables emitted for the set (docs/DYN-TRAITS.md §10).
-			b.emit(Op{Kind: OpConstVtable, Str: dynVtableSetKey(dc.Traits), Str2: dc.Concrete})
+			b.emit(Op{Kind: OpConstVtable, Str: dynVtableSetKey(dc.Traits), Ext: &OpExt{Str2: dc.Concrete}})
 			if b.dynBoxed() {
 				b.emit(Op{Kind: OpBoxDyn})
 			}
@@ -7545,6 +8019,14 @@ func (b *builder) expr(e ast.Expr) error {
 		// stored into the result slot before branching out.
 		if isLiteralMatchExprArms(n.Arms) {
 			if err := b.emitLiteralMatchExpr(n); err != nil {
+				return err
+			}
+			return nil
+		}
+		// Struct-pattern match-expr: scrutinee is a struct (checker
+		// stamped n.StructMatch) — see emitStructMatchExpr.
+		if n.StructMatch != "" {
+			if err := b.emitStructMatchExpr(n); err != nil {
 				return err
 			}
 			return nil
@@ -8093,95 +8575,101 @@ func (b *builder) expr(e ast.Expr) error {
 			// a user-callable name) — the arm64 two-word ABI
 			// needs `(string, i32, i32)` to count the string
 			// arg as 2 operand-stack slots.
-			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3, ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}})
+			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 			break
 		}
 		// Lower `arr[low:high]` to:
-		//   data_ptr = (arr or *slice) + low * 4
-		//   len      = high - low
-		//   slice    = __slice_make(data_ptr, len)
+		//   src      = source (evaluated once)
+		//   len'     = __slice_range(low or 0, high or len(src), len(src))
+		//   data_ptr = (src or *src) + low * stride
+		//   slice    = __slice_make(data_ptr, len')
 		// Both bounds default lazily — `low` falls back to 0,
-		// `high` falls back to len(source). Bounds-check happens
-		// at access time inside `__slice_idx`; constructing a
-		// slice with `low > high` is allowed (the resulting
-		// negative len just fails the next bounds check).
-
-		// Push the source's underlying data pointer.
+		// `high` falls back to len(source). `__slice_range` is the
+		// construction-time bounds check (#5419): it traps (exit
+		// 134) unless 0 <= low <= high <= len(src) and returns
+		// high - low. Without it an oversized `high` materialised a
+		// view past the source, and the access-time `__slice_idx`
+		// check — which compares against the slice's own len —
+		// happily read out of bounds. (The parser reserves the
+		// bare `a[:]` form, so at least one bound is present.)
 		if err := b.expr(n.Source); err != nil {
 			return err
 		}
+		srcSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_src_%d", srcSlot)] = srcSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: srcSlot})
+
+		// Source length: a slice carries its len at header + ptrW
+		// (after the pointer-width data field); an owned array at
+		// the standard data_ptr - 4 prefix.
+		b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
 		if n.SourceIsSlice {
-			// For sub-slicing, dereference: data_ptr lives at
-			// slice + 0. It's a full pointer-width field (8 bytes
-			// on native, 4 on wasm32), so load at WidthPtr — a
-			// plain i32 load would truncate a high .rodata / heap
-			// pointer (the as_bytes-in-.so / arm64-darwin bug).
-			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: 4})
+			b.emit(Op{Kind: OpSub})
+			b.emit(Op{Kind: OpLoad})
 		}
-		// data_ptr += low * stride (skip when low is 0/missing).
-		// Stride defaults to 4 for the historical i32 layout but
-		// drops to 1 / 2 / 8 for byte / halfword / wide-element
-		// slices per ast.ElemSizeBytes. Skip the multiply
-		// entirely when stride == 1 — `low * 1` is just `low`.
-		stride := int32(4)
-		if n.ElemType != nil {
-			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
-		}
+		srcLenSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_srclen_%d", srcLenSlot)] = srcLenSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: srcLenSlot})
+
+		loSlot := int32(-1)
 		if n.Low != nil {
 			if err := b.expr(n.Low); err != nil {
 				return err
 			}
+			loSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__sl_slice_lo_%d", loSlot)] = loSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: loSlot})
+		}
+
+		// len' = __slice_range(lo, hi, srcLen) — checked.
+		lenSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_len_%d", lenSlot)] = lenSlot
+		if loSlot >= 0 {
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+		}
+		if n.High != nil {
+			if err := b.expr(n.High); err != nil {
+				return err
+			}
+		} else {
+			b.emit(Op{Kind: OpLoadLocal, I32: srcLenSlot})
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: srcLenSlot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__slice_range", I32: 3})
+		b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
+
+		// data_ptr = source data + low * stride. For sub-slicing,
+		// dereference first: data_ptr lives at slice + 0. It's a
+		// full pointer-width field (8 bytes on native, 4 on
+		// wasm32), so load at WidthPtr — a plain i32 load would
+		// truncate a high .rodata / heap pointer (the
+		// as_bytes-in-.so / arm64-darwin bug). Stride defaults to 4
+		// for the historical i32 layout but drops to 1 / 2 / 8 for
+		// byte / halfword / wide-element slices per
+		// ast.ElemSizeBytes; skip the multiply when stride == 1.
+		stride := int32(4)
+		if n.ElemType != nil {
+			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+		if n.SourceIsSlice {
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		}
+		if loSlot >= 0 {
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
 			if stride != 1 {
 				b.emit(Op{Kind: OpConstI32, I32: stride})
 				b.emit(Op{Kind: OpMul})
 			}
 			b.emit(Op{Kind: OpAdd})
 		}
-		// Stash the data_ptr for later — we still need to push
-		// the len before calling `$__slice_make`.
-		dataSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__sl_slice_data_%d", dataSlot)] = dataSlot
-		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
-
-		// Compute len = (High or source-len) - (Low or 0).
-		if n.High != nil {
-			if err := b.expr(n.High); err != nil {
-				return err
-			}
-		} else {
-			// Re-evaluate Source's length. Cheap when the source
-			// is an identifier (the common case); a more
-			// expensive source would benefit from evaluating
-			// once into a slot, but we don't have that yet.
-			if err := b.expr(n.Source); err != nil {
-				return err
-			}
-			if n.SourceIsSlice {
-				// len lives at slice + ptrW (after the pointer-width
-				// data field): +8 on native, +4 on wasm32.
-				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
-				b.emit(Op{Kind: OpAdd})
-				b.emit(Op{Kind: OpLoad})
-			} else {
-				// Owned arrays / strings carry their length at
-				// data_ptr - 4 (the standard prefix).
-				b.emit(Op{Kind: OpConstI32, I32: 4})
-				b.emit(Op{Kind: OpSub})
-				b.emit(Op{Kind: OpLoad})
-			}
-		}
-		if n.Low != nil {
-			if err := b.expr(n.Low); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpSub})
-		}
-		// Stack now: [len]. Push data, swap argument order via a
-		// temp local, then call `$__slice_make(data, len)`.
-		lenSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__sl_slice_len_%d", lenSlot)] = lenSlot
-		b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
-		b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 		b.emit(Op{Kind: OpCallDirect, Str: "__slice_make", I32: 2})
 	case *ast.ArrayLit:
@@ -8641,7 +9129,7 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures)),
-			CaptureSlots: captureSlotSizes(b.closureCaps[n.FuncName], b.ptrW)})
+			Ext: extCaptureSlots(captureSlotSizes(b.closureCaps[n.FuncName], b.ptrW))})
 	case *ast.FieldAccess:
 		// Qualified payload-less variant reference: `Color.Red`
 		// in value position. The checker accepted it as an
@@ -8833,12 +9321,31 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if ename, _, _, ok := b.lookupVariantOn(x.Name, x.EnumName); ok {
 			return ast.EnumType{Name: ename}
 		}
+		// A top-level function name in value position (`(dbl, 1)`) is a
+		// function reference — pointer-shaped, same slot-sizing rationale
+		// as the variant case above (and the MakeClosure case below).
+		// Locals/params were already checked, so this cannot shadow one.
+		if ft, ok := b.info.FuncSigs[x.Name]; ok {
+			return ft
+		}
 	case *ast.CaptureRef:
 		// Captured variable references carry their resolved
 		// outer-scope type on the AST node — needed when the
 		// closure body asks "what struct/tuple is this?" for
 		// field-access offset resolution.
 		return x.Type
+	case *ast.MakeClosure:
+		// A closureconv-rewritten lambda produces a closure value — a
+		// heap pointer to the closure pair — so it is pointer-shaped.
+		// Without this case an enclosing TupleLit / StructLit sized the
+		// element slot at the payloadSlotSize(nil) 4-byte default while
+		// the read/drop side used the DECLARED (fn, …) layout's 8-byte
+		// slot: the store packed the neighbouring element 4 bytes below
+		// where the load expects it, and the tuple drop rc_dec'd the two
+		// misaligned halves as one garbage pointer → segfault. The
+		// params/result don't matter for slot sizing; an empty FuncType
+		// classifies as IsPointerType.
+		return &ast.FuncType{}
 	case *ast.FString:
 		// f-strings always produce a string. The arms of a
 		// MatchExpr returning f-strings need to mark the
@@ -9363,6 +9870,13 @@ func (b *builder) exprStaticType(e ast.Expr) ast.Type {
 		}
 	case *ast.Call:
 		return b.callReturnType(x)
+	case *ast.CaptureRef:
+		// A captured value inside a closure body: closure conversion
+		// stamps the resolved outer-scope type. Without this,
+		// `capturedArr[i].field` — including a boxcapture cell's
+		// `cell[0].field` — peels nothing and fieldOwner errors with
+		// `field access on unresolved struct ""`.
+		return x.Type
 	}
 	return nil
 }
@@ -10275,7 +10789,7 @@ func (b *builder) call(n *ast.Call) error {
 			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
 			b.emit(Op{Kind: OpAdd})
 			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
 			return nil
 		}
 		// Inline two-word (wasm, §4.2.1): lower the receiver →
@@ -10295,7 +10809,7 @@ func (b *builder) call(n *ast.Call) error {
 		}
 		// Push the vtable back → [data, args..., vtable], then dispatch.
 		b.emit(Op{Kind: OpLoadLocal, I32: vtmp})
-		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
 		return nil
 	}
 	// Captured-closure callee: closureconv rewrote a captured
@@ -10318,7 +10832,7 @@ func (b *builder) call(n *ast.Call) error {
 		if err := b.expr(cr); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 		return nil
 	}
 	// `(b.f)(args...)` / `(t.N)(args...)` where the field access
@@ -10364,7 +10878,7 @@ func (b *builder) call(n *ast.Call) error {
 			if err := b.expr(fa); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 			return nil
 		}
 	}
@@ -10385,7 +10899,7 @@ func (b *builder) call(n *ast.Call) error {
 				if err := b.expr(innerCall); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+				b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 				return nil
 			}
 		}
@@ -10418,7 +10932,7 @@ func (b *builder) call(n *ast.Call) error {
 			if err := b.expr(idx); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 			return nil
 		}
 	}
@@ -10444,7 +10958,7 @@ func (b *builder) call(n *ast.Call) error {
 		if err := b.expr(lam); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 		return nil
 	}
 	if mc, ok := n.Callee.(*ast.MakeClosure); ok {
@@ -10473,7 +10987,7 @@ func (b *builder) call(n *ast.Call) error {
 			if err := b.expr(mc); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 			return nil
 		}
 	}
@@ -10522,6 +11036,127 @@ func resultCannotAliasArg(t ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// growBracketEntry is one buffer the #4873 caller-side containment bracket
+// protects across a call: the arg local's slot, and either the arg buffer
+// itself (empty fieldPath) or an array buffer reached from a struct arg by
+// loading each field offset in fieldPath in turn (intermediate hops are
+// struct-box pointers; the final hop is the array buffer).
+type growBracketEntry struct {
+	slot      int32
+	fieldPath []int32
+}
+
+// arrayFieldPaths enumerates the offset paths from a struct type to every
+// (transitively nested, depth-limited) array field — the buffers a callee
+// marked growFieldBufs may grow in place. Struct-typed fields recurse;
+// self-referential shapes are cycle-guarded; Map / enum / tuple / string
+// fields are skipped (arrays are the only push/set targets).
+func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]bool) [][]int32 {
+	if depth <= 0 || seen[structName] {
+		return nil
+	}
+	sd, has := b.info.Structs[structName]
+	if !has {
+		return nil
+	}
+	seen[structName] = true
+	defer delete(seen, structName)
+	offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+	var out [][]int32
+	for _, fld := range sd.Fields {
+		switch ft := fld.Type.(type) {
+		case ast.ArrayType:
+			out = append(out, []int32{offs[fld.Name]})
+		case ast.StructType:
+			for _, sub := range b.arrayFieldPaths(ft.Name, depth-1, seen) {
+				out = append(out, append([]int32{offs[fld.Name]}, sub...))
+			}
+		}
+	}
+	return out
+}
+
+// growBracketArgs resolves the #4873 containment bracket for a direct call
+// to `calleeName`: for each argument position the callee may grow in place
+// (computeGrowParams), a surviving plain-ident argument contributes its
+// buffer (growArgBuffer) and/or its struct type's array-field buffers
+// (growFieldBufs). Skipped when the arg dies at this call (the strict
+// self-reassign shape — keeps the #4838 O(n) accumulator chains on the
+// in-place fast path), is a move site, is not an rc-tracked alias, or
+// flows into an `own` / owned-by-default position (those transfer or inc
+// already).
+func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketEntry {
+	gp := b.growParams[calleeName]
+	if len(gp) == 0 {
+		return nil
+	}
+	b.curAppendOrder() // refresh callArgDies for the current fn
+	ownFlags := b.info.OwnFuncs[calleeName]
+	sig := b.info.FuncSigs[calleeName]
+	var out []growBracketEntry
+	for ai, a := range n.Args {
+		if ai >= len(gp) || gp[ai] == 0 {
+			continue
+		}
+		id, isIdent := a.(*ast.Ident)
+		if !isIdent {
+			continue
+		}
+		slot, hasSlot := b.locals[id.Name]
+		if !hasSlot {
+			continue
+		}
+		if b.callArgDies[n][id.Name] {
+			continue
+		}
+		if b.rc.moveSites[a] {
+			continue
+		}
+		if !needsRcIncOnAlias(a, b) {
+			continue
+		}
+		if ai < len(ownFlags) && ownFlags[ai] {
+			continue
+		}
+		if sig != nil && ai < len(sig.Params) && b.calleeParamOwnedByDefault(calleeName, sig.Params[ai], ai) {
+			continue
+		}
+		if gp[ai]&growArgBuffer != 0 {
+			out = append(out, growBracketEntry{slot: slot})
+		}
+		if gp[ai]&growFieldBufs != 0 && sig != nil && ai < len(sig.Params) {
+			if st, isStruct := sig.Params[ai].(ast.StructType); isStruct {
+				for _, path := range b.arrayFieldPaths(st.Name, 4, map[string]bool{}) {
+					out = append(out, growBracketEntry{slot: slot, fieldPath: path})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// emitGrowBracket emits one side of the #4873 containment bracket: for
+// each protected buffer, load it (via the arg slot, plus a pointer-width
+// field load for a struct arg's array field) and inc/dec its rc. Net-zero
+// on the operand stack; the rc helpers guard null / static sentinels. The
+// callee's grow/cow COPY path leaves the operand untouched (the #4827
+// forced-copy invariant), so the post-call dec restores the incoming
+// count and never frees.
+func (b *builder) emitGrowBracket(entries []growBracketEntry, kind OpKind, helper string) {
+	for _, e := range entries {
+		b.emit(Op{Kind: OpLoadLocal, I32: e.slot})
+		for _, off := range e.fieldPath {
+			if off > 0 {
+				b.emit(Op{Kind: OpConstI32, I32: off})
+				b.emit(Op{Kind: OpAdd})
+			}
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		}
+		b.emit(Op{Kind: kind, Str: helper, I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
 }
 
 func (b *builder) callBody(n *ast.Call) error {
@@ -10755,7 +11390,20 @@ func (b *builder) callBody(n *ast.Call) error {
 		// literal receivers are const-folded above, so the shape reaching
 		// here in practice is a string concat / slice.)
 		lenTempSlot := int32(-1)
-		if tt, ok := b.freshOwnedRcTempType(n.Args[0]); ok {
+		tt, ok := b.freshOwnedRcTempType(n.Args[0])
+		if !ok {
+			// A USER-call receiver (`f(i).len()`) is the same dead-after-
+			// consume temp as a concat: the callee's fresh result is created
+			// solely for this length read. Reclaim it via the is_unique-gated
+			// ownedCallResultType route the discarded-stmt / index-of-fresh /
+			// field-access / call-arg sites already use — without this
+			// fallback the returned heap box leaked every call (masked below
+			// the SSO inline threshold, ~32-128 B per call above it). An
+			// aliased return (callee handing back a param) carries the
+			// return-transfer inc, so the drop only dec's it.
+			tt, ok = b.ownedCallResultType(n.Args[0])
+		}
+		if ok {
 			lenTempSlot = b.allocSlot()
 			b.locals[fmt.Sprintf("__lentmp_%d", lenTempSlot)] = lenTempSlot
 			b.scratchType[lenTempSlot] = tt
@@ -11379,7 +12027,13 @@ func (b *builder) callBody(n *ast.Call) error {
 			// user-facing builtin (print / write_file / tcp_send
 			// / __method_Writer_write / ...).
 			argTypes := callArgTypesFromSig(sig.Params, int(argCount))
-			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width, ArgTypes: argTypes})
+			// #4873 caller-side containment: rc-bracket surviving args
+			// whose buffers the callee may grow in place, so its
+			// uniqueness gate takes the copy path and this function's
+			// bindings keep interpreter (copy-on-shared) semantics.
+			growBracket := b.growBracketArgs(n, id.Name)
+			b.emitGrowBracket(growBracket, OpRcInc, "__fern_rc_inc")
+			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width, Ext: extArgTypes(argTypes)})
 			if kind == OpCallDirectPair && !b.suppressPairRebox {
 				// Re-pack the (tag, payload) pair into a heap
 				// box so existing callers (var assignment,
@@ -11399,6 +12053,10 @@ func (b *builder) callBody(n *ast.Call) error {
 			// any) sitting underneath is left untouched. reclaimArgTemps
 			// required kind == OpCallDirect (not pair-form), so the
 			// result is a single value / void — never the rebox'd pair.
+			// #4873: restore the bracketed args' rc — the callee's copy
+			// path left each buffer untouched, so this returns it to the
+			// incoming count (the inc preceded it; never frees).
+			b.emitGrowBracket(growBracket, OpRcDec, "__fern_rc_dec")
 			for i, slot := range argTempSlots {
 				b.emitOwnedSlotDrop(slot, argTempTypes[i])
 			}
@@ -11417,7 +12075,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		return err
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: sig})
+	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: sig}})
 	return nil
 }
 
@@ -13113,11 +13771,22 @@ func (b *builder) constructionMovesIdent(e ast.Expr, name string) bool {
 // overwrite-drop the old `name`: the callee already owns and frees it, so a
 // second deep-drop here frees the box twice (the own-struct-param
 // move-and-rebind double-free). The mirror of constructionMovesIdent for plain
-// function calls. (Method calls are conservatively excluded — receiver-consume
-// shape differs; revisit when an own-self method threads a struct.)
+// function calls.
+//
+// Method calls are INCLUDED: `s = s.emit(x)` on an `own`-receiver method
+// reaches here as a plain Call on the mangled method name with the receiver
+// in Args[0] and flags[0] the receiver's own flag, so the loop below covers
+// it unchanged. The receiver position MUST get the same suppression as a
+// plain own arg — the checker's E051 admission (SelfReassignOwnMoveArg) has
+// no method exclusion, and without the matching skip here the callee-side
+// receiver drop plus this overwrite-dec net -1 per call: a threaded borrowed
+// param (consumedParams entry-inc) loses the CALLER's reference (UAF one
+// frame up), and a local receiver's box is freed by the callee and then this
+// dec writes through the freed header (freelist corruption — the source of
+// the arm64 rc-underflow counts the own-receiver probes surfaced).
 func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
 	call, ok := e.(*ast.Call)
-	if !ok || call.Method != nil {
+	if !ok {
 		return false
 	}
 	id, ok := call.Callee.(*ast.Ident)
@@ -13266,7 +13935,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				// set (the call result may alias it), but the rc-gated buffer
 				// free is balanced anyway — __fern_arr_dec only reclaims at
 				// rc==0, and typeSelfDropSafe restricts this to arrays whose
-				// elements are inc'd at construction (no bare strings / Maps).
+				// elements are inc'd at construction (no Maps; strings joined
+				// the counted set with the #3425 admission).
 				// Without it `a = a.append(x)` in a loop leaked the OLD buffer
 				// on every grow (the copy path orphans it; the flat
 				// __fern_rc_dec the catch-all else emits never frees) — the
@@ -13800,18 +14470,40 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 		}
 	}
 	// SOUNDNESS: the deep-drop frees the old value's fields. Array / nested
-	// struct / enum fields are inc'd at construction, so the rc-gated drop
-	// (is_unique on the box, rc==0 on the buffer) is balanced even when the new
-	// value shares them. But STRINGS are not rc-tracked — never inc'd at struct
-	// construction — so a string field shared via a functional-copy reassign
-	// (`s = S{...s, ...}`) is an UNCOUNTED alias: deep-dropping the old value
-	// would free a buffer the new value still points at (the self-host
-	// EmitState/`s = s.write(..)` UAF). Map fields likewise have an incomplete
-	// (leaky) deep-drop. So restrict to structs whose deep drop is the
-	// fully-counted array/struct/enum/scalar walk — transitively string- and
-	// Map-free. (This is a sound subset; once strings are rc-tracked the
-	// restriction can lift.)
-	if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
+	// struct / enum / STRING fields are all inc'd at construction (field-init
+	// emitAliasInc — needsRcIncOnAlias admits strings, routing two-word ABIs
+	// through __fern_str_inc; the struct-update base copy incs every copied
+	// pointer field including strings), so the rc-gated drop (is_unique on
+	// the box; genStructDropFn's per-ABI freeing __fern_str_dec on string
+	// fields) is balanced even when the new value shares them. Strings were
+	// excluded here while they were still uncounted at construction — that
+	// era is over (#4174 rc-tracked native strings + the genStructDropFn
+	// string-field arms), and lifting the exclusion is what un-quadratics
+	// the self-host LowerState/EmitState `s = s.emit(op)` threading: with
+	// the old box flat-dec'd (never freed) every superseded state pinned the
+	// ops array at rc >= 2, so each statement's append cloned the whole
+	// accumulated array — the #3425 Effect-A O(ops^2) that kept the merged
+	// whole-compiler bundle over the 8 GiB arena. Map fields still have an
+	// incomplete (leaky) deep-drop and stay excluded (typeSelfDropSafe).
+	//
+	// BUT the ARRAY general form `a = f(a)` keeps the string-element
+	// exclusion (typeSelfDropSafeArrGeneral): the array branch's overwrite
+	// __fern_arr_dec has no identity guard, and a callee that flows its
+	// argument through unchanged (the recursive-collector shape —
+	// checker.e060_collect_dyn_locals's `a = e060_collect_dyn_locals(body,
+	// a)`) can return the very buffer being "superseded". The rc ledger
+	// that keeps the string-free element types balanced there does not
+	// extend to string elements (their per-site inc/dec discipline is the
+	// #4355 open arc), so admitting string[]/nested-string arrays here
+	// double-freed the flowed-through buffer under a different size class —
+	// the derive-compile freelist corruption. Struct/enum targets keep the
+	// full string admission (the deep-drop is box-level is_unique-gated and
+	// the return-transfer inc protects identity returns — probed).
+	if _, isArr := ty.(ast.ArrayType); isArr {
+		if !typeSelfDropSafeNoStrings(ty, b.info, map[string]bool{}) {
+			return false
+		}
+	} else if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
 		return false
 	}
 	mentions := false
@@ -13828,9 +14520,10 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 // `__method_Array_push(name, x)` — for a LOCAL `name` (not a param). This is the
 // rc-SAFE subset of an array self-reassign overwrite, and the one that lets the
 // array branch's buffer-only __fern_arr_dec reclaim the OLD buffer for element
-// types selfReassignOwnedLocal's typeSelfDropSafe rejects (string[] / struct[] /
-// nested arrays) — e.g. the self-host SSA builder's `vn = vn.append(..)` over
-// `string[]`, which otherwise orphans every grow's buffer.
+// types selfReassignOwnedLocal's typeSelfDropSafe rejects (Map-carrying
+// elements; historically also string[] before the #3425 string admission) —
+// e.g. the self-host SSA builder's `vn = vn.append(..)` over `string[]`,
+// which otherwise orphans every grow's buffer.
 //
 // Why append is safe where the general `x = f(x)` is NOT: __fern_arr_push_grow
 // is rc-gated. A uniquely-owned buffer (rc==1) either mutates in place (no old
@@ -13875,16 +14568,83 @@ func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
 
 // typeSelfDropSafe reports whether a value of type `t` can be deep-dropped on a
 // self-reassign overwrite without risking an uncounted-alias over-release: no
-// string anywhere (strings aren't inc'd at construction) and no Map anywhere
-// (its deep drop is incomplete). Arrays / structs / enums / tuples of safe types
-// are fine — their pointer payloads are inc'd at construction, so the rc-gated
-// drop is balanced.
+// Map anywhere (its deep drop is incomplete). Arrays / structs / enums / tuples
+// / STRINGS of safe types are fine — their pointer payloads are inc'd at
+// construction, so the rc-gated drop is balanced. Strings joined the safe set
+// once they became rc-counted at every sharing construction site (field-init
+// emitAliasInc, struct-update base copy) with genStructDropFn's matching
+// per-ABI freeing __fern_str_dec on the drop side — see the
+// selfReassignOwnedLocal soundness note (#3425: the exclusion forced every
+// string-fielded builder rebind onto the flat non-freeing dec, whose leaked
+// boxes pinned the builder's array fields at rc >= 2 and turned each append
+// into a whole-array clone).
+// typeSelfDropSafeNoStrings is typeSelfDropSafe with the pre-#3425 string
+// exclusion kept — the gate for the ARRAY general-form (`a = f(a)`) overwrite
+// dec only, whose buffer free has no identity guard and whose string-element
+// inc/dec ledger is not yet balanced for the callee-flows-argument-through
+// shape (see the selfReassignOwnedLocal soundness note). Struct/enum targets
+// use the widened typeSelfDropSafe.
+func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	if _, isStr := t.(ast.StringType); isStr {
+		return false
+	}
+	switch ty := t.(type) {
+	case ast.ArrayType:
+		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
+	case ast.SliceType:
+		return typeSelfDropSafeNoStrings(ty.Elem, info, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !typeSelfDropSafeNoStrings(e, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		sd, ok := info.Structs[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, f := range sd.Fields {
+			if !typeSelfDropSafeNoStrings(f.Type, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		ed, ok := info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !typeSelfDropSafeNoStrings(pl, info, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return typeSelfDropSafe(t, info, seen)
+}
+
 func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
 		return true
 	case ast.StringType:
-		return false
+		return true
 	case ast.ArrayType:
 		return typeSelfDropSafe(ty.Elem, info, seen)
 	case ast.SliceType:
@@ -14120,6 +14880,14 @@ func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
 			}
 		}
 		return true
+	}
+	if blk, ok := e.(*ast.BlockExpr); ok {
+		// A block-expression leaves a value only when it has a trailing
+		// expression. A value-less (void) block — e.g. a `defer { … }`
+		// action whose last element is a `;`-statement — pushes nothing,
+		// so no drop must follow it (else the wasm stack underflows and
+		// the module fails to validate).
+		return blk.Tail != nil
 	}
 	return true
 }
@@ -15329,6 +16097,7 @@ func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = identOrderOf(b.fn.Body)
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
+		b.callArgDies = callArgDeaths(b.fn.Body)
 		b.appendOrderFn = b.fn
 	}
 	return b.appendOrder
@@ -16023,4 +16792,22 @@ func fieldType(fields []ast.Param, name string) ast.Type {
 		}
 	}
 	return nil
+}
+
+// extArgTypes wraps a non-nil ArgTypes slice in an OpExt block (nil in →
+// nil out, so ops without string-typed args stay Ext-free).
+func extArgTypes(ts []ast.Type) *OpExt {
+	if ts == nil {
+		return nil
+	}
+	return &OpExt{ArgTypes: ts}
+}
+
+// extCaptureSlots wraps a non-nil CaptureSlots slice in an OpExt block
+// (nil in → nil out).
+func extCaptureSlots(slots []int32) *OpExt {
+	if slots == nil {
+		return nil
+	}
+	return &OpExt{CaptureSlots: slots}
 }

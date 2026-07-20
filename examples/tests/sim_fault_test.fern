@@ -1,0 +1,217 @@
+import "std/test";
+import "std/async";
+import "std/sim";
+
+// examples/tests/sim_fault_test.fern — SimNet fault injection
+// (docs/DST-PLATFORM-BRIEF.md slice 3): seed-driven fault schedules on
+// scripted endpoints — fail / stall / partial / flaky — driven through
+// the std/async combinators. Every fault outcome is a pure function of
+// the seed and the call order, so a flaky-upstream bug is a seed you
+// replay (the sweep_seeds workflow), not a flake.
+//
+// Run:  fern -interp examples/tests/sim_fault_test.fern
+
+// fail-mode mirrors the real fetch's connect/send failure: Ready("")
+// immediately, no suspension, the clock does not move, the hit still
+// counts, and a healthy sibling endpoint is untouched.
+function test_fail_immediate(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(2, 80, "/k", "other", 10000000 as i64);
+    n = n.fault_fail(1, 80, "/k");
+    var f: async.Future[string] = n.fetch_future(1, 80, "/k");
+    match (f) {
+        Ready(v) => { if (v != "") { return test.fail("failed upstream resolved to " + v); } },
+        Pending(tok, c) => { return test.fail("failed upstream suspended"); },
+    }
+    if (d.now_ns() != (0 as i64)) { return test.fail("fail-mode moved the clock"); }
+    if (n.hits(1, 80, "/k") != (1 as i64)) { return test.fail("faulted fetch not counted as a hit"); }
+    var fs: async.Future[string][] = [n.fetch_future(2, 80, "/k")];
+    var got: string[] = async.gather_on(d, fs, "!");
+    if (got[0] != "other") { return test.fail("healthy sibling broken by fault_fail"); }
+    return test.pass();
+}
+
+// stall-mode never resolves: with_deadline drops it with None at the
+// EXACT virtual deadline while the healthy endpoint still answers.
+function test_stall_dropped_at_deadline(): test.TestOutcome {
+    var d: sim.Sim = sim.new(7);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "healthy", 10000000 as i64);
+    n = n.serve(2, 80, "/k", "silent", 5000000 as i64);
+    n = n.fault_stall(2, 80, "/k");
+    var fs: async.Future[string][] = [
+        n.fetch_future(1, 80, "/k"),
+        n.fetch_future(2, 80, "/k")
+    ];
+    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    match (got[0]) {
+        Some(v) => { if (v != "healthy") { return test.fail("wrong healthy body: " + v); } },
+        None => { return test.fail("healthy endpoint dropped alongside the stalled one"); },
+    }
+    match (got[1]) { Some(v) => { return test.fail("stalled endpoint resolved"); }, None => { } }
+    if (n.hits(2, 80, "/k") != (1 as i64)) { return test.fail("stalled fetch not counted as a hit"); }
+    return test.assert_eq(d.now_ns(), 25000000 as i64);
+}
+
+// A stalled slot in an unbounded gather lands on_incomplete (poll over
+// only never-ready tokens returns -1) instead of hanging the fan-out.
+function test_stall_gather_incomplete(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "ok", 10000000 as i64);
+    n = n.serve(2, 80, "/k", "gone", 5000000 as i64);
+    n = n.fault_stall(2, 80, "/k");
+    var fs: async.Future[string][] = [
+        n.fetch_future(1, 80, "/k"),
+        n.fetch_future(2, 80, "/k")
+    ];
+    var got: string[] = async.gather_on(d, fs, "!");
+    if (got[0] != "ok") { return test.fail("healthy body lost: " + got[0]); }
+    return test.assert_eq(got[1], "!");
+}
+
+// partial(k) delivers the first k chunks at their scheduled virtual
+// times, then goes silent: drained by hand, the [4,4,2]@5/10/15ms
+// schedule under fault_partial(2) yields tokens 5 and 10 and then a
+// never-ready (negative) token — the future never resolves.
+function test_partial_prefix_then_silent(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    n = n.fault_partial(1, 80, "/big", 2);
+    var f: async.Future[string] = n.fetch_future(1, 80, "/big");
+    var toks: i32[] = [];
+    var guard: i32 = 0;
+    while (guard < 10) {
+        match (f) {
+            Ready(v) => { return test.fail("partial future resolved: " + v); },
+            Pending(tok, resume) => {
+                if (tok < 0) {
+                    if (toks.len() != 2) { return test.fail("delivered " + toks.len().to_string() + " chunks, want 2"); }
+                    if (toks[0] != 5 || toks[1] != 10) { return test.fail("wrong partial chunk schedule"); }
+                    return test.pass();
+                }
+                toks = toks.append(tok);
+                f = resume(tok);
+            },
+        }
+        guard = guard + 1;
+    }
+    return test.fail("partial future never went silent");
+}
+
+// Under with_deadline a partial endpoint is indistinguishable from a
+// stall: None at exactly the deadline, even though its prefix chunks
+// arrived on time.
+function test_partial_deadline_none(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    n = n.fault_partial(1, 80, "/big", 2);
+    var fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
+    var got: Option[string][] = async.with_deadline_on(d, 30, fs);
+    match (got[0]) { Some(v) => { return test.fail("partial endpoint resolved: " + v); }, None => { } }
+    return test.assert_eq(d.now_ns(), 30000000 as i64);
+}
+
+// __flaky_pattern(seed) — 10 sequential fetches of a flaky(50)
+// endpoint: "S" per success (a Pending scripted read), "F" per fault
+// (Ready("")). Sequential calls with no polls between them, so the
+// pattern is exactly the sim PRNG's first ten draws for the seed.
+function __flaky_pattern(seed: i64): string {
+    var d: sim.Sim = sim.new(seed);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.fault_flaky(1, 80, "/k", 50);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < 10) {
+        match (n.fetch_future(1, 80, "/k")) {
+            Ready(v) => { out = out + "F"; },
+            Pending(tok, c) => { out = out + "S"; },
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// flaky(50) over 10 calls with seed 1 gives this exact golden pattern
+// on every backend — the determinism proof.
+function test_flaky_golden(): test.TestOutcome {
+    return test.assert_eq(__flaky_pattern(1), "SSSFFSSFSF");
+}
+
+// Same seed => same outcomes and the PRNG states stay in lockstep;
+// different seeds => (here, immediately) different outcomes.
+function test_same_seed_reproducible(): test.TestOutcome {
+    if (__flaky_pattern(9) != __flaky_pattern(9)) { return test.fail("same seed diverged"); }
+    var a: sim.Sim = sim.new(9);
+    var b: sim.Sim = sim.new(9);
+    if (a.rng_state() != b.rng_state()) { return test.fail("same-seed sims start with different PRNG states"); }
+    if (__flaky_pattern(1) == __flaky_pattern(2)) { return test.fail("seeds 1 and 2 gave identical patterns"); }
+    return test.pass();
+}
+
+// __gather_shape_ok(seed) — the invariant swept below: gather over one
+// healthy + one flaky(50) + one stalled endpoint ALWAYS returns exactly
+// 3 results in input order, whatever the seed's fault outcomes.
+function __gather_shape_ok(seed: i64): boolean {
+    var d: sim.Sim = sim.new(seed);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "alpha", 10000000 as i64);
+    n = n.serve(2, 80, "/k", "beta", 20000000 as i64);
+    n = n.serve(3, 80, "/k", "gamma", 5000000 as i64);
+    n = n.fault_flaky(2, 80, "/k", 50);
+    n = n.fault_stall(3, 80, "/k");
+    var fs: async.Future[string][] = [
+        n.fetch_future(1, 80, "/k"),
+        n.fetch_future(2, 80, "/k"),
+        n.fetch_future(3, 80, "/k")
+    ];
+    var got: string[] = async.gather_on(d, fs, "!");
+    if (got.len() != 3) { return false; }
+    if (got[0] != "alpha") { return false; }
+    if (got[1] != "beta" && got[1] != "") { return false; }
+    return got[2] == "!";
+}
+
+// __flaky_first_call_ok(seed) — a property that genuinely depends on the
+// seed (the first draw of a flaky(50) endpoint succeeds), used to pin
+// sweep_seeds' failure path.
+function __flaky_first_call_ok(seed: i64): boolean {
+    var d: sim.Sim = sim.new(seed);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.fault_flaky(1, 80, "/k", 50);
+    var ok: boolean = false;
+    match (n.fetch_future(1, 80, "/k")) {
+        Ready(v) => { },
+        Pending(tok, c) => { ok = true; },
+    }
+    return ok;
+}
+
+// sweep_seeds over 20 seeds: the gather-shape invariant holds for every
+// seed (returns 0), and a seed-dependent property reports its FIRST
+// failing seed (seed 1 draws a success first, seed 2 a fault — so 2).
+function test_seed_sweep(): test.TestOutcome {
+    if (sim.sweep_seeds(20, __gather_shape_ok) != (0 as i64)) {
+        return test.fail("gather-shape invariant failed for some seed in 1..20");
+    }
+    return test.assert_eq(sim.sweep_seeds(20, __flaky_first_call_ok), 2 as i64);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/sim faults");
+    r = r.it("fail-mode resolves Ready empty immediately", test_fail_immediate());
+    r = r.it("stall-mode dropped at the exact deadline", test_stall_dropped_at_deadline());
+    r = r.it("stalled gather slot lands on_incomplete", test_stall_gather_incomplete());
+    r = r.it("partial delivers the prefix then goes silent", test_partial_prefix_then_silent());
+    r = r.it("partial under with_deadline is None at the deadline", test_partial_deadline_none());
+    r = r.it("flaky(50) seed-1 golden pattern", test_flaky_golden());
+    r = r.it("same seed reproduces, different seed diverges", test_same_seed_reproducible());
+    r = r.it("seed sweep: invariant holds, failing seed found", test_seed_sweep());
+    return r.finish();
+}

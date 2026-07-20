@@ -101,18 +101,22 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+          gotestsum: "true"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-wasm-test-${{ matrix.host }}
       # Run the wasm slice from the PREBUILT binary — the compile that used to
       # be the preemption window now lives in the short `build` job above.
       # `^Test(WASM|Wasm)` matches both wasm_e2e_test.go (TestWASM* — uppercase)
-      # and wasm_preview2_test.go (TestWasmPreview2* — mixed case). `-test.v`
-      # streams RUN/PASS/FAIL live so a preempted run shows the in-flight test.
+      # and wasm_preview2_test.go (TestWasmPreview2* — mixed case). gotestsum's
+      # `--raw-command` runs the prebuilt binary through `go tool test2json`; the
+      # `standard-verbose` format still streams RUN/PASS/FAIL live so a preempted
+      # run shows the in-flight test, while adding gotestsum's end-of-run summary.
       - name: go test (wasm e2e, prebuilt)
         run: |
           set -euo pipefail
           chmod +x e2e.test
           BIN="$PWD/e2e.test"
           cd internal/e2e
-          "$BIN" -test.run '^Test(WASM|Wasm)' -test.v -test.timeout 18m
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2e "$BIN" -test.run '^Test(WASM|Wasm)' -test.v -test.timeout 18m

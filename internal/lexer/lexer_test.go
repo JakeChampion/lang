@@ -435,10 +435,11 @@ func TestFloatLiteralStillWorksAfterNonDot(t *testing.T) {
 	}
 }
 
-// `float` was a legacy alias for `f32` in pre-i64/usize codebases.
-// Removed in the legacy-cleanup pass — `f32` is the canonical
-// spelling. Regression-pin that the bare identifier `float`
-// tokenises as an Ident (NOT a reserved keyword).
+// `float` is the width-unqualified alias for f64 (#5363), handled
+// contextually in the parser's type position (like `str`). It must
+// stay an Ident at the lexer level — NOT a reserved keyword — so
+// the std/float module qualifier (`float.pi()`) and `float` locals
+// keep working.
 func TestFloatIsNoLongerAKeyword(t *testing.T) {
 	toks, _, err := Tokenize("float")
 	if err != nil {

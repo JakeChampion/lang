@@ -301,3 +301,49 @@ function main(): i32 { var ys: List = Cons(1, Nil).inc(); return 0; }`)
 function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
 function f(borrowed: List): i32 { var ys: List = borrowed.inc(); return 0; }`)
 }
+
+// --- E051 self-reassign move admission (#4873 step 0) --------------------
+
+// A LOCAL passed exactly once, directly, in an `own` position of its own
+// reassignment's RHS is a transfer: the old binding dies at the
+// assignment, so E051 admits it (SelfReassignOwnMoveArg — the IR's
+// callConsumesIdent overwrite-dec skip pairs with the same shape).
+func TestOwnGuardAllowsSelfReassignMove(t *testing.T) {
+	if err := checkSource(t, ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function f(): i32 {
+    var a = B { items: [] };
+    a = grow(a, 1);
+    a = grow(a, 2);
+    return a.items.len();
+}`); err != nil {
+		t.Errorf("self-reassign own move should check, got: %v", err)
+	}
+}
+
+// The admission is ONLY the self-reassign shape: binding the result to a
+// DIFFERENT name keeps the old binding alive — still E051.
+func TestOwnGuardRejectsKeptAliveLocal(t *testing.T) {
+	wantE051(t, "kept-alive-local", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function f(): i32 {
+    var a = B { items: [] };
+    var c = grow(a, 1);
+    return c.items.len();
+}`)
+}
+
+// A SECOND read of the local anywhere in the same RHS would observe the
+// consumed value — exactly-once is required, so this stays E051.
+func TestOwnGuardRejectsSelfReassignSecondRead(t *testing.T) {
+	wantE051(t, "self-reassign-second-read", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function f(): i32 {
+    var a = B { items: [7] };
+    a = grow(a, a.items[0]);
+    return a.items.len();
+}`)
+}

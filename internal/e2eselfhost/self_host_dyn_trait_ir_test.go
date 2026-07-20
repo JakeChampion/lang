@@ -115,6 +115,88 @@ var dynTraitIRCases = []struct {
 	// MISS: a `dyn Show + Weigh` holding a Brick, `d as? Apple` → None → 0.
 	{"downcast-multi-miss",
 		`trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } function main(): i32 { var x: Brick = Brick { kg: 3 }; return dc(x); }`, 99},
+
+	// --- STRING-returning `dyn Trait` methods, chained (#5142). The dispatch
+	// returns the string in the result register; a string method chained
+	// DIRECTLY on it must see a string receiver so `.len()` lowers as the
+	// length read ([ptr-4], the L2 header) rather than a plain deref ([ptr+0],
+	// the string data). Before the fix the dyn-dispatched method's declared
+	// return type wasn't tracked onto the result, so `d.name().len()` read the
+	// data pointer as a length and returned garbage (0). The trait's required
+	// method signature carries the return type; a "dyn <Trait>.<method>" entry
+	// in str_ret_fns makes the chained lowering track the string.
+	// `d.name().len()` on an SSO-inline string ("hello", <=7 bytes) → 5.
+	{"dyn-string-len-chained",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "hello" }; var d: dyn Named = p; return d.name().len(); }`, 5},
+	// Same on a HEAP string (>7 bytes, out-of-line data) → 27.
+	{"dyn-string-len-heap",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "this is a long string value" }; var d: dyn Named = p; return d.name().len(); }`, 27},
+	// Materialising into a `var s: string` first was the workaround — pin that
+	// it still works (the slot type already carried the string). → 5.
+	{"dyn-string-len-via-var",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "hello" }; var d: dyn Named = p; var s: string = d.name(); return s.len(); }`, 5},
+	// Concat chained on a dyn string result: (d.name() + "cd").len() = 2 + 2 = 4.
+	{"dyn-string-concat-chained",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function main(): i32 { var p: P = P { tag: "ab" }; var d: dyn Named = p; return (d.name() + "cd").len(); }`, 4},
+	// A `dyn Named` PARAM, chained `.len()` inside the callee. len("hiya") = 4.
+	{"dyn-string-len-param",
+		`trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function f(d: dyn Named): i32 { return d.name().len(); } function main(): i32 { var p: P = P { tag: "hiya" }; return f(p); }`, 4},
+	// Precision guard (#5151, root-caused + fixed by #5149): a `dyn Foo` whose
+	// method `bar` returns i32, alongside an UNRELATED inherent `S.bar()` that
+	// returns a string. expr_is_str's dyn-receiver arm used to scan str_ret_fns
+	// by BARE method name, matching the unrelated `S.bar`, so `d.bar()` was
+	// typed a string and `d.bar() + sv.bar().len()` mis-lowered to
+	// `__fern_strcat` over the i32 result — garbage/trap on wasm (= 1) and, on
+	// x86, strcat walking the integer as a pointer until it faulted (the CI
+	// "26 s hang → exit -1", layout-sensitive because the walk length depended
+	// on heap contents). The mis-lowering was deterministic in the shared
+	// irlower, not an uninitialized read; #5149's exact-qualified
+	// "dyn <Trait>.<method>" lookup eliminates it on every backend. 9 + 3 = 12.
+	{"dyn-i32-vs-unrelated-string",
+		`trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function main(): i32 { var a: A = A { n: 9 }; var d: dyn Foo = a; var sv: S = S { s: "xyz" }; return d.bar() + sv.bar().len(); }`, 12},
+
+	// --- NUMERIC-returning `dyn Trait` methods, chained in arithmetic. Same
+	// "result type not tracked onto the dispatch result" class as the string
+	// cases above: a 64-bit / float value returned by the dispatch and chained
+	// (`d.v() + 1`) width-tracked as i32 (i64/u64) or as integer bits (f64/f32),
+	// so the arithmetic mis-lowered. "dyn <Trait>.<method>" entries in
+	// i64_ret_fns / f64_ret_fns fix each; the `if (r == …) 1 else 0` returns 1
+	// only when the arithmetic is done at the correct width.
+	// i64: 5_000_000_000 + 1 == 5_000_000_001 (truncates to garbage at i32).
+	{"dyn-i64-chained",
+		`trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { var p: P = P { n: 5000000000 }; var d: dyn Big = p; var r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
+	// u64 rides the i64 path — same fix.
+	{"dyn-u64-chained",
+		`trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { var p: P = P { n: 5000000000 }; var d: dyn U = p; var r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
+	// f64: 2.5 + 0.5 == 3.0 (integer add on the float bits gives a wrong value).
+	{"dyn-f64-chained",
+		`trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { var s: S = S { v: 2.5 }; var d: dyn Fl = s; var r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
+	// f32 rides the f64 twin for value ops — same fix.
+	{"dyn-f32-chained",
+		`trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { var p: P = P { n: 2.5 }; var d: dyn F = p; var r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
+	// Regression guard for a non-scalar return that DOES track + route IR: an
+	// array `.len()` on the dispatch result. (A struct-field or Option-match on a
+	// dyn dispatch result currently routes to the AST fallback — a legit
+	// IR-subset gap, not a miscompile — so those shapes aren't pinned here.)
+	{"dyn-array-len-chained",
+		`trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { var s: S = S { n: 1 }; var d: dyn Arr = s; return d.make().len(); }`, 3},
+
+	// --- DIRECTLY-INDEXED dyn-array dispatch results (`d.make()[i]`, no
+	// explicitly-typed intermediate `var xs: T[]`). The element WIDTH/type of the
+	// dispatch result must be tracked via the array registries keyed
+	// "dyn <Trait>.<method>" — without it a directly-indexed f64 element reads at
+	// the wrong width and a string element mis-lowers its chained `.len()`.
+	// (Binding through `var xs: T[] = d.make()` already types the slot, so only
+	// the direct-chain shape is affected. An i64[]/u64[] direct index of a dyn
+	// result routes to the AST fallback today — a legit IR-subset gap, not a
+	// miscompile — so it is not pinned here and the i64arr registry gets no dyn
+	// entry.)
+	// f64[] element: [2.5, 3.5][1] + 1.0 == 4.5.
+	{"dyn-arr-f64-direct-index",
+		`trait Arr { function make(self: Self): f64[]; } struct S { v: f64 } impl Arr for S { function make(self: Self): f64[] { return [self.v, self.v + 1.0]; } } function main(): i32 { var s: S = S { v: 2.5 }; var d: dyn Arr = s; var r: f64 = d.make()[1] + 1.0; if (r == 4.5) { return 1; } return 0; }`, 1},
+	// string[] element, chained `.len()`: ["ab","hello"][1].len() == 5.
+	{"dyn-arr-string-direct-index",
+		`trait Arr { function make(self: Self): string[]; } struct S { s: string } impl Arr for S { function make(self: Self): string[] { return [self.s, "hello"]; } } function main(): i32 { var s: S = S { s: "ab" }; var d: dyn Arr = s; return d.make()[1].len(); }`, 5},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64

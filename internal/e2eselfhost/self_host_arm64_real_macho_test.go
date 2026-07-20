@@ -141,7 +141,12 @@ func asmToMachoDriver(asm string) string {
 	b.WriteString("    var p: Arm64GasProg = arm64_gas_program(asm);\n")
 	// Surface any silently-dropped mnemonic so the structural check (which
 	// can't tell good code from a well-formed-but-wrong binary) still fails.
-	b.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\" + p.unknown.join(\",\")); return 0; }\n")
+	// Loop-write (not `p.unknown.join(",")`): `.join` has no IR lowering yet,
+	// and the AST-fallback wasm backend it forced the whole driver onto
+	// miscompiles the driver's `p = arm64_gas_link(p, …)` rebind (a struct
+	// release that double-frees children shared with the returned value),
+	// poisoning the freelist and crashing macho_code_signature's sha256.
+	b.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); var ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
 	b.WriteString("    var pa: Arm64Asm = p.asm;\n")
 	b.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), p.data.len());\n")
 	b.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), p.data.len());\n")

@@ -82,6 +82,15 @@ pub function (o: Option[T]) is_some_and(pred: (T) => boolean): boolean {
     match (o) { Some(x) => { return pred(x); }, None => { return false; } }
 }
 
+// is_none_or reports whether the option is empty OR its value satisfies
+// `pred` — the mirror of `is_some_and`, flipping the empty case to true.
+// Handy for "absent or valid" checks: `port.is_none_or(in_range)` passes
+// when no port was supplied and when the supplied one is in range. `None`
+// short-circuits to true (pred is not called).
+pub function (o: Option[T]) is_none_or(pred: (T) => boolean): boolean {
+    match (o) { Some(x) => { return pred(x); }, None => { return true; } }
+}
+
 // or returns this option if present, else `other` (the eagerly-evaluated
 // counterpart of `or_else`).
 pub function (o: Option[T]) or(other: Option[T]): Option[T] {
@@ -151,4 +160,21 @@ pub function (o: Option[T]) xor(other: Option[T]): Option[T] {
 // it sidesteps the indirect-call seam entirely.
 pub function (o: Option[Option[T]]) flatten(): Option[T] {
     match (o) { Some(inner) => { return inner; }, None => { return None; } }
+}
+
+// transpose swaps an `Option` of a `Result` into a `Result` of an
+// `Option`: `None` -> `Ok(None)`, `Some(Ok(v))` -> `Ok(Some(v))`,
+// `Some(Err(e))` -> `Err(e)`. The `Result` sibling `Result.transpose`
+// is the exact inverse. Callback-free (a nested `match`), so it lowers
+// on every backend without touching the indirect-call seam.
+pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
+    match (o) {
+        Some(r) => {
+            match (r) {
+                Ok(x) => { return Ok(Some(x)); },
+                Err(e) => { return Err(e); }
+            }
+        },
+        None => { return Ok(None); }
+    }
 }

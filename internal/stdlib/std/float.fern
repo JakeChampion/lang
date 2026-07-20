@@ -8,8 +8,9 @@
 // covers every practically-encountered case but isn't bit-
 // exact against `f64.const inf`.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/float";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 // __float_to_string's body dispatches (i64) `.to_string()` on
 // the integer and fractional parts (both `intPart` / `fracInt`
@@ -186,6 +187,28 @@ pub function (x: f64) ceil(): f64 { return __ceil_f64(x); }
 // banker's rounding (round half to even) should reach
 // into the bit-pattern themselves.
 pub function (x: f64) round(): f64 { return __round_f64(x); }
+
+// `round_to(digits)` — round `x` to `digits` decimal places, half away from
+// zero (like `round`): `(3.14159).round_to(2)` is `3.14`, `(2.5).round_to(0)`
+// is `3.0`. Negative `digits` round to tens / hundreds
+// (`(1234.0).round_to(-2)` is `1200.0`). Scales by `10^digits`, rounds, and
+// unscales; the usual float-representation caveat applies (the result is the
+// nearest f64 to the rounded decimal, which for most display / money use is
+// exact enough). NaN / ±Inf pass through unchanged.
+pub function (x: f64) round_to(digits: i32): f64 {
+    if (x != x) { return x; }                    // NaN
+    if (x != 0.0 && x * 2.0 == x) { return x; }  // ±Inf
+    var scale: f64 = 1.0;
+    var i: i32 = 0;
+    var d: i32 = digits;
+    if (d < 0) { d = 0 - d; }
+    while (i < d) { scale = scale * 10.0; i = i + 1; }
+    if (digits >= 0) {
+        return __round_f64(x * scale) / scale;
+    }
+    return __round_f64(x / scale) * scale;
+}
+
 // `trunc(x)` is round-toward-zero, equivalent to
 // `(x as i64) as f64` for values that fit in the i64 range.
 // The primitive form handles ±Inf / NaN that the cast
@@ -193,12 +216,93 @@ pub function (x: f64) round(): f64 { return __round_f64(x); }
 pub function (x: f64) trunc(): f64 { return __trunc_f64(x); }
 pub function (x: f64) sqrt(): f64 { return __sqrt_f64(x); }
 pub function (x: f64) log(): f64 { return __log_f64(x); }
+// `log2(x)` / `log10(x)` — logarithms in base 2 and base 10, derived from
+// the natural log by dividing by `ln(2)` / `ln(10)` (change-of-base). No new
+// primitive needed — they ride on the same `__log_f64` the wasm-IR backend
+// already lowers. `log2(8)` is `3`, `log10(1000)` is `3`; `log2` of a power
+// of two and `log10` of a power of ten come out exact up to rounding.
+pub function (x: f64) log2(): f64 { return __log_f64(x) / 0.6931471805599453; }
+pub function (x: f64) log10(): f64 { return __log_f64(x) / 2.302585092994046; }
 pub function (x: f64) exp(): f64 { return __exp_f64(x); }
+// `exp2(x)` / `exp10(x)` — base-2 and base-10 exponentials, the inverses of
+// `log2` / `log10`. Built on the natural `exp` via `2^x == e^(x*ln2)` and
+// `10^x == e^(x*ln10)`, so — like the logs — they reuse the `__exp_f64` the
+// wasm-IR backend already lowers rather than needing a new primitive.
+// `exp2(3)` is `8`, `exp2(10)` is `1024`, `exp10(3)` is `1000`; `exp2` of a
+// whole number and `exp10` of a whole number land on the exact power up to
+// rounding, and both round-trip with their logs (`exp2(x).log2() == x`).
+pub function (x: f64) exp2(): f64 { return __exp_f64(x * 0.6931471805599453); }
+pub function (x: f64) exp10(): f64 { return __exp_f64(x * 2.302585092994046); }
 pub function (x: f64) sin(): f64 { return __sin_f64(x); }
 pub function (x: f64) cos(): f64 { return __cos_f64(x); }
+// `tan(x)` — tangent, as `sin(x) / cos(x)`; the missing sibling of the
+// existing `sin` / `cos`. Blows up to ±Inf near the odd multiples of π/2
+// where `cos` crosses zero, as expected.
+pub function (x: f64) tan(): f64 { return __sin_f64(x) / __cos_f64(x); }
+// `sinh(x)` / `cosh(x)` / `tanh(x)` — the hyperbolic trig functions, built on
+// the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`) so — like
+// `exp2` / `log2` — they need no new primitive and ride the `__exp_f64` the
+// wasm-IR backend already lowers. `sinh(0)` is `0`, `cosh(0)` is `1`,
+// `tanh(0)` is `0`, and the identity `cosh² - sinh² == 1` holds. `tanh` uses
+// the stable `(e²ˣ - 1)/(e²ˣ + 1)` form and saturates to `±1` past `|x| = 20`
+// (where it already equals `±1` to f64 precision), avoiding the `Inf/Inf` NaN
+// that `sinh/cosh` would give for large magnitudes.
+pub function (x: f64) sinh(): f64 { return (__exp_f64(x) - __exp_f64(0.0 - x)) * 0.5; }
+pub function (x: f64) cosh(): f64 { return (__exp_f64(x) + __exp_f64(0.0 - x)) * 0.5; }
+pub function (x: f64) tanh(): f64 {
+    if (x > 20.0) { return 1.0; }
+    if (x < 0.0 - 20.0) { return 0.0 - 1.0; }
+    var e2: f64 = __exp_f64(x * 2.0);
+    return (e2 - 1.0) / (e2 + 1.0);
+}
 // `pow(x, y)` — two-argument form; method receiver is the
 // base. Use `(b).pow(e)` for `b ^ e`.
 pub function (x: f64) pow(y: f64): f64 { return __pow_f64(x, y); }
+
+// `cbrt(x)` — the real cube root, the companion to `sqrt` but defined for
+// negative inputs too (`cbrt(-8)` is `-2`). Since `pow` of a negative base with
+// a fractional exponent is NaN, the sign is peeled off and reapplied around
+// `pow(|x|, 1/3)`. `cbrt(0)` is `0` (sign preserved), NaN passes through.
+pub function (x: f64) cbrt(): f64 {
+    if (x != x) { return x; }
+    if (x == 0.0) { return x; }
+    if (x < 0.0) { return 0.0 - __pow_f64(0.0 - x, 1.0 / 3.0); }
+    return __pow_f64(x, 1.0 / 3.0);
+}
+
+// `hypot(x, y)` — the Euclidean length `sqrt(x*x + y*y)`, computed via the
+// scaled form `hi * sqrt(1 + (lo/hi)^2)` (hi/lo the larger/smaller magnitude)
+// so it does NOT overflow when a naive `x*x + y*y` would, and stays accurate
+// for very lopsided inputs. `hypot(0, 0)` is `0`.
+pub function (x: f64) hypot(y: f64): f64 {
+    var ax: f64 = x.abs();
+    var ay: f64 = y.abs();
+    var hi: f64 = ax.max(ay);
+    var lo: f64 = ax.min(ay);
+    if (hi == 0.0) { return 0.0; }
+    var r: f64 = lo / hi;
+    return hi * (1.0 + r * r).sqrt();
+}
+
+// `hypot3(x, y, z)` — the 3-D Euclidean length `sqrt(x*x + y*y + z*z)`, the
+// three-argument sibling of `hypot`. Same overflow-safe scaling: divide through
+// by the largest magnitude before squaring, so a component near the f64 max
+// doesn't overflow the sum. `hypot3(0, 0, 0)` is `0`; `hypot3(2, 3, 6)` is `7`.
+pub function (x: f64) hypot3(y: f64, z: f64): f64 {
+    var ax: f64 = x.abs();
+    var ay: f64 = y.abs();
+    var az: f64 = z.abs();
+    var hi: f64 = ax.max(ay).max(az);
+    if (hi == 0.0) { return 0.0; }
+    var rx: f64 = ax / hi;
+    var ry: f64 = ay / hi;
+    var rz: f64 = az / hi;
+    return hi * (rx * rx + ry * ry + rz * rz).sqrt();
+}
+
+// `fract(x)` — the fractional part, `x - trunc(x)`; keeps `x`'s sign, so
+// `fract(-3.75)` is `-0.75`. The companion to `trunc` / `floor` / `ceil`.
+pub function (x: f64) fract(): f64 { return x - __trunc_f64(x); }
 
 // `is_nan(x)` / `is_inf(x)` / `is_finite(x)` — IEEE-754
 // classification. The NaN predicate uses the textbook
@@ -243,6 +347,29 @@ pub function (x: f64) clamp(lo: f64, hi: f64): f64 {
     return lo.max(x.min(hi));
 }
 
+// `clamp01(x)` — restrict to the unit interval `[0, 1]`, the common case for
+// colour channels, probabilities, and interpolation weights. Shorthand for
+// `clamp(0, 1)`; NaN propagates like `clamp`.
+pub function (x: f64) clamp01(): f64 {
+    return (0.0).max(x.min(1.0));
+}
+
+// `abs_diff(a, b)` — the absolute difference `|a - b|`, the float sibling of the
+// i32 / i64 helpers. NaN in either operand propagates.
+pub function (a: f64) abs_diff(b: f64): f64 {
+    var d: f64 = a - b;
+    if (d < 0.0) { return 0.0 - d; }
+    return d;
+}
+
+// `mul_add(a, b, c)` — `a * b + c`. A convenience for the common
+// multiply-accumulate step; note this is NOT a hardware-fused FMA — the
+// intermediate `a * b` rounds before the add, so it is exactly `a * b + c` in
+// f64 arithmetic, not the single-rounding `fma`.
+pub function (a: f64) mul_add(b: f64, c: f64): f64 {
+    return a * b + c;
+}
+
 // `signum(x)` — `1.0` if positive, `-1.0` if negative, the value itself
 // (`0.0` / `-0.0`) at zero, and `NaN` for `NaN`. Matches Rust's `f64::signum`
 // EXCEPT at zero, where Rust returns `±1.0` on signed zeros; here signed zero
@@ -261,6 +388,30 @@ pub function (a: f64) lerp(b: f64, t: f64): f64 {
     return a + (b - a) * t;
 }
 
+// `recip(x)` — the reciprocal `1 / x`. `recip(4)` is `0.25`; `recip(0)` is
+// `+Inf` (and `recip(-0)` is `-Inf`, since the division carries the sign).
+// Purely arithmetic — no libm primitive — so it lowers on every backend.
+pub function (x: f64) recip(): f64 { return 1.0 / x; }
+
+// `copysign(x, sign)` — the magnitude of `x` carrying the sign of `sign`:
+// `copysign(3, -1)` is `-3`, `copysign(-3, 2)` is `3`. The sign test is
+// `sign < 0`, so a signed negative zero (`-0.0`, which compares equal to
+// `+0.0`) reads as positive here — the one case where this differs from a
+// bit-level copysign. NaN magnitude passes through with the chosen sign.
+pub function (x: f64) copysign(sign: f64): f64 {
+    var m: f64 = x.abs();
+    if (sign < 0.0) { return 0.0 - m; }
+    return m;
+}
+
+// `midpoint(a, b)` — the point halfway between `a` and `b`, computed as
+// `a*0.5 + b*0.5` so it never overflows the way `(a + b) / 2` would when both
+// operands are near the f64 max. `midpoint(2, 4)` is `3`, `midpoint(1, 2)` is
+// `1.5`.
+pub function (a: f64) midpoint(b: f64): f64 {
+    return a * 0.5 + b * 0.5;
+}
+
 // `to_radians()` / `to_degrees()` — convert between degrees and radians,
 // the natural companions to `sin` / `cos` (which take radians). Uses a
 // high-precision π; the round-trip `d.to_radians().to_degrees()` recovers
@@ -272,27 +423,54 @@ pub function (rad: f64) to_degrees(): f64 {
     return rad * (180.0 / 3.141592653589793);
 }
 
-// f32 mirror methods. Lang's float literals default to f32
-// (`3.14` is `f32`, not `f64`), so callers writing
-// `(3.14).sqrt()` reach for the f32 receiver method. Each
-// wraps the f64 primitive — promote to f64, apply, demote
-// back. Float precision in the final answer is bounded by
-// the f32 input + the operation's f64-domain accuracy;
-// the demotion-to-f32 rounds the result to the nearest f32.
+// f32 mirror methods for explicitly-f32 values (a bare `3.14`
+// is f64 — the language's default float, #5363 — and takes the
+// f64 receiver methods above). Each wraps the f64 primitive —
+// promote to f64, apply, demote back. Float precision in the
+// final answer is bounded by the f32 input + the operation's
+// f64-domain accuracy; the demotion-to-f32 rounds the result
+// to the nearest f32.
 
 pub function (x: f32) abs(): f32 { return __abs_f64(x as f64) as f32; }
 pub function (x: f32) floor(): f32 { return __floor_f64(x as f64) as f32; }
 pub function (x: f32) ceil(): f32 { return __ceil_f64(x as f64) as f32; }
 pub function (x: f32) round(): f32 { return __round_f64(x as f64) as f32; }
+pub function (x: f32) round_to(digits: i32): f32 {
+    return (x as f64).round_to(digits) as f32;
+}
 pub function (x: f32) trunc(): f32 { return __trunc_f64(x as f64) as f32; }
 pub function (x: f32) sqrt(): f32 { return __sqrt_f64(x as f64) as f32; }
 pub function (x: f32) log(): f32 { return __log_f64(x as f64) as f32; }
+pub function (x: f32) log2(): f32 { return (__log_f64(x as f64) / 0.6931471805599453) as f32; }
+pub function (x: f32) log10(): f32 { return (__log_f64(x as f64) / 2.302585092994046) as f32; }
 pub function (x: f32) exp(): f32 { return __exp_f64(x as f64) as f32; }
+pub function (x: f32) exp2(): f32 { return __exp_f64(x as f64 * 0.6931471805599453) as f32; }
+pub function (x: f32) exp10(): f32 { return __exp_f64(x as f64 * 2.302585092994046) as f32; }
 pub function (x: f32) sin(): f32 { return __sin_f64(x as f64) as f32; }
 pub function (x: f32) cos(): f32 { return __cos_f64(x as f64) as f32; }
+pub function (x: f32) tan(): f32 { return (__sin_f64(x as f64) / __cos_f64(x as f64)) as f32; }
+pub function (x: f32) sinh(): f32 { return (x as f64).sinh() as f32; }
+pub function (x: f32) cosh(): f32 { return (x as f64).cosh() as f32; }
+pub function (x: f32) tanh(): f32 { return (x as f64).tanh() as f32; }
 pub function (x: f32) pow(y: f32): f32 {
     return __pow_f64(x as f64, y as f64) as f32;
 }
+pub function (x: f32) cbrt(): f32 {
+    return (x as f64).cbrt() as f32;
+}
+pub function (x: f32) hypot(y: f32): f32 {
+    var ax: f64 = (x as f64).abs();
+    var ay: f64 = (y as f64).abs();
+    var hi: f64 = ax.max(ay);
+    var lo: f64 = ax.min(ay);
+    if (hi == 0.0) { return 0.0 as f32; }
+    var r: f64 = lo / hi;
+    return (hi * (1.0 + r * r).sqrt()) as f32;
+}
+pub function (x: f32) hypot3(y: f32, z: f32): f32 {
+    return (x as f64).hypot3(y as f64, z as f64) as f32;
+}
+pub function (x: f32) fract(): f32 { return (x as f64 - __trunc_f64(x as f64)) as f32; }
 
 pub function (x: f32) is_nan(): boolean { return x != x; }
 pub function (x: f32) is_finite(): boolean {
@@ -321,6 +499,17 @@ pub function (x: f32) max(y: f32): f32 {
 pub function (x: f32) clamp(lo: f32, hi: f32): f32 {
     return lo.max(x.min(hi));
 }
+pub function (x: f32) clamp01(): f32 {
+    return (0.0 as f32).max(x.min(1.0 as f32));
+}
+pub function (a: f32) abs_diff(b: f32): f32 {
+    var d: f32 = a - b;
+    if (d < (0.0 as f32)) { return (0.0 as f32) - d; }
+    return d;
+}
+pub function (a: f32) mul_add(b: f32, c: f32): f32 {
+    return a * b + c;
+}
 
 pub function (x: f32) signum(): f32 {
     if (x != x) { return x; }
@@ -330,6 +519,15 @@ pub function (x: f32) signum(): f32 {
 }
 pub function (a: f32) lerp(b: f32, t: f32): f32 {
     return a + (b - a) * t;
+}
+pub function (x: f32) recip(): f32 { return (1.0 as f32) / x; }
+pub function (x: f32) copysign(sign: f32): f32 {
+    var m: f32 = x.abs();
+    if (sign < (0.0 as f32)) { return (0.0 as f32) - m; }
+    return m;
+}
+pub function (a: f32) midpoint(b: f32): f32 {
+    return (a as f64 * 0.5 + b as f64 * 0.5) as f32;
 }
 pub function (deg: f32) to_radians(): f32 {
     return (deg as f64 * (3.141592653589793 / 180.0)) as f32;

@@ -1215,6 +1215,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// VALUES are non-deterministic, so they ride the IR-only block below.)
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`},
 		{"random-bytes-len-var", `function main(): i32 { var s: string = random_bytes(13); return s.len(); }`},
+		// Clock leaves migrated to Fern on the IR path (#2649). The VALUES are
+		// non-deterministic, but deterministic PROPERTIES (a live clock reads
+		// positive; realtime is past 2023) hold identically on the hand-asm AST
+		// path and the Fern IR helper — the differential proves the IR helper
+		// (via __syscall3 / __raw_scratch / __load_i64 + i64 math) matches.
+		{"monotonic-ns-positive", `function main(): i32 { var a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`},
+		{"now-unix-ms-past-2023", `function main(): i32 { var ms: i64 = now_unix_ms(); if (ms / (1000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`},
+		{"now-ns-past-2023", `function main(): i32 { var ns: i64 = now_ns(); if (ns / (1000000000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`},
+		{"monotonic-ns-nondecreasing", `function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { return 1; } return 0; }`},
 		{"as-bytes-len", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b.len(); }`},
 		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b[0] + b[1] + b[2]; }`},
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); return b[0] + b[1]; }`},
@@ -1420,7 +1429,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `arr[i]` index read on a u64[] producing a u64 value (param or local):
 		// reads 8-byte (arr_index_is_i64 now accepts u64[]) and the use compares
 		// it unsigned (expr_is_u64). The max over a u64[] PARAM whose middle
-		// element is 2^63+1 — the shape std/array's max_u64 uses — would pick the
+		// element is 2^63+1 — the shape cmp.max_of over a u64[] uses — would pick the
 		// wrong element under a signed compare; both paths must return 0.
 		{"u64-param-idx-sum", "function s(arr: u64[]): u64 { var t: u64 = 0u64; var i = 0; while (i < arr.len()) { t = t + arr[i]; i = i + 1; } return t; } function main(): i32 { return s([10u64, 20u64, 5u64]) as i32; }"},
 		{"u64-param-idx-max-big", "function mx(arr: u64[]): u64 { var m: u64 = arr[0]; var i = 1; while (i < arr.len()) { if (arr[i] > m) { m = arr[i]; } i = i + 1; } return m; } function main(): i32 { if (mx([5u64, 9223372036854775809u64, 7u64]) == 9223372036854775809u64) { return 0; } return 1; }"},
@@ -1432,7 +1441,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"i64-append-build", "function main(): i32 { var a: i64[] = []; var i = 0; while (i < 4) { a = a.append((i as i64) * 5000000000); i = i + 1; } if (a[3] == 15000000000 as i64) { return 0; } return 1; }"},
 		{"i64-sort-asc", "function main(): i32 { var a: i64[] = []; a = a.append(9 as i64); a = a.append(3 as i64); a = a.append(6 as i64); var k = 1; while (k < 3) { var key: i64 = a[k]; var j = k - 1; while (j >= 0 && a[j] > key) { a = a.with(j + 1, a[j]); j = j - 1; } a = a.with(j + 1, key); k = k + 1; } if (a[0] == 3 as i64 && a[2] == 9 as i64) { return 0; } return 1; }"},
 		{"u64-append-with-big", "function main(): i32 { var xs: u64[] = []; xs = xs.append(9223372036854775809u64); xs = xs.append(3u64); xs = xs.with(1, 9223372036854775810u64); if (xs[0] != 9223372036854775809u64) { return 1; } if (xs[1] > xs[0]) { return 0; } return 2; }"},
-		// Returning a u64[] (a pointer move) — the std/sort sort_u64_asc shape.
+		// Returning a u64[] (a pointer move) — a u64[]-returning sort shape.
 		// The width-64 return guard must NOT mistake the u64[] array for a scalar
 		// u64. Sorting elements spanning 2^63 proves the body's unsigned compares
 		// order them correctly through the IR path; both paths must agree.
@@ -1491,6 +1500,25 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `.len()` on the result mis-dispatched to the array path — a silent
 		// miscompile (returned 56, not 4). These assert the IR value directly (the
 		// AST==IR differential is blind to a both-paths-wrong case).
+		// A map-RETURNING call as a TUPLE-LITERAL element (`(mk(), 3)`): the
+		// element tag now recovers the full Map[K, V] from the map_ret_fns
+		// registry (#3317's missing arm in expr_map_type_tag), so a later
+		// `t.0.get_or(…)` / `t.0.len()` dispatches as a map op. Before, the
+		// element fell through to the scalar "i32" tag and the map method
+		// silently returned the -1 unknown-method shim (10 read back as 2,
+		// 4 as 2). Pinned to the absolute IR value (the AST==IR differential
+		// is blind to a both-paths-wrong case).
+		{"map-ret-tuple-elem-getor", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		{"map-ret-tuple-elem-len", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.len(); }`, 4},
+		{"map-ret-tuple-elem-unannotated", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		// The METHOD-call sibling (`(f.mk(), 3)`): the registry keys methods
+		// "<BaseType>.<method>", resolved via the receiver's struct type.
+		{"map-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, f.base); return m; } function main(): i32 { var f: Fac = Fac { base: 7 }; var t: (Map[i32, i32], i32) = (f.mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
+		// The string[]-returning METHOD sibling (`(f.mks(), 3)`): before the
+		// qualified strarr_ret_fns entry + expr_is_strarr method arm, the
+		// element tag fell to scalar and `t.0[0].len()` dispatched to a
+		// nonexistent `__fn_i32__len` (link failure).
+		{"strarr-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mks(): string[] { var xs: string[] = []; xs = xs.append("ab"); return xs; } function main(): i32 { var f: Fac = Fac { base: 7 }; var t: (string[], i32) = (f.mks(), 3); return t.1 + t.0.len() + t.0[0].len(); }`, 6},
 		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
@@ -1887,6 +1915,23 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-expr-payload-strmethod-len", `function f(o: Option[string]): i32 { return match (o) { Some(s) => s.trim().len(), None => 0 }; } function main(): i32 { return f(Some("hi ")); }`, 2},
 		{"match-expr-nested-call-arg", `enum L { C(i32, L), N } function id(l: L): L { return l; } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(id(t)), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 	}
+	// Erased-generic 64-bit shapes (#4451 goal-1 widening): a 64-bit (i64/u64)
+	// argument at a bare-typevar param lowers via lower_i64 (fn_param_sigs flag
+	// '5'), and an erased return mirroring that argument reads back full-width
+	// (the str_ret_fns argref resolution in infer_expr_width / lower_i64).
+	// Previously these bailed the module to the AST path; the exit codes pin
+	// the 8-byte round-trip (a truncation returns the 38 arm).
+	irOnly = append(irOnly, []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"erased-i64-arg-only", `function first[T](x: T, n: i32): i32 { return n; } function main(): i32 { var r: i32 = first[i64](4200000000 as i64, 7); return r; }`, 7},
+		{"erased-i64-roundtrip", `function ident[T](x: T): T { return x; } function main(): i32 { var big: i64 = ident[i64](4200000000 as i64); if (big == 4200000000 as i64) { return 42; } return 38; }`, 42},
+		{"erased-i64-tuple-elem", `function pair[K, V](k: K, v: V): (K, V) { return (k, v); } function main(): i32 { var t: (i32, i64) = pair[i32, i64](38, 4200000000 as i64); var big: i64 = t.1; if (big == 4200000000 as i64) { return 42; } return 38; }`, 42},
+		{"erased-i64-both-elems", `function pair[K, V](k: K, v: V): (K, V) { return (k, v); } function main(): i32 { var t: (i64, i64) = pair[i64, i64](5000000000 as i64, 6000000000 as i64); if (t.0 + t.1 == 11000000000 as i64) { return 42; } return 38; }`, 42},
+		{"erased-u64-roundtrip", `function ident[T](x: T): T { return x; } function main(): i32 { var u: u64 = ident[u64](18000000000000000000 as u64); if (u == 18000000000000000000 as u64) { return 42; } return 38; }`, 42},
+	}...)
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := emitAndRun(t, tc.src, true); got != tc.want {

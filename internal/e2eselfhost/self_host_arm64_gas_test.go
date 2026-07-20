@@ -173,6 +173,24 @@ function main(): i32 {
     if (pg < 0.0149 || pg > 0.0151) { return 14; }
     var ph: f64 = arm64_parse_f64("-2.5e+2");
     if (ph < (0.0 - 250.1) || ph > (0.0 - 249.9)) { return 15; }
+    // SH-006: the register decode is STRICT — digit-suffix garbage and
+    // out-of-range numbers return -1 instead of a wrong register (x1a
+    // decoded as x1, unknown tokens as x0 before).
+    if (arm64_gas_reg("x1a") != (0 - 1)) { return 16; }
+    if (arm64_gas_reg("x99") != (0 - 1)) { return 17; }
+    if (arm64_gas_reg("x31") != (0 - 1)) { return 18; }
+    if (arm64_gas_reg("banana") != (0 - 1)) { return 19; }
+    if (arm64_gas_reg("x30") != 30 || arm64_gas_reg("w7") != 7 || arm64_gas_reg("d31") != 31 || arm64_gas_reg("sp") != 31) { return 20; }
+    // …and the program-level assembler RECORDS a register-shaped operand
+    // that fails the decode on p.unknown (top-level and inside a memory
+    // operand), so the driver refuses the corrupt output; a clean program
+    // records nothing.
+    var u1: Arm64GasProg = arm64_gas_program("mov x1a, #1\n");
+    if (u1.unknown.len() != 1) { return 21; }
+    var u2: Arm64GasProg = arm64_gas_program("ldr x0, [x9q, #8]\n");
+    if (u2.unknown.len() != 1) { return 22; }
+    var u3: Arm64GasProg = arm64_gas_program("add x0, x1, x2\nldr x0, [sp, #16]\n");
+    if (u3.unknown.len() != 0) { return 23; }
     return 0;
 }
 `

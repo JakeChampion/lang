@@ -1,0 +1,170 @@
+import "std/test";
+import "std/async";
+import "std/sim";
+
+// examples/tests/sim_net_test.fern — SimNet (docs/DST-PLATFORM-BRIEF.md
+// slice 2): scripted request/response endpoints driven through the
+// std/async combinators, the sim sibling of `fetch.fetch_future`. Every
+// latency here is virtual ns, so every assertion — winners, losers,
+// deadlines, chunk arrival — is EXACT, on every backend including the
+// interpreter (where the real fetch's fd-backed futures never resolve).
+//
+// Run:  fern -interp examples/tests/sim_net_test.fern
+
+// __three_upstreams — a net with three endpoints whose latencies are
+// deliberately out of input order (30ms / 10ms / 20ms).
+function __three_upstreams(d: sim.Sim): sim.Net {
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "primary", 30000000 as i64);
+    n = n.serve(2, 80, "/k", "cache", 10000000 as i64);
+    n = n.serve(3, 80, "/k", "mirror", 20000000 as i64);
+    return n;
+}
+
+// gather over 3 endpoints with different latencies returns bodies in
+// INPUT order (not readiness order), and the fan-out ends at the
+// slowest endpoint's time.
+function test_gather_input_order(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = __three_upstreams(d);
+    var fs: async.Future[string][] = [
+        n.fetch_future(1, 80, "/k"),
+        n.fetch_future(2, 80, "/k"),
+        n.fetch_future(3, 80, "/k")
+    ];
+    var got: string[] = async.gather_on(d, fs, "!");
+    if (got[0] != "primary" || got[1] != "cache" || got[2] != "mirror") {
+        return test.fail("bodies not in input order");
+    }
+    return test.assert_eq(d.now_ns(), 30000000 as i64);
+}
+
+// race over fast + slow endpoints picks the fast one, at the fast one's
+// virtual time — and abandoning the loser leaves the net fully usable
+// (its endpoint still answers a later fetch).
+function test_race_picks_fast(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "slow", 40000000 as i64);
+    n = n.serve(2, 80, "/k", "fast", 10000000 as i64);
+    var fs: async.Future[string][] = [
+        n.fetch_future(1, 80, "/k"),
+        n.fetch_future(2, 80, "/k")
+    ];
+    var (w, v) = async.race_on(d, fs, "!");
+    if (w != 1) { return test.fail("winner index " + w.to_string() + ", want 1"); }
+    if (v != "fast") { return test.fail("winner body " + v + ", want fast"); }
+    if (d.now_ns() != (10000000 as i64)) { return test.fail("race did not end at the fast endpoint's time"); }
+    var rest: async.Future[string][] = [n.fetch_future(1, 80, "/k")];
+    var again: string[] = async.gather_on(d, rest, "!");
+    if (again[0] != "slow") { return test.fail("abandoned loser broke its endpoint"); }
+    return test.pass();
+}
+
+// with_deadline drops ONLY the endpoint slower than the deadline, and
+// the clock lands exactly on the deadline.
+function test_deadline_drops_only_slow(): test.TestOutcome {
+    var d: sim.Sim = sim.new(7);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "late", 40000000 as i64);
+    n = n.serve(2, 80, "/k", "early", 10000000 as i64);
+    var fs: async.Future[string][] = [
+        n.fetch_future(1, 80, "/k"),
+        n.fetch_future(2, 80, "/k")
+    ];
+    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    match (got[0]) { Some(v) => { return test.fail("late endpoint resolved under a 25ms deadline"); }, None => { } }
+    match (got[1]) {
+        Some(v) => { if (v != "early") { return test.fail("wrong early body: " + v); } },
+        None => { return test.fail("early endpoint timed out under a 25ms deadline"); },
+    }
+    return test.assert_eq(d.now_ns(), 25000000 as i64);
+}
+
+// A chunked body accumulates completely and resolves at the LAST chunk's
+// virtual time: 10 bytes as [4,4,2] via chunks_of, first byte at 5ms,
+// then 5ms per chunk => done at 15ms.
+function test_chunked_accumulates(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    var fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
+    var got: string[] = async.gather_on(d, fs, "!");
+    if (got[0] != "abcdefghij") { return test.fail("chunked body did not accumulate: " + got[0]); }
+    return test.assert_eq(d.now_ns(), 15000000 as i64);
+}
+
+// The chunked future's suspension structure, drained by hand: one
+// Pending per chunk (the __fetch_drain shape), tokens on the scheduled
+// ready-at times, partial accumulation between wakes.
+function test_chunked_resuspends_per_chunk(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    var f: async.Future[string] = n.fetch_future(1, 80, "/big");
+    var toks: i32[] = [];
+    var guard: i32 = 0;
+    while (guard < 10) {
+        match (f) {
+            Ready(v) => {
+                if (v != "abcdefghij") { return test.fail("wrong resolved body: " + v); }
+                if (toks.len() != 3) { return test.fail("expected 3 suspensions, got " + toks.len().to_string()); }
+                if (toks[0] != 5 || toks[1] != 10 || toks[2] != 15) {
+                    return test.fail("wrong chunk ready-at schedule");
+                }
+                return test.pass();
+            },
+            Pending(tok, resume) => {
+                toks = toks.append(tok);
+                f = resume(tok);
+            },
+        }
+        guard = guard + 1;
+    }
+    return test.fail("chunked future never resolved");
+}
+
+// An unregistered endpoint is a dead upstream: Ready("") immediately, no
+// suspension, and the clock does not move.
+function test_unregistered_is_ready_empty(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    var f: async.Future[string] = n.fetch_future(9, 80, "/k");
+    match (f) {
+        Ready(v) => { if (v != "") { return test.fail("dead upstream resolved to " + v); } },
+        Pending(tok, c) => { return test.fail("dead upstream suspended"); },
+    }
+    return test.assert_eq(d.now_ns(), 0 as i64);
+}
+
+// Per-endpoint hits: each fetch bumps the matched endpoint's counter,
+// misses count nowhere, and a "" registration is a host:port wildcard.
+function test_hits_and_wildcard(): test.TestOutcome {
+    var d: sim.Sim = sim.new(1);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(2, 80, "", "any", 10000000 as i64);
+    var f1: async.Future[string] = n.fetch_future(1, 80, "/k");
+    var f2: async.Future[string] = n.fetch_future(1, 80, "/k");
+    var f3: async.Future[string] = n.fetch_future(9, 80, "/k");
+    if (n.hits(1, 80, "/k") != (2 as i64)) { return test.fail("expected 2 hits"); }
+    if (n.hits(9, 80, "/k") != (0 as i64)) { return test.fail("miss was counted"); }
+    var wf: async.Future[string][] = [n.fetch_future(2, 80, "/whatever")];
+    var got: string[] = async.gather_on(d, wf, "!");
+    if (got[0] != "any") { return test.fail("wildcard path did not match"); }
+    if (n.hits(2, 80, "") != (1 as i64)) { return test.fail("wildcard hit not counted"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/sim net");
+    r = r.it("gather returns bodies in input order", test_gather_input_order());
+    r = r.it("race picks the fast endpoint", test_race_picks_fast());
+    r = r.it("with_deadline drops only the slow endpoint", test_deadline_drops_only_slow());
+    r = r.it("chunked body accumulates completely", test_chunked_accumulates());
+    r = r.it("chunked future re-suspends per chunk", test_chunked_resuspends_per_chunk());
+    r = r.it("unregistered endpoint is Ready empty", test_unregistered_is_ready_empty());
+    r = r.it("hits counter and wildcard path", test_hits_and_wildcard());
+    return r.finish();
+}

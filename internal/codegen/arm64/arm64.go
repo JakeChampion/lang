@@ -131,15 +131,20 @@ const (
 // in `linuxOnlySysno` below or get branched inline in their
 // emitter.
 var linuxDarwinSysno = map[string][2]int{
-	"read":       {sysRead, darRead},
-	"write":      {sysWrite, darWrite},
-	"close":      {sysClose, darClose},
-	"socket":     {sysSocket, darSocket},
-	"bind":       {sysBind, darBind},
-	"listen":     {sysListen, darListen},
-	"accept":     {sysAccept, darAccept},
-	"connect":    {sysConnect, darConnect},
-	"openat":     {sysOpenat, darOpenat},
+	"read":    {sysRead, darRead},
+	"write":   {sysWrite, darWrite},
+	"close":   {sysClose, darClose},
+	"socket":  {sysSocket, darSocket},
+	"bind":    {sysBind, darBind},
+	"listen":  {sysListen, darListen},
+	"accept":  {sysAccept, darAccept},
+	"connect": {sysConnect, darConnect},
+	"openat":  {sysOpenat, darOpenat},
+	// unlinkat(2) / mkdirat(2): identical arg shapes on both
+	// platforms (Darwin BSD 472 / 475). Back __fern_remove_file /
+	// __fern_remove_dir_all / __fern_temp_dir.
+	"unlinkat":   {35, 472},
+	"mkdirat":    {34, 475},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -359,6 +364,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
 		}
+		// Release the function's IR as soon as it is emitted (mirrors the
+		// x86-64 backend): nothing after this loop reads ip.Funcs, and
+		// dropping each entry lets the GC reclaim the program's ops
+		// incrementally instead of holding all of them until the output
+		// buffer peaks. Output is unaffected (forward-only walk).
+		ip.Funcs[i] = nil
 	}
 	// The Reader/Writer runtime is emitted as a single bundle:
 	// every helper (open_*, read_line, read_chunk, close,
@@ -374,17 +385,23 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesMemcpy = true
 		g.usesAlloc = true
 	}
-	// read_file / write_file both NUL-terminate the path with an
-	// alloc + memcpy before openat (see emitNulTermPath2W) — pull
-	// the runtimes in so the helper links. read_file already needs
-	// __fern_alloc for the result string buffer; write_file gets
-	// it transitively too. The IoError box constructor is shared
-	// with the Reader/Writer family above; pulled in here for the
-	// programs that use file I/O without the Reader API.
-	if g.usesReadFile || g.usesWriteFile {
+	// The file-I/O + filesystem-op helpers all NUL-terminate the
+	// path with an alloc + memcpy before their path syscall (see
+	// emitNulTermPath2W) — pull the runtimes in so the helpers
+	// link. read_file already needs __fern_alloc for the result
+	// string buffer; the rest get it transitively too. The IoError
+	// box constructor is shared with the Reader/Writer family
+	// above; pulled in here for the programs that use file I/O
+	// without the Reader API.
+	if g.usesReadFile || g.usesWriteFile || g.usesRemoveFile ||
+		g.usesTempDir || g.usesReadDir || g.usesStat || g.usesRemoveDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
+	}
+	// temp_dir's unique suffix rides the monotonic clock.
+	if g.usesTempDir {
+		g.usesMonotonicNs = true
 	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
@@ -475,6 +492,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
+	if g.usesSliceRange {
+		g.emitSliceRangeRuntime()
+	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
@@ -541,6 +561,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the _start epilogue always
+		// calls the report, so the helper (and its BSS counters +
+		// literal labels, see emitDataSections) is unconditional under
+		// the flag — a no-alloc program just reports zeros.
+		g.emitLcReportRuntime()
+	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
 	}
@@ -592,6 +619,21 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
+	if g.usesRemoveFile {
+		g.emitRemoveFileRuntime()
+	}
+	if g.usesTempDir {
+		g.emitTempDirRuntime()
+	}
+	if g.usesReadDir {
+		g.emitReadDirRuntime()
+	}
+	if g.usesStat {
+		g.emitStatRuntime()
+	}
+	if g.usesRemoveDirAll {
+		g.emitRemoveDirAllRuntime()
+	}
 	if g.usesReaderWriter {
 		// Reader / Writer struct constructors (stdin/stdout/
 		// stderr + open_reader/writer/appender) + the method
@@ -628,7 +670,15 @@ func (g *generator) emitDataSections() {
 	// backend's emission.
 	if len(g.dynVtableCells) > 0 {
 		if g.darwin {
-			g.line(`.section __TEXT,__const`)
+			// __DATA,__const, NOT __TEXT,__const: the vtable slots are
+			// absolute `.quad __method_*` pointers, and pointers in a
+			// __TEXT section are TEXT RELOCATIONS — current ld64 rejects
+			// them outright ("text-relocation in 'anon-N' ... to
+			// '__method_...'", surfaced when the macos-latest runner's
+			// Xcode rolled forward, #5055). __DATA,__const keeps them
+			// read-only after load while giving the linker a legal
+			// place for the fixups.
+			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)
 		}
@@ -665,7 +715,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors the x86-64 emitter.
 			// The `.quad` directive + label refs are identical for Linux ELF
-			// and the Mach-O __TEXT,__const path above, so this works for
+			// and the Mach-O __DATA,__const path above, so this works for
 			// both arm64 targets.
 			if vt.Drop != "" {
 				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
@@ -678,7 +728,14 @@ func (g *generator) emitDataSections() {
 	// functions. Each cell holds {fn_ptr (8B), env=0 (8B)}.
 	if len(g.constFuncCells) > 0 {
 		if g.darwin {
-			g.line(`.section __TEXT,__const`)
+			// __DATA,__const like the vtables above: each cell's
+			// `.quad <fn>` is an absolute code pointer, which in a
+			// __TEXT section is a text relocation current ld64
+			// rejects (#5055 — the `__map_*_keyed` fn-value adapters
+			// from the core/map collapse were the first const_func
+			// cells a darwin map program emitted, turning every
+			// TestArm64DarwinBuilds/map_* case into a link failure).
+			g.line(`.section __DATA,__const`)
 		} else {
 			g.line(`.section .rodata`)
 		}
@@ -693,10 +750,22 @@ func (g *generator) emitDataSections() {
 			// function-value cells once FuncType locals are
 			// rc-tracked. The label still points at the fn_ptr, so
 			// OpCallIndirect's [+0]/[+8] reads are unchanged.
+			//
+			// Darwin: the label MUST be assembler-local ("L" prefix,
+			// like the .LStr_* string literals above) — a named
+			// (non-L) label starts a new ld64/ld-prime ATOM, and the
+			// anonymous 8-byte rc header preceding it belongs to the
+			// PREVIOUS atom, so the linker may separate/reorder the
+			// header away from its cell. The runtime then reads
+			// garbage at [cell-8], the static-sentinel guard misses,
+			// and the first rc op on a function value WRITES to the
+			// read-only __TEXT,__const page (SIGBUS) — every Map op
+			// crashed on arm64-darwin once #5052 made the default
+			// hash/eq adapters closure targets.
 			g.line(".align 3")
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
-			g.label(fmt.Sprintf("__closure_cell_%s", name))
+			g.label(g.closureCellSym(name))
 			g.line(fmt.Sprintf("\t.quad %s", name))
 			g.line("\t.quad 0")
 		}
@@ -804,7 +873,21 @@ func (g *generator) emitDataSections() {
 		g.label(".LLangNewline")
 		g.line(`	.asciz "\n"`)
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount {
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the fixed text of
+		// __fern_lc_report's summary line. `.asciz` for uniformity with
+		// the literals above (and Mach-O friendliness); the report
+		// writes exact lengths, so the trailing NULs are never emitted.
+		g.label(".Llc_str_allocs")
+		g.line(`	.asciz "leakcheck: allocs="`)
+		g.label(".Llc_str_frees")
+		g.line(`	.asciz " frees="`)
+		g.label(".Llc_str_live")
+		g.line(`	.asciz " live_bytes="`)
+		g.label(".Llc_str_nl")
+		g.line(`	.asciz "\n"`)
+	}
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || ast.LeakCheckEnabled {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -816,6 +899,25 @@ func (g *generator) emitDataSections() {
 			g.line(`.section __DATA,__bss`)
 		} else {
 			g.line(`.section .bss`)
+		}
+		if ast.LeakCheckEnabled {
+			// Leak detector counters (#5362 slice 1). alloc_count /
+			// alloc_bytes tick in __fern_alloc (post-16-rounding, both
+			// the freelist-pop and bump paths); free_count / free_bytes
+			// in __fern_free (same rounding). __fern_lc_report prints
+			// them at exit; live_bytes = alloc_bytes − free_bytes.
+			g.line(`.align 3`)
+			g.label("__fern_lc_alloc_count")
+			g.line(`	.quad 0`)
+			g.line(`.align 3`)
+			g.label("__fern_lc_alloc_bytes")
+			g.line(`	.quad 0`)
+			g.line(`.align 3`)
+			g.label("__fern_lc_free_count")
+			g.line(`	.quad 0`)
+			g.line(`.align 3`)
+			g.label("__fern_lc_free_bytes")
+			g.line(`	.quad 0`)
 		}
 	}
 	if g.usesAlloc {
@@ -951,8 +1053,17 @@ func (g *generator) emitAllocRuntime() {
 	// heap already exercises >32-bit heap pointers). The hint stays at
 	// 0x10000000: the below-heap rc guards key on it (see the lsl below).
 	// Lazy-mapped via a literal-pool load, so the wider window costs
-	// nothing until touched and has no 32-bit-immediate limit.
-	const heapBytes = 8589934592 // 0x200000000, 8 GiB
+	// nothing until touched and has no 32-bit-immediate limit. Raised to
+	// 16 GiB when the arm64 stage-2 self-compile crossed the 8 GiB trap
+	// again (measured need ~8.2 GiB at tip; the compiler's live set grows
+	// with every compiler-source addition). MAP_NORESERVE makes the wider
+	// reservation free: without it Linux's overcommit heuristic refuses
+	// the single anonymous map outright on hosts with RAM+swap below the
+	// arena size (a 16 GiB map would fail AT STARTUP on a 16 GB host with
+	// no swap — and the old 8 GiB map already could not start on
+	// small-RAM boards like a 4 GB Raspberry Pi). The exit-137 bounds
+	// check in the allocator remains the real out-of-memory guard.
+	const heapBytes = 17179869184 // 0x400000000, 16 GiB
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -961,6 +1072,24 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("add x0, x0, #15")
 	g.emit("and x0, x0, #-16")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): count every allocation — the
+		// freelist-pop and bump paths both flow through here — at the
+		// 16-rounded size, the same rounding __fern_free's counter
+		// applies, so a block's alloc and eventual free cancel exactly.
+		// (The large tier's further capacity round-up is deliberately
+		// NOT counted: free is called with the logical size and never
+		// sees it.) x9/x10 are scratch here — the mmap path's x9 stash
+		// happens later.
+		g.adrpAdd("x9", "__fern_lc_alloc_count")
+		g.emit("ldr x10, [x9]")
+		g.emit("add x10, x10, #1")
+		g.emit("str x10, [x9]")
+		g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+		g.emit("ldr x10, [x9]")
+		g.emit("add x10, x10, x0")
+		g.emit("str x10, [x9]")
+	}
 	if ast.RcFreeEnabled {
 		// Two-tier segregated freelist (arm64 mirror of the x86_64 helper).
 		// Small tier (16..2048 B): 16-byte exact-fit classes 0..127,
@@ -1031,9 +1160,14 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("ldr x1, =%d", heapBytes)
 	g.emit("mov x2, #3")
 	if g.darwin {
+		// Darwin: MAP_ANON|MAP_PRIVATE. No NORESERVE needed — macOS does
+		// not strictly account anonymous private reservations.
 		g.emit("mov x3, #0x1002")
 	} else {
-		g.emit("mov x3, #0x22")
+		// MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000) — see the
+		// heapBytes comment: exempts the big lazy arena from Linux's
+		// overcommit accounting so reservation size never blocks startup.
+		g.emit("mov x3, #0x4022")
 	}
 	g.emit("mov x4, #-1")
 	g.emit("mov x5, #0")
@@ -1083,6 +1217,32 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".global __fern_free")
 	g.typeDirective("__fern_free")
 	g.label("__fern_free")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): every reclamation site funnels
+		// through this helper (box_free / arr_dec / map_drop /
+		// drop_arr_ptr / drop_arr_str / alloc_reuse's mismatch path /
+		// the __free builtin — the freelist push below is the only
+		// other freelist writer and it's in this same function), so
+		// counting here covers them all. Count at the same
+		// (size+15)&-16 rounding __fern_alloc counted, in scratch regs
+		// so the RcFreeEnabled body's own rounding of x1 is untouched
+		// (and the counters still tick when the freelist is compiled
+		// out). __fern_alloc_reuse's in-place path calls neither
+		// __fern_alloc nor __fern_free — in-place reuse counts as
+		// NEITHER an alloc nor a free, which is exact: its class match
+		// requires equal rounded sizes, so the block's original alloc
+		// count still cancels against its eventual free.
+		g.emit("add x9, x1, #15")
+		g.emit("and x9, x9, #-16")
+		g.adrpAdd("x10", "__fern_lc_free_count")
+		g.emit("ldr x11, [x10]")
+		g.emit("add x11, x11, #1")
+		g.emit("str x11, [x10]")
+		g.adrpAdd("x10", "__fern_lc_free_bytes")
+		g.emit("ldr x11, [x10]")
+		g.emit("add x11, x11, x9")
+		g.emit("str x11, [x10]")
+	}
 	if ast.RcFreeEnabled {
 		g.emit("add x1, x1, #15")
 		g.emit("and x1, x1, #-16")
@@ -2397,6 +2557,37 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSliceRangeRuntime emits `__fern_slice_range(lo, hi, len)` — the
+// slice-construction bounds check (#5419). Traps with exit 134 unless
+// 0 <= lo <= hi <= len, then returns the slice length hi - lo in w0.
+// Two unsigned compares on the sign-extended values cover all four
+// conditions: a negative bound sign-extends to a huge unsigned 64-bit
+// value, so `hi > len` catches hi < 0 and `lo > hi` catches lo < 0.
+// The sxtw normalisation is the same #5294 fix as __str_slice: an i32
+// bound can arrive with dirty high bits.
+//
+// Calling convention: w0 = lo, w1 = hi, w2 = len (i32s).
+func (g *generator) emitSliceRangeRuntime() {
+	g.line("")
+	g.line(".global __fern_slice_range")
+	g.typeDirective("__fern_slice_range")
+	g.label("__fern_slice_range")
+	g.emit("sxtw x0, w0") // lo (sign-extended from i32)
+	g.emit("sxtw x1, w1") // hi
+	g.emit("sxtw x2, w2") // len
+	g.emit("cmp x1, x2")
+	g.emit("bhi .Lslicerange_trap") // hi > len (unsigned)
+	g.emit("cmp x0, x1")
+	g.emit("bhi .Lslicerange_trap") // lo > hi (unsigned)
+	g.emit("sub w0, w1, w0")
+	g.emit("ret")
+	g.label(".Lslicerange_trap")
+	g.emit("mov x0, #134")
+	g.syscallExit()
+	g.sizeDirective("__fern_slice_range")
+	g.line(".ltorg")
+}
+
 // emitStrcatRuntime emits `__fern_strcat(a, b)` — concat two
 // length-prefixed strings into a fresh allocation. Both string
 // operands are data pointers (post-prefix) with the 4-byte
@@ -3179,9 +3370,13 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("str x23, [sp, #48]")
-	g.emit("mov x19, x0")      // x19 = base (may be inline-tagged)
-	g.emit("mov x20, x1")      // x20 = low
-	g.emit("mov x21, x2")      // x21 = high
+	g.emit("mov x19, x0") // x19 = base (may be inline-tagged)
+	// Sign-extend the i32 bounds from their low 32 bits (#5294) — the
+	// arm64 twin of x86-64's movsxd: a negative i32 constant materialises
+	// zero-extended (mov w0, N), so a dirty-high-bits bound slips past the
+	// bounds compares. sxtw is a no-op for a clean bound.
+	g.emit("sxtw x20, w1")     // x20 = low (sign-extended from i32)
+	g.emit("sxtw x21, w2")     // x21 = high (sign-extended from i32)
 	g.emitStrLen("w22", "x19") // x22 = src_len
 	// low < 0 → trap
 	g.emit("cmp x20, #0")
@@ -3266,8 +3461,9 @@ func (g *generator) emitStrSliceRuntime2W() {
 	g.emit("stp x23, x24, [sp, #48]")
 	g.emit("mov x19, x0") // base_data
 	g.emit("mov x20, x1") // base_len
-	g.emit("mov x21, x2") // low
-	g.emit("mov x22, x3") // high
+	// Sign-extend the i32 bounds (#5294), as in the 1W variant above.
+	g.emit("sxtw x21, w2") // low (sign-extended from i32)
+	g.emit("sxtw x22, w3") // high (sign-extended from i32)
 	// Get base byte length.
 	g.emitStrLen2W("w23", "x20") // x23 = src_byteLen
 	// Bounds checks: low ≥ 0, high ≤ src_byteLen, low ≤ high.
@@ -3966,9 +4162,106 @@ func (g *generator) emitExitRuntime() {
 	g.line(".global __fern_exit")
 	g.typeDirective("__fern_exit")
 	g.label("__fern_exit")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the exit() builtin bypasses the
+		// _start epilogue, so report here too. The code parks in x19 —
+		// clobbering a callee-save is fine on a path that never returns.
+		g.emit("mov x19, x0")
+		g.emit("bl __fern_lc_report")
+		g.emit("mov x0, x19")
+	}
 	g.syscallExit()
 	g.emit("ret")
 	g.sizeDirective("__fern_exit")
+	g.line(".ltorg")
+}
+
+// emitLcReportRuntime emits `__fern_lc_report()` — the leak detector's
+// (#5362 slice 1) exit-time summary, the arm64 mirror of the x86_64
+// helper. Writes one line to stderr:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = __fern_lc_alloc_bytes − __fern_lc_free_bytes (signed — an
+// over-free would show negative rather than wrapping). Only emitted
+// when ast.LeakCheckEnabled; called from the _start epilogue and
+// __fern_exit, which park the exit code in x19 across the call, so the
+// helper (and its two local subroutines) must touch caller-saved
+// registers only. The decimal formatting is a self-contained
+// divide-by-10 loop into a stack buffer (.Llc_wrnum).
+func (g *generator) emitLcReportRuntime() {
+	g.line("")
+	g.line(".global __fern_lc_report")
+	g.typeDirective("__fern_lc_report")
+	g.label("__fern_lc_report")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.adrpAdd("x1", ".Llc_str_allocs")
+	g.emit("mov x2, #18")
+	g.emit("bl .Llc_write")
+	g.adrpAdd("x9", "__fern_lc_alloc_count")
+	g.emit("ldr x0, [x9]")
+	g.emit("bl .Llc_wrnum")
+	g.adrpAdd("x1", ".Llc_str_frees")
+	g.emit("mov x2, #7")
+	g.emit("bl .Llc_write")
+	g.adrpAdd("x9", "__fern_lc_free_count")
+	g.emit("ldr x0, [x9]")
+	g.emit("bl .Llc_wrnum")
+	g.adrpAdd("x1", ".Llc_str_live")
+	g.emit("mov x2, #12")
+	g.emit("bl .Llc_write")
+	g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+	g.emit("ldr x0, [x9]")
+	g.adrpAdd("x9", "__fern_lc_free_bytes")
+	g.emit("ldr x1, [x9]")
+	g.emit("sub x0, x0, x1")
+	g.emit("bl .Llc_wrnum")
+	g.adrpAdd("x1", ".Llc_str_nl")
+	g.emit("mov x2, #1")
+	g.emit("bl .Llc_write")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	// .Llc_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf —
+	// no bl inside, so x30 (the report's return-into-report address)
+	// survives.
+	g.label(".Llc_write")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("ret")
+	// .Llc_wrnum(x0 = signed i64): decimal itoa, digits built backwards
+	// from the end of a 32-byte stack buffer (an i64 is at most 19
+	// digits + sign), then one write(2) to stderr. Leaf.
+	g.label(".Llc_wrnum")
+	g.emit("sub sp, sp, #48") // 32-byte digit buffer + 16 spare
+	g.emit("add x3, sp, #32")
+	g.emit("mov x4, #10")
+	g.emit("mov x5, #0") // sign flag
+	g.emit("cmp x0, #0")
+	g.emit("b.ge .Llc_wrnum_loop")
+	g.emit("neg x0, x0")
+	g.emit("mov x5, #1")
+	g.label(".Llc_wrnum_loop")
+	g.emit("udiv x6, x0, x4")
+	g.emit("msub x7, x6, x4, x0") // remainder = x0 - q*10
+	g.emit("add x7, x7, #48")     // → ASCII digit
+	g.emit("sub x3, x3, #1")
+	g.emit("strb w7, [x3]")
+	g.emit("mov x0, x6")
+	g.emit("cbnz x0, .Llc_wrnum_loop")
+	g.emit("cbz x5, .Llc_wrnum_emit")
+	g.emit("mov x7, #45") // '-'
+	g.emit("sub x3, x3, #1")
+	g.emit("strb w7, [x3]")
+	g.label(".Llc_wrnum_emit")
+	g.emit("add x2, sp, #32")
+	g.emit("sub x2, x2, x3") // len
+	g.emit("mov x1, x3")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("add sp, sp, #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_lc_report")
 	g.line(".ltorg")
 }
 
@@ -4611,14 +4904,28 @@ func (g *generator) emitArgsRuntime2W() {
 	g.label(".Largs2w_strlen_done")
 	g.emit("sub x0, x0, x23") // x0 = strlen
 	g.emit("mov x24, x0")     // x24 = strlen (callee-save, survives bl)
-	// Allocate strlen bytes (no length prefix; len lives in
-	// the entry's `len` half).
-	g.emit("bl __fern_alloc")
-	g.emit("mov x25, x0") // x25 = dst (callee-save, survives bl)
-	// memcpy(dst, src, strlen).
+	// Allocate via __fern_alloc_rc1 — the L2 rc-headed form, matching the
+	// single-word variant — NOT plain __fern_alloc. The entry's `len`
+	// half carries the length for readers, but every rc consumer
+	// (__fern_str_inc / __fern_str_dec / the __fern_drop_arr_str element
+	// sweep) unconditionally read-modify-writes the rc word at data-8 and
+	// the box-free path sizes the block from the length prefix at data-4.
+	// A headerless plain-alloc string made those hit the PREVIOUS argv
+	// string's tail bytes: binding or dropping any args() element
+	// silently incremented/decremented a byte inside a neighbouring
+	// argv string — path-length-dependent corruption (openat on argv[1]
+	// failing with one byte off by one; the long-standing "argv string
+	// lifetime" flake that dropped suites from the native-mmc gate).
+	// Payload is strlen + 1 so the trailing NUL survives for libc-shaped
+	// consumers, same as the single-word variant.
+	g.emit("add x0, x0, #1")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x25, x0")          // x25 = dst (callee-save, survives bl)
+	g.emit("stur w24, [x25, #-4]") // length prefix at data-4 (block sizing for box-free)
+	// memcpy(dst, src, strlen + 1) — include the NUL.
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x23")
-	g.emit("mov x2, x24")
+	g.emit("add x2, x24, #1")
 	g.emit("bl __fern_memcpy")
 	// Write entry: data at [x21 + i*16], len at [x21 + i*16 + 8].
 	g.emit("lsl x11, x22, #4")    // x11 = i * 16
@@ -5933,6 +6240,754 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.line(".ltorg")
 }
 
+// atFdcwd materialises the platform AT_FDCWD constant (-100 on
+// Linux, -2 on Darwin) into reg. Shared by the filesystem-op
+// helpers below.
+func (g *generator) atFdcwd(reg string) {
+	if g.darwin {
+		g.emit("mov %s, #-2", reg)
+	} else {
+		g.emit("mov %s, #-100", reg)
+	}
+}
+
+// syscallFstatat emits fstatat(dirfd, path, statbuf, flags) —
+// args already in x0..x3 — and normalises the error shape to
+// Linux's -errno-in-x0. Branched inline (like syscallFstat)
+// because Darwin and Linux disagree on the number (Linux
+// newfstatat 79, Darwin fstatat64 470) and the struct layout
+// (see statSizeOff / the st_mode reads in emitStatRuntime).
+func (g *generator) syscallFstatat() {
+	if g.darwin {
+		g.emit("mov x16, #470")
+		g.emit("svc #0x80")
+		lbl := g.freshLabel("fstatat_ok")
+		g.emit("b.cc %s", lbl)
+		g.emit("neg x0, x0")
+		g.label(lbl)
+		return
+	}
+	g.emit("mov x8, #79")
+	g.emit("svc #0")
+}
+
+// syscallGetdents emits getdents64(fd, buf, count) — args in
+// x0..x2 — normalised to -errno-in-x0 on error. On Darwin the
+// equivalent is getdirentries64(fd, buf, count, basep) (BSD 344)
+// whose extra `basep` pointer must already be in x3; the dirent
+// record layouts also differ (d_name at 21 vs Linux's 19 — the
+// callers branch on that), while d_reclen sits at offset 16 on
+// both.
+func (g *generator) syscallGetdents() {
+	if g.darwin {
+		g.emit("mov x16, #344")
+		g.emit("svc #0x80")
+		lbl := g.freshLabel("getdents_ok")
+		g.emit("b.cc %s", lbl)
+		g.emit("neg x0, x0")
+		g.label(lbl)
+		return
+	}
+	g.emit("mov x8, #61")
+	g.emit("svc #0")
+}
+
+// direntNameOff is the byte offset of d_name within a directory
+// entry record: 19 in Linux's getdents64 layout, 21 in Darwin's
+// 64-bit-inode getdirentries64 layout.
+func (g *generator) direntNameOff() int {
+	if g.darwin {
+		return 21
+	}
+	return 19
+}
+
+// emitODirectory materialises the platform O_DIRECTORY flag into
+// reg: 0o40000 = 16384 on arm64 Linux (an arch-specific override
+// — x86-64's 65536 is O_DIRECT here), 0x100000 on Darwin.
+func (g *generator) emitODirectory(reg string) {
+	if g.darwin {
+		g.emit("mov %s, #1", reg)
+		g.emit("lsl %s, %s, #20", reg, reg)
+	} else {
+		g.emit("mov %s, #16384", reg)
+	}
+}
+
+// emitRemoveFileRuntime emits `__fern_remove_file(path_data,
+// path_len)` in (x0, x1) → Option[IoError] — unlinkat(AT_FDCWD,
+// path, 0). None on success; Some(IoError) on failure (removing
+// a missing file IS an error, matching the checker's contract —
+// unlike remove_dir_all's silent-ENOENT). Box shapes match
+// write_file: None = 8-byte box tag=1; Some = 16-byte box tag=0
+// with the IoError box @+8.
+func (g *generator) emitRemoveFileRuntime() {
+	g.line("")
+	g.line(".global __fern_remove_file")
+	g.typeDirective("__fern_remove_file")
+	g.label("__fern_remove_file")
+	// Frame: fp/lr (16) + x19..x22 (32) + 16-byte inline-spill
+	// scratch at [x29+48] = 64.
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 48)
+	g.emit("mov x22, x20")
+	g.emitStrLen2W("w22", "x22") // w22 = byte length
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// unlinkat(AT_FDCWD, pathz, 0)
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, #0")
+	g.syscall("unlinkat")
+	g.emit("tbnz x0, #63, .Lrmf2w_some")
+	g.emit("mov x0, #8")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // Option.None
+	g.emit("b .Lrmf2w_return")
+
+	g.label(".Lrmf2w_some")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]") // Option.Some
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lrmf2w_return")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_remove_file")
+	g.line(".ltorg")
+}
+
+// emitTempDirRuntime emits `__fern_temp_dir(prefix_data,
+// prefix_len)` in (x0, x1) → Result[string, IoError] — creates
+// "/tmp/<prefix>-<ns>" (ns = __fern_monotonic_ns, decimal
+// digits) via mkdirat and returns Ok(path). The path is built in
+// a plain scratch buffer, then copied into an exactly-sized rc=1
+// string so the length prefix matches the allocation. Result
+// box: Ok = 24-byte {tag=0 @0, data @8, len @16}; Err = 16-byte
+// {tag=1 @0, IoError @8} (same shapes as read_file's 2W boxes).
+func (g *generator) emitTempDirRuntime() {
+	g.line("")
+	g.line(".global __fern_temp_dir")
+	g.typeDirective("__fern_temp_dir")
+	g.label("__fern_temp_dir")
+	// Frame: fp/lr (16) + x19..x25 (56 + 8 pad rounds into the
+	// next slot) + 16-byte inline-spill scratch at [x29+72] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0")                       // prefix_data (original, for io_error)
+	g.emit("mov x20, x1")                       // prefix_len (original, for io_error)
+	g.emitStrDataPtr2W("x25", "x19", "x20", 72) // x25 = prefix byte ptr
+	g.emit("mov x24, x20")
+	g.emitStrLen2W("w24", "x24") // w24 = prefix byte length
+	g.emit("bl __fern_monotonic_ns")
+	g.emit("mov x23, x0") // ns (unique suffix)
+	// Scratch: 5 ("/tmp/") + plen + 1 ('-') + 20 (max digits) + 1 NUL.
+	g.emit("add x0, x24, #27")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0") // scratch path buffer
+	g.emit("mov w9, #47") // '/'
+	g.emit("strb w9, [x21]")
+	g.emit("mov w9, #116") // 't'
+	g.emit("strb w9, [x21, #1]")
+	g.emit("mov w9, #109") // 'm'
+	g.emit("strb w9, [x21, #2]")
+	g.emit("mov w9, #112") // 'p'
+	g.emit("strb w9, [x21, #3]")
+	g.emit("mov w9, #47") // '/'
+	g.emit("strb w9, [x21, #4]")
+	g.emit("mov x22, #5") // cursor
+	// Append the prefix bytes.
+	g.emit("mov x9, #0")
+	g.label(".Ltd2w_pcp")
+	g.emit("cmp x9, x24")
+	g.emit("b.ge .Ltd2w_pcpd")
+	g.emit("ldrb w10, [x25, x9]")
+	g.emit("strb w10, [x21, x22]")
+	g.emit("add x22, x22, #1")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Ltd2w_pcp")
+	g.label(".Ltd2w_pcpd")
+	g.emit("mov w9, #45") // '-'
+	g.emit("strb w9, [x21, x22]")
+	g.emit("add x22, x22, #1")
+	// Count decimal digits of ns into x11 (do-while: ns=0 → 1).
+	g.emit("mov x9, x23")
+	g.emit("mov x11, #0")
+	g.emit("mov x13, #10")
+	g.label(".Ltd2w_cnt")
+	g.emit("udiv x14, x9, x13")
+	g.emit("add x11, x11, #1")
+	g.emit("mov x9, x14")
+	g.emit("cbnz x9, .Ltd2w_cnt")
+	// Write the digits least-significant-first into
+	// [x22 .. x22+x11-1], then advance the cursor.
+	g.emit("add x15, x22, x11")
+	g.emit("sub x15, x15, #1") // last digit position
+	g.emit("mov x9, x23")
+	g.label(".Ltd2w_wr")
+	g.emit("udiv x14, x9, x13")
+	g.emit("msub x16, x14, x13, x9") // rem = x9 - q*10
+	g.emit("add x16, x16, #48")
+	g.emit("strb w16, [x21, x15]")
+	g.emit("sub x15, x15, #1")
+	g.emit("mov x9, x14")
+	g.emit("cbnz x9, .Ltd2w_wr")
+	g.emit("add x22, x22, x11")    // total path length
+	g.emit("strb wzr, [x21, x22]") // NUL
+	// mkdirat(AT_FDCWD, pathz, 0700=448)
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, #448")
+	g.syscall("mkdirat")
+	g.emit("cbnz x0, .Ltd2w_err")
+	// Ok: copy the path into an exactly-sized rc=1 string.
+	g.emit("add x0, x22, #1")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x24, x0") // final string data ptr (prefix len dead)
+	g.emit("stur w22, [x24, #-4]")
+	g.emit("mov x0, x24")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x22")
+	g.emit("bl __fern_memcpy")
+	g.emit("strb wzr, [x24, x22]")
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
+	g.emit("str x24, [x0, #8]")  // payload data
+	g.emit("str x22, [x0, #16]") // payload len (heap form)
+	g.emit("b .Ltd2w_return")
+
+	g.label(".Ltd2w_err")
+	g.emit("neg x22, x0") // errno (cursor dead on this path)
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Ltd2w_return")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective("__fern_temp_dir")
+	g.line(".ltorg")
+}
+
+// emitReadDirRuntime emits `__fern_read_dir(path_data,
+// path_len)` in (x0, x1) → Result[string[], IoError] — lists the
+// non-recursive children of `path` as base names (unsorted).
+// Pipeline: openat(O_RDONLY|O_DIRECTORY) → getdents64-drain into
+// a 1 MiB heap buffer → close → pass 1 counts entries (skipping
+// "." / "..") → array alloc (canonical two-word layout: 16-byte
+// header, cap@data-12, rc=1@data-8, len@data-4, 16-byte
+// (data, len) elements) → pass 2 fills with fresh rc=1 strings.
+// openat failure → Err(IoError). Ok = 16-byte box {tag=0,
+// array ptr @8}; Err = 16-byte box {tag=1, IoError @8}.
+func (g *generator) emitReadDirRuntime() {
+	g.line("")
+	g.line(".global __fern_read_dir")
+	g.typeDirective("__fern_read_dir")
+	g.label("__fern_read_dir")
+	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
+	// scratch at [x29+80] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emit("mov x22, x20")
+	g.emitStrLen2W("w22", "x22") // w22 = path byte length
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emitODirectory("x2")
+	g.emit("mov x3, #0")
+	g.syscall("openat")
+	g.emit("tbnz x0, #63, .Lrdd2w_err")
+	g.emit("mov x23, x0") // fd
+	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
+	g.emit("mov x0, #1")
+	g.emit("lsl x0, x0, #20")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0") // buf base (pathz dead past openat)
+	if g.darwin {
+		// getdirentries64 needs a basep (off_t*) scratch cell.
+		g.emit("mov x0, #8")
+		g.emit("bl __fern_alloc")
+		g.emit("mov x24, x0")
+	}
+	g.emit("mov x22, #0") // total (path byte len dead)
+	g.label(".Lrdd2w_g")
+	g.emit("mov x2, #1")
+	g.emit("lsl x2, x2, #20")
+	g.emit("sub x2, x2, x22")
+	g.emit("cbz x2, .Lrdd2w_gd")
+	g.emit("mov x0, x23")
+	g.emit("add x1, x21, x22")
+	if g.darwin {
+		g.emit("mov x3, x24") // basep
+	}
+	g.syscallGetdents()
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lrdd2w_gd")
+	g.emit("add x22, x22, x0")
+	g.emit("b .Lrdd2w_g")
+	g.label(".Lrdd2w_gd")
+	g.emit("mov x0, x23")
+	g.syscall("close")
+	// Pass 1: count entries that aren't "." / "..".
+	g.emit("mov x23, #0") // count (fd is closed)
+	g.emit("mov x26, #0") // offset
+	g.label(".Lrdd2w_c1")
+	g.emit("cmp x26, x22")
+	g.emit("b.ge .Lrdd2w_c1d")
+	g.emit("add x10, x21, x26")
+	g.emit("add x10, x10, #%d", g.direntNameOff()) // d_name ptr
+	g.emit("ldrb w11, [x10]")
+	g.emit("cmp w11, #46") // '.'
+	g.emit("b.ne .Lrdd2w_c1n")
+	g.emit("ldrb w11, [x10, #1]")
+	g.emit("cbz w11, .Lrdd2w_c1s") // "."
+	g.emit("cmp w11, #46")
+	g.emit("b.ne .Lrdd2w_c1n")
+	g.emit("ldrb w11, [x10, #2]")
+	g.emit("cbz w11, .Lrdd2w_c1s") // ".."
+	g.label(".Lrdd2w_c1n")
+	g.emit("add x23, x23, #1")
+	g.label(".Lrdd2w_c1s")
+	g.emit("add x12, x21, x26")
+	g.emit("ldrh w11, [x12, #16]") // d_reclen
+	g.emit("add x26, x26, x11")
+	g.emit("b .Lrdd2w_c1")
+	g.label(".Lrdd2w_c1d")
+	// Array alloc: 16-byte header + count * 16 (two-word string
+	// elements).
+	g.emit("lsl x0, x23, #4")
+	g.emit("add x0, x0, #16")
+	g.emit("bl __fern_alloc")
+	g.emit("add x25, x0, #16")      // array data ptr
+	g.emit("stur w23, [x25, #-12]") // cap = count
+	g.emit("mov w9, #1")
+	g.emit("stur w9, [x25, #-8]") // rc = 1
+	g.emitArrayLenStore("w23", "x25")
+	// Pass 2: fill with fresh rc=1 strings.
+	g.emit("mov x23, #0") // element index
+	g.emit("mov x26, #0") // offset
+	g.label(".Lrdd2w_p2")
+	g.emit("cmp x26, x22")
+	g.emit("b.ge .Lrdd2w_p2d")
+	g.emit("add x10, x21, x26")
+	g.emit("add x10, x10, #%d", g.direntNameOff())
+	g.emit("ldrb w11, [x10]")
+	g.emit("cmp w11, #46")
+	g.emit("b.ne .Lrdd2w_p2t")
+	g.emit("ldrb w11, [x10, #1]")
+	g.emit("cbz w11, .Lrdd2w_p2a")
+	g.emit("cmp w11, #46")
+	g.emit("b.ne .Lrdd2w_p2t")
+	g.emit("ldrb w11, [x10, #2]")
+	g.emit("cbz w11, .Lrdd2w_p2a")
+	g.label(".Lrdd2w_p2t")
+	// nlen = strlen(name).
+	g.emit("mov x11, #0")
+	g.label(".Lrdd2w_sl")
+	g.emit("ldrb w12, [x10, x11]")
+	g.emit("cbz w12, .Lrdd2w_sld")
+	g.emit("add x11, x11, #1")
+	g.emit("b .Lrdd2w_sl")
+	g.label(".Lrdd2w_sld")
+	g.emit("mov x24, x10")         // name ptr (survives the alloc)
+	g.emit("str x11, [sp, #-16]!") // nlen across the alloc
+	g.emit("add x0, x11, #1")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("ldr x11, [sp], #16")
+	g.emit("stur w11, [x0, #-4]") // length prefix (block sizing)
+	g.emit("mov x9, #0")
+	g.label(".Lrdd2w_nc")
+	g.emit("cmp x9, x11")
+	g.emit("b.ge .Lrdd2w_ncd")
+	g.emit("ldrb w12, [x24, x9]")
+	g.emit("strb w12, [x0, x9]")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Lrdd2w_nc")
+	g.label(".Lrdd2w_ncd")
+	g.emit("strb wzr, [x0, x11]") // NUL (libc-shaped consumers)
+	// Write entry: data at [x25 + i*16], len at [x25 + i*16 + 8].
+	g.emit("lsl x12, x23, #4")
+	g.emit("str x0, [x25, x12]")
+	g.emit("add x12, x12, #8")
+	g.emit("str x11, [x25, x12]") // len (heap form, top bit clear)
+	g.emit("add x23, x23, #1")
+	g.label(".Lrdd2w_p2a")
+	g.emit("add x12, x21, x26")
+	g.emit("ldrh w11, [x12, #16]") // d_reclen
+	g.emit("add x26, x26, x11")
+	g.emit("b .Lrdd2w_p2")
+	g.label(".Lrdd2w_p2d")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x25, [x0, #8]")
+	g.emit("b .Lrdd2w_return")
+
+	g.label(".Lrdd2w_err")
+	g.emit("neg x22, x0") // errno (path byte len dead)
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lrdd2w_return")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective("__fern_read_dir")
+	g.line(".ltorg")
+}
+
+// emitStatRuntime emits `__fern_stat(path_data, path_len)` in
+// (x0, x1) → Result[FileStat, IoError] — fstatat(AT_FDCWD, path,
+// buf, 0) into a 192-byte stack buffer. Linux arm64 struct stat:
+// st_mode u32 @16, st_size i64 @48; Darwin 64-bit-inode stat:
+// st_mode u16 @4, st_size i64 @96 (see statSizeOff). The
+// FileStat box uses the native structFieldLayout offsets —
+// is_file (i32) @0, is_dir (i32) @4, size (i64) @8 — 16 bytes
+// via __fern_alloc_box (immortal, same class as the Result
+// boxes). Ok = 16-byte box {tag=0, FileStat ptr @8}; Err =
+// 16-byte box {tag=1, IoError @8}.
+func (g *generator) emitStatRuntime() {
+	g.line("")
+	g.line(".global __fern_stat")
+	g.typeDirective("__fern_stat")
+	g.label("__fern_stat")
+	// Frame: 96-byte base (fp/lr + x19..x25 + 16-byte inline-
+	// spill scratch at [x29+72]) + 192-byte statbuf at [x29+96]
+	// = 288.
+	g.emit("stp x29, x30, [sp, #-288]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 72)
+	g.emit("mov x22, x20")
+	g.emitStrLen2W("w22", "x22")
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// fstatat(AT_FDCWD, pathz, statbuf, 0)
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("add x2, x29, #96")
+	g.emit("mov x3, #0")
+	g.syscallFstatat()
+	g.emit("tbnz x0, #63, .Lst2w_err")
+	if g.darwin {
+		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
+	} else {
+		g.emit("ldr w9, [x29, #112]") // st_mode (u32 @ +16)
+	}
+	g.emit("mov w11, #61440") // S_IFMT (0xF000)
+	g.emit("and w9, w9, w11")
+	g.emit("mov x23, #0")     // is_file
+	g.emit("mov w10, #32768") // S_IFREG
+	g.emit("cmp w9, w10")
+	g.emit("b.ne .Lst2w_nf")
+	g.emit("mov x23, #1")
+	g.label(".Lst2w_nf")
+	g.emit("mov x24, #0")     // is_dir
+	g.emit("mov w10, #16384") // S_IFDIR
+	g.emit("cmp w9, w10")
+	g.emit("b.ne .Lst2w_nd")
+	g.emit("mov x24, #1")
+	g.label(".Lst2w_nd")
+	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
+	// FileStat box: is_file @0, is_dir @4, size @8.
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str w23, [x0]")
+	g.emit("str w24, [x0, #4]")
+	g.emit("str x25, [x0, #8]")
+	g.emit("mov x21, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")
+	g.emit("b .Lst2w_return")
+
+	g.label(".Lst2w_err")
+	g.emit("neg x22, x0")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lst2w_return")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #288")
+	g.emit("ret")
+	g.sizeDirective("__fern_stat")
+	g.line(".ltorg")
+}
+
+// emitRemoveDirAllRuntime emits `__fern_remove_dir_all(
+// path_data, path_len)` in (x0, x1) → Option[IoError] — a
+// recursive `rm -rf`, the arm64 sibling of the x86-64 helper of
+// the same name. Syscalls are inlined and the helper
+// self-recurses per directory entry:
+//
+//	openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
+//	  fd >= 0        → it's a directory: drain entries, recurse
+//	                   on each non-dot child, close, rmdir → None
+//	  -ENOENT (-2)   → already gone → None
+//	  -ENOTDIR (-20) → it's a file: unlinkat(file) → None
+//	  else           → Some(IoError) via __fern_io_error
+//
+// Child paths "pathz/name" are freshly-allocated rc=1 strings
+// passed to the recursion as (data, len) pairs (leaked
+// one-level, same as the x86-64 helper). The dirent buffer is
+// 1 KiB per level, matching x86-64's small-tree cap.
+func (g *generator) emitRemoveDirAllRuntime() {
+	g.line("")
+	g.line(".global __fern_remove_dir_all")
+	g.typeDirective("__fern_remove_dir_all")
+	g.label("__fern_remove_dir_all")
+	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
+	// scratch at [x29+80] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x20, x0") // path_data (original, for io_error)
+	g.emit("mov x21, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x19", "x20", "x21", 80)
+	g.emit("mov x22, x21")
+	g.emitStrLen2W("w22", "x22")
+	g.emitNulTermPath2W("x19", "x19", "x22") // x19 = pathz
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
+	g.atFdcwd("x0")
+	g.emit("mov x1, x19")
+	g.emitODirectory("x2")
+	g.emit("mov x3, #0")
+	g.syscall("openat")
+	g.emit("tbz x0, #63, .Lrda2w_dir") // fd >= 0 → directory
+	g.emit("cmn x0, #2")               // -ENOENT → already gone
+	g.emit("b.eq .Lrda2w_none")
+	g.emit("cmn x0, #20") // -ENOTDIR → it's a file
+	g.emit("b.ne .Lrda2w_some")
+	// unlinkat(AT_FDCWD, pathz, 0) — remove the file.
+	g.atFdcwd("x0")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, #0")
+	g.syscall("unlinkat")
+	g.emit("b .Lrda2w_none")
+
+	g.label(".Lrda2w_dir")
+	g.emit("mov x22, x0") // dir fd (path byte len dead)
+	// 1 KiB dirent buffer, drained until full/end (small-tree cap,
+	// mirrors x86-64).
+	g.emit("mov x0, #1024")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x23, x0")
+	if g.darwin {
+		// getdirentries64 basep scratch (x26 is free until the
+		// iteration below).
+		g.emit("mov x0, #8")
+		g.emit("bl __fern_alloc")
+		g.emit("mov x26, x0")
+	}
+	g.emit("mov x24, #0") // total
+	g.label(".Lrda2w_g")
+	g.emit("mov x2, #1024")
+	g.emit("sub x2, x2, x24")
+	g.emit("cbz x2, .Lrda2w_gd") // buffer full → stop
+	g.emit("mov x0, x22")
+	g.emit("add x1, x23, x24")
+	if g.darwin {
+		g.emit("mov x3, x26")
+	}
+	g.syscallGetdents()
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lrda2w_gd") // 0 (end) or <0 (error) → stop
+	g.emit("add x24, x24, x0")
+	g.emit("b .Lrda2w_g")
+
+	g.label(".Lrda2w_gd")
+	g.emit("mov x25, #0") // iteration offset
+	g.label(".Lrda2w_it")
+	g.emit("cmp x25, x24")
+	g.emit("b.ge .Lrda2w_itd")
+	g.emit("add x9, x23, x25")
+	g.emit("add x9, x9, #%d", g.direntNameOff()) // d_name ptr
+	g.emit("ldrb w11, [x9]")
+	g.emit("cmp w11, #46") // '.'
+	g.emit("b.ne .Lrda2w_ch")
+	g.emit("ldrb w11, [x9, #1]")
+	g.emit("cbz w11, .Lrda2w_adv") // "."
+	g.emit("cmp w11, #46")
+	g.emit("b.ne .Lrda2w_ch")
+	g.emit("ldrb w11, [x9, #2]")
+	g.emit("cbz w11, .Lrda2w_adv") // ".."
+	g.label(".Lrda2w_ch")
+	// plen = strlen(pathz)
+	g.emit("mov x11, #0")
+	g.label(".Lrda2w_pl")
+	g.emit("ldrb w12, [x19, x11]")
+	g.emit("cbz w12, .Lrda2w_pld")
+	g.emit("add x11, x11, #1")
+	g.emit("b .Lrda2w_pl")
+	g.label(".Lrda2w_pld")
+	// nlen = strlen(name)
+	g.emit("mov x12, #0")
+	g.label(".Lrda2w_nl")
+	g.emit("ldrb w13, [x9, x12]")
+	g.emit("cbz w13, .Lrda2w_nld")
+	g.emit("add x12, x12, #1")
+	g.emit("b .Lrda2w_nl")
+	g.label(".Lrda2w_nld")
+	// childlen = plen + 1 + nlen; alloc an rc=1 child string
+	// (childlen + NUL). Stash name ptr / plen / nlen across the
+	// call.
+	g.emit("stp x9, x11, [sp, #-32]!")
+	g.emit("str x12, [sp, #16]")
+	g.emit("add x0, x11, x12")
+	g.emit("add x0, x0, #2")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("ldr x12, [sp, #16]")
+	g.emit("ldp x9, x11, [sp], #32")
+	g.emit("mov x10, x0") // child data ptr
+	g.emit("add x13, x11, x12")
+	g.emit("add x13, x13, #1")     // childlen
+	g.emit("stur w13, [x10, #-4]") // length prefix
+	// copy pathz[0..plen]
+	g.emit("mov x14, #0")
+	g.label(".Lrda2w_c1")
+	g.emit("cmp x14, x11")
+	g.emit("b.ge .Lrda2w_c1d")
+	g.emit("ldrb w15, [x19, x14]")
+	g.emit("strb w15, [x10, x14]")
+	g.emit("add x14, x14, #1")
+	g.emit("b .Lrda2w_c1")
+	g.label(".Lrda2w_c1d")
+	g.emit("mov w15, #47") // '/'
+	g.emit("strb w15, [x10, x11]")
+	// copy name at plen+1
+	g.emit("mov x14, #0")
+	g.label(".Lrda2w_c2")
+	g.emit("cmp x14, x12")
+	g.emit("b.ge .Lrda2w_c2d")
+	g.emit("ldrb w15, [x9, x14]")
+	g.emit("add x16, x11, x14")
+	g.emit("add x16, x16, #1")
+	g.emit("strb w15, [x10, x16]")
+	g.emit("add x14, x14, #1")
+	g.emit("b .Lrda2w_c2")
+	g.label(".Lrda2w_c2d")
+	g.emit("strb wzr, [x10, x13]") // NUL
+	// recurse: remove_dir_all(child_data, child_len).
+	g.emit("mov x0, x10")
+	g.emit("mov x1, x13")
+	g.emit("bl __fern_remove_dir_all")
+	g.label(".Lrda2w_adv")
+	g.emit("add x12, x23, x25")
+	g.emit("ldrh w11, [x12, #16]") // d_reclen
+	g.emit("add x25, x25, x11")
+	g.emit("b .Lrda2w_it")
+
+	g.label(".Lrda2w_itd")
+	// close(fd), then rmdir the now-empty directory.
+	g.emit("mov x0, x22")
+	g.syscall("close")
+	g.atFdcwd("x0")
+	g.emit("mov x1, x19")
+	if g.darwin {
+		g.emit("mov x2, #128") // AT_REMOVEDIR (Darwin 0x80)
+	} else {
+		g.emit("mov x2, #512") // AT_REMOVEDIR (Linux 0x200)
+	}
+	g.syscall("unlinkat")
+
+	g.label(".Lrda2w_none")
+	g.emit("mov x0, #8")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // Option.None
+	g.emit("b .Lrda2w_return")
+
+	g.label(".Lrda2w_some")
+	g.emit("neg x22, x0") // errno (never opened a fd on this path)
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x20")
+	g.emit("mov x2, x21")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x22, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]") // Option.Some
+	g.emit("str x22, [x0, #8]")
+
+	g.label(".Lrda2w_return")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective("__fern_remove_dir_all")
+	g.line(".ltorg")
+}
+
 // emitReaderWriterRuntime emits the full set of Reader / Writer
 // runtimes — both the entry points that allocate handle
 // structs (stdin/stdout/stderr/open_reader/open_writer/
@@ -6744,6 +7799,10 @@ type generator struct {
 	// by recordUse() when the IR's slice-construction path
 	// (a[lo:hi]) lowers to OpCallDirect{__slice_make}.
 	usesSliceMake bool
+	// usesSliceRange pulls in `__fern_slice_range(lo, hi, len)` —
+	// the slice-construction bounds check (#5419): traps unless
+	// 0 <= lo <= hi <= len, returns hi - lo.
+	usesSliceRange bool
 	// usesEnv pulls in `__fern_env(name)` — walks envp for a
 	// NAME=VALUE match. Used by the synthesised auto-main's
 	// `__port_from_env("PORT", 8080)` call.
@@ -7005,6 +8064,16 @@ type generator struct {
 	// for the IR-matching layout.
 	usesReadFile  bool
 	usesWriteFile bool
+	// usesRemoveFile / usesTempDir / usesReadDir / usesStat /
+	// usesRemoveDirAll pull in the filesystem-op family (#5372):
+	// unlinkat / mkdirat / getdents64 / fstatat runtimes with the
+	// same Option[IoError] / Result[_, IoError] box shapes as the
+	// file-I/O helpers.
+	usesRemoveFile   bool
+	usesTempDir      bool
+	usesReadDir      bool
+	usesStat         bool
+	usesRemoveDirAll bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -7434,6 +8503,16 @@ func (g *generator) emitStartRuntime() {
 		}
 	}
 	g.emit("bl main")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): print the alloc/free summary
+		// before exiting. main's return value parks in x19 (callee-save,
+		// and _start has no caller to preserve it for; the report helper
+		// itself only touches caller-saved registers) so the exit code
+		// survives the report's syscalls.
+		g.emit("mov x19, x0")
+		g.emit("bl __fern_lc_report")
+		g.emit("mov x0, x19")
+	}
 	g.syscallExit()
 	if !g.darwin {
 		g.sizeDirective(entry)
@@ -7476,8 +8555,10 @@ func (g *generator) emitStartRuntime() {
 // fast path (see the rcInlineOK field). 1M sits ~2× above the largest normal
 // self-host function (~0.5M ops) and ~10× below irlower__lower_expr (~9.75M
 // ops), the only function whose inlined body overflows aarch64's ±128MB
-// branch reach.
-const rcInlineMaxOps = 1_000_000
+// branch reach. A var (not a const) only so the backend's own tests can lower
+// it to exercise the fall-back on a small function; production never
+// reassigns it. (Mirrors the x86-64 backend's rcInlineMaxOps.)
+var rcInlineMaxOps = 1_000_000
 
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.current = fn
@@ -7816,7 +8897,7 @@ var twoWordStrHelperArgSlots = map[string]int{
 }
 
 // callArgTypes returns the parameter types of an OpCallDirect /
-// OpCallDirectPair, preferring the IR-stamped `op.ArgTypes`
+// OpCallDirectPair, preferring the IR-stamped `op.ArgTypes()`
 // (populated by the lowering pass from FuncSigs at the central
 // emit point and explicitly at synthesised emit sites like
 // `__str_slice`). Falls back to looking up the user FuncDecl
@@ -7829,8 +8910,8 @@ var twoWordStrHelperArgSlots = map[string]int{
 // path treats every arg as 1 operand-stack slot, which is
 // correct for callees with no string args.
 func callArgTypes(g *generator, op ir.Op, argc int) []ast.Type {
-	if len(op.ArgTypes) > 0 {
-		return op.ArgTypes
+	if len(op.ArgTypes()) > 0 {
+		return op.ArgTypes()
 	}
 	if callee, ok := g.funcs[op.Str]; ok && callee != nil {
 		out := make([]ast.Type, 0, argc)
@@ -8521,12 +9602,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// pair — top-level fn values (env=0) and runtime-
 		// allocated closures (env points at the captured-slot
 		// block) reach the same dispatch path.
-		cell := fmt.Sprintf("__closure_cell_%s", op.Str)
 		if g.constFuncCells == nil {
 			g.constFuncCells = map[string]bool{}
 		}
 		g.constFuncCells[op.Str] = true
-		g.adrpAdd("x0", cell)
+		g.adrpAdd("x0", g.closureCellSym(op.Str))
 		g.push()
 
 	case ir.OpConstVtable:
@@ -8538,12 +9618,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// (docs/DYN-TRAITS.md §4.2.2). On natives the vtable holds
 		// POINTERS, not table indices (the wasm form): OpCallDyn loads
 		// slot k and `blr`s it directly.
-		key := op.Str + "/" + op.Str2
+		key := op.Str + "/" + op.Str2()
 		if g.dynVtableCells == nil {
 			g.dynVtableCells = map[string]bool{}
 		}
 		g.dynVtableCells[key] = true
-		g.adrpAdd("x0", dynVtableLabel(op.Str, op.Str2))
+		g.adrpAdd("x0", dynVtableLabel(op.Str, op.Str2()))
 		g.push()
 
 	case ir.OpBoxDyn:
@@ -8582,11 +9662,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
 		// function pointer (`vtable + slot*8`), then do an indirect call
 		// with [data, args...] as the AAPCS64 args (receiver-first,
-		// plain — no closure env). op.Sig is the receiver-first method
+		// plain — no closure env). op.Sig() is the receiver-first method
 		// signature; argc = len(params) (= 1 receiver + method args),
 		// void iff Result == nil.
-		if op.Sig == nil {
-			return fmt.Errorf("arm64: OpCallDyn missing op.Sig")
+		if op.Sig() == nil {
+			return fmt.Errorf("arm64: OpCallDyn missing op.Sig()")
 		}
 		g.pop()               // x0 = vtable (top)
 		g.emit("mov x17, x0") // x17 = vtable base
@@ -8603,12 +9683,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// operand-stack slots → 2 arg registers. The receiver (param[0],
 		// a StructType pointer) is always 1 slot; method params follow.
 		// Translate the user-visible param count into the effective slot
-		// count via op.Sig — same fan-out OpCallIndirect / OpCallDirect
+		// count via op.Sig() — same fan-out OpCallIndirect / OpCallDirect
 		// apply.
-		slotCount := len(op.Sig.Params)
+		slotCount := len(op.Sig().Params)
 		if ast.UseTwoWordStrings(8) {
 			slotCount = 0
-			for _, t := range op.Sig.Params {
+			for _, t := range op.Sig().Params {
 				if _, isStr := t.(ast.StringType); isStr {
 					slotCount += 2
 				} else {
@@ -8619,13 +9699,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsLoad(slotCount)
 		g.emit("blr x16")
 		g.emitCallArgsCleanup(slotCount)
-		if op.Sig.Result == nil {
+		if op.Sig().Result == nil {
 			break
 		}
 		// String result arrives as (data, len) in (x0, x1) under the
 		// two-word ABI — push both halves; other results push x0 only.
 		if ast.UseTwoWordStrings(8) {
-			if _, isStr := op.Sig.Result.(ast.StringType); isStr {
+			if _, isStr := op.Sig().Result.(ast.StringType); isStr {
 				g.push() // data (x0)
 				g.emit("mov x0, x1")
 				g.push() // len
@@ -9400,9 +10480,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// argc (user-visible param count) into the effective
 		// slot count. The trailing env_ptr is always 1 slot.
 		slotCount := argc + 1
-		if ast.UseTwoWordStrings(8) && op.Sig != nil {
+		if ast.UseTwoWordStrings(8) && op.Sig() != nil {
 			slotCount = 1 // env_ptr
-			for _, t := range op.Sig.Params {
+			for _, t := range op.Sig().Params {
 				if _, isStr := t.(ast.StringType); isStr {
 					slotCount += 2
 				} else {
@@ -9419,8 +10499,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// values don't materialise as values today (the IR
 		// emits OpCallIndirect through a non-void expression
 		// position), so we always push at least one slot.
-		if ast.UseTwoWordStrings(8) && op.Sig != nil {
-			if _, isStr := op.Sig.Result.(ast.StringType); isStr {
+		if ast.UseTwoWordStrings(8) && op.Sig() != nil {
+			if _, isStr := op.Sig().Result.(ast.StringType); isStr {
 				g.push()
 				g.emit("mov x0, x1")
 				g.push()
@@ -9749,6 +10829,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_slice_make"
 			g.usesSliceMake = true
 			g.usesAlloc = true
+		case "__slice_range":
+			target = "__fern_slice_range"
+			g.usesSliceRange = true
 		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
 			g.usesRawIntPokes = true
 		case "__memset":
@@ -10046,6 +11129,31 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesWriteFile = true
 			g.usesAlloc = true
 			g.usesIoError = true
+		case "remove_file":
+			// remove_file(path): Option[IoError] — unlinkat.
+			target = "__fern_remove_file"
+			g.usesRemoveFile = true
+		case "temp_dir":
+			// temp_dir(prefix): Result[string, IoError] —
+			// mkdirat("/tmp/<prefix>-<monotonic_ns>").
+			target = "__fern_temp_dir"
+			g.usesTempDir = true
+		case "read_dir":
+			// read_dir(path): Result[string[], IoError] —
+			// openat(O_DIRECTORY) + getdents64 drain.
+			target = "__fern_read_dir"
+			g.usesReadDir = true
+		case "stat":
+			// stat(path): Result[FileStat, IoError] — fstatat
+			// into a FileStat box.
+			target = "__fern_stat"
+			g.usesStat = true
+		case "remove_dir_all":
+			// remove_dir_all(path): Option[IoError] — recursive
+			// rm -rf (openat + getdents64 + unlinkat, self-
+			// recursion per entry).
+			target = "__fern_remove_dir_all"
+			g.usesRemoveDirAll = true
 		case "random_bytes":
 			// random_bytes(n): allocates an n-byte string and
 			// fills it with kernel CSPRNG output. Linux uses
@@ -10169,4 +11277,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		return fmt.Errorf("arm64: unsupported IR op %s", op.Kind)
 	}
 	return nil
+}
+
+// closureCellSym names an OpConstFunc static closure-pair cell. On
+// darwin the label is assembler-local ("L" prefix) so it does NOT start
+// a linker atom — keeping the anonymous 8-byte rc header at [cell-8]
+// glued to the cell under ld64/ld-prime reordering (the same reason the
+// string literals use .LStr_* labels in __TEXT,__const). ELF keeps the
+// plain named label.
+func (g *generator) closureCellSym(name string) string {
+	if g.darwin {
+		return "L__closure_cell_" + name
+	}
+	return "__closure_cell_" + name
 }

@@ -179,6 +179,119 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_split",
 			[]string{"\n__fern_str_split:", ".Lir_split_cl"},
 		},
+		{
+			// random_bytes — the first syscall-leaf migrated to Fern (#2649),
+			// over the __syscall3 sub-floor. The old hand-written IR body
+			// (__fern_random_bytes:) must be gone; op_random_bytes now calls
+			// __fn___fern_random_bytes via the stack ABI, whose body does the
+			// getrandom syscall through the raw `syscall` the __syscall3 op emits.
+			"random_bytes",
+			`function main(): i32 { var b: string = random_bytes(8); return b.len(); }`,
+			"__fn___fern_random_bytes",
+			[]string{"\n__fern_random_bytes:"},
+		},
+		{
+			// monotonic_ns — clock leaf migrated to Fern (#2649) over the
+			// __syscall3 / __raw_scratch / __load_i64 floor. The old hand-asm
+			// IR body (__fern_monotonic_ns:) must be gone; op_monotonic_ns now
+			// calls __fn___fern_monotonic_ns.
+			"monotonic_ns",
+			`function main(): i32 { var a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			"__fn___fern_monotonic_ns",
+			[]string{"\n__fern_monotonic_ns:"},
+		},
+		{
+			"now_unix_ms",
+			`function main(): i32 { var a: i64 = now_unix_ms(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			"__fn___fern_now_unix_ms",
+			[]string{"\n__fern_now_unix_ms:"},
+		},
+		{
+			"now_ns",
+			`function main(): i32 { var a: i64 = now_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			"__fn___fern_now_ns",
+			[]string{"\n__fern_now_ns:"},
+		},
+		{
+			// stat — the first syscall leaf returning a user-typed
+			// Result[FileStat, IoError] (#2649), migrated to Fern over the
+			// __syscall3 / __raw_scratch / __load_i32/i64 floor. The old
+			// hand-asm IR body (__fern_stat:) is gone; op_stat now calls
+			// __fn___fern_stat, whose body builds Ok(FileStat{...}) /
+			// Err(NotFound(_)) through the normal struct/enum lowering.
+			"stat",
+			`function main(): i32 { match (stat("/tmp")) { Ok(s) => { return 1; }, Err(e) => { return 0; } } }`,
+			"__fn___fern_stat",
+			[]string{"\n__fern_stat:"},
+		},
+		{
+			// read_file — Result[string, IoError] leaf (#2649): the sized read
+			// buffer becomes the Ok(string). The old hand-asm IR body
+			// (__fern_read_file:) is gone; op_read_file calls __fn___fern_read_file.
+			"read_file",
+			`function main(): i32 { match (read_file("/nonexistent")) { Ok(s) => { return 1; }, Err(e) => { return 0; } } }`,
+			"__fn___fern_read_file",
+			[]string{"\n__fern_read_file:"},
+		},
+		{
+			// remove_file — Option[IoError] leaf (#2649): unlinkat via __syscall3.
+			// The old hand-asm IR body (__fern_remove_file:) is gone; op_remove_file
+			// calls __fn___fern_remove_file.
+			"remove_file",
+			`function main(): i32 { match (remove_file("/nonexistent-xyz")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			"__fn___fern_remove_file",
+			[]string{"\n__fern_remove_file:"},
+		},
+		{
+			// write_file — Option[IoError] leaf (#2649), first __syscall4 user
+			// (openat with O_CREAT mode). Old hand-asm IR body (__fern_write_file:)
+			// gone; op_write_file calls __fn___fern_write_file.
+			"write_file",
+			`function main(): i32 { match (write_file("/tmp/fern-lockin-wf", "x")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			"__fn___fern_write_file",
+			[]string{"\n__fern_write_file:"},
+		},
+		{
+			// temp_dir — Result[string, IoError] leaf (#2649), the first migrated
+			// helper that CALLS another Fern helper (monotonic_ns). Old hand-asm IR
+			// body (__fern_temp_dir:) gone; op_temp_dir calls __fn___fern_temp_dir.
+			"temp_dir",
+			`function main(): i32 { match (temp_dir("ferntest")) { Ok(p) => { return 0; }, Err(e) => { return 1; } } }`,
+			"__fn___fern_temp_dir",
+			[]string{"\n__fern_temp_dir:"},
+		},
+		{
+			// env — Option[string] leaf (#2649), first __raw_environ user. Walks the
+			// envp array + copies the value. Old hand-asm IR body (__fern_env:) gone;
+			// op_env calls __fn___fern_env. (__fern_envp global kept for subprocess.)
+			"env",
+			`function main(): i32 { match (env("PATH")) { Some(v) => { return 0; }, None => { return 1; } } }`,
+			"__fn___fern_env",
+			[]string{"\n__fern_env:"},
+		},
+		{
+			// read_dir — Result[string[], IoError] leaf (#2649): drains the directory
+			// with a getdents64 loop over a fresh buffer per read, building the
+			// string[] with .append(). Old hand-asm IR body (__fern_read_dir:) gone;
+			// op_read_dir calls __fn___fern_read_dir. The .Lrd_* local labels of the
+			// retired hand-asm body must be gone.
+			"read_dir",
+			`function main(): i32 { match (read_dir("/tmp")) { Ok(es) => { return 0; }, Err(e) => { return 1; } } }`,
+			"__fn___fern_read_dir",
+			[]string{"\n__fern_read_dir:", ".Lrd_g", ".Lrd_p2"},
+		},
+		{
+			// remove_dir_all — Option[IoError] leaf (#2649), the last fs syscall leaf.
+			// Best-effort recursive rm -rf: probe openat to classify, delegate
+			// enumeration to the (Fern) read_dir, recurse, rmdir. Old hand-asm IR body
+			// (__fern_remove_dir_all:) gone; op_remove_dir_all calls the stack-ABI
+			// __fn___fern_remove_dir_all. The .Lrda_* local labels of the retired
+			// hand-asm body must be gone.
+			"remove_dir_all",
+			`function main(): i32 { match (remove_dir_all("/nonexistent-fern-xyz")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			"__fn___fern_remove_dir_all",
+			[]string{"\n__fern_remove_dir_all:", ".Lrda_copy", ".Lrda_it"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -222,6 +335,56 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			}
 		})
 	}
+
+	// Consolidation lock-in (#2649): the fs-syscall leaves share ONE errno→IoError
+	// classifier, __fern_io_error, instead of each inlining the five-way branch.
+	// A program touching all four must emit __fn___fern_io_error exactly once, and
+	// each fs helper's body must CALL it (an ordinary call-graph edge) rather than
+	// inline the variant construction — so no fs-helper body names PermissionDenied.
+	t.Run("io_error_shared", func(t *testing.T) {
+		const prog = `function main(): i32 {
+    var r: i32 = 0;
+    match (stat("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (read_file("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (remove_file("/nope")) { Some(_) => { r = r + 1; }, None => {} }
+    match (write_file("/nope-dir/x", "y")) { Some(_) => { r = r + 1; }, None => {} }
+    match (temp_dir("/nope-parent/p")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (read_dir("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
+    match (remove_dir_all("/nope-parent/deep/tree")) { Some(_) => { r = r + 1; }, None => {} }
+    return r;
+}`
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(prog))
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("driver run: %v", err)
+		}
+		got := string(out)
+		if n := strings.Count(got, "\n__fn___fern_io_error:"); n != 1 {
+			t.Errorf("__fn___fern_io_error defined %d times, want exactly 1 (shared classifier)", n)
+		}
+		if !strings.Contains(got, "call __fn___fern_io_error") {
+			t.Error("no `call __fn___fern_io_error` — the fs helpers are not calling the shared classifier")
+		}
+		// Each fs helper delegates its error path to io_error: its body must CALL
+		// the shared classifier (an ordinary call-graph edge) rather than inline the
+		// five-way branch. A silent revert to inlining drops the call.
+		for _, sym := range []string{"__fn___fern_stat", "__fn___fern_read_file", "__fn___fern_remove_file", "__fn___fern_write_file", "__fn___fern_temp_dir", "__fn___fern_read_dir", "__fn___fern_remove_dir_all"} {
+			body := extractFuncBody(got, sym)
+			if body == "" {
+				t.Errorf("%s not defined in the fs bundle", sym)
+				continue
+			}
+			if !strings.Contains(body, "call __fn___fern_io_error") {
+				t.Errorf("%s does not call __fern_io_error — it is inlining the errno mapping instead of delegating", sym)
+			}
+		}
+	})
 }
 
 // extractFuncBody returns the asm text of the named function: from its

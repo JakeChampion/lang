@@ -14,6 +14,9 @@
 
 import "std/string";
 import "std/async";
+// std/tcp — tcp_recv_deadline, the recv-with-deadline primitive behind
+// the *_deadline fetch variants.
+import "std/tcp";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
 // i32 that tcp_connect wants in sin_addr. ipv4(127,0,0,1) addresses
@@ -55,6 +58,62 @@ pub function fetch_raw(host_be: i32, port: i32, request: string): string {
 pub function fetch_get(host_be: i32, port: i32, path: string): string {
     var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
     return fetch_raw(host_be, port, request);
+}
+
+// fetch_raw_deadline(host_be, port, request, deadline_ms) — `fetch_raw`
+// with a total read deadline: `Some(response)` when the upstream's
+// whole response arrived within `deadline_ms` of the send, `None` when
+// the deadline passed first (the connection is closed either way). A
+// connect/send failure is `Some("")`, mirroring `fetch_raw`'s "" — so
+// None means exactly one thing: too slow. The deadline covers the read
+// phase; `tcp_connect` itself is still a blocking connect (no
+// non-blocking connect primitive yet), which on a reachable-but-dead
+// upstream fails fast but on a black-holed address is at the mercy of
+// the kernel SYN timeout. On interp the deadline degrades to blocking
+// reads (see `tcp_recv_deadline`).
+pub function fetch_raw_deadline(host_be: i32, port: i32, request: string, deadline_ms: i32): Option[string] {
+    var c: i32 = tcp_connect(host_be, port);
+    if (c < 0) {
+        return Some("");
+    }
+    if (tcp_send(c, request) < 0) {
+        tcp_close(c);
+        return Some("");
+    }
+    var ns_per_ms: i64 = 1000000;
+    var start_ns: i64 = monotonic_ns();
+    var resp: string = "";
+    while (true) {
+        var remaining_ms: i32 = (((deadline_ms as i64) * ns_per_ms - (monotonic_ns() - start_ns)) / ns_per_ms) as i32;
+        if (remaining_ms <= 0) {
+            tcp_close(c);
+            return None;
+        }
+        var chunk: string = "";
+        var timed_out: boolean = false;
+        match (tcp.tcp_recv_deadline(c, 4096, remaining_ms)) {
+            Some(got) => { chunk = got; },
+            None => { timed_out = true; },
+        }
+        if (timed_out) {
+            tcp_close(c);
+            return None;
+        }
+        if (chunk.len() == 0) {
+            break;
+        }
+        resp = resp + chunk;
+    }
+    tcp_close(c);
+    return Some(resp);
+}
+
+// fetch_get_deadline(host_be, port, path, deadline_ms) — `fetch_get`
+// with a total read deadline. `Some(raw response)` in time (use
+// `http_body` / `http_status`), `None` when the upstream was too slow.
+pub function fetch_get_deadline(host_be: i32, port: i32, path: string, deadline_ms: i32): Option[string] {
+    var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+    return fetch_raw_deadline(host_be, port, request, deadline_ms);
 }
 
 // fetch_future(host_be, port, path) — the AWAITABLE fetch: open a

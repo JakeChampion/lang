@@ -82,6 +82,41 @@ func TestParseDeferAndErrDefer(t *testing.T) {
 	}
 }
 
+// Block-shaped `defer { … }` / `errdefer { … }` (#5153) parse to *ast.Defer
+// whose Expr is a value-less *ast.BlockExpr (the block's action), matching the
+// self-host parser. No trailing `;` follows the closing brace.
+func TestParseDeferBlockForm(t *testing.T) {
+	prog, err := Parse(`function f(): Result[i32, i32] {
+		var x: i32 = 0;
+		defer { x = x + 1; }
+		errdefer { x = x + 2; }
+		return Ok(x);
+	}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	for i, want := range []bool{false, true} { // stmt 1 = defer, stmt 2 = errdefer
+		d, ok := stmts[i+1].(*ast.Defer)
+		if !ok {
+			t.Fatalf("stmt %d: expected *ast.Defer, got %T", i+1, stmts[i+1])
+		}
+		if d.OnError != want {
+			t.Errorf("stmt %d: OnError = %v, want %v", i+1, d.OnError, want)
+		}
+		blk, ok := d.Expr.(*ast.BlockExpr)
+		if !ok {
+			t.Fatalf("stmt %d: expected Defer.Expr *ast.BlockExpr, got %T", i+1, d.Expr)
+		}
+		if blk.Tail != nil {
+			t.Errorf("stmt %d: block action should be value-less (Tail == nil)", i+1)
+		}
+		if len(blk.Stmts) != 1 {
+			t.Errorf("stmt %d: expected 1 stmt in block, got %d", i+1, len(blk.Stmts))
+		}
+	}
+}
+
 // TestParseAssertDesugar pins that `assert(cond)` / `assert(cond, msg)`
 // desugars, at parse time, to `if (!cond) { eprint(<text>); exit(1); }`
 // (#4416) — so no dedicated AST node, checker rule, or codegen is needed;
@@ -763,6 +798,40 @@ func TestFloatLiteralAndType(t *testing.T) {
 	}
 	if lit.Value != 1.5 {
 		t.Errorf("value = %v, want 1.5", lit.Value)
+	}
+}
+
+// `float` is the width-unqualified alias for f64 (#5363) — a
+// contextual Ident in type position (like `str`), producing
+// FloatType{Width:64, Spelling:"float"}. A `float.`-qualified name
+// stays a module struct reference.
+func TestFloatAliasType(t *testing.T) {
+	prog, err := Parse(`function f(x: float): float { var xs: float[] = [x]; return xs[0] as float; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	for _, ty := range []ast.Type{fn.ReturnType, fn.Params[0].Type} {
+		ft, ok := ty.(ast.FloatType)
+		if !ok {
+			t.Fatalf("type = %T, want FloatType", ty)
+		}
+		if ft.Width != 64 || ft.Spelling != "float" {
+			t.Errorf("got FloatType{Width:%d, Spelling:%q}, want {64, \"float\"}", ft.Width, ft.Spelling)
+		}
+	}
+	at, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.(ast.ArrayType)
+	if !ok || at.Elem.(ast.FloatType).Width != 64 {
+		t.Errorf("var type = %#v, want float[] with f64 elem", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type)
+	}
+
+	prog, err = Parse(`function g(v: float.Vec): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := prog.Funcs[0].Params[0].Type.(ast.StructType)
+	if !ok || st.Name != "float.Vec" {
+		t.Errorf("qualified type = %#v, want StructType{Name:\"float.Vec\"}", prog.Funcs[0].Params[0].Type)
 	}
 }
 
@@ -1538,18 +1607,27 @@ function f(e: E): i32 {
 	}
 }
 
-// Or-patterns are restricted to variant / `_` patterns: a `|` between literal
-// patterns is the bitwise-or operator on the literal-match path, so it is
-// rejected with a clear diagnostic rather than silently meaning `1 | 2 == 3`.
-func TestMatchLiteralOrPatternRejected(t *testing.T) {
-	_, err := Parse(`function f(n: i32): i32 {
+// Literal or-patterns (`1 | 2 => …`) parse now (#5355): each alternative is
+// its own literal pattern, so the shared clone-desugar expands them into
+// separate literal arms. Tuple or-patterns stay rejected, since they'd bind
+// different names per alternative.
+func TestMatchLiteralOrPatternParses(t *testing.T) {
+	if _, err := Parse(`function f(n: i32): i32 {
 	return match (n) {
 		1 | 2 => 10,
 		_ => 0,
 	};
+}`); err != nil {
+		t.Fatalf("literal or-pattern should parse now, got %v", err)
+	}
+	_, err := Parse(`function f(t: (i32, i32)): i32 {
+	return match (t) {
+		(0, y) | (y, 0) => 1,
+		_ => 0,
+	};
 }`)
 	if err == nil {
-		t.Fatal("expected a parse error for a literal or-pattern, got none")
+		t.Fatal("expected a parse error for a tuple or-pattern, got none")
 	}
 	if !strings.Contains(err.Error(), "or-patterns") {
 		t.Errorf("error should mention or-patterns; got %v", err)
@@ -1676,6 +1754,53 @@ func TestTupleDestructureSingleNameError(t *testing.T) {
 	_, err := Parse(`function f(): i32 { let (a) = (1, 2); return a; }`)
 	if err == nil {
 		t.Fatal("expected parse error for single-name destructure")
+	}
+}
+
+// `let Point { x, y: b, .. } = p;` parses to a *ast.Destructure with
+// Fields set (struct mode), StructName recorded, `y: b` renamed, and the
+// trailing `..` accepted (partial bind). Shares the node with the tuple
+// form so the checker / interp / IR reuse the same lowering.
+func TestStructDestructureParses(t *testing.T) {
+	prog, err := Parse(`struct Point { x: i32, y: i32, z: i32 }
+	function f(): i32 {
+		var p: Point = Point { x: 1, y: 2, z: 3 };
+		let Point { x, y: b, .. } = p;
+		return x + b;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	d, ok := stmts[1].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("second stmt should be *ast.Destructure; got %T", stmts[1])
+	}
+	if d.StructName != "Point" {
+		t.Errorf("StructName = %q, want Point", d.StructName)
+	}
+	if len(d.Fields) != 2 || d.Fields[0] != "x" || d.Fields[1] != "y" {
+		t.Errorf("Fields = %v, want [x y]", d.Fields)
+	}
+	if len(d.Names) != 2 || d.Names[0] != "x" || d.Names[1] != "b" {
+		t.Errorf("Names = %v, want [x b]", d.Names)
+	}
+}
+
+// `var Point { x, y } = p;` parses the same way via the `var` keyword.
+func TestStructDestructureVarKeyword(t *testing.T) {
+	prog, err := Parse(`struct Point { x: i32, y: i32 }
+	function f(): i32 {
+		var p: Point = Point { x: 1, y: 2 };
+		var Point { x, y } = p;
+		return x + y;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Destructure)
+	if !ok || d.Fields == nil {
+		t.Fatalf("second stmt should be a struct-mode *ast.Destructure; got %T", prog.Funcs[0].Body.Stmts[1])
 	}
 }
 

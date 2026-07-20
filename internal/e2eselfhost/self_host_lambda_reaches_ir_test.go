@@ -9,11 +9,21 @@ import (
 	"testing"
 )
 
-// TestSelfHostLambdaReachesIR guards that lifted-lambda programs actually lower
-// through the IR path, not the AST fallback. The lift hoists a lambda to a
-// top-level __lam_<k> function; the AST backend never produces that symbol (it
-// boxes the lambda inline), and the IR path never emits the AST tagged-value
-// runtime (release_JNull / …). So "emits __lam_0 AND no AST runtime" ⟺ IR path.
+// TestSelfHostLambdaReachesIR guards that lambda programs actually lower
+// through the IR path, not the AST fallback. The IR path never emits the AST
+// tagged-value runtime (release_JNull / …), and each lambda position has a
+// designed IR lowering whose artifacts the AST backend never produces:
+//
+//   - A no-capture lambda passed as a fn-typed CALL ARGUMENT rides the uniform
+//     env-box ABI (irlower.lift_inline_closures_expr): it is wrapped into an
+//     env-ignoring `<fn>$wrapN` trampoline boxed as [funcval], and the callee
+//     dispatches it env-first via call_indirect. This pass deliberately runs
+//     BEFORE the no-capture __lam_N lift ("there is one fn-arg shape, the
+//     box"), so a lambda argument never becomes a bare __lam_N — the guard
+//     here is the trampoline + call_indirect, not __lam_0.
+//   - A capture-free lambda BOUND TO A LOCAL and called directly is hoisted to
+//     a top-level __lam_<k> and the call rewritten to a direct call
+//     (irlower.lift_stmt).
 //
 // This is the check that was missing while the lambda slices silently rode the
 // AST fallback: a native free-list bug corrupted the lift's reconstructed
@@ -40,7 +50,7 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
-	// A no-capture lambda passed as a callback — the slice-2a shape.
+	// A no-capture lambda passed as a callback — the uniform env-box shape.
 	src := `function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply(function(x: i32): i32 { return x + 1; }, 41); }`
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -54,8 +64,11 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 		t.Fatalf("driver failed: %v", err)
 	}
 	out := string(wat)
-	if !strings.Contains(out, "__lam_0") {
-		t.Errorf("lambda program did not reach the IR path: emitted WAT has no __lam_0 (lifted fn)\n%s", out)
+	if !strings.Contains(out, "$main$wrap0") {
+		t.Errorf("lambda argument did not reach the IR env-box path: emitted WAT has no $main$wrap0 trampoline\n%s", out)
+	}
+	if !strings.Contains(out, "call_indirect") {
+		t.Errorf("lambda argument did not reach the IR env-box path: emitted WAT has no call_indirect dispatch\n%s", out)
 	}
 	if strings.Contains(out, "release_JNull") {
 		t.Errorf("lambda program fell back to the AST backend (AST tagged-value runtime present)")

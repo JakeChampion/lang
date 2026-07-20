@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,91 @@ func TestFoldChainedArithmetic(t *testing.T) {
 	}
 }
 
+// Constant reassociation: `x + 1 + 2` lowers to `load ; const 1 ; add ;
+// const 2 ; add` — the two constants are separated by the first add, so
+// the plain two-adjacent-constant fold can't reach them. Reassociation
+// combines them into `load ; const 3 ; add`. Verified for each
+// associative op (add / mul / and / or / xor) and a 3-constant chain.
+func TestFoldReassociatesConstantChain(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int32
+	}{
+		{"add", `function f(x: i32): i32 { return x + 1 + 2; }`, 3},
+		{"mul", `function f(x: i32): i32 { return x * 3 * 5; }`, 15},
+		{"and", `function f(x: i32): i32 { return (x & 12) & 10; }`, 8},
+		{"or", `function f(x: i32): i32 { return x | 1 | 4; }`, 5},
+		{"xor", `function f(x: i32): i32 { return x ^ 6 ^ 3; }`, 5},
+		{"chain3", `function f(x: i32): i32 { return x + 1 + 2 + 3; }`, 6},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := loweredAndFolded(t, c.src)
+			fn := findFunc(p, "f")
+			// Expect exactly: OpLoadLocal, OpConstI32 <want>, <op>, OpReturn.
+			if len(fn.Ops) != 4 {
+				t.Fatalf("expected 4 ops after reassociation, got %d:\n%s", len(fn.Ops), p)
+			}
+			if fn.Ops[1].Kind != OpConstI32 || fn.Ops[1].I32 != c.want {
+				t.Errorf("op[1] = %s %d, want OpConstI32 %d:\n%s",
+					fn.Ops[1].Kind, fn.Ops[1].I32, c.want, p)
+			}
+		})
+	}
+}
+
+// i64 constant chains reassociate the same way, keeping the wide width.
+func TestFoldReassociatesI64ConstantChain(t *testing.T) {
+	p := loweredAndFolded(t, `function f(x: i64): i64 { return x + 10i64 + 20i64; }`)
+	fn := findFunc(p, "f")
+	if len(fn.Ops) != 4 {
+		t.Fatalf("expected 4 ops, got %d:\n%s", len(fn.Ops), p)
+	}
+	if fn.Ops[1].Kind != OpConstI64 || fn.Ops[1].I64 != 30 {
+		t.Errorf("op[1] = %s %d, want OpConstI64 30:\n%s", fn.Ops[1].Kind, fn.Ops[1].I64, p)
+	}
+}
+
+// Reassociation is restricted to a single associative op repeated.
+// A mixed `add` then `sub` chain (`x + 1 - 2`) must NOT combine — sub is
+// not associative in this shape — so both constants and both ops survive.
+func TestFoldDoesNotReassociateMixedOps(t *testing.T) {
+	p := loweredAndFolded(t, `function f(x: i32): i32 { return x + 1 - 2; }`)
+	adds, subs, consts := 0, 0, 0
+	for _, op := range findFunc(p, "f").Ops {
+		switch op.Kind {
+		case OpAdd:
+			adds++
+		case OpSub:
+			subs++
+		case OpConstI32:
+			consts++
+		}
+	}
+	if adds != 1 || subs != 1 || consts != 2 {
+		t.Errorf("mixed add/sub chain should be left intact (1 add, 1 sub, 2 consts), got %d/%d/%d:\n%s",
+			adds, subs, consts, p)
+	}
+}
+
+// Shifts must NOT reassociate: the runtime masks the shift count to the
+// operand width, so folding `<< a` then `<< b` into `<< (a+b)` would
+// diverge once a+b reaches 32. `(x << 30) << 30` is 0 at runtime but
+// `x << 60` masks to `x << 28` — the two must stay two shifts.
+func TestFoldDoesNotReassociateShifts(t *testing.T) {
+	p := loweredAndFolded(t, `function f(x: i32): i32 { return (x << 30) << 30; }`)
+	shifts := 0
+	for _, op := range findFunc(p, "f").Ops {
+		if op.Kind == OpShl {
+			shifts++
+		}
+	}
+	if shifts != 2 {
+		t.Errorf("shift chain must not reassociate, expected 2 OpShl, got %d:\n%s", shifts, p)
+	}
+}
+
 // Comparison ops fold the same way as arithmetic. `5 < 3` collapses
 // to a single OpConstI32 0.
 func TestFoldComparison(t *testing.T) {
@@ -66,17 +152,155 @@ func TestFoldShiftMasksCount(t *testing.T) {
 	}
 }
 
-// Division and remainder must NOT be folded — `1 / 0` would mask a
-// runtime trap. The ops survive intact even when both operands are
-// constants.
-func TestFoldSkipsDivisionAndRemainder(t *testing.T) {
-	for _, op := range []string{"/", "%"} {
-		src := `function f(): i32 { return 6 ` + op + ` 2; }`
-		p := loweredAndFolded(t, src)
+// Division / remainder by a NONZERO constant folds like any other
+// binop — `6 / 2` → 3, `7 % 3` → 1. (The AST optimiser doesn't fold
+// these, so they reach the IR as a const/const/div chain; inlining a
+// small `n / K` helper at a constant call site produces the same
+// shape.)
+func TestFoldDivRemByNonzero(t *testing.T) {
+	for _, tc := range []struct {
+		expr string
+		want int32
+	}{
+		{"6 / 2", 3},
+		{"7 / 2", 3}, // truncates toward zero
+		{"7 % 3", 1},
+		{"8 % 4", 0},
+	} {
+		p := loweredAndFolded(t, `function f(): i32 { return `+tc.expr+`; }`)
 		fn := findFunc(p, "f")
-		// Expect at least three ops: the two constants and the divs/rems.
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != tc.want {
+			t.Errorf("%q: op[0] = %s %d, want OpConstI32 %d:\n%s", tc.expr, fn.Ops[0].Kind, fn.Ops[0].I32, tc.want, p)
+		}
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS || op.Kind == OpRemS {
+				t.Errorf("%q: div/rem by nonzero should have folded:\n%s", tc.expr, p)
+			}
+		}
+	}
+}
+
+// Division / remainder by a ZERO constant must NOT be folded — the op
+// survives so the runtime trap still fires.
+func TestFoldPreservesDivRemByZero(t *testing.T) {
+	for _, op := range []string{"/", "%"} {
+		p := loweredAndFolded(t, `function f(): i32 { return 6 `+op+` 0; }`)
+		fn := findFunc(p, "f")
 		if len(fn.Ops) < 3 {
-			t.Errorf("operator %q: expected fold to leave divs/rems alone, got:\n%s", op, p)
+			t.Errorf("operator %q by 0: expected the trapping op to survive, got:\n%s", op, p)
+		}
+	}
+}
+
+// The signed overflow `INT_MIN / -1` traps at runtime (wasm i32.div_s),
+// so it stays unfolded; the sibling `INT_MIN %% -1` is 0 and doesn't
+// trap, so it folds. Constructed at the IR level — the pair only
+// reaches Fold post-inline.
+func TestFoldPreservesSignedDivOverflow(t *testing.T) {
+	// INT_MIN / -1 → keep the op (traps)
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: math.MinInt32},
+			{Kind: OpConstI32, I32: -1},
+			{Kind: OpDivS},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		kept := false
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS {
+				kept = true
+			}
+		}
+		if !kept {
+			t.Errorf("INT_MIN / -1 must stay unfolded (traps):\n%s", p)
+		}
+	}
+	// INT_MIN % -1 → fold to 0 (no trap)
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: math.MinInt32},
+			{Kind: OpConstI32, I32: -1},
+			{Kind: OpRemS},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0 || fn.Ops[1].Kind != OpReturn {
+			t.Errorf("INT_MIN %% -1 should fold to const 0:\n%s", p)
+		}
+	}
+}
+
+// Unsigned div / rem by a nonzero constant folds with unsigned
+// semantics: 0xFFFFFFFF /u 2 == 0x7FFFFFFF (not the signed -1 / 2 == 0).
+func TestFoldUnsignedDivRem(t *testing.T) {
+	// div_u
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: -1}, // 0xFFFFFFFF
+			{Kind: OpConstI32, I32: 2},
+			{Kind: OpDivS, Unsigned: true},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0x7FFFFFFF {
+			t.Errorf("0xFFFFFFFF /u 2 should fold to 0x7FFFFFFF, got %d:\n%s", fn.Ops[0].I32, p)
+		}
+	}
+	// rem_u
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: -1}, // 0xFFFFFFFF
+			{Kind: OpConstI32, I32: 16},
+			{Kind: OpRemS, Unsigned: true},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 15 { // 0xFFFFFFFF % 16 = 15
+			t.Errorf("0xFFFFFFFF %%u 16 should fold to 15, got %d:\n%s", fn.Ops[0].I32, p)
+		}
+	}
+}
+
+// i64 division / remainder folds too, with the same zero-divisor
+// carve-out.
+func TestFoldI64DivRem(t *testing.T) {
+	// 100 / 7 = 14 (i64)
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI64, I64: 100},
+			{Kind: OpConstI64, I64: 7},
+			{Kind: OpDivS, Width: 64},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		if fn.Ops[0].Kind != OpConstI64 || fn.Ops[0].I64 != 14 {
+			t.Errorf("100 / 7 (i64) should fold to 14, got %d:\n%s", fn.Ops[0].I64, p)
+		}
+	}
+	// 100 / 0 (i64) stays put
+	{
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI64, I64: 100},
+			{Kind: OpConstI64, I64: 0},
+			{Kind: OpDivS, Width: 64},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		Fold(p)
+		kept := false
+		for _, op := range fn.Ops {
+			if op.Kind == OpDivS {
+				kept = true
+			}
+		}
+		if !kept {
+			t.Errorf("100 / 0 (i64) must stay unfolded (traps):\n%s", p)
 		}
 	}
 }
@@ -169,6 +393,93 @@ func TestFoldHandlesNestedControlFlow(t *testing.T) {
 		}
 		if depth != 0 {
 			t.Errorf("%s: ended at depth %d, want 0", fn.Name, depth)
+		}
+	}
+}
+
+// A constant loop condition folds the exit br_if. `while (false)`
+// lowers its exit test to `<cond> ; OpNot ; OpBrIf breakD`; with a
+// literal `false` that collapses to `OpConstI32 1 ; OpBrIf breakD`
+// (branch always taken), which Fold turns into an unconditional
+// OpBr — the loop exits at the top and no br_if survives.
+func TestFoldConstBrIfAlwaysTaken(t *testing.T) {
+	src := `function f(): i32 { var i: i32 = 0; while (false) { i = i + 1; } return i; }`
+	// Before Fold the exit test is a real br_if on a constant.
+	pre := lowerSource(t, src)
+	if !hasOpKind(pre, "f", OpBrIf) {
+		t.Fatalf("test premise broken: expected an OpBrIf before fold:\n%s", pre)
+	}
+	p := loweredAndFolded(t, src)
+	fn := findFunc(p, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpBrIf {
+			t.Fatalf("constant-true br_if should fold to an unconditional OpBr:\n%s", p)
+		}
+	}
+	mustContainOp(t, p, "f", OpBr)
+	assertScopesBalanced(t, p)
+}
+
+// `while (true)` lowers its exit test to `OpConstI32 1 ; OpNot ;
+// OpBrIf breakD`; folding `const ; not` first yields `OpConstI32 0 ;
+// OpBrIf breakD` (branch never taken), which Fold drops entirely. The
+// only OpBrIf that could remain here is one from inside the body — this
+// loop's body branches via an OpBr (`break`), so none survives.
+func TestFoldConstBrIfNeverTaken(t *testing.T) {
+	src := `function f(): i32 {
+		var i: i32 = 0;
+		while (true) { i = i + 1; if (i >= 5) { break; } }
+		return i;
+	}`
+	pre := lowerSource(t, src)
+	if !hasOpKind(pre, "f", OpBrIf) {
+		t.Fatalf("test premise broken: expected an OpBrIf before fold:\n%s", pre)
+	}
+	p := loweredAndFolded(t, src)
+	fn := findFunc(p, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpBrIf {
+			t.Fatalf("constant-false exit br_if should be dropped, not survive:\n%s", p)
+		}
+	}
+	assertScopesBalanced(t, p)
+}
+
+// hasOpKind reports whether function fn in p contains an op of kind k.
+func hasOpKind(p *Program, fn string, k OpKind) bool {
+	f := findFunc(p, fn)
+	if f == nil {
+		return false
+	}
+	for _, op := range f.Ops {
+		if op.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+// assertScopesBalanced fails the test if any function's structured
+// control scopes (block / loop / if vs. end) don't balance — a
+// rewrite that dropped or added a scope boundary would break wasm
+// validation.
+func assertScopesBalanced(t *testing.T, p *Program) {
+	t.Helper()
+	for _, fn := range p.Funcs {
+		depth := 0
+		for i, op := range fn.Ops {
+			switch op.Kind {
+			case OpBlock, OpLoop, OpIf:
+				depth++
+			case OpEnd:
+				depth--
+				if depth < 0 {
+					t.Fatalf("%s: op %d (%s): scope depth went negative", fn.Name, i, op.Kind)
+				}
+			}
+		}
+		if depth != 0 {
+			t.Errorf("%s: ended at scope depth %d, want 0", fn.Name, depth)
 		}
 	}
 }

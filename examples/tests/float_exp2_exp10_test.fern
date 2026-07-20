@@ -1,0 +1,64 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_exp2_exp10_test.fern — pure-Fern coverage of
+// std/float.exp2 / exp10: base-2 and base-10 exponentials (inverses of
+// log2 / log10), built on the natural exp via 2^x = e^(x·ln2), 10^x = e^(x·ln10).
+// Whole exponents land on the exact power up to rounding and both round-trip
+// against their logs, so the checks are tolerance-banded with assert_eq_f64_near.
+// Both f64 and f32. The Go-side TestFloatExp2Exp10 pins these across interp /
+// x86-64 / arm64 (wasmbin skips libm transcendentals, the same known gap
+// exp/log/sin already carry); this is the migration-shaped companion.
+
+function test_exp2_pow2(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.0).exp2(), 8.0, 0.0001);
+}
+
+function test_exp2_large(): test.TestOutcome {
+    return test.assert_eq_f64_near((10.0).exp2(), 1024.0, 0.0001);
+}
+
+function test_exp2_zero(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0).exp2(), 1.0, 0.0001);
+}
+
+function test_exp2_negative(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0 - 1.0).exp2(), 0.5, 0.0001);
+}
+
+function test_exp10_pow10(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.0).exp10(), 1000.0, 0.0001);
+}
+
+function test_exp10_hundred(): test.TestOutcome {
+    return test.assert_eq_f64_near((2.0).exp10(), 100.0, 0.0001);
+}
+
+function test_roundtrip(): test.TestOutcome {
+    // exp2 and log2 invert each other; likewise exp10 / log10.
+    if (!float_near((8.0).log2().exp2(), 8.0)) { return test.fail("log2->exp2"); }
+    return test.assert_eq_f64_near((1000.0).log10().exp10(), 1000.0, 0.001);
+}
+
+function test_f32(): test.TestOutcome {
+    if (!float_near((16.0 as f32).exp2() as f64, 65536.0)) { return test.fail("exp2 f32"); }
+    return test.assert_eq_f64_near((2.0 as f32).exp10() as f64, 100.0, 0.001);
+}
+
+function float_near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float exp2/exp10");
+    r = r.it("exp2 power of two",   test_exp2_pow2());
+    r = r.it("exp2 large",          test_exp2_large());
+    r = r.it("exp2 zero",           test_exp2_zero());
+    r = r.it("exp2 negative",       test_exp2_negative());
+    r = r.it("exp10 power of ten",  test_exp10_pow10());
+    r = r.it("exp10 hundred",       test_exp10_hundred());
+    r = r.it("log/exp round-trip",  test_roundtrip());
+    r = r.it("f32",                 test_f32());
+    return r.finish();
+}

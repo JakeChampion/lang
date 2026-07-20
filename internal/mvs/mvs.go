@@ -26,14 +26,44 @@ type DepsOf func(pkg string, v Version, src Source) (map[string]string, error)
 // version's own requirements to a fixpoint. The result is deterministic
 // and lockfile-ready. A demanded version absent from the index is a
 // hard, precisely-located error (never a silent round-up).
-func Resolve(rootDeps map[string]string, ix *Index, depsOf DepsOf) ([]Selected, error) {
+//
+// excludes (name → banned versions) is the top-level manifest's
+// [exclude] table — MVS's escape hatch for "1.9 is broken", since the
+// minimum-only constraint language cannot express upper bounds. A demand
+// for an excluded version rounds up to the NEXT higher non-excluded
+// indexed version (Go's exclude semantics); no higher version is a
+// precise error. Only the root's excludes reach here — a dependency's
+// [exclude] is ignored, preserving determinism.
+func Resolve(rootDeps map[string]string, excludes map[string][]string, ix *Index, depsOf DepsOf) ([]Selected, error) {
 	selected := map[string]Version{}
 	var queue []string // packages whose selected version's deps need expanding
+
+	excluded := func(pkg string, v Version) bool {
+		for _, s := range excludes[pkg] {
+			if e, err := ParseVersion(s); err == nil && e.Compare(v) == 0 {
+				return true
+			}
+		}
+		return false
+	}
 
 	raise := func(pkg, minS string) error {
 		v, err := ParseVersion(minS)
 		if err != nil {
 			return fmt.Errorf("dependency %q: %w", pkg, err)
+		}
+		if excluded(pkg, v) {
+			up, ok := Version{}, false
+			for _, cand := range ix.Versions(pkg) {
+				if cand.Compare(v) > 0 && !excluded(pkg, cand) {
+					up, ok = cand, true
+					break
+				}
+			}
+			if !ok {
+				return fmt.Errorf("dependency %q: version %s is excluded by the top-level manifest and the index has no higher non-excluded version (available: %s)", pkg, v, versList(ix.Versions(pkg)))
+			}
+			v = up
 		}
 		if _, ok := ix.SourceFor(pkg, v); !ok {
 			avail := ix.Versions(pkg)

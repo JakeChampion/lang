@@ -32,17 +32,39 @@ function main(): i32 {
     return b.e.message().len();
 }`
 
+// (b') same as (b) but the field value coerces IMPLICITLY (no `as dyn Error`):
+// the struct-field position was missing from assignable()'s dyn boxing-site
+// list, so this reported a spurious E043. Now the concrete boxes into the dyn
+// field like every other position; dispatch still reads "ab" (len 2).
+const dynDispatchFieldImplicit = dynDispatchHdr + `struct Box { e: dyn Error }
+function main(): i32 {
+    var b: Box = Box { e: NotFound { what: "ab" } };
+    return b.e.message().len();
+}`
+
 // (c) receiver read from an array element
 const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
     var xs: dyn Error[] = [NotFound { what: "ab" } as dyn Error];
     return xs[0].message().len();
 }`
 
+// (d) receiver bound from a USER-enum variant payload whose value coerces
+// IMPLICITLY (no `as dyn Error`): the variant-payload position was also
+// missing from the dyn boxing-site list, so this reported a spurious E036.
+// Now the concrete boxes into the payload; dispatch still reads "ab" (len 2).
+const dynDispatchEnumPayloadImplicit = dynDispatchHdr + `enum Wrapped { Wrap(dyn Error), Bare }
+function main(): i32 {
+    var w: Wrapped = Wrap(NotFound { what: "ab" });
+    return match (w) { Wrap(e) => e.message().len(), Bare => 0 };
+}`
+
 func dynDispatchCases() map[string]string {
 	return map[string]string{
-		"match-arm": dynDispatchMatchArm,
-		"field":     dynDispatchField,
-		"array":     dynDispatchArrayElem,
+		"match-arm":             dynDispatchMatchArm,
+		"field":                 dynDispatchField,
+		"field-implicit":        dynDispatchFieldImplicit,
+		"enum-payload-implicit": dynDispatchEnumPayloadImplicit,
+		"array":                 dynDispatchArrayElem,
 	}
 }
 

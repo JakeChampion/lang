@@ -1,4 +1,4 @@
-import "std/sort";
+import "core/cmp";
 import "std/test";
 // examples/tests/filesystem_ops_test.fern — exercises the
 // `read_dir` / `remove_file` / `remove_dir_all` builtins and
@@ -35,7 +35,7 @@ function test_read_dir_lists_what_we_wrote(): test.TestOutcome {
             match (write_file(dir + "/c.txt", "c")) { None => {}, Some(_) => { return test.fail("write c failed"); } }
             match (read_dir(dir)) {
                 Ok(names) => {
-                    var sorted: string[] = sort.sort_strings_asc(names);
+                    var sorted: string[] = cmp.sort(names);
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
                     return test.assert_eq_array(sorted, ["a.txt", "b.txt", "c.txt"]);
                 },

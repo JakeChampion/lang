@@ -116,7 +116,8 @@ function main(): i32 {
     var arr = cmp.sort([3, 1, 2]);       // [1,2,3]  (primitive impl Ord for i32)
     var srt = 0;
     if (cmp.is_sorted(arr)) { srt = 1; } // 1
-    var ix = cmp.index_of([10, 20, 30], 20); // 1  (canonical index_of -> i32, #3699)
+    var ix = 0;
+    match (cmp.index_of([10, 20, 30], 20)) { Some(v) => { ix = v; }, None => { ix = 0 - 1; } } // 1  (index_of -> Option[i32], #5348)
     var has = 0;
     if (cmp.contains([10, 20, 30], 30)) { has = 1; }                              // 1
     var eqa = 0;

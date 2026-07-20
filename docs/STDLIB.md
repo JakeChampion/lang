@@ -32,7 +32,9 @@ Receiver methods on i32 / byte values.
   `is_zero`, `is_in_range`, `is_between`, `is_multiple_of`,
   `is_perfect_square`, `is_palindrome`, `is_even`, `is_odd`,
   `is_power_of_2`, `is_prime`
-- **Scalar:** `abs`, `abs_diff` (`|n - other|`), `min`, `max`,
+- **Scalar:** `abs`, `abs_diff` (`|n - other|`),
+  `midpoint(other)` (overflow-safe average via `(a&b)+((a^b)>>1)`,
+  rounds toward −∞), `min`, `max`,
   `clamp`, `min_zero`, `sign_str`,
   `percent_of`, `reverse_digits`, `sum_of_digits`, `has_digit`,
   `saturating_add`, `saturating_sub`, `checked_add`,
@@ -40,31 +42,50 @@ Receiver methods on i32 / byte values.
   `next_power_of_2`, `log2_floor`, `sqrt_floor`, `ceil_div`,
   `round_up_to`, `round_down_to`, `divmod`
 - **Bit ops:** `count_ones`, `count_zeros` (`32 - count_ones`),
-  `leading_zeros`, `trailing_zeros`,
+  `leading_zeros`, `trailing_zeros`, `bit_length` (bits to
+  represent `|n|`, highest set bit + 1),
   `bit`, `set_bit`, `clear_bit`, `toggle_bit`, `byte_swap`,
   `rotate_left`, `rotate_right`
 - **String formatting:** `to_string`, `to_string_padded`,
   `to_string_with_sep`, `to_hex`, `to_binary`, `to_oct`,
+  `to_string_radix(base)` (arbitrary base 2–36, the general form
+  behind the others; write-side inverse of `string.parse_int_radix`),
   `to_rgb_hex`, `digits`, `pluralize`, `ordinal` (English ordinal,
   `1`→`"1st"`/`2`→`"2nd"`/`11`→`"11th"`, with the 11/12/13 exception)
 
 ### `std/i64`
 
-- **Scalar:** `abs`, `abs_diff` (`|n - other|`), `min`, `max`,
-  `clamp`, `pow`, `gcd`, `lcm`
+- **Scalar:** `abs`, `abs_diff` (`|n - other|`),
+  `midpoint(other)` (overflow-safe average, i64 sibling of the
+  i32 one), `min`, `max`, `clamp`, `pow`, `gcd`, `lcm`
+- **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact
+  into the i64 range), `is_power_of_2` (`n & (n-1)` bit trick),
+  `is_perfect_square` (`sqrt_floor(n)² == n`), `next_power_of_2`
+  (smallest power of two `>= n`; caps at 2^62, returns 0 above),
+  `log2_floor` (`floor(log2 n)`, `-1` for `n <= 0`)
+- **Integer division:** `is_multiple_of(d)` (`d == 0` → false),
+  `ceil_div(d)` (round toward +∞; `d <= 0` → 0)
 - **Parity:** `is_even`, `is_odd`
 - **Sign:** `signum` (-1/0/1), `is_positive`, `is_negative`, `is_zero`
 - **Range:** `is_in_range` (half-open `[lo, hi)`), `is_between`
   (inclusive `[lo, hi]`)
+- **Bit ops:** `count_ones` (set bits in the 64-bit two's-complement
+  rep), `bit_length` (bits to represent `|n|`, i64::MIN → 64)
 - **Overflow-aware:** `saturating_add`/`saturating_sub` (clamp to
   i64::MAX/MIN), `checked_add`/`checked_sub` (`Option[i64]`, `None` on
   overflow)
-- **String:** `to_string`
+- **String:** `to_string`, `to_string_radix(base)` (arbitrary base
+  2–36; renders i64::MIN cleanly via a u64 magnitude)
 
 ### `std/u32`
 
 - **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
-  always fits — unsigned)
+  always fits — unsigned), `midpoint(other)` (overflow-safe average
+  via `(a&b)+((a^b)>>1)`)
+- **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact to
+  `(2^16-1)²`), `is_power_of_2` (`n & (n-1)` bit trick), `next_power_of_2`
+  (smallest power `>= n`; caps at 2^31, returns 0 above), `log2_floor`
+  (`floor(log2 n)`, `-1` for `n == 0`)
 - **Predicates:** `is_zero`, `is_even`, `is_odd`
 - **Range (unsigned):** `is_in_range` (half-open `[lo, hi)`),
   `is_between` (inclusive `[lo, hi]`)
@@ -76,7 +97,12 @@ Receiver methods on i32 / byte values.
 ### `std/u64`
 
 - **Scalar:** `min`, `max`, `clamp`, `pow`, `abs_diff` (`|n - other|`,
-  always fits — unsigned)
+  always fits — unsigned), `midpoint(other)` (overflow-safe average,
+  u64 sibling of the u32 one)
+- **Roots / powers:** `sqrt_floor` (floor of √n via Newton, exact to
+  `(2^32-1)²`), `is_power_of_2` (`n & (n-1)` bit trick), `next_power_of_2`
+  (smallest power `>= n`; caps at 2^63, returns 0 above), `log2_floor`
+  (`floor(log2 n)`, `-1` for `n == 0`)
 - **Predicates:** `is_zero`, `is_even`, `is_odd`
 - **Range (unsigned):** `is_in_range` (half-open `[lo, hi)`),
   `is_between` (inclusive `[lo, hi]`)
@@ -93,18 +119,34 @@ Receiver methods on i32 / byte values.
   fractional digits (no trimming), rounded half away from zero.
 - **Math primitives** (on both f32 and f64; f32 wrappers
   promote to f64, apply, demote): `abs`, `floor`, `ceil`,
-  `round`, `trunc`, `sqrt`, `pow(y)`, `log`, `exp`, `sin`,
-  `cos`. Routed through the checker-injected
+  `round`, `round_to(digits)` (round to N decimal places, half
+  away from zero; negative `digits` round to tens/hundreds),
+  `trunc`, `fract` (signed fractional part
+  `x - trunc(x)`), `sqrt`, `cbrt` (real cube root, defined for
+  negatives), `pow(y)`, `hypot(y)` (2-D Euclidean length,
+  overflow-safe), `hypot3(y, z)` (3-D Euclidean length,
+  overflow-safe), `log` (natural), `log2` / `log10`
+  (base-2 / base-10, via change-of-base ÷ ln2 / ÷ ln10),
+  `exp`, `exp2` / `exp10` (base-2 / base-10 exponentials,
+  inverses of `log2` / `log10`, via `e^(x·ln2)` / `e^(x·ln10)`),
+  `sin`, `cos`, `tan`, `sinh` / `cosh` / `tanh` (hyperbolic,
+  built on `exp`; `tanh` saturates to `±1` past `|x| = 20`).
+  Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
   hardware-precise op.
 - **IEEE-754 classification:** `is_nan`, `is_finite`, `is_inf`
 - **Combinators:** `min(y)`, `max(y)`, `clamp(lo, hi)` — NaN
   propagates (any NaN input → NaN output), matching Go's
-  `math.Min` / `math.Max` semantics
+  `math.Min` / `math.Max` semantics; `clamp01` (restrict to
+  `[0, 1]`), `abs_diff(b)` (`|a - b|`), `mul_add(b, c)`
+  (`a*b + c`; not a hardware-fused FMA — the multiply rounds first)
 - **Convenience:** `signum` (`±1.0`, `0.0` at zero, NaN-preserving),
   `lerp(b, t)` (precise `a + (b - a) * t` linear interpolation;
-  `t` outside `[0, 1]` extrapolates), `to_radians` / `to_degrees`
-  (degree↔radian conversion via a high-precision π)
+  `t` outside `[0, 1]` extrapolates), `recip` (`1 / x`),
+  `copysign(sign)` (magnitude of the receiver, sign of the argument;
+  `sign < 0` test, so `-0.0` reads positive), `midpoint(b)`
+  (overflow-safe halfway point `a*0.5 + b*0.5`), `to_radians` /
+  `to_degrees` (degree↔radian conversion via a high-precision π)
 
 ### `std/string`
 
@@ -126,6 +168,7 @@ Grouped by family:
   `None` instead) so a forgotten `< 0` check can't read a
   bogus index — consistent with `split_once` / `strip_prefix`.
 - **Casing / transform:** `capitalize`, `to_lower`, `to_upper`,
+  `swap_case` (toggle ASCII case, à la Python `str.swapcase`),
   `snake_case`, `kebab_case`, `title_case`, `to_acronym`,
   `word_count`, `eq_ignore_ascii_case`, `slugify` (free-form text →
   URL slug: lowercased, non-`[a-z0-9]` runs collapsed to `-`, ends
@@ -153,8 +196,13 @@ Grouped by family:
 - **Char-set ops:** `without_chars`, `contains_only`,
   `count_chars_in`
 - **Split / pad / center:** `split`, `splitn`, `split_at`,
-  `split_once`, `pad_start`, `pad_end`, `pad_start_str`,
-  `pad_end_str`, `center`, `wrap`, `indent`, `dedent` (strip the
+  `split_once`, `rsplit_once` (split at the LAST separator — the
+  mirror of `split_once`), `partition`/`rpartition` (Python-style
+  three-way `(head, sep, tail)` that KEEPS the separator; first /
+  last occurrence), `pad_start`, `pad_end`, `pad_start_str`,
+  `pad_end_str`, `zfill` (zero-pad a numeric string keeping the sign
+  in front, à la Python `str.zfill`), `center`, `wrap`, `indent`,
+  `dedent` (strip the
   common leading-whitespace prefix — the inverse of `indent`, à la
   Python `textwrap.dedent`), `repeat_with_sep`
 - **Slice / count / reverse:** `take`, `drop`, `chunks`, `at`,
@@ -163,7 +211,8 @@ Grouped by family:
   `len` == `count`), `bytes`, `first`, `last`, `before`, `after`,
   `between`, `truncate`, `ellipsis`, `first_line`
 - **Parse:** `parse_bool`, `parse_int`, `parse_hex_int`,
-  `parse_bin_int`, `parse_float`
+  `parse_bin_int`, `parse_int_radix(base)` (arbitrary base 2–36,
+  the general form behind the others), `parse_float`
 - **Build:** `repeat_char`
 
 ### `std/array`
@@ -185,7 +234,20 @@ convention.
   `sum_i64`, `max_i64`, `min_i64`, `avg_i64`;
   `sum_u32`, `max_u32`, `min_u32`;
   `sum_u64`, `max_u64`, `min_u64`;
-  `sum_f64`, `max_f64`, `min_f64`, `avg_f64`
+  `sum_f64`, `product_f64` (empty = 1), `cumsum_f64` (running
+  prefix sum), `cumprod_f64` (running product), `diff_f64`
+  (successive differences, one shorter; inverse of `cumsum`),
+  `max_f64`, `min_f64`, `avg_f64`,
+  `variance_f64` / `stddev_f64` (population variance and its
+  square root, `Option[f64]`, `None` for empty),
+  `median_f64` (averages the two middles for even length),
+  `range_f64` (`max - min` spread),
+  `dot_f64(a, b)` (dot product, runs to the shorter length),
+  `norm_f64` (Euclidean / L2 norm, `sqrt(dot(self, self))`),
+  `distance_f64(a, b)` (Euclidean distance `norm(a - b)`),
+  `normalize_f64` (unit vector; zero / empty returned unchanged),
+  `scale_f64(arr, k)` (scalar multiply), `add_f64(a, b)`
+  (element-wise sum, runs to the shorter length)
 - **string[] core:** `join`, `index_of`, `position`, `contains`,
   `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,
@@ -193,20 +255,30 @@ convention.
   `take`, `drop`, `all_non_empty`, `any_contains`,
   `count_str`, `all_starts_with`, `all_ends_with`,
   `sorted_str_asc`, `sorted_str_desc`, `join_with_last`
-- **generic `[T]` combinators** (free + method forms): `map`,
-  `filter`, `fold`, `reduce`, `any`, `all`, `find`, `find_map`
+- **generic `[T]` combinators** (free + method forms): `is_empty`,
+  `first`/`last` (→ `Option[T]`, `None` when empty), `get(i)`
+  (bounds-checked → `Option[T]`, negative index → `None`), `map`,
+  `filter`, `fold`, `reduce`, `any`, `all`, `none` (complement of
+  `any`), `find`, `find_map`
   (first `Some` of a projection returning `Option[U]`), `position`,
   `count_where` (tally matching a predicate), `sum_by` (sum of an
-  i32 projection over any element type),
+  i32 projection over any element type), `max_index`/`min_index`
+  (index of the extremal element by `Ord` → `Option[i32]`),
   `take`/`drop`/`take_while`/`drop_while`, `slice`, `chunks`,
-  `windows`, `zip`, `enumerate`, `reverse`, `intersperse`,
+  `windows`, `zip`, `enumerate`, `reverse`, `rotate_left`/
+  `rotate_right` (cyclic shift by n mod len; negative n rotates
+  the other way), `intersperse`,
   `flat_map`, `flatten` (`T[][]` → `T[]`), `partition`
   (→ `(kept, rejected)`), `scan` (running left fold, same length
   as input), `max_by_i32_key`/`min_by_i32_key` (extremum by an
   i32 projection), `max_by`/`min_by` (extremum under a `sort_by`-
   style comparator; first on a tie, `None` when empty).
   Eq/Ord-bounded: `contains`, `index_of`,
-  `index_of_last`, `distinct`, `count`, `is_sorted`, `equal`,
+  `index_of_last`, `distinct` (remove all duplicates), `dedup`
+  (collapse consecutive runs — single-pass complement of
+  `distinct`), `binary_search` (O(log n) → `Option[i32]` over an
+  ascending-sorted array), `all_equal` (≤ 1 distinct value),
+  `count`, `is_sorted`, `equal`,
   `starts_with`/`ends_with`.
 
 ### `std/unicode`
@@ -318,11 +390,19 @@ Semantic Versioning 2.0.0 (semver.org) — parse and precedence-compare.
 
 ### `std/math`
 
-Free helpers — random, ranges, numeric constants, RGB packing.
+Free helpers — random, ranges, numeric constants, angle + interpolation
+helpers, RGB packing.
 
 - `random_int(lo, hi)`
 - `range(start, end)`, `range_step(start, end, step)`
 - `i32_max()`, `i32_min()`, `i64_max()`, `i64_min()`
+- `pi(): f64`, `tau(): f64` — the closest f64 to π and 2π (`tau() == 2.0 *
+  pi()` exactly).
+- `to_radians(deg): f64`, `to_degrees(rad): f64` — inverse angle
+  conversions; the zero angle is exact both ways.
+- `lerp(a, b, t): f64` — linear interpolation (`a·(1−t) + b·t`), exact at
+  both endpoints (`t == 0.0` → `a`, `t == 1.0` → `b`) and extrapolating
+  outside [0, 1].
 - `pack_rgb(r, g, b)` — pack three 0–255 channels into a 24-bit i32.
 - `parse_rgb_hex(s): Option[i32]` — inverse: parse `#rrggbb` / `rrggbb`
   / `#rgb` shorthand (case-insensitive) into a packed RGB i32, `None` if
@@ -341,9 +421,20 @@ the small-list convenience cases.
 - `sort_i32_asc(arr)`, `sort_i32_desc(arr)`
 - `sort_i64_asc(arr)`, `sort_i64_desc(arr)`
 - `sort_u32_asc(arr)`, `sort_u64_asc(arr)`
+- `sort_f64_asc(arr)`, `sort_f64_desc(arr)` (NaN ordering
+  unspecified — filter NaNs first if it matters)
 - `sort_strings_asc(arr)`, `sort_strings_desc(arr)`,
   `sort_strings_asc_ci(arr)`
 - `string_cmp(a, b)`, `string_cmp_ci(a, b)`
+- `sort_by_i32_key(arr, key)` — sort by an `i32` projection
+  (Schwartzian: each `key(x)` computed once)
+- `sort_key[T, K: cmp.Ord](arr, key)` — the generic-key
+  generalisation: sort by a projection to any `Ord` key
+  (`string`, `u64`, a `@derive(Ord)` struct), dispatching the
+  order through `key.cmp(...)`
+
+`sort_by[T](xs, cmp)` (comparator-driven) and `sort[T: cmp.Ord]`
+(no-comparator, `Ord`-ordered) live in `std/array` / `core/cmp`.
 
 ### `std/set`
 
@@ -508,6 +599,12 @@ Percent-encoding, URL parsing, query parsing.
   stay on one line). Same value tokens as `json_encode` — only
   whitespace differs.
 - `json_parse(s: string): Option[JsonValue]`
+- `json_escape(s: string): string` — escape a raw string for embedding
+  inside a JSON string literal (caller supplies the quotes): `\` `"`
+  backslash-escaped, `\n` `\r` `\t` short escapes, other C0 controls as
+  lowercase `\u00XX`, everything else byte-for-byte. The one shared
+  escaper — the `JsonValue` encoder, `@derive(json.Json)`, and
+  `std/log`'s JSON-lines mode all route through it.
 
 ### `std/http`
 
@@ -517,7 +614,19 @@ serializer.
 - **Response builders:** `http_response_ok`,
   `http_response_text`, `http_response_not_found`,
   `http_response_bad_request`, `http_response_internal_error`,
-  `http_response_redirect`, `http_response_no_content`
+  `http_response_redirect`, `http_response_no_content`; typed-body
+  variants that set `Content-Type` up front:
+  `http_response_json` / `http_response_json_status` /
+  `http_response_html` / `http_response_plain`
+- **Header methods:** `(resp).with_header(name, value)` (set) /
+  `(resp).with_appended_header(name, value)` (append) /
+  `(resp).with_content_type(ct)`
+- **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
+  `SetCookie` built via `cookie_new(name, value)` (hardened
+  defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
+  `cookie_delete(name)`, serialized with `(c).serialize()` and
+  attached with `(resp).with_set_cookie(c)` (append semantics —
+  one `Set-Cookie` header per cookie)
 - **Status / classifiers:** `http_status_text`,
   `is_valid_http_status`, and the RFC 9110 status-class predicates
   `http_is_informational` / `http_is_success` / `http_is_redirect` /
@@ -533,7 +642,16 @@ serializer.
 
 - `tcp_serve(port, handler)` — HTTP/1.1 accept loop. Calls
   `handler(req: HttpRequest): HttpResponse` once per accepted
-  connection.
+  connection. Each connection's request read is bounded by a
+  10 s deadline (the slow-loris guard).
+- `tcp_serve_deadline(port, handler, recv_deadline_ms)` —
+  `tcp_serve` with an explicit per-request read deadline; a
+  client that hasn't delivered a complete request in time is
+  disconnected without a response.
+- `tcp_recv_deadline(fd, max, deadline_ms): Option[string]` —
+  recv bounded by a readability deadline: `Some(chunk)` in time
+  (empty chunk = EOF), `None` at the deadline. On interp (where
+  `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
   programs can be tuned via `PORT=N ./bin`.
@@ -542,6 +660,29 @@ The raw socket primitives `tcp_listen` / `tcp_accept` / `tcp_recv`
 / `tcp_send` / `tcp_close` are runtime-provided, emitted by
 codegen from extern stubs at module boundary — not declared in
 this module.
+
+### `std/fetch`
+
+Outbound HTTP/1.1 client (the upstream-fetch half of the edge
+use case). Hosts are literal IPv4 (no DNS / TLS yet).
+
+- **Addresses:** `ipv4(a,b,c,d)` / `parse_ipv4(s)` — pack a
+  dotted-quad into the network-byte-order i32 `tcp_connect` wants.
+- **Blocking:** `fetch_raw(host_be, port, request)`,
+  `fetch_get(host_be, port, path)`, `get_url("http://…")` — send
+  and read the whole response ("" on failure).
+- **Deadline-bounded:** `fetch_raw_deadline` /
+  `fetch_get_deadline(host_be, port, path, deadline_ms):
+  Option[string]` — `Some(response)` in time, `None` when the
+  upstream was too slow (connect/send failure is `Some("")`,
+  mirroring `fetch_raw`).
+- **Awaitable:** `fetch_future(host_be, port, path):
+  async.Future[string]` — fan out through `async.gather` /
+  `async.race` / `async.with_deadline`.
+- **Response helpers:** `http_status(resp)`, `http_body(resp)`.
+- **Capability-scoped:** `(plat: Platform).fetch(host, port,
+  path): i32` — status-code GET through the handler's `Platform`
+  bag.
 
 ### `std/headers`
 
@@ -599,17 +740,25 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
 - Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
   `DAYS_PER_WEEK`, etc.
 
-### `std/task`
+### `std/async`
 
-Cooperative single-threaded task runtime — the backend-independent
-core of Fern's colorless structured-concurrency model (see
-`docs/ASYNC-IMPLEMENTATION-PLAN.md`).
+The blessed structured-concurrency surface (see
+`docs/ASYNC-REDESIGN.md`) — combinators over a `Future[T]`, a
+not-yet-ready value of type `T`. Colorless (no function coloring, no
+compiler transform) and portable: every combinator compiles and runs
+on all backends, driving the universal `poll` builtin. Replaces the
+old `concurrent { … }` / `await` keyword surface.
 
-- `reactor_new()`; `(rx).register(...)`, `(rx).poll(...)`,
-  `(rx).pending()`.
-- `run(states, reactor)` drives every task to completion;
-  `select(states, reactor)` returns on the first to finish.
-- `Step` (enum) is the per-task state; `Reactor` owns the wait set.
+- `Future[T]` (enum) — `Ready(T)` or `Pending(fd, resume)`, a poll fd
+  plus its continuation.
+- `gather(fs, on_incomplete)` — await ALL futures, values in input
+  order, their I/O overlapping on one thread; an unresolved slot gets
+  `on_incomplete`.
+- `race(fs, none_val)` — return on the FIRST to finish as `(index,
+  value)`; `(-1, none_val)` if none can progress.
+- `with_deadline(ms, fs)` — await all with a timeout, yielding
+  `Option[T][]`: `Some(v)` for each that resolved in time, `None` for
+  one abandoned at the deadline.
 
 ### `std/mock_platform`
 

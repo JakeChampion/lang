@@ -4,9 +4,8 @@
 // auto-synthesised handler `main()`) can do
 // request → response work without rolling its own parser.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
-// Phase 5, so callers now `import "std/http";` explicitly.
+// No prelude: callers now `import "std/http";` explicitly
+// (docs/PRELUDE-TO-MODULES.md, Phase 5).
 //
 // Scope: HTTP/1.1 only, Content-Length-delimited bodies, no
 // chunked transfer encoding, no persistent connections (every
@@ -548,4 +547,128 @@ pub function (r: HttpResponse) with_appended_header(name: string, value: string)
 //   r = http_response_ok(csv).with_content_type("text/csv");
 pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
     return HttpResponse { ...r, headers: r.headers.set("Content-Type", ct) };
+}
+
+// ============================================================
+// Cookies (RFC 6265) — the last helper family from the
+// 2026-07-02 stdlib review's http list (#4385 noted "no cookie
+// helpers"). Request side: read a cookie out of the `Cookie`
+// header(s). Response side: a `SetCookie` value with the
+// standard attributes, serialized onto the response as an
+// appended `Set-Cookie` header (append semantics — one header
+// per cookie, per the RFC).
+// ============================================================
+
+// `(r: HttpRequest).cookie(name)` — the value of cookie `name`
+// from the request's `Cookie` header(s), or None. Parses the
+// RFC 6265 §5.4 cookie-string shape (`a=1; b=2`) across every
+// `Cookie` header present (clients send one, but proxies can
+// split). Names are case-SENSITIVE per the RFC. The value is
+// returned raw: surrounding double quotes (allowed by the
+// grammar) are not stripped, and no decoding is applied.
+pub function (r: HttpRequest) cookie(name: string): Option[string] {
+    var hs: string[] = r.headers.get_all("cookie");
+    var i: i32 = 0;
+    while (i < hs.len()) {
+        var parts: string[] = hs[i].split(";");
+        var j: i32 = 0;
+        while (j < parts.len()) {
+            var pair: str = parts[j].trim();
+            var eq: i32 = pair.index_of("=");
+            if (eq > 0) {
+                if (pair[0:eq] == name) {
+                    return Some(pair[eq + 1:pair.len()].to_owned());
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `SetCookie` — a response cookie with the standard RFC 6265
+// attributes. Build with `cookie_new` / `cookie_delete`, adjust
+// fields via struct-update spread, attach with
+// `resp.with_set_cookie(c)`:
+//
+//   var c: SetCookie = http.cookie_new("session", sid);
+//   resp = resp.with_set_cookie(SetCookie { ...c, secure: true });
+//
+// Field conventions: `path`/`same_site` empty = attribute
+// omitted; `max_age` negative = omitted (a session cookie),
+// `0` = expire immediately (deletion).
+pub struct SetCookie {
+    name: string,
+    value: string,
+    path: string,
+    max_age: i32,
+    http_only: boolean,
+    secure: boolean,
+    same_site: string,
+}
+
+// `cookie_new(name, value)` — a `SetCookie` with the modern
+// framework defaults: `Path=/`, session lifetime (no Max-Age),
+// `HttpOnly`, `SameSite=Lax`, not `Secure` (defaulting Secure on
+// would silently break plain-http development; set it explicitly
+// for production HTTPS).
+pub function cookie_new(name: string, value: string): SetCookie {
+    return SetCookie {
+        name: name,
+        value: value,
+        path: "/",
+        max_age: -1,
+        http_only: true,
+        secure: false,
+        same_site: "Lax",
+    };
+}
+
+// `cookie_delete(name)` — a `SetCookie` that expires the cookie
+// immediately (`Max-Age=0`, empty value) on `Path=/`. Attach it
+// like any other: `resp = resp.with_set_cookie(http.cookie_delete("session"));`.
+pub function cookie_delete(name: string): SetCookie {
+    return SetCookie { ...cookie_new(name, ""), max_age: 0 };
+}
+
+// `__cookie_clean(s, drop_eq)` — header-injection defence for
+// serialize: strip control bytes (CR/LF would let a value smuggle
+// extra headers onto the wire) and the cookie structure bytes `;`
+// (and `=` for names). Everything else passes through unchanged;
+// callers needing arbitrary bytes in a value should encode first
+// (e.g. base64 / percent).
+function __cookie_clean(s: string, drop_eq: boolean): string {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        var keep: boolean = b >= 32 && b != 59;
+        if (drop_eq && b == 61) { keep = false; }
+        if (keep) { out = out.append(b as u8); }
+        i = i + 1;
+    }
+    return string_from_bytes(out);
+}
+
+// `(c: SetCookie).serialize()` — the `Set-Cookie` header VALUE
+// (`name=value; Path=/; Max-Age=0; Secure; HttpOnly;
+// SameSite=Lax`, attributes in that order, omitted per the field
+// conventions on `SetCookie`).
+pub function (c: SetCookie) serialize(): string {
+    var out: string = __cookie_clean(c.name, true) + "=" + __cookie_clean(c.value, false);
+    if (c.path.len() > 0) { out = out + "; Path=" + c.path; }
+    if (c.max_age >= 0) { out = out + "; Max-Age=" + int.int_to_string(c.max_age); }
+    if (c.secure) { out = out + "; Secure"; }
+    if (c.http_only) { out = out + "; HttpOnly"; }
+    if (c.same_site.len() > 0) { out = out + "; SameSite=" + c.same_site; }
+    return out;
+}
+
+// `(r: HttpResponse).with_set_cookie(c)` — append a `Set-Cookie`
+// header for `c` (append semantics: each cookie gets its own
+// header line, and setting several cookies on one response
+// works). Rebind: `r = r.with_set_cookie(c);`.
+pub function (r: HttpResponse) with_set_cookie(c: SetCookie): HttpResponse {
+    return HttpResponse { ...r, headers: r.headers.append("Set-Cookie", c.serialize()) };
 }

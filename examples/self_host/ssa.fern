@@ -48,10 +48,10 @@ import "./util";
 //   "copy"       args=[x]                          result aliases x (var read)
 //   "phi"        args parallel to the block's Preds; result = the merged
 //                value (operand i flows in when control arrives from Preds[i])
-pub struct SInst { kind: string, result: i32, args: i32[], imm: i32, str: string }
+pub struct SInst { kind_tag: i32, result: i32, args: i32[], imm: i32, str: string }
 
 // STerm kinds: "ret" (value), "br" (target), "brif" (cond, t, f).
-pub struct STerm { kind: string, cond: i32, target: i32, t: i32, f: i32, value: i32 }
+pub struct STerm { kind_tag: i32, cond: i32, target: i32, t: i32, f: i32, value: i32 }
 
 pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 
@@ -64,10 +64,112 @@ pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 // ignore it (their indirect calls tolerate an unused trailing arg).
 pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32, takes_env: boolean }
 
-function t_ret(value: i32): STerm { return STerm { kind: "ret", cond: 0, target: 0, t: 0, f: 0, value: value }; }
-function t_br(target: i32): STerm { return STerm { kind: "br", cond: 0, target: target, t: 0, f: 0, value: 0 }; }
-function t_brif(cond: i32, t: i32, f: i32): STerm { return STerm { kind: "brif", cond: cond, target: 0, t: t, f: f, value: 0 }; }
-function t_none(): STerm { return STerm { kind: "", cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
+function t_ret(value: i32): STerm { return STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value }; }
+function t_br(target: i32): STerm { return STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 }; }
+function t_brif(cond: i32, t: i32, f: i32): STerm { return STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 }; }
+function t_none(): STerm { return STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
+
+// ---- integer kind registry (#4394 lever 2 / #5351, foundation slice) ----
+// The SSA analogue of ir.fern's op-kind registry (kind_id / kind_name):
+// a stable 1-based id per SInst kind and per STerm kind, with 0 as the
+// invalid / none sentinel in both spaces. This slice is ADDITIVE — SInst
+// and STerm still carry their string `kind`; the follow-up conversion
+// stamps `kind_tag: i32` from these ids and retires the string from the
+// hot dispatch ladders (ssa_x86 / ssa_arm64 / ssa_wasm / the optimiser),
+// mirroring how ir.fern's registry landed before Op.kind became an int.
+// The ssa_kind_run driver + TestSelfHostSSAKindRegistry pin the id<->name
+// bijection and both sentinels, so a kind added to one direction (or a
+// duplicated id) fails the golden instead of silently misdispatching a
+// backend later (the SH-003/SH-005 class).
+//
+// NOTE: this vocabulary is the SSA layer's own — it deliberately does NOT
+// reuse ir.kind_id (SSA's "const_int"/"binary"/"phi"/... don't exist in
+// the stack-IR registry and vice versa).
+
+// kind_count is the number of registered SInst kinds (ids 1..kind_count()).
+pub function kind_count(): i32 { return 27; }
+
+pub function kind_id(name: string): i32 {
+    if (name == "const_int") { return 1; }
+    if (name == "const_bool") { return 2; }
+    if (name == "const_i64") { return 3; }
+    if (name == "const_float") { return 4; }
+    if (name == "const_str") { return 5; }
+    if (name == "param") { return 6; }
+    if (name == "copy") { return 7; }
+    if (name == "phi") { return 8; }
+    if (name == "binary") { return 9; }
+    if (name == "unary") { return 10; }
+    if (name == "call") { return 11; }
+    if (name == "call_indirect") { return 12; }
+    if (name == "funcaddr") { return 13; }
+    if (name == "alloc") { return 14; }
+    if (name == "load_elem") { return 15; }
+    if (name == "store_elem") { return 16; }
+    if (name == "concat") { return 17; }
+    if (name == "streq") { return 18; }
+    if (name == "print") { return 19; }
+    if (name == "write") { return 20; }
+    if (name == "exit") { return 21; }
+    if (name == "args") { return 22; }
+    if (name == "strbuf_reset") { return 23; }
+    if (name == "strbuf_append") { return 24; }
+    if (name == "strbuf_take") { return 25; }
+    if (name == "read_file") { return 26; }
+    if (name == "write_file") { return 27; }
+    return 0;
+}
+
+pub function kind_name(id: i32): string {
+    if (id == 1) { return "const_int"; }
+    if (id == 2) { return "const_bool"; }
+    if (id == 3) { return "const_i64"; }
+    if (id == 4) { return "const_float"; }
+    if (id == 5) { return "const_str"; }
+    if (id == 6) { return "param"; }
+    if (id == 7) { return "copy"; }
+    if (id == 8) { return "phi"; }
+    if (id == 9) { return "binary"; }
+    if (id == 10) { return "unary"; }
+    if (id == 11) { return "call"; }
+    if (id == 12) { return "call_indirect"; }
+    if (id == 13) { return "funcaddr"; }
+    if (id == 14) { return "alloc"; }
+    if (id == 15) { return "load_elem"; }
+    if (id == 16) { return "store_elem"; }
+    if (id == 17) { return "concat"; }
+    if (id == 18) { return "streq"; }
+    if (id == 19) { return "print"; }
+    if (id == 20) { return "write"; }
+    if (id == 21) { return "exit"; }
+    if (id == 22) { return "args"; }
+    if (id == 23) { return "strbuf_reset"; }
+    if (id == 24) { return "strbuf_append"; }
+    if (id == 25) { return "strbuf_take"; }
+    if (id == 26) { return "read_file"; }
+    if (id == 27) { return "write_file"; }
+    return "invalid";
+}
+
+// term_count is the number of registered STerm kinds (ids 1..term_count()).
+// Id 0 is the "no terminator" sentinel (t_none's empty-string kind today):
+// term_id("") == 0 and term_name(0) == "" by construction, so the eventual
+// `terminated()` check becomes `term.kind_tag != 0`.
+pub function term_count(): i32 { return 3; }
+
+pub function term_id(name: string): i32 {
+    if (name == "ret") { return 1; }
+    if (name == "br") { return 2; }
+    if (name == "brif") { return 3; }
+    return 0;
+}
+
+pub function term_name(id: i32): string {
+    if (id == 1) { return "ret"; }
+    if (id == 2) { return "br"; }
+    if (id == 3) { return "brif"; }
+    return "";
+}
 
 // ---- builder state -----------------------------------------------------
 // BState threads the in-progress function plus the variable→value
@@ -177,7 +279,7 @@ function (s: BState) open_block(id: i32, preds: i32[]): BState {
     return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
-function (s: BState) terminated(): boolean { return s.cur.term.kind != ""; }
+function (s: BState) terminated(): boolean { return s.cur.term.kind_tag != 0; }
 
 function (s: BState) set_var(name: string, val: i32): BState {
     var i: i32 = 0;
@@ -241,7 +343,7 @@ function (s: BState) record_continue(): BState {
 function (s: BState) kconst(v: i32): BState {
     s = s.fresh();
     var na: i32[] = [];
-    return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: na, imm: v, str: "" });
+    return s.emit(SInst { kind_tag: 1, result: s.cur_id(), args: na, imm: v, str: "" });
 }
 
 // type_of_expr returns the struct type name of an expression (for field-
@@ -391,19 +493,19 @@ function emit_fn_box(s: BState, fnname: string): BState {
     s = s.fresh();
     var fa: i32 = s.cur_id();
     var ea: i32[] = [];
-    s = s.emit(SInst { kind: "funcaddr", result: fa, args: ea, imm: 0, str: fnname });
+    s = s.emit(SInst { kind_tag: 13, result: fa, args: ea, imm: 0, str: fnname });
     s = s.fresh();
     var box: i32 = s.cur_id();
     var na: i32[] = [];
-    s = s.emit(SInst { kind: "alloc", result: box, args: na, imm: 1, str: "" });
+    s = s.emit(SInst { kind_tag: 14, result: box, args: na, imm: 1, str: "" });
     s = s.kconst(0);
     var z: i32 = s.cur_id();
     s = s.fresh();
     var sa: i32[] = [box, z, fa];
-    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: sa, imm: 64, str: "" });
+    s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: sa, imm: 64, str: "" });
     s = s.fresh();
     var ca: i32[] = [box];
-    return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ca, imm: 0, str: "" });
+    return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ca, imm: 0, str: "" });
 }
 
 // count_fn_markers counts var-type entries that name a lifted lambda ("fn:…").
@@ -427,19 +529,19 @@ function build_expr(e: parser.Expr, s: BState): BState {
             if (n.is_float) {
                 // f64 literal: the bits aren't representable in imm, so carry
                 // the source text; the backend emits it as a `.double` constant.
-                return s.emit(SInst { kind: "const_float", result: s.cur_id(), args: args0, imm: 0, str: n.text });
+                return s.emit(SInst { kind_tag: 4, result: s.cur_id(), args: args0, imm: 0, str: n.text });
             }
             // lit_to_i32 (hex/binary-aware) so `0x`/`0b` literals carry their
             // value into the const_int imm; digits_to_i32 stopped at the prefix
             // letter and zeroed them (#4341). Decimal is unchanged.
-            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: util.lit_to_i32(n.text), str: "" });
+            return s.emit(SInst { kind_tag: 1, result: s.cur_id(), args: args0, imm: util.lit_to_i32(n.text), str: "" });
         },
         parser.ExprBool(b) => {
             s = s.fresh();
             var iv: i32 = 0;
             if (b.value) { iv = 1; }
             var args0: i32[] = [];
-            return s.emit(SInst { kind: "const_bool", result: s.cur_id(), args: args0, imm: iv, str: "" });
+            return s.emit(SInst { kind_tag: 2, result: s.cur_id(), args: args0, imm: iv, str: "" });
         },
         parser.ExprIdent(id) => {
             // A bound local / param (including a capturing-lambda box, which
@@ -452,7 +554,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             if (v >= 0) {
                 s = s.fresh();
                 var a1: i32[] = [v];
-                return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
+                return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: a1, imm: 0, str: "" });
             }
             // None — the empty Option, a 2-word box { tag@0 = 1, payload@1 = 0 }
             // (matches Some/Ok/Err construction above; tag 1 like None/Err).
@@ -460,17 +562,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 s = s.fresh();
                 var nbx: i32 = s.cur_id();
                 var nna2: i32[] = [];
-                s = s.emit(SInst { kind: "alloc", result: nbx, args: nna2, imm: 2, str: "" });
+                s = s.emit(SInst { kind_tag: 14, result: nbx, args: nna2, imm: 2, str: "" });
                 s = s.kconst(0);
                 var nz: i32 = s.cur_id();
                 s = s.kconst(1);
                 var n1: i32 = s.cur_id();
                 s = s.fresh();
                 var nta: i32[] = [nbx, nz, n1];
-                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: nta, imm: 32, str: "" });
+                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nta, imm: 32, str: "" });
                 s = s.fresh();
                 var ncp: i32[] = [nbx];
-                return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ncp, imm: 0, str: "" });
+                return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ncp, imm: 0, str: "" });
             }
             // Not a local: a no-capture lambda or a named top-level function
             // used as a VALUE → a 1-slot closure box [funcaddr]. (A capturing
@@ -500,19 +602,19 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = s.fresh();
             var a2: i32[] = [lv, rv];
             if (is_concat) {
-                return s.emit(SInst { kind: "concat", result: s.cur_id(), args: a2, imm: 0, str: "" });
+                return s.emit(SInst { kind_tag: 17, result: s.cur_id(), args: a2, imm: 0, str: "" });
             }
             if (is_streq) {
-                s = s.emit(SInst { kind: "streq", result: s.cur_id(), args: a2, imm: 0, str: "" });
+                s = s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: a2, imm: 0, str: "" });
                 if (b.op == "!=") {
                     var eqv: i32 = s.cur_id();
                     s = s.fresh();
                     var na: i32[] = [eqv];
-                    s = s.emit(SInst { kind: "unary", result: s.cur_id(), args: na, imm: 0, str: "!" });
+                    s = s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: na, imm: 0, str: "!" });
                 }
                 return s;
             }
-            return s.emit(SInst { kind: "binary", result: s.cur_id(), args: a2, imm: 0, str: b.op });
+            return s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: a2, imm: 0, str: b.op });
         },
         parser.ExprUnary(u) => {
             s = build_expr(u.operand, s);
@@ -520,7 +622,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var xv: i32 = s.cur_id();
             s = s.fresh();
             var a1: i32[] = [xv];
-            return s.emit(SInst { kind: "unary", result: s.cur_id(), args: a1, imm: 0, str: u.op });
+            return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: a1, imm: 0, str: u.op });
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -545,14 +647,14 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var bzi: i32 = s.cur_id();
                         s = s.fresh();
                         var bla: i32[] = [boxv, bzi];
-                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: bla, imm: 64, str: "" });
+                        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: bla, imm: 64, str: "" });
                         var fnaddr: i32 = s.cur_id();
                         var icargs: i32[] = [fnaddr];
                         var ica: i32 = 0;
                         while (ica < iav.len()) { icargs = icargs.append(iav[ica]); ica = ica + 1; }
                         icargs = icargs.append(boxv);
                         s = s.fresh();
-                        return s.emit(SInst { kind: "call_indirect", result: s.cur_id(), args: icargs, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 12, result: s.cur_id(), args: icargs, imm: 0, str: "" });
                     }
                     // print(s) — write the string's bytes to stdout. A
                     // dedicated op (the backends emit a write-syscall helper);
@@ -567,7 +669,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         if (cid.name == "eprint") { fd = 2; }
                         s = s.fresh();
                         var pa: i32[] = [sv];
-                        return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: fd, str: "" });
+                        return s.emit(SInst { kind_tag: 19, result: s.cur_id(), args: pa, imm: fd, str: "" });
                     }
                     // write(s) — like print but WITHOUT the trailing newline:
                     // the driver's raw-output primitive (Fern's print == println,
@@ -580,7 +682,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var wv: i32 = s.cur_id();
                         s = s.fresh();
                         var wa: i32[] = [wv];
-                        return s.emit(SInst { kind: "write", result: s.cur_id(), args: wa, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 20, result: s.cur_id(), args: wa, imm: 0, str: "" });
                     }
                     // args() — the argv accessor: returns a string[] of every
                     // command-line argument (argv[0] first). A dedicated op →
@@ -590,7 +692,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     if (cid.name == "args" && c.args.len() == 0) {
                         s = s.fresh();
                         var aa: i32[] = [];
-                        return s.emit(SInst { kind: "args", result: s.cur_id(), args: aa, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 22, result: s.cur_id(), args: aa, imm: 0, str: "" });
                     }
                     // exit(code) — terminate the process with the given i32
                     // exit code. A dedicated op (the native backends emit the
@@ -603,7 +705,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var ev: i32 = s.cur_id();
                         s = s.fresh();
                         var ea: i32[] = [ev];
-                        return s.emit(SInst { kind: "exit", result: s.cur_id(), args: ea, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 21, result: s.cur_id(), args: ea, imm: 0, str: "" });
                     }
                     // f64_bits(x) / f64_from_bits(x) — bit reinterprets between
                     // an f64 and its 64-bit IEEE pattern. The value already
@@ -617,7 +719,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var rbv: i32 = s.cur_id();
                         s = s.fresh();
                         var rba: i32[] = [rbv];
-                        return s.emit(SInst { kind: "unary", result: s.cur_id(), args: rba, imm: 0, str: cid.name });
+                        return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: rba, imm: 0, str: cid.name });
                     }
                     // strbuf_reset() / strbuf_append(s) / strbuf_take() — the
                     // global amortised-O(1) string-builder (a dedicated op
@@ -629,7 +731,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     if (cid.name == "strbuf_reset" && c.args.len() == 0) {
                         s = s.fresh();
                         var sbra: i32[] = [];
-                        return s.emit(SInst { kind: "strbuf_reset", result: s.cur_id(), args: sbra, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 23, result: s.cur_id(), args: sbra, imm: 0, str: "" });
                     }
                     if (cid.name == "strbuf_append" && c.args.len() == 1) {
                         s = build_expr(c.args[0], s);
@@ -637,12 +739,12 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var sbav: i32 = s.cur_id();
                         s = s.fresh();
                         var sbaa: i32[] = [sbav];
-                        return s.emit(SInst { kind: "strbuf_append", result: s.cur_id(), args: sbaa, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 24, result: s.cur_id(), args: sbaa, imm: 0, str: "" });
                     }
                     if (cid.name == "strbuf_take" && c.args.len() == 0) {
                         s = s.fresh();
                         var sbta: i32[] = [];
-                        return s.emit(SInst { kind: "strbuf_take", result: s.cur_id(), args: sbta, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 25, result: s.cur_id(), args: sbta, imm: 0, str: "" });
                     }
                     // read_file(path) / write_file(path, content) — the file-I/O
                     // builtins (the AST backends emit inline open/read/write/close
@@ -660,7 +762,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var rfv: i32 = s.cur_id();
                         s = s.fresh();
                         var rfa: i32[] = [rfv];
-                        return s.emit(SInst { kind: "read_file", result: s.cur_id(), args: rfa, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 26, result: s.cur_id(), args: rfa, imm: 0, str: "" });
                     }
                     if (cid.name == "write_file" && c.args.len() == 2) {
                         s = build_expr(c.args[0], s);
@@ -671,7 +773,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var wfc: i32 = s.cur_id();
                         s = s.fresh();
                         var wfa: i32[] = [wfp, wfc];
-                        return s.emit(SInst { kind: "write_file", result: s.cur_id(), args: wfa, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 27, result: s.cur_id(), args: wfa, imm: 0, str: "" });
                     }
                     // Option / Result construction: Some(x) / Ok(x) / Err(x) →
                     // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
@@ -685,7 +787,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         s = s.fresh();
                         var obox: i32 = s.cur_id();
                         var ona: i32[] = [];
-                        s = s.emit(SInst { kind: "alloc", result: obox, args: ona, imm: 2, str: "" });
+                        s = s.emit(SInst { kind_tag: 14, result: obox, args: ona, imm: 2, str: "" });
                         s = s.kconst(0);
                         var oz: i32 = s.cur_id();
                         var otag: i32 = 0;
@@ -694,15 +796,15 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var otv: i32 = s.cur_id();
                         s = s.fresh();
                         var ota: i32[] = [obox, oz, otv];
-                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: ota, imm: 32, str: "" });
+                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: ota, imm: 32, str: "" });
                         s = s.kconst(1);
                         var oo: i32 = s.cur_id();
                         s = s.fresh();
                         var opa: i32[] = [obox, oo, opv];
-                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: opa, imm: 64, str: "" });
+                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: opa, imm: 64, str: "" });
                         s = s.fresh();
                         var ocp: i32[] = [obox];
-                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ocp, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ocp, imm: 0, str: "" });
                     }
                     // __opt_payload(box) — read an Option/Result box's payload
                     // (word 1). Synthesized by synth_match_chain for the
@@ -716,7 +818,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var p1: i32 = s.cur_id();
                         s = s.fresh();
                         var pla: i32[] = [pbx, p1];
-                        return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: pla, imm: 64, str: "" });
+                        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: pla, imm: 64, str: "" });
                     }
                     // arr[idx] = val — the parser desugars an indexed
                     // assignment to the builtin __set_index(arr, idx, val).
@@ -736,14 +838,14 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var ione: i32 = s.cur_id();
                         s = s.fresh();
                         var iba: i32[] = [iidx, ione];
-                        s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: iba, imm: 0, str: "+" });
+                        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: iba, imm: 0, str: "+" });
                         var iidx1: i32 = s.cur_id();
                         s = build_expr(c.args[2], s);
                         if (!s.ok) { return s; }
                         var ival: i32 = s.cur_id();
                         s = s.fresh();
                         var isa: i32[] = [iptr, iidx1, ival];
-                        return s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: isa, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: isa, imm: 0, str: "" });
                     }
                     // __new_array(n) — allocate a length-prefixed i32 array of
                     // n zeroed elements at a RUNTIME size (the alloc op carries
@@ -759,20 +861,20 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var naone: i32 = s.cur_id();
                         s = s.fresh();
                         var nasz: i32[] = [nav, naone];
-                        s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: nasz, imm: 0, str: "+" });
+                        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: nasz, imm: 0, str: "+" });
                         var nasize: i32 = s.cur_id();
                         s = s.fresh();
                         var nahandle: i32 = s.cur_id();
                         var naa: i32[] = [nasize];
-                        s = s.emit(SInst { kind: "alloc", result: nahandle, args: naa, imm: 0, str: "" });
+                        s = s.emit(SInst { kind_tag: 14, result: nahandle, args: naa, imm: 0, str: "" });
                         s = s.kconst(0);
                         var nazidx: i32 = s.cur_id();
                         s = s.fresh();
                         var nast: i32[] = [nahandle, nazidx, nav];
-                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: nast, imm: 0, str: "" });
+                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nast, imm: 0, str: "" });
                         s = s.fresh();
                         var naret: i32[] = [nahandle];
-                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: naret, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: naret, imm: 0, str: "" });
                     }
                     // __streq(a, b) — content comparison of two string pointers
                     // (1 if equal, else 0), used by the string-keyed map helpers
@@ -787,7 +889,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var sqb: i32 = s.cur_id();
                         s = s.fresh();
                         var sqargs: i32[] = [sqa, sqb];
-                        return s.emit(SInst { kind: "streq", result: s.cur_id(), args: sqargs, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: sqargs, imm: 0, str: "" });
                     }
                     // string_from_bytes(bs) builds a string from an i32 byte
                     // array. A string and a byte array share the same length-
@@ -803,13 +905,13 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var sbz: i32 = s.cur_id();
                         s = s.fresh();
                         var sbla: i32[] = [sbarr, sbz];
-                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: sbla, imm: 0, str: "" });
+                        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: sbla, imm: 0, str: "" });
                         var sblen: i32 = s.cur_id();
                         s = s.kconst(0);
                         var sblo: i32 = s.cur_id();
                         s = s.fresh();
                         var sbargs: i32[] = [sbarr, sblo, sblen];
-                        return s.emit(SInst { kind: "call", result: s.cur_id(), args: sbargs, imm: 0, str: "__ssa_arr_slice" });
+                        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: sbargs, imm: 0, str: "__ssa_arr_slice" });
                     }
                     // Map constructors. The parser desugars a `Map { … }`
                     // literal to map_new_i32(8)… (integer keys) or map_new(8)…
@@ -828,15 +930,15 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         s = s.fresh();
                         var nbox: i32 = s.cur_id();
                         var nna: i32[] = [];
-                        s = s.emit(SInst { kind: "alloc", result: nbox, args: nna, imm: 1, str: "" });
+                        s = s.emit(SInst { kind_tag: 14, result: nbox, args: nna, imm: 1, str: "" });
                         s = s.kconst(0);
                         var nz: i32 = s.cur_id();
                         s = s.fresh();
                         var nsa: i32[] = [nbox, nz, nval];
-                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: nsa, imm: 64, str: "" });
+                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nsa, imm: 64, str: "" });
                         s = s.fresh();
                         var nca: i32[] = [nbox];
-                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: nca, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: nca, imm: 0, str: "" });
                     }
                     var callee_name: string = cid.name;
                     if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
@@ -872,7 +974,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         cpi = cpi + 1;
                     }
                     s = s.fresh();
-                    return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
+                    return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
                 },
                 parser.ExprFieldAccess(fa) => {
                     // User-defined receiver method `recv.m(args)` → a direct
@@ -900,7 +1002,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                                 uai = uai + 1;
                             }
                             s = s.fresh();
-                            return s.emit(SInst { kind: "call", result: s.cur_id(), args: uargs, imm: 0, str: usym });
+                            return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: uargs, imm: 0, str: usym });
                         }
                     }
                     // Cell[T] (docs/CELL-TYPE-PLAN.md): get() loads slot 0;
@@ -913,7 +1015,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var gz: i32 = s.cur_id();
                         s = s.fresh();
                         var gla: i32[] = [gptr, gz];
-                        return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: gla, imm: 64, str: "" });
+                        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: gla, imm: 64, str: "" });
                     }
                     if (urt == "cell" && fa.field == "set" && c.args.len() == 1) {
                         s = build_expr(fa.obj, s);
@@ -926,7 +1028,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var cval: i32 = s.cur_id();
                         s = s.fresh();
                         var cstore: i32[] = [cptr, cz, cval];
-                        return s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: cstore, imm: 64, str: "" });
+                        return s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: cstore, imm: 64, str: "" });
                     }
                     // Built-in `.with(i, v)` on arrays — value-returning
                     // element set (`arr = arr.with(i, v)`, the replacement for
@@ -944,17 +1046,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var wone: i32 = s.cur_id();
                         s = s.fresh();
                         var wba: i32[] = [widx, wone];
-                        s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: wba, imm: 0, str: "+" });
+                        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: wba, imm: 0, str: "+" });
                         var widx1: i32 = s.cur_id();
                         s = build_expr(c.args[1], s);
                         if (!s.ok) { return s; }
                         var wval: i32 = s.cur_id();
                         s = s.fresh();
                         var wsa: i32[] = [wptr, widx1, wval];
-                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: wsa, imm: 0, str: "" });
+                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: wsa, imm: 0, str: "" });
                         s = s.fresh();
                         var wcp: i32[] = [wptr];
-                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: wcp, imm: 0, str: "" });
+                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: wcp, imm: 0, str: "" });
                     }
                     // Map methods (i32-keyed maps): set / get_or / has, and
                     // len on a Map receiver. The parser desugars a `Map { … }`
@@ -996,7 +1098,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                             mi = mi + 1;
                         }
                         s = s.fresh();
-                        return s.emit(SInst { kind: "call", result: s.cur_id(), args: margs, imm: 0, str: mname });
+                        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: margs, imm: 0, str: mname });
                     }
                     // arr.len() → the length stored at element 0.
                     if (fa.field != "len" || c.args.len() != 0) { return s.fail(); }
@@ -1007,7 +1109,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var zidx: i32 = s.cur_id();
                     s = s.fresh();
                     var la: i32[] = [ptr, zidx];
-                    return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 0, str: "" });
+                    return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
                 },
                 _ => { return s.fail(); }
             }
@@ -1031,7 +1133,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = s.fresh();
             var shandle: i32 = s.cur_id();
             var sna: i32[] = [];
-            s = s.emit(SInst { kind: "alloc", result: shandle, args: sna, imm: nf + 1, str: "" });
+            s = s.emit(SInst { kind_tag: 14, result: shandle, args: sna, imm: nf + 1, str: "" });
             // tag at offset 0
             s = s.kconst(0);
             var tagidx: i32 = s.cur_id();
@@ -1039,7 +1141,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var tagval: i32 = s.cur_id();
             s = s.fresh();
             var tsa: i32[] = [shandle, tagidx, tagval];
-            s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: tsa, imm: 32, str: "" });
+            s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: tsa, imm: 32, str: "" });
             var f: i32 = 0;
             while (f < nf) {
                 var fname: string = sd.fields[f].name;
@@ -1056,7 +1158,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var bfidx: i32 = s.cur_id();
                     s = s.fresh();
                     var bla: i32[] = [baseptr, bfidx];
-                    s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: bla, imm: fw, str: "" });
+                    s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: bla, imm: fw, str: "" });
                     fv = s.cur_id();
                 } else {
                     return s.fail();   // field missing from a non-spread literal
@@ -1065,12 +1167,12 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 var fidx: i32 = s.cur_id();
                 s = s.fresh();
                 var fsa: i32[] = [shandle, fidx, fv];
-                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: fsa, imm: fw, str: "" });
+                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: fsa, imm: fw, str: "" });
                 f = f + 1;
             }
             s = s.fresh();
             var sha: i32[] = [shandle];
-            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: sha, imm: 0, str: "" });
+            return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: sha, imm: 0, str: "" });
         },
         parser.ExprFieldAccess(fa) => {
             // Tuple element access `t.0` / `t.1` / … — a numeric field name is
@@ -1086,7 +1188,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 var tidx: i32 = s.cur_id();
                 s = s.fresh();
                 var tla: i32[] = [tptr, tidx];
-                return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: tla, imm: 0, str: "" });
+                return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: tla, imm: 0, str: "" });
             }
             var sty: string = type_of_expr(fa.obj, s);
             if (sty.len() == 0) { return s.fail(); }
@@ -1100,7 +1202,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var oidx: i32 = s.cur_id();
             s = s.fresh();
             var ola: i32[] = [optr, oidx];
-            return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: ola, imm: fw2, str: "" });
+            return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: ola, imm: fw2, str: "" });
         },
         parser.ExprString(strlit) => {
             // A string literal is a static [len, b0, b1, …] constant: emit a
@@ -1112,7 +1214,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // existing paths.
             s = s.fresh();
             var sca: i32[] = [];
-            return s.emit(SInst { kind: "const_str", result: s.cur_id(), args: sca, imm: 0, str: strlit.value });
+            return s.emit(SInst { kind_tag: 5, result: s.cur_id(), args: sca, imm: 0, str: strlit.value });
         },
         parser.ExprArray(arr) => {
             // Heap-allocate a length-prefixed i32 array: element 0 holds the
@@ -1122,7 +1224,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = s.fresh();
             var handle: i32 = s.cur_id();
             var noargs: i32[] = [];
-            s = s.emit(SInst { kind: "alloc", result: handle, args: noargs, imm: n + 1, str: "" });
+            s = s.emit(SInst { kind_tag: 14, result: handle, args: noargs, imm: n + 1, str: "" });
             // length at index 0
             s = s.kconst(0);
             var lenidx: i32 = s.cur_id();
@@ -1130,7 +1232,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var lenval: i32 = s.cur_id();
             s = s.fresh();
             var la0: i32[] = [handle, lenidx, lenval];
-            s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: la0, imm: 0, str: "" });
+            s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: la0, imm: 0, str: "" });
             var i: i32 = 0;
             while (i < n) {
                 s = s.kconst(i + 1);
@@ -1140,12 +1242,12 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 var elv: i32 = s.cur_id();
                 s = s.fresh();
                 var sa: i32[] = [handle, idxv, elv];
-                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: sa, imm: 0, str: "" });
+                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: sa, imm: 0, str: "" });
                 i = i + 1;
             }
             s = s.fresh();
             var ha: i32[] = [handle];
-            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ha, imm: 0, str: "" });
+            return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ha, imm: 0, str: "" });
         },
         parser.ExprTuple(tup) => {
             // A tuple `(a, b, c)` is a fixed-arity heap box: element i at
@@ -1155,7 +1257,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = s.fresh();
             var thandle: i32 = s.cur_id();
             var tnoargs: i32[] = [];
-            s = s.emit(SInst { kind: "alloc", result: thandle, args: tnoargs, imm: tn, str: "" });
+            s = s.emit(SInst { kind_tag: 14, result: thandle, args: tnoargs, imm: tn, str: "" });
             var ti: i32 = 0;
             while (ti < tn) {
                 s = s.kconst(ti);
@@ -1165,12 +1267,12 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 var telev: i32 = s.cur_id();
                 s = s.fresh();
                 var tsa: i32[] = [thandle, tidxv, telev];
-                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: tsa, imm: 0, str: "" });
+                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: tsa, imm: 0, str: "" });
                 ti = ti + 1;
             }
             s = s.fresh();
             var tha: i32[] = [thandle];
-            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: tha, imm: 0, str: "" });
+            return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: tha, imm: 0, str: "" });
         },
         parser.ExprIndex(ix) => {
             s = build_expr(ix.array, s);
@@ -1184,11 +1286,11 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var one: i32 = s.cur_id();
             s = s.fresh();
             var ba: i32[] = [idx, one];
-            s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: ba, imm: 0, str: "+" });
+            s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: ba, imm: 0, str: "+" });
             var idx1: i32 = s.cur_id();
             s = s.fresh();
             var la: i32[] = [ptr, idx1];
-            return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 0, str: "" });
+            return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
         },
         parser.ExprSlice(sl) => {
             // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh array (or
@@ -1204,7 +1306,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var slhi: i32 = s.cur_id();
             s = s.fresh();
             var slargs: i32[] = [slarr, sllo, slhi];
-            return s.emit(SInst { kind: "call", result: s.cur_id(), args: slargs, imm: 0, str: "__ssa_arr_slice" });
+            return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: slargs, imm: 0, str: "__ssa_arr_slice" });
         },
         _ => { return s.fail(); }
     }
@@ -1237,7 +1339,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                         var deidx: i32 = s.cur_id();
                         s = s.fresh();
                         var dela: i32[] = [dtptr, deidx];
-                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: dela, imm: 0, str: "" });
+                        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: dela, imm: 0, str: "" });
                         s = s.set_var(dnm, s.cur_id());
                         dnm = "";
                         didx = didx + 1;
@@ -1271,16 +1373,16 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                     s = s.fresh();
                     var lfa: i32 = s.cur_id();
                     var lea: i32[] = [];
-                    s = s.emit(SInst { kind: "funcaddr", result: lfa, args: lea, imm: 0, str: lname });
+                    s = s.emit(SInst { kind_tag: 13, result: lfa, args: lea, imm: 0, str: lname });
                     s = s.fresh();
                     var lbox: i32 = s.cur_id();
                     var lna: i32[] = [];
-                    s = s.emit(SInst { kind: "alloc", result: lbox, args: lna, imm: lcaps.len() + 1, str: "" });
+                    s = s.emit(SInst { kind_tag: 14, result: lbox, args: lna, imm: lcaps.len() + 1, str: "" });
                     s = s.kconst(0);
                     var lz: i32 = s.cur_id();
                     s = s.fresh();
                     var lsa: i32[] = [lbox, lz, lfa];
-                    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: lsa, imm: 64, str: "" });
+                    s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: lsa, imm: 64, str: "" });
                     var lci: i32 = 0;
                     while (lci < lcaps.len()) {
                         s = s.kconst(lci + 1);
@@ -1288,7 +1390,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                         var lcv: i32 = s.get_var(lcaps[lci]);
                         s = s.fresh();
                         var lcsa: i32[] = [lbox, lslot, lcv];
-                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: lcsa, imm: 0, str: "" });
+                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: lcsa, imm: 0, str: "" });
                         lci = lci + 1;
                     }
                     s = s.set_var(v.name, lbox);
@@ -1453,7 +1555,7 @@ function build_match(m: parser.StmtMatch, s: BState): BState {
     var z: i32 = s.cur_id();
     s = s.fresh();
     var la: i32[] = [scrutv, z];
-    s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 32, str: "" });
+    s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 32, str: "" });
     s = s.set_var("$tag", s.cur_id());
     var chain: parser.Stmt[] = synth_match_chain(m.arms, s.structs);
     return build_stmts(chain, s);
@@ -1538,7 +1640,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
             init: parser.ExprIndex {
                 array: parser.ExprIdent { name: arr_name, line: 0, col: 0 },
-                index: parser.ExprIdent { name: i_name, line: 0, col: 0 } }, line: 0, col: 0, is_str: false };
+                index: parser.ExprIdent { name: i_name, line: 0, col: 0 }, unchecked: false }, line: 0, col: 0, is_str: false };
         wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;
@@ -1619,7 +1721,7 @@ function build_if(f: parser.StmtIf, s: BState): BState {
             if (tv != ev) {
                 s = s.fresh();
                 var pa: i32[] = [tv, ev];
-                s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa, imm: 0, str: "" });
+                s = s.emit(SInst { kind_tag: 8, result: s.cur_id(), args: pa, imm: 0, str: "" });
                 merge_vals = env_set_at(merge_vals, vi, s.cur_id());
             }
         } else if (then_reaches) {
@@ -1772,7 +1874,7 @@ function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_r
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                if (ins.kind == "phi") {
+                if (ins.kind_tag == 8) {  // phi
                     var pj: i32 = index_of_i32(phi_results, ins.result);
                     if (pj >= 0) {
                         var vi: i32 = phi_vars[pj];
@@ -1782,7 +1884,7 @@ function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_r
                             nargs = nargs.append(latch_flat[li * n0 + vi]);
                             li = li + 1;
                         }
-                        ins = SInst { kind: "phi", result: ins.result, args: nargs, imm: 0, str: "" };
+                        ins = SInst { kind_tag: 8, result: ins.result, args: nargs, imm: 0, str: "" };
                     }
                 }
                 ninsts = ninsts.append(ins);
@@ -1835,7 +1937,7 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
         if (contains_str(assigned, pre_names[vi])) {
             s = s.fresh();
             var pa: i32[] = [pre_vals[vi]];
-            s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa, imm: 0, str: "" });
+            s = s.emit(SInst { kind_tag: 8, result: s.cur_id(), args: pa, imm: 0, str: "" });
             phi_vars = phi_vars.append(vi);
             phi_results = phi_results.append(s.cur_id());
             header_vals = env_set_at(header_vals, vi, s.cur_id());
@@ -1904,7 +2006,7 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
                 var pa2: i32[] = [header_vals[ev]];
                 var bb2: i32 = 0;
                 while (bb2 < brk_ids.len()) { pa2 = pa2.append(brk_flat[bb2 * n0 + ev]); bb2 = bb2 + 1; }
-                s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa2, imm: 0, str: "" });
+                s = s.emit(SInst { kind_tag: 8, result: s.cur_id(), args: pa2, imm: 0, str: "" });
                 exit_vals = env_set_at(exit_vals, ev, s.cur_id());
             }
             ev = ev + 1;
@@ -2075,7 +2177,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var eparams: parser.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" });
+                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" });
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
@@ -2222,7 +2324,7 @@ pub function build_func_seeded(raw_fd: parser.FuncDecl, structs: parser.StructDe
     var pidx: i32 = 0;
     if (fd.receiver_type.len() > 0) {
         var rna: i32[] = [];
-        insts0 = insts0.append(SInst { kind: "param", result: 0, args: rna, imm: 0, str: "ptr" });
+        insts0 = insts0.append(SInst { kind_tag: 6, result: 0, args: rna, imm: 0, str: "ptr" });
         pnames = pnames.append(fd.receiver_name);
         pvals = pvals.append(0);
         pidx = 1;
@@ -2233,7 +2335,7 @@ pub function build_func_seeded(raw_fd: parser.FuncDecl, structs: parser.StructDe
         var pmark: string = "";
         if (is_ptr_type(fd.params[i].type_name) || is_struct_type(fd.params[i].type_name, structs)) { pmark = "ptr"; }
         else if (fd.params[i].type_name == "f64") { pmark = "f64"; }   // an f64 param (XMM-passed)
-        insts0 = insts0.append(SInst { kind: "param", result: pidx, args: noargs, imm: pidx, str: pmark });
+        insts0 = insts0.append(SInst { kind_tag: 6, result: pidx, args: noargs, imm: pidx, str: pmark });
         pnames = pnames.append(fd.params[i].name);
         pvals = pvals.append(pidx);
         pidx = pidx + 1;
@@ -2343,11 +2445,11 @@ function rewrite_args(ins: SInst, resolved: i32[]): SInst {
     var na: i32[] = [];
     var i: i32 = 0;
     while (i < ins.args.len()) { na = na.append(resolved[ins.args[i]]); i = i + 1; }
-    return SInst { kind: ins.kind, result: ins.result, args: na, imm: ins.imm, str: ins.str };
+    return SInst { kind_tag: ins.kind_tag, result: ins.result, args: na, imm: ins.imm, str: ins.str };
 }
 function rewrite_term(t: STerm, resolved: i32[]): STerm {
-    if (t.kind == "ret") { return t_ret(resolved[t.value]); }
-    if (t.kind == "brif") { return t_brif(resolved[t.cond], t.t, t.f); }
+    if (t.kind_tag == 1) { return t_ret(resolved[t.value]); }
+    if (t.kind_tag == 3) { return t_brif(resolved[t.cond], t.t, t.f); }
     return t;
 }
 
@@ -2362,7 +2464,7 @@ function has_copy(f: SFunc): boolean {
         var blk: SBlock = f.blocks[bi];
         var k: i32 = 0;
         while (k < blk.insts.len()) {
-            if (blk.insts[k].kind == "copy") { return true; }
+            if (blk.insts[k].kind_tag == 7) { return true; }  // copy
             k = k + 1;
         }
         bi = bi + 1;
@@ -2386,7 +2488,7 @@ function copy_propagate(f: SFunc): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "copy") { ct = env_put(ct, ins.result, ins.args[0]); }
+            if (ins.kind_tag == 7) { ct = env_put(ct, ins.result, ins.args[0]); }
             k = k + 1;
         }
         bi = bi + 1;
@@ -2410,7 +2512,7 @@ function copy_propagate(f: SFunc): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind != "copy") { ninsts = ninsts.append(rewrite_args(ins, resolved)); }
+            if (ins.kind_tag != 7) { ninsts = ninsts.append(rewrite_args(ins, resolved)); }
             k = k + 1;
         }
         nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, resolved), preds: blk.preds });
@@ -2453,21 +2555,21 @@ function const_fold(f: SFunc): SFunc {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 var folded: SInst = ins;
-                if (ins.kind == "const_int" || ins.kind == "const_bool") {
+                if (ins.kind_tag == 1 || ins.kind_tag == 2) {
                     cset = env_put(cset, ins.result, 1);
                     cval = env_put(cval, ins.result, ins.imm);
-                } else if (ins.kind == "binary" && cset[ins.args[0]] == 1 && cset[ins.args[1]] == 1) {
+                } else if (ins.kind_tag == 9 && cset[ins.args[0]] == 1 && cset[ins.args[1]] == 1) {
                     var l: i32 = cval[ins.args[0]];
                     var r: i32 = cval[ins.args[1]];
                     if (!is_div_by_zero(ins.str, r)) {
                         var noargs: i32[] = [];
                         var fv: i32 = eval_binary(ins.str, l, r);
-                        folded = SInst { kind: "const_int", result: ins.result, args: noargs, imm: fv, str: "" };
+                        folded = SInst { kind_tag: 1, result: ins.result, args: noargs, imm: fv, str: "" };
                         cset = env_put(cset, ins.result, 1);
                         cval = env_put(cval, ins.result, fv);
                         changed = true;
                     }
-                } else if (ins.kind == "unary" && cset[ins.args[0]] == 1 && (ins.str == "-" || ins.str == "!")) {
+                } else if (ins.kind_tag == 10 && cset[ins.args[0]] == 1 && (ins.str == "-" || ins.str == "!")) {
                     // Only the integer unary ops fold to an i32 constant; `as_*`
                     // casts (e.g. `as_f64`) change representation and must not be
                     // folded here (folding `as_f64 7` as `!7` was the bug).
@@ -2475,7 +2577,7 @@ function const_fold(f: SFunc): SFunc {
                     var nv: i32 = 0;
                     if (ins.str == "-") { nv = 0 - x; } else { if (x == 0) { nv = 1; } else { nv = 0; } }
                     var noargs2: i32[] = [];
-                    folded = SInst { kind: "const_int", result: ins.result, args: noargs2, imm: nv, str: "" };
+                    folded = SInst { kind_tag: 1, result: ins.result, args: noargs2, imm: nv, str: "" };
                     cset = env_put(cset, ins.result, 1);
                     cval = env_put(cval, ins.result, nv);
                     changed = true;
@@ -2496,11 +2598,11 @@ function const_fold(f: SFunc): SFunc {
 // algebraic simplification, after which copy-prop / DCE clean up.
 function as_copy(result: i32, v: i32): SInst {
     var a: i32[] = [v];
-    return SInst { kind: "copy", result: result, args: a, imm: 0, str: "" };
+    return SInst { kind_tag: 7, result: result, args: a, imm: 0, str: "" };
 }
 function as_const0(result: i32): SInst {
     var a: i32[] = [];
-    return SInst { kind: "const_int", result: result, args: a, imm: 0, str: "" };
+    return SInst { kind_tag: 1, result: result, args: a, imm: 0, str: "" };
 }
 function is_cval(cset: i32[], cval: i32[], v: i32, c: i32): boolean {
     return cset[v] == 1 && cval[v] == c;
@@ -2558,7 +2660,7 @@ function algebraic_simplify(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                if (ins.kind == "const_int" || ins.kind == "const_bool") {
+                if (ins.kind_tag == 1 || ins.kind_tag == 2) {
                     cset = env_put(cset, ins.result, 1);
                     cval = env_put(cval, ins.result, ins.imm);
                 }
@@ -2574,9 +2676,9 @@ function algebraic_simplify(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                if (ins.kind == "binary") {
+                if (ins.kind_tag == 9) {  // binary
                     var simp: SInst = simplify_binary(ins, cset, cval);
-                    if (simp.kind != "binary") { changed = true; }
+                    if (simp.kind_tag != 9) { changed = true; }
                     ins = simp;
                 }
                 ninsts = ninsts.append(ins);
@@ -2604,10 +2706,10 @@ function is_commutative(op: string): boolean {
 // by id (already canonicalised through copy-propagation); commutative
 // binary operands are sorted so order doesn't matter.
 function cse_key(ins: SInst): string {
-    if (ins.kind == "const_int") { return "ci|" + int_str(ins.imm); }
-    if (ins.kind == "const_bool") { return "cb|" + int_str(ins.imm); }
-    if (ins.kind == "unary") { return "u|" + ins.str + "|" + int_str(ins.args[0]); }
-    if (ins.kind == "binary") {
+    if (ins.kind_tag == 1) { return "ci|" + int_str(ins.imm); }
+    if (ins.kind_tag == 2) { return "cb|" + int_str(ins.imm); }
+    if (ins.kind_tag == 10) { return "u|" + ins.str + "|" + int_str(ins.args[0]); }
+    if (ins.kind_tag == 9) {  // binary
         var a: i32 = ins.args[0];
         var b: i32 = ins.args[1];
         if (is_commutative(ins.str) && b < a) { var tmp: i32 = a; a = b; b = tmp; }
@@ -2639,7 +2741,7 @@ function cse(f: SFunc): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = rewrite_args(blk.insts[k], repl);
-            var pure: boolean = ins.kind == "const_int" || ins.kind == "const_bool" || ins.kind == "unary" || ins.kind == "binary";
+            var pure: boolean = ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 10 || ins.kind_tag == 9;
             if (pure) {
                 var key: string = cse_key(ins);
                 var j: i32 = util.index_of_str(keys, key);
@@ -2677,8 +2779,8 @@ function cse(f: SFunc): SFunc {
 
 // term_targets reports whether a terminator branches to block id `to`.
 function term_targets(t: STerm, to: i32): boolean {
-    if (t.kind == "br") { return t.target == to; }
-    if (t.kind == "brif") { return t.t == to || t.f == to; }
+    if (t.kind_tag == 2) { return t.target == to; }
+    if (t.kind_tag == 3) { return t.t == to || t.f == to; }
     return false;
 }
 
@@ -2698,8 +2800,8 @@ function reachable_ids(f: SFunc): i32[] {
         var bi: i32 = block_index(f, id);
         if (bi >= 0) {
             var t: STerm = f.blocks[bi].term;
-            if (t.kind == "br") { if (index_of_i32(seen, t.target) < 0) { seen = seen.append(t.target); work = work.append(t.target); } }
-            else if (t.kind == "brif") {
+            if (t.kind_tag == 2) { if (index_of_i32(seen, t.target) < 0) { seen = seen.append(t.target); work = work.append(t.target); } }
+            else if (t.kind_tag == 3) {
                 if (index_of_i32(seen, t.t) < 0) { seen = seen.append(t.t); work = work.append(t.t); }
                 if (index_of_i32(seen, t.f) < 0) { seen = seen.append(t.f); work = work.append(t.f); }
             }
@@ -2729,7 +2831,7 @@ function branch_simplify(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                if (ins.kind == "const_int" || ins.kind == "const_bool") {
+                if (ins.kind_tag == 1 || ins.kind_tag == 2) {
                     cset = env_put(cset, ins.result, 1);
                     cval = env_put(cval, ins.result, ins.imm);
                 }
@@ -2742,7 +2844,7 @@ function branch_simplify(f: SFunc): SFunc {
         while (bi < f.blocks.len()) {
             var blk: SBlock = f.blocks[bi];
             var t: STerm = blk.term;
-            if (t.kind == "brif" && cset[t.cond] == 1) {
+            if (t.kind_tag == 3 && cset[t.cond] == 1) {
                 var taken: i32 = t.f;
                 if (cval[t.cond] != 0) { taken = t.t; }
                 t = t_br(taken);
@@ -2780,15 +2882,15 @@ function branch_simplify(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                if (ins.kind == "phi") {
+                if (ins.kind_tag == 8) {  // phi
                     var nargs: i32[] = [];
                     var ai: i32 = 0;
                     while (ai < keep.len()) { nargs = nargs.append(ins.args[keep[ai]]); ai = ai + 1; }
                     if (nargs.len() == 1) {
-                        ins = SInst { kind: "copy", result: ins.result, args: nargs, imm: 0, str: "" };
+                        ins = SInst { kind_tag: 7, result: ins.result, args: nargs, imm: 0, str: "" };
                         changed = true;
                     } else {
-                        ins = SInst { kind: "phi", result: ins.result, args: nargs, imm: ins.imm, str: ins.str };
+                        ins = SInst { kind_tag: 8, result: ins.result, args: nargs, imm: ins.imm, str: ins.str };
                     }
                 }
                 ninsts = ninsts.append(ins);
@@ -2823,7 +2925,7 @@ function merge_blocks(f: SFunc): SFunc {
         var bi: i32 = 0;
         while (bi < f.blocks.len()) {
             var b: SBlock = f.blocks[bi];
-            if (b.term.kind == "br" && b.term.target != b.id) {
+            if (b.term.kind_tag == 2 && b.term.target != b.id) {
                 var ti: i32 = block_index(f, b.term.target);
                 if (ti >= 0) {
                     var tt: SBlock = f.blocks[ti];
@@ -2908,26 +3010,26 @@ pub function compute_widths(f: SFunc): i32[] {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 var make64: boolean = false;
-                if (ins.kind == "alloc") { make64 = true; }
-                else if (ins.kind == "const_str") { make64 = true; }   // a string pointer
-                else if (ins.kind == "funcaddr") { make64 = true; }   // a code pointer
-                else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
-                else if (ins.kind == "param" && ins.str == "f64") { make64 = true; }   // f64 param (8-byte)
-                else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
-                else if (ins.kind == "call" && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
-                else if (ins.kind == "unary" && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
-                else if (ins.kind == "strbuf_take") { make64 = true; }   // a string pointer
-                else if (ins.kind == "read_file") { make64 = true; }   // a Result box pointer
-                else if (ins.kind == "write_file") { make64 = true; }   // an Option box pointer
-                else if (ins.kind == "args") { make64 = true; }   // a string[] array pointer
-                else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
-                else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
-                else if (ins.kind == "const_i64") { make64 = true; }   // a 64-bit integer literal
-                else if (ins.kind == "param" && ins.str == "i64") { make64 = true; }   // i64 param (8-byte)
-                else if (ins.kind == "unary" && (ins.str == "sext_i64" || ins.str == "zext_i64")) { make64 = true; }   // i32 -> i64 widen
-                else if (ins.kind == "binary" && !binop_is_cmp(ins.str) && (w[ins.args[0]] == 64 || w[ins.args[1]] == 64)) { make64 = true; }   // i64 arithmetic: 64-bit operand -> 64-bit result (a comparison stays i32)
-                else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
-                else if (ins.kind == "phi") {
+                if (ins.kind_tag == 14) { make64 = true; }
+                else if (ins.kind_tag == 5) { make64 = true; }   // a string pointer
+                else if (ins.kind_tag == 13) { make64 = true; }   // a code pointer
+                else if (ins.kind_tag == 6 && ins.str == "ptr") { make64 = true; }
+                else if (ins.kind_tag == 6 && ins.str == "f64") { make64 = true; }   // f64 param (8-byte)
+                else if (ins.kind_tag == 11 && ins.imm == 1) { make64 = true; }   // pointer-returning call
+                else if (ins.kind_tag == 11 && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
+                else if (ins.kind_tag == 10 && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
+                else if (ins.kind_tag == 25) { make64 = true; }   // a string pointer
+                else if (ins.kind_tag == 26) { make64 = true; }   // a Result box pointer
+                else if (ins.kind_tag == 27) { make64 = true; }   // an Option box pointer
+                else if (ins.kind_tag == 22) { make64 = true; }   // a string[] array pointer
+                else if (ins.kind_tag == 15 && ins.imm == 64) { make64 = true; }   // pointer element
+                else if (ins.kind_tag == 17) { make64 = true; }   // concat yields a string pointer
+                else if (ins.kind_tag == 3) { make64 = true; }   // a 64-bit integer literal
+                else if (ins.kind_tag == 6 && ins.str == "i64") { make64 = true; }   // i64 param (8-byte)
+                else if (ins.kind_tag == 10 && (ins.str == "sext_i64" || ins.str == "zext_i64")) { make64 = true; }   // i32 -> i64 widen
+                else if (ins.kind_tag == 9 && !binop_is_cmp(ins.str) && (w[ins.args[0]] == 64 || w[ins.args[1]] == 64)) { make64 = true; }   // i64 arithmetic: 64-bit operand -> 64-bit result (a comparison stays i32)
+                else if (ins.kind_tag == 7) { if (w[ins.args[0]] == 64) { make64 = true; } }
+                else if (ins.kind_tag == 8) {
                     var a: i32 = 0;
                     while (a < ins.args.len()) { if (w[ins.args[a]] == 64) { make64 = true; } a = a + 1; }
                 }
@@ -2966,23 +3068,23 @@ pub function compute_isfloat(f: SFunc): i32[] {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 var isf: boolean = false;
-                if (ins.kind == "const_float") { isf = true; }
-                else if (ins.kind == "param" && ins.str == "f64") { isf = true; }   // an f64 param
-                else if (ins.kind == "call" && ins.imm == 2) { isf = true; }   // f64-returning call
-                else if (ins.kind == "unary") {
+                if (ins.kind_tag == 4) { isf = true; }
+                else if (ins.kind_tag == 6 && ins.str == "f64") { isf = true; }   // an f64 param
+                else if (ins.kind_tag == 11 && ins.imm == 2) { isf = true; }   // f64-returning call
+                else if (ins.kind_tag == 10) {
                     if (ins.str == "as_f64") { isf = true; }
                     else if (ins.str == "f64_from_bits") { isf = true; }   // i64 bits → f64
                     else if (ins.str == "-" && fl[ins.args[0]] == 1) { isf = true; }
                     // f64_bits → an i64 (NOT float), so it stays non-float even
                     // though its operand is an f64 (handled by the default).
                 }
-                else if (ins.kind == "binary") {
+                else if (ins.kind_tag == 9) {
                     if (ins.str == "+" || ins.str == "-" || ins.str == "*" || ins.str == "/") {
                         if (fl[ins.args[0]] == 1 || fl[ins.args[1]] == 1) { isf = true; }
                     }
                 }
-                else if (ins.kind == "copy") { if (fl[ins.args[0]] == 1) { isf = true; } }
-                else if (ins.kind == "phi") {
+                else if (ins.kind_tag == 7) { if (fl[ins.args[0]] == 1) { isf = true; } }
+                else if (ins.kind_tag == 8) {
                     var a: i32 = 0;
                     while (a < ins.args.len()) { if (fl[ins.args[a]] == 1) { isf = true; } a = a + 1; }
                 }
@@ -3024,7 +3126,7 @@ function any_call_named(f: SFunc, names: string[]): boolean {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call" && util.index_of_str(names, ins.str) >= 0) { return true; }
+            if (ins.kind_tag == 11 && util.index_of_str(names, ins.str) >= 0) { return true; }
             k = k + 1;
         }
         bi = bi + 1;
@@ -3042,8 +3144,8 @@ pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call" && util.index_of_str(ptr_ret, ins.str) >= 0) {
-                ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 1, str: ins.str };
+            if (ins.kind_tag == 11 && util.index_of_str(ptr_ret, ins.str) >= 0) {
+                ins = SInst { kind_tag: 11, result: ins.result, args: ins.args, imm: 1, str: ins.str };
             }
             ninsts = ninsts.append(ins);
             k = k + 1;
@@ -3068,8 +3170,8 @@ pub function mark_float_calls(f: SFunc, float_ret: string[]): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call" && util.index_of_str(float_ret, ins.str) >= 0) {
-                ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 2, str: ins.str };
+            if (ins.kind_tag == 11 && util.index_of_str(float_ret, ins.str) >= 0) {
+                ins = SInst { kind_tag: 11, result: ins.result, args: ins.args, imm: 2, str: ins.str };
             }
             ninsts = ninsts.append(ins);
             k = k + 1;
@@ -3092,7 +3194,7 @@ pub function calls_all_known(f: SFunc, known: string[]): boolean {
             // declined (unresolved capture type) leaves a funcaddr to an
             // unbuilt name here, so this fails it and the whole program falls
             // back to the AST emitter. (call_indirect has no static target.)
-            if (ins.kind == "call" || ins.kind == "funcaddr") {
+            if (ins.kind_tag == 11 || ins.kind_tag == 13) {
                 var found: boolean = false;
                 var j: i32 = 0;
                 while (j < known.len()) { if (known[j] == ins.str) { found = true; } j = j + 1; }
@@ -3111,8 +3213,8 @@ pub function uses_memory(f: SFunc): boolean {
         var blk: SBlock = f.blocks[bi];
         var k: i32 = 0;
         while (k < blk.insts.len()) {
-            var kind: string = blk.insts[k].kind;
-            if (kind == "alloc" || kind == "load_elem" || kind == "store_elem") { return true; }
+            var kt: i32 = blk.insts[k].kind_tag;
+            if (kt == 14 || kt == 15 || kt == 16) { return true; }   // alloc / load_elem / store_elem
             k = k + 1;
         }
         bi = bi + 1;
@@ -3207,12 +3309,12 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "write" || ins.kind == "args" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
+            if (ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 22 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || ins.kind_tag == 18) { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
-        if (blk.term.kind == "ret") { lo = upd_lo(lo, blk.term.value, pos); hi = upd_hi(hi, blk.term.value, pos); }
-        else if (blk.term.kind == "brif") { lo = upd_lo(lo, blk.term.cond, pos); hi = upd_hi(hi, blk.term.cond, pos); }
+        if (blk.term.kind_tag == 1) { lo = upd_lo(lo, blk.term.value, pos); hi = upd_hi(hi, blk.term.value, pos); }
+        else if (blk.term.kind_tag == 3) { lo = upd_lo(lo, blk.term.cond, pos); hi = upd_hi(hi, blk.term.cond, pos); }
         pos = pos + 1;
         bi = bi + 1;
     }
@@ -3229,7 +3331,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         var kk: i32 = 0;
         while (kk < b2.insts.len()) {
             var pin: SInst = b2.insts[kk];
-            if (pin.kind == "phi") {
+            if (pin.kind_tag == 8) {  // phi
                 var pa2: i32 = 0;
                 while (pa2 < pin.args.len()) {
                     if (def_pos[pin.args[pa2]] > ppos) { hi = upd_hi(hi, pin.args[pa2], total_pos); }
@@ -3271,9 +3373,9 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         while (th < 2) {
             var tgt: i32 = 0 - 1;
             if (th == 0) {
-                if (lblk.term.kind == "br") { tgt = lblk.term.target; }
-                else if (lblk.term.kind == "brif") { tgt = lblk.term.t; }
-            } else if (lblk.term.kind == "brif") { tgt = lblk.term.f; }
+                if (lblk.term.kind_tag == 2) { tgt = lblk.term.target; }
+                else if (lblk.term.kind_tag == 3) { tgt = lblk.term.t; }
+            } else if (lblk.term.kind_tag == 3) { tgt = lblk.term.f; }
             if (tgt >= 0) {
                 var hstart: i32 = 0 - 1;
                 var si2: i32 = 0;
@@ -3359,8 +3461,8 @@ function dead_code_elim(f: SFunc): SFunc {
                 while (ai < ins.args.len()) { used = env_put(used, ins.args[ai], 1); ai = ai + 1; }
                 k = k + 1;
             }
-            if (blk.term.kind == "ret") { used = env_put(used, blk.term.value, 1); }
-            else if (blk.term.kind == "brif") { used = env_put(used, blk.term.cond, 1); }
+            if (blk.term.kind_tag == 1) { used = env_put(used, blk.term.value, 1); }
+            else if (blk.term.kind_tag == 3) { used = env_put(used, blk.term.cond, 1); }
             bi = bi + 1;
         }
         // Drop unused pure instructions.
@@ -3372,7 +3474,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "write" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind_tag == 6 || ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 14 || ins.kind_tag == 16 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }
@@ -3483,24 +3585,24 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var inst: SInst = blk.insts[k];
-            if (inst.kind == "param") {
+            if (inst.kind_tag == 6) {  // param
                 var pv: i32 = 0;
                 if (inst.imm < args.len()) { pv = args[inst.imm]; }
                 tab = vtab_set(tab, inst.result, pv);
-            } else if (inst.kind == "const_int" || inst.kind == "const_bool") {
+            } else if (inst.kind_tag == 1 || inst.kind_tag == 2) {
                 tab = vtab_set(tab, inst.result, inst.imm);
-            } else if (inst.kind == "copy") {
+            } else if (inst.kind_tag == 7) {  // copy
                 tab = vtab_set(tab, inst.result, tab[inst.args[0]]);
-            } else if (inst.kind == "phi") {
+            } else if (inst.kind_tag == 8) {  // phi
                 tab = vtab_set(tab, inst.result, tab[inst.args[slot]]);
-            } else if (inst.kind == "binary") {
+            } else if (inst.kind_tag == 9) {  // binary
                 tab = vtab_set(tab, inst.result, eval_binary(inst.str, tab[inst.args[0]], tab[inst.args[1]]));
-            } else if (inst.kind == "unary") {
+            } else if (inst.kind_tag == 10) {  // unary
                 var x: i32 = tab[inst.args[0]];
                 if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
                 else if (inst.str == "f64_bits" || inst.str == "f64_from_bits") { tab = vtab_set(tab, inst.result, x); }   // bit reinterpret = identity on the stored value
                 else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
-            } else if (inst.kind == "alloc") {
+            } else if (inst.kind_tag == 14) {  // alloc
                 // Bump-allocate the handle's base. The slot count is inst.imm
                 // (compile-time size) unless args[0] is present (a runtime
                 // size, e.g. __new_array).
@@ -3510,15 +3612,15 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var a: i32 = 0;
                 while (a < asz) { mem = mem.append(0); a = a + 1; }
                 tab = vtab_set(tab, inst.result, base);
-            } else if (inst.kind == "load_elem") {
+            } else if (inst.kind_tag == 15) {  // load_elem
                 var p: i32 = tab[inst.args[0]];
                 var ix: i32 = tab[inst.args[1]];
                 tab = vtab_set(tab, inst.result, mem[p + ix]);
-            } else if (inst.kind == "store_elem") {
+            } else if (inst.kind_tag == 16) {  // store_elem
                 var p2: i32 = tab[inst.args[0]];
                 var ix2: i32 = tab[inst.args[1]];
                 mem = vmem_set(mem, p2 + ix2, tab[inst.args[2]]);
-            } else if (inst.kind == "concat") {
+            } else if (inst.kind_tag == 17) {  // concat
                 // New string = [lenA+lenB, A's bytes…, B's bytes…].
                 var pa: i32 = tab[inst.args[0]];
                 var pb: i32 = tab[inst.args[1]];
@@ -3533,7 +3635,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var cb: i32 = 0;
                 while (cb < lb) { mem = vmem_set(mem, cbase + 1 + la + cb, mem[pb + 1 + cb]); cb = cb + 1; }
                 tab = vtab_set(tab, inst.result, cbase);
-            } else if (inst.kind == "streq") {
+            } else if (inst.kind_tag == 18) {  // streq
                 // 1 if the two strings have equal length and bytes, else 0.
                 var sa: i32 = tab[inst.args[0]];
                 var sb: i32 = tab[inst.args[1]];
@@ -3544,7 +3646,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                     while (qi < mem[sa]) { if (mem[sa + 1 + qi] != mem[sb + 1 + qi]) { eq = 0; } qi = qi + 1; }
                 }
                 tab = vtab_set(tab, inst.result, eq);
-            } else if (inst.kind == "const_str") {
+            } else if (inst.kind_tag == 5) {  // const_str
                 // Materialise the literal as [len, b0, b1, …] in mem.
                 var cs: string = inst.str;
                 var csl: i32 = cs.len();
@@ -3556,9 +3658,9 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
             }
             k = k + 1;
         }
-        if (blk.term.kind == "ret") { return tab[blk.term.value]; }
-        if (blk.term.kind == "br") { prev_id = cur_id; cur_id = blk.term.target; }
-        else if (blk.term.kind == "brif") {
+        if (blk.term.kind_tag == 1) { return tab[blk.term.value]; }
+        if (blk.term.kind_tag == 2) { prev_id = cur_id; cur_id = blk.term.target; }
+        else if (blk.term.kind_tag == 3) {
             prev_id = cur_id;
             if (tab[blk.term.cond] != 0) { cur_id = blk.term.t; } else { cur_id = blk.term.f; }
         } else {
@@ -3591,11 +3693,11 @@ pub function print_func(f: SFunc): string {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            out = out + "    v" + int_str(ins.result) + " = " + ins.kind;
-            if (ins.kind == "const_int" || ins.kind == "const_bool" || ins.kind == "param") {
+            out = out + "    v" + int_str(ins.result) + " = " + kind_name(ins.kind_tag);
+            if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6) {
                 out = out + " " + int_str(ins.imm);
             }
-            if (ins.kind == "binary" || ins.kind == "unary" || ins.kind == "call") {
+            if (ins.kind_tag == 9 || ins.kind_tag == 10 || ins.kind_tag == 11) {
                 out = out + " " + ins.str;
             }
             var ai: i32 = 0;
@@ -3606,9 +3708,9 @@ pub function print_func(f: SFunc): string {
             out = out + "\n";
             k = k + 1;
         }
-        if (blk.term.kind == "ret") { out = out + "    ret v" + int_str(blk.term.value) + "\n"; }
-        else if (blk.term.kind == "br") { out = out + "    br b" + int_str(blk.term.target) + "\n"; }
-        else if (blk.term.kind == "brif") { out = out + "    brif v" + int_str(blk.term.cond) + " b" + int_str(blk.term.t) + " b" + int_str(blk.term.f) + "\n"; }
+        if (blk.term.kind_tag == 1) { out = out + "    ret v" + int_str(blk.term.value) + "\n"; }
+        else if (blk.term.kind_tag == 2) { out = out + "    br b" + int_str(blk.term.target) + "\n"; }
+        else if (blk.term.kind_tag == 3) { out = out + "    brif v" + int_str(blk.term.cond) + " b" + int_str(blk.term.t) + " b" + int_str(blk.term.f) + "\n"; }
         bi = bi + 1;
     }
     return out + "}\n";
@@ -3742,7 +3844,7 @@ pub function calls_func(funcs: SFunc[], name: string): boolean {
             var insts: SInst[] = funcs[fi].blocks[bi].insts;
             while (ki < insts.len()) {
                 var ins: SInst = insts[ki];
-                if (ins.kind == "call" && ins.str == name) { return true; }
+                if (ins.kind_tag == 11 && ins.str == name) { return true; }
                 ki = ki + 1;
             }
             bi = bi + 1;

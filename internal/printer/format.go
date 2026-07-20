@@ -636,6 +636,16 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ExportWITName)
 		f.b.WriteString("\")\n")
 	}
+	// `@inline` / `@noinline` (#4412 Rec §14) render on their own line —
+	// dropping one would silently change the release build's inlining.
+	switch fn.InlineHint {
+	case ast.InlineHintAlways:
+		f.indent(depth)
+		f.b.WriteString("@inline\n")
+	case ast.InlineHintNever:
+		f.indent(depth)
+		f.b.WriteString("@noinline\n")
+	}
 	f.indent(depth)
 	if fn.PackageScoped {
 		f.b.WriteString("pub(package) ")
@@ -945,8 +955,15 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		} else {
 			f.b.WriteString("defer ")
 		}
-		f.formatExpr(x.Expr, precLowest)
-		f.b.WriteByte(';')
+		// A block-shaped action `defer { … }` (#5153) prints as the block
+		// with no trailing `;` (matching the parse form); a plain expression
+		// action keeps its `;`.
+		if be, ok := x.Expr.(*ast.BlockExpr); ok {
+			f.formatBlockExpr(be)
+		} else {
+			f.formatExpr(x.Expr, precLowest)
+			f.b.WriteByte(';')
+		}
 	case *ast.Match:
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
@@ -1118,14 +1135,17 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 		}
 		if x.Value < 0 {
-			needsParens := parentPrec >= precUnary
-			if needsParens {
-				f.b.WriteByte('(')
-			}
-			fmt.Fprintf(&f.b, "-%d%s", -x.Value, suffix)
-			if needsParens {
-				f.b.WriteByte(')')
-			}
+			// A negative Value in formatter input can only be an unsigned
+			// literal whose magnitude exceeds i64::MAX: the parser stored the
+			// bit pattern via `int64(strconv.ParseUint(...))`. (Source
+			// negatives like `-5` are `ast.Unary` nodes wrapping a positive
+			// NumberLit, handled by the Unary case — they never reach here.)
+			// So emit the unsigned decimal. The old `-%d` with `-x.Value`
+			// overflowed for math.MinInt64 (== 2^63, e.g.
+			// `9223372036854775808 as u64`), leaving it negative and emitting
+			// a spurious `--` that grew another `-` on every format pass and
+			// broke idempotency.
+			fmt.Fprintf(&f.b, "%s%s", strconv.FormatUint(uint64(x.Value), 10), suffix)
 		} else {
 			fmt.Fprintf(&f.b, "%d%s", x.Value, suffix)
 		}

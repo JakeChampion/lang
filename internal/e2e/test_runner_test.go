@@ -99,6 +99,28 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/regex_test.fern` covers std/regex through the pure-Fern
+// runner: the matcher (match / search / find / anchors / classes /
+// quantifiers / alternation / (?i)), the bulk ops (count / find_all /
+// replace / replace_all / split / full_match), and the capture engine
+// (regex_captures positional + optional + quantified-last-iteration,
+// captures_all, named groups (?<name>…) + .group_named / .group_index /
+// .has_group_named, and $-template replacement incl. ${name} and $$).
+// The regex module had only Go-side coverage. Passing suite → exit 0.
+func TestRunnerRegexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/regex_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/regex", "# pass 22", "# fail 0", "1..22"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/iter_test.fern` covers the core/iter stdlib (the
 // generic Iterator[T] protocol + Range / ArrayIter and the eager
 // drivers — sum / count / of / product / nth / last / min / max /
@@ -311,6 +333,47 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i32_bit_length_test.fern` covers std/i32's bit_length — the
+// number of bits needed to represent |n| (highest set bit + 1). Zero, small
+// values, powers of two, negatives (magnitude), i32::MAX, and the i32::MIN
+// widen-to-i64 edge. On the interp gate and the self-host x86-64 + arm64 gates;
+// the Go-side TestI32BitLength pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI32BitLengthExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_bit_length_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 bit_length", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/i32_to_string_radix_test.fern` covers std/i32's
+// to_string_radix(base) — render an i32 in an arbitrary base (2..36), the
+// general form behind to_binary/to_oct/to_hex and the write-side inverse of
+// string.parse_int_radix. Several bases, sign, zero, out-of-range base, and a
+// round-trip. On the interp gate and the self-host x86-64 + arm64 gates (i32 ->
+// string render, self-hosts cleanly); the Go-side TestI32ToStringRadix pins
+// native compilation on all four backends. Passing → exit 0.
+func TestRunnerI32ToStringRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_to_string_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 to_string_radix", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/i32_bit_arith_test.fern` covers std/i32's abs_diff (absolute
 // difference via an ordering branch) and count_zeros (complement of count_ones;
 // the two sum to 32). Kept out of i32_test to keep the self-host bundle under
@@ -343,6 +406,47 @@ func TestRunnerI64ExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/i64", "# pass 18", "# fail 0", "1..18"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/i64_to_string_radix_test.fern` covers std/i64's
+// to_string_radix(base) — render an i64 in an arbitrary base (2..36) via a u64
+// magnitude, so it renders i64::MIN cleanly and exercises unsigned u64 div/rem.
+// Several bases, sign, zero, values past the i32 range, i64::MAX/MIN, and
+// out-of-range bases. On the interp gate and the self-host x86-64 + arm64 gates;
+// the Go-side TestI64ToStringRadix pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI64ToStringRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_to_string_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 to_string_radix", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/i64_bit_ops_test.fern` covers std/i64's bit ops (wider
+// counterparts to std/i32's): count_ones (set bits in the 64-bit two's-
+// complement rep) and bit_length (bits to represent |n|, i64::MIN special-
+// cased), over values past the i32 range. On the interp gate and the self-host
+// x86-64 + arm64 gates (both return i32); the Go-side TestI64BitOps pins native
+// compilation on all four backends. Passing → exit 0.
+func TestRunnerI64BitOpsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_bit_ops_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 bit ops", "# pass 7", "# fail 0", "1..7"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -470,7 +574,7 @@ func TestRunnerSortByAndCiExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/sort comparator + ci", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: std/sort comparator + ci", "# pass 13", "# fail 0", "1..13"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -527,6 +631,101 @@ func TestRunnerStringReplaceSplitExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/string replace + split", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringSwapCaseExamplePasses gates std/string.swap_case — toggle the
+// case of every ASCII letter — under the interpreter. Also on the self-host
+// x86-64 + arm64 gates (string return, uses assert_true); the Go-side
+// TestStringSwapCase pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerStringSwapCaseExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_swap_case_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string swap_case", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringZfillExamplePasses gates std/string.zfill(width) — zero-pad a
+// numeric string keeping the sign in front — under the interpreter. Also on the
+// self-host x86-64 + arm64 gates (string return, uses assert_true); the Go-side
+// TestStringZfill pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerStringZfillExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_zfill_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string zfill", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringParseRadixExamplePasses gates std/string.parse_int_radix(base)
+// — the method form of the arbitrary-base (2..36) i32 parser — under the
+// interpreter. Also on the self-host x86-64 + arm64 gates (Option[i32] return,
+// uses assert_true); the Go-side TestStringParseIntRadix pins native
+// compilation on all four backends. Passing → exit 0.
+func TestRunnerStringParseRadixExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_parse_radix_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string parse_int_radix", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringPartitionExamplePasses gates std/string.partition /
+// rpartition — the Python-style three-way (head, sep, tail) split that keeps the
+// separator — under the interpreter. Also on the self-host x86-64 + arm64 gates
+// (uses assert_true, no assert_eq[i32]); the Go-side TestStringPartition pins
+// native compilation on all four backends. Passing → exit 0.
+func TestRunnerStringPartitionExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_partition_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string partition", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringRsplitOnceExamplePasses gates std/string.rsplit_once — split
+// at the LAST occurrence of a separator (the mirror of split_once) — under the
+// interpreter. Also on the self-host x86-64 + arm64 gates (uses assert_true /
+// fail / pass, no generic assert_eq[i32] monomorph); the Go-side
+// TestStringRsplitOnce pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerStringRsplitOnceExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_rsplit_once_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string rsplit_once", "# pass 9", "# fail 0", "1..9"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -639,7 +838,7 @@ func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 23", "# fail 0", "1..23"} {
+	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 27", "# fail 0", "1..27"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -845,6 +1044,158 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/array count/sum by", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_none_test.fern` covers std/array's none[T](xs, pred)
+// (free + method forms): true iff pred holds for no element, the complement of
+// any; short-circuits, vacuously true for empty. Closure over a generic T[], so
+// the i32 cases are on interp + the self-host x86-64 + arm64 gates; the Go-side
+// TestNativeArrayNone pins native compilation on all four backends (incl. a
+// string-closure case). Passing → exit 0.
+func TestRunnerArrayNoneExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_none_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array none", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_all_equal_test.fern` covers std/array's
+// all_equal[T: cmp.Eq] (free + method forms): true iff every element equals the
+// first (≤ 1 distinct value), vacuously true for length < 2. i32 cases
+// (all-equal / distinct / first-or-last differs / empty / single / free-fn) on
+// interp + the self-host x86-64 + arm64 gates. STRING-element all_equal is
+// native-differential-only (element-vs-element string compare trips the
+// self-host compiler); the Go-side TestArrayAllEqual pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerArrayAllEqualExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_all_equal_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array all_equal", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_min_max_index_test.fern` covers std/array's
+// max_index / min_index[T: cmp.Ord] (free + method forms): the INDEX of the
+// largest / smallest element by Ord → Option[i32] (None on empty, first on a
+// tie). i32 cases (single / empty / all-equal) on interp + the self-host x86-64
+// + arm64 gates. STRING-element min/max_index is native-differential-only: it
+// compares two array elements (xs[i].cmp(xs[best])), and that element-vs-element
+// string compare trips the self-host compiler. The Go-side TestArrayMinMaxIndex
+// pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerArrayMinMaxIndexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_min_max_index_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array min/max index", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_binary_search_test.fern` covers std/array's
+// binary_search[T: cmp.Ord] (free + method forms): O(log n) search of an
+// ascending-sorted array → Option[i32]. Found (first/middle/last), absent
+// (in-range/below/above), empty, single, and STRING elements. Fully self-host
+// gated (x86-64 + arm64) incl. strings — the return is Option[i32] (scalar), so
+// it avoids the pointer-payload gap that limits the T[]-returning generics. The
+// Go-side TestArrayBinarySearch pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerArrayBinarySearchExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_binary_search_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array binary_search", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_dedup_test.fern` covers std/array's dedup[T: cmp.Eq]
+// (free + method forms): collapse runs of CONSECUTIVE equal elements, the
+// single-pass complement of distinct. Runs / all-equal / no-dup / sorted /
+// empty (i32) cases on the interp gate and the self-host x86-64 + arm64 gates
+// (same cmp.Eq bound / monomorphisation as distinct). STRING-element dedup is
+// native-differential-only (self-host mishandles the generic cmp.Eq over
+// pointer payloads); the Go-side TestNativeArrayDedup pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerArrayDedupExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_dedup_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array dedup", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_accessors_test.fern` covers std/array's foundational
+// accessors is_empty / first / last / get (free + method forms): Option[T]
+// returns, None on empty / out-of-range, negative index → None. On the interp
+// gate and the self-host x86-64 + arm64 gates for the i32 cases (uses
+// assert_true + match). STRING-element first/get is native-differential-only
+// (self-host mishandles the generic Option[T] over pointer payloads); the
+// Go-side TestNativeArrayFirstLastGet pins native compilation on all four
+// backends. Passing → exit 0.
+func TestRunnerArrayAccessorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_accessors_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array accessors", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_rotate_test.fern` covers std/array's structural
+// rotation verbs rotate_left / rotate_right (free + method forms): cyclic shift
+// by n (mod len), wrap when n >= len, negative n, zero / full shift, and empty.
+// On the interp gate and the self-host x86-64 + arm64 gates (i32, structural, no
+// closures; uses assert_eq_array / assert_true). The Go-side
+// TestNativeArrayRotate pins native compilation on all four backends including
+// string-element rotation (which the self-host compiler miscompiles, so it's
+// native-differential-only). Passing → exit 0.
+func TestRunnerArrayRotateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_rotate_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array rotate", "# pass 8", "# fail 0", "1..8"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1651,6 +2002,441 @@ func TestRunnerFloatConvertExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_round_to_test.fern` covers std/float's round_to(digits)
+// — round to N decimal places, half away from zero (positive digits round the
+// fraction, negative digits round to tens/hundreds), f64 and f32. On the interp
+// gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near); the
+// Go-side TestFloatRoundTo pins native compilation on all four backends. Passing
+// → exit 0.
+func TestRunnerFloatRoundToExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_round_to_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float round_to", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_log2_log10_test.fern` covers std/float's log2 / log10 —
+// base-2 and base-10 logarithms via change-of-base (natural log ÷ ln2 / ÷ ln10),
+// f64 and f32. On the interp gate and the self-host x86-64 + arm64 gates (uses
+// assert_eq_f64_near); the Go-side TestFloatLog2Log10 pins native compilation on
+// interp/x86-64/arm64 (wasmbin skips libm transcendentals, the known gap
+// log/sin/cos share). Passing → exit 0.
+func TestRunnerFloatLog2Log10Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_log2_log10_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float log2/log10", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_exp2_exp10_test.fern` covers std/float's exp2 / exp10 —
+// base-2 and base-10 exponentials (inverses of log2 / log10), built on the
+// natural exp via 2^x = e^(x·ln2) / 10^x = e^(x·ln10), f64 and f32. On the
+// interp gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near);
+// the Go-side TestFloatExp2Exp10 pins native compilation on interp/x86-64/arm64
+// (wasmbin skips libm transcendentals, the known gap exp/log/sin share).
+// Passing → exit 0.
+func TestRunnerFloatExp2Exp10Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_exp2_exp10_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float exp2/exp10", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_recip_copysign_midpoint_test.fern` covers std/float's
+// recip (1/x), copysign (magnitude of receiver, sign of argument), and midpoint
+// (overflow-safe halfway point), f64 and f32. Purely arithmetic, so unlike the
+// transcendentals these lower on all four backends. On the interp gate and both
+// self-host gates (uses assert_eq_f64_near); the Go-side
+// TestFloatRecipCopysignMidpoint pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerFloatRecipCopysignMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_recip_copysign_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float recip/copysign/midpoint", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/i64_roots_test.fern` covers std/i64's sqrt_floor (floor of √n
+// via Newton), is_power_of_2 (n&(n-1) bit trick), and is_perfect_square
+// (sqrt_floor(n)²==n) — the i64 siblings of the std/i32 predicates, exact past
+// the i32 range. Scalar-only, so on the interp gate and both self-host gates;
+// the Go-side TestI64Roots pins native compilation on all four backends.
+// Passing → exit 0.
+func TestRunnerI64RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 roots", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/i64_intdiv_test.fern` covers std/i64's is_multiple_of,
+// next_power_of_2 (capped at 2^62, 0 above), ceil_div, and log2_floor
+// (halving-count, since i64 has no leading_zeros) — scalar integer helpers
+// ported from std/i32. On the interp gate and both self-host gates; the Go-side
+// TestI64Intdiv pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerI64IntdivExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i64_intdiv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i64 intdiv", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/u64_roots_test.fern` covers std/u64's sqrt_floor,
+// is_power_of_2, next_power_of_2 (capped at 2^63, 0 above), and log2_floor —
+// unsigned root/power helpers spanning the full u64 range. On the interp gate
+// and both self-host gates; the Go-side TestU64Roots pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerU64RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/u64_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u64 roots", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_clamp01_absdiff_muladd_test.fern` covers std/float's
+// clamp01 (restrict to [0,1]), abs_diff (|a-b|), and mul_add (a*b+c, not a
+// fused FMA), f64 and f32. Purely arithmetic, so unlike the transcendentals
+// these lower on all four backends. On the interp gate and both self-host
+// gates; the Go-side TestFloatClamp01AbsDiffMulAdd pins native compilation on
+// all four backends. Passing → exit 0.
+func TestRunnerFloatClamp01AbsDiffMulAddExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_clamp01_absdiff_muladd_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float clamp01/abs_diff/mul_add", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/u32_roots_test.fern` covers std/u32's sqrt_floor,
+// is_power_of_2, next_power_of_2 (capped at 2^31, 0 above), and log2_floor —
+// unsigned root/power helpers, the u32 mirror of the u64 set. On the interp gate
+// AND both self-host gates (formerly interp-only: a u32-receiver method call
+// dispatched to its SIGNED std/i32 namesake because irlower's
+// expr_recv_prim_type lacked a u32 branch, so next_power_of_2 ran the signed
+// version and spun forever past 2^31 — fixed there). The Go-side TestU32Roots
+// pins native compilation on all four backends. Passing → exit 0.
+func TestRunnerU32RootsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/u32_roots_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u32 roots", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_cbrt_hypot3_test.fern` covers std/float's cbrt (real
+// cube root, defined for negatives) and hypot3 (overflow-safe 3-D Euclidean
+// length), f64 and f32. On the interp gate and both self-host gates; the Go-side
+// TestFloatCbrt / TestFloatHypot3 pin native compilation (cbrt's wasmbin leg
+// skips libm pow, hypot3 covers all four). Passing → exit 0.
+func TestRunnerFloatCbrtHypot3Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_cbrt_hypot3_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float cbrt/hypot3", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_hyperbolic_test.fern` covers std/float's sinh / cosh /
+// tanh — the hyperbolic trig functions built on the natural exp, f64 and f32.
+// On the interp gate and both self-host gates; the Go-side TestFloatHyperbolic
+// pins native compilation on interp/x86-64/arm64 (wasmbin skips libm exp, the
+// gap exp/log/sin share). Passing → exit 0.
+func TestRunnerFloatHyperbolicExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_hyperbolic_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float sinh/cosh/tanh", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_stats_test.fern` covers std/array's variance_f64 /
+// stddev_f64 — population variance (mean of squared deviations) and its square
+// root, both Option[f64]. On the interp gate and both self-host gates; the
+// Go-side TestArrayStats pins native compilation on interp/x86-64/arm64 (the
+// wasmbin leg skips Option over a 64-bit payload, the gap avg_f64 /
+// variance_f64 share). Passing → exit 0.
+func TestRunnerArrayStatsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_stats_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 stats", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/sort_f64_test.fern` covers core/cmp's generic sort /
+// sort_desc over an f64[] — bottom-up merge sort, the float siblings of the
+// integer sorts. On the interp gate and both self-host gates; the Go-side
+// TestSortF64 pins native compilation on all four backends (f64 arrays are
+// scalar-payload, so no wasm skip). Passing → exit 0.
+func TestRunnerSortF64Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/sort_f64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/sort f64", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_median_range_test.fern` covers std/array's median_f64
+// (averaging the two middles for even length) and range_f64 (max - min), both
+// Option[f64]. On the interp gate and both self-host gates; the Go-side
+// TestArrayMedianRange pins native compilation on interp/x86-64/arm64 (the
+// wasmbin leg skips Option over a 64-bit payload). Passing → exit 0.
+func TestRunnerArrayMedianRangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_median_range_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 median/range", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_vector_test.fern` covers std/array's dot_f64 (dot
+// product, running to the shorter length) and norm_f64 (Euclidean / L2 norm).
+// Both return a plain f64, so on the interp gate and both self-host gates; the
+// Go-side TestArrayVector pins native compilation on all four backends (no wasm
+// skip). Passing → exit 0.
+func TestRunnerArrayVectorExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_vector_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 vector", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_distance_normalize_test.fern` covers std/array's
+// distance_f64 (Euclidean distance) and normalize_f64 (unit vector; zero /
+// empty returned unchanged). distance returns f64, normalize an f64[] — both
+// scalar payload, so on the interp gate and both self-host gates; the Go-side
+// TestArrayDistanceNormalize pins native compilation on all four backends (no
+// wasm skip). Passing → exit 0.
+func TestRunnerArrayDistanceNormalizeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_distance_normalize_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 distance/normalize", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_product_cumsum_test.fern` covers std/array's product_f64
+// (product of all elements, empty = 1) and cumsum_f64 (running prefix sum).
+// product returns f64, cumsum an f64[] — both scalar payload, so on the interp
+// gate and both self-host gates; the Go-side TestArrayProductCumsum pins native
+// compilation on all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayProductCumsumExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_product_cumsum_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 product/cumsum", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_scale_add_test.fern` covers std/array's scale_f64
+// (scalar multiply) and add_f64 (element-wise sum, to the shorter length) — the
+// element-wise vector combinators, both f64[] returns. On the interp gate and
+// both self-host gates; the Go-side TestArrayScaleAdd pins native compilation on
+// all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayScaleAddExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_scale_add_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 scale/add", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_cumprod_diff_test.fern` covers std/array's cumprod_f64
+// (running product) and diff_f64 (successive differences, one shorter than the
+// input) — scan-style ops, both f64[] returns. On the interp gate and both
+// self-host gates; the Go-side TestArrayCumprodDiff pins native compilation on
+// all four backends (no wasm skip). Passing → exit 0.
+func TestRunnerArrayCumprodDiffExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_cumprod_diff_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array f64 cumprod/diff", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/int_midpoint_test.fern` covers std/i32.midpoint and
+// std/i64.midpoint — the overflow-safe average via (a & b) + ((a ^ b) >> 1).
+// Scalar bit-ops, so on the interp gate and both self-host gates; the Go-side
+// TestIntMidpoint pins native compilation on all four backends (no wasm skip).
+// Passing → exit 0.
+func TestRunnerIntMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/int_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/int midpoint", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/uint_midpoint_test.fern` covers std/u32.midpoint and
+// std/u64.midpoint — the overflow-safe unsigned average via
+// (a & b) + ((a ^ b) >> 1). On the interp gate AND both self-host gates
+// (formerly interp-only: `(a as u32).midpoint(...)` dispatched to the SIGNED
+// std/i32.midpoint — whose `>>` is arithmetic — because irlower's
+// expr_recv_prim_type lacked a u32 branch; fixed there). The Go-side
+// TestUintMidpoint pins native compilation on all four backends (no wasm skip).
+// Passing → exit 0.
+func TestRunnerUintMidpointExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/uint_midpoint_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uint midpoint", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/float_hypot_test.fern` covers std/float's hypot (Euclidean
+// length, overflow-safe scaled form), fract (signed fractional part), and tan
+// (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
+// gates (scalar, no closures; uses assert_eq_f64_near); the Go-side
+// TestFloatHypotFractTan pins native compilation on all four backends. Passing →
+// exit 0.
+func TestRunnerFloatHypotExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_hypot_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/float hypot", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/timing_test.fern` exercises the time
 // builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
 // the elapsed-time assertion helpers (`assert_elapsed_lt_ms`
@@ -1763,13 +2549,13 @@ func TestRunnerBenchExample(t *testing.T) {
 }
 
 // `examples/tests/array_reductions_test.fern` exercises the
-// new wider-int / float array reductions added as free
-// functions to std/array: `sum_i64` / `max_i64` / `min_i64` /
-// `avg_i64`, `sum_u32` / `max_u32` / `min_u32`,
-// `sum_u64` / `max_u64` / `min_u64`, `sum_f64` / `max_f64` /
-// `min_f64` / `avg_f64`. Eleven cases cover the happy path
-// + empty input semantics + the near-u64-max unsigned-
-// compare correctness check.
+// wider-int / float array reductions through the generic bounded
+// verbs that replaced std/array's per-width zoo (#5349):
+// `num.sum[T: Add + Zero]` for i64 / u32 / f64 totals and
+// `cmp.max_of` / `cmp.min_of[T: Ord]` for the extrema, plus
+// std/array's own `avg_i64` / `avg_f64` (no generic equivalent).
+// Eleven cases cover the happy path + empty input semantics + the
+// near-u64-max unsigned-compare correctness check.
 func TestRunnerArrayReductionsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/array_reductions_test.fern")

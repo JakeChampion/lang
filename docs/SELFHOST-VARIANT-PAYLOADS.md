@@ -114,12 +114,23 @@ assume a single `i32` enum payload and 4-byte struct fields:
    already parses). *Gated by a `TestSelfHostWasm…` run test that round-trips
    a value needing 64 bits through an enum, + the self-compile oracle stays
    green.* **Unblocks the self-host mixed-width single-field extern port.**
-2. **S2 — non-uniform same-width self-host extern port. ⏸ f32 deferred.** The
-   `f32` arm of a `{ i(s32), f(f32) }` set rides the canonical 32-bit (i32)
-   join — but the self-host has **no distinct f32** (it widens f32 to f64
-   everywhere, `is_float_type`), so an f32 enum payload is stored in an 8-byte
-   f64 slot, a 4-vs-8-byte impedance against the i32 join that needs a
-   demote+reinterpret bridge. Deferred until/if the self-host grows a real f32.
+2. **S2 — non-uniform same-width self-host extern port. ✅ Done (#5327,
+   non-uniform i32 join).** The `f32` arm of a `{ i(s32), f(f32) }` set rides
+   the canonical 32-bit (i32) join. The self-host has **no distinct f32** (it
+   widens f32 to f64 everywhere, `is_float_type`), so an f32 enum payload is
+   stored in an 8-byte f64 slot — a 4-vs-8-byte impedance bridged with the
+   #4366 f32 demote/reinterpret machinery: the param side branches per-arm on
+   the box's struct_id (`extern_variant_payload_join_i32_f32`) and coerces the
+   f32 arm to the join (`f64.load` → `f32.demote_f64` → `i32.reinterpret_f32`);
+   the result side branches on the disc (`extern_variant_result_store_f32`) and
+   promotes the host's raw f32 bits back into the box's f64 slot
+   (`f32.reinterpret_i32` → `f64.promote_f32`). The gate keeps the join i32:
+   the variant must also carry an i32/u32 payload arm and no 64-bit arm.
+   **Still deferred:** a uniform-f32 variant (every payloaded arm f32 — its
+   canonical join is an f32 *signature* slot the self-host, with no distinct
+   f32, can't carry) and an f32 arm mixed with a 64-bit arm (the same
+   impedance against the i64 join).
+   *Gated by `TestSelfHostExternVariantF32Arm{Param,Result}CustomProvider`.*
 3. **S3 — mixed-width self-host extern port. ✅ Done (#2515) + f64 arm.** The
    i64 join slot + per-arm coerce, mirroring the Go `appendVariantPayloadI64`
    path (i32 arm zero-extends, 64-bit arm `i64.load`s). Initially i32/i64

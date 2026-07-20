@@ -1,0 +1,22 @@
+import "std/u32";
+import "std/i64";
+import "std/u64";
+// byte_swap (endianness) for u32/i64/u64, mirroring std/i32. Distinct
+// nonzero exit per failure; 42 = all pass. interp/x86-64/arm64/wasm.
+function main(): i32 {
+    // u32: 0x01020304 -> 0x04030201
+    if ((16909060 as u32).byte_swap() != (67305985 as u32)) { return 1; }
+    if ((16909060 as u32).byte_swap().byte_swap() != (16909060 as u32)) { return 2; }
+    // u32 round-trip on a high-bit value
+    if ((4278190080 as u32).byte_swap() != (255 as u32)) { return 3; }   // 0xFF000000 -> 0x000000FF
+    // u64: 0x0102030405060708 -> 0x0807060504030201
+    var v: u64 = 72623859790382856 as u64;
+    var sw: u64 = 578437695752307201 as u64;
+    if (v.byte_swap() != sw) { return 4; }
+    if (v.byte_swap().byte_swap() != v) { return 5; }
+    // i64 round-trips (bit pattern reversed twice)
+    if ((123456789 as i64).byte_swap().byte_swap() != (123456789 as i64)) { return 6; }
+    // i64 low byte 0xFF -> high byte
+    if ((255 as i64).byte_swap() != ((0 as i64) - (72057594037927936 as i64))) { return 7; }  // 0xFF -> 0xFF00000000000000 (sign bit set => negative)
+    return 42;
+}

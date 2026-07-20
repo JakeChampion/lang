@@ -11,10 +11,87 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > migration is complete.** `chr`, `str_concat`, `i32_to_string`,
 > `str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
 > `string_from_bytes` and `str_split` all lower as Fern functions via these
-> raw-memory intrinsics. What remains hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the
-> syscalling leaves (`read_file`, the clocks, `random_bytes`),
-> `__fern_alloc` itself, and the map/array mutator core.
+> raw-memory intrinsics.
+>
+> **Status update (2026-07, syscall sub-floor): in progress.** The `__syscall3`
+> intrinsic (below) landed; `random_bytes` and the three clocks (`monotonic_ns`
+> / `now_unix_ms` / `now_ns`) are the syscall leaves moved to Fern so far — on
+> the **x86-64 IR path** (`asmcore.rt_src_random_bytes` / `_monotonic_ns` / …;
+> the arm64 / AST backends keep their hand-asm because the syscall numbers are
+> arch-specific, and wasm has no generic syscall). The clocks slice added one
+> more floor primitive — `__raw_scratch` (a fixed static buffer for the kernel
+> to write `timespec`/`stat` into — no per-call heap leak) — and reuses the
+> existing `__load_i64` for the i64 `tv_sec`/`tv_nsec` read-back. What remains
+> hand-written (the residue tracked by
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is `read_file` + the
+> rest of the fs family, the syscall leaves on arm64/AST/wasm, `__fern_alloc`
+> itself, and the map/array mutator core.
+>
+> **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
+> first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
+> it lowers as a Fern function (`asmcore.rt_src_stat`): `stat(2)` into
+> `__raw_scratch`, read `st_mode`/`st_size` with `__load_i32`/`__load_i64`, then
+> build `Ok(FileStat{...})` or, on failure, the errno-mapped `IoError` variant
+> (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
+> `EINTR→Interrupted`, else `Other`) — the same mapping native's `__fern_io_error`
+> and the arm64 hand-asm use. This proves a runtime helper compiled via
+> `emit_ir_runtime_fern_fn` can construct user structs **and multi-variant enums**
+> (it receives `all_structs`), which is the capability `read_file` and the rest of
+> the fs family need. **`read_file` followed** (`asmcore.rt_src_read_file` →
+> `Result[string, IoError]`): openat/lseek/read/close via `__syscall3`, the sized
+> read buffer becomes the `Ok(string)`. It reads the whole file in ONE `read`
+> (into an lseek-sized buffer, passed whole) rather than a read-loop, because the
+> i32 raw-pointer floor can't do 64-bit-safe `buf + offset` arithmetic on a high
+> heap buffer — correct for regular files ≤ 2 GiB read without interruption. And
+> **`remove_file`** (`rt_src_remove_file` → `Option[IoError]`): `unlinkat` via
+> `__syscall3`, `None` on success / the errno-mapped `Some(IoError)` on failure.
+> `write_file` (`rt_src_write_file` → `Option[IoError]`, the first `__syscall4`
+> user) followed.
+>
+> **`read_dir`** (`rt_src_read_dir` → `Result[string[], IoError]`) followed too —
+> the first fs leaf that returns an *array*. It `openat`s the dir
+> (`O_RDONLY|O_DIRECTORY`) and **drains** it with a `getdents64` loop over a FRESH
+> 64 KiB buffer per read, parsing each `linux_dirent64` record (`d_reclen@16`,
+> NUL-terminated `d_name@19`, skipping `.` / `..`) and appending each base name to
+> the result `string[]` with `.append()` (→ `__fern_arr_push` / the sole-owner
+> `arr_push_owned`, like `str_split`). The fresh-buffer-per-read shape sidesteps
+> the `buf + offset`-as-syscall-arg arithmetic the i32 raw-pointer floor can't do
+> 64-bit-safely (`getdents64` never splits a record across calls, so each buffer
+> parses independently); the record fields are read via `__raw_load8(buf, pos+k)`,
+> which offsets in the emitter.
+>
+> **`remove_dir_all`** (`rt_src_remove_dir_all` → `Option[IoError]`) closed out the
+> fs leaves — a best-effort recursive `rm -rf`. It classifies the target with
+> `openat(O_DIRECTORY)` (ENOENT → `None`, ENOTDIR → `unlinkat` the file, else
+> `Some(io_error)`), then for a directory **drains it inline** with the same
+> `getdents64`-per-fresh-buffer loop as `read_dir`, builds each child path
+> (`path + "/" + name`) directly in a raw buffer, and recurses, then rmdirs.
+> Notably it does **not** reuse the `read_dir` builtin: `read_dir` returns an
+> RC-managed `string[]`, and **holding that array live across the recursive call —
+> which allocates heavily — corrupts it** (the held array's backing memory gets
+> reused by the recursion's allocations; SIGSEGV on any tree with a subdirectory).
+> A raw `getdents` buffer + raw child-path buffers are `__raw_alloc`'d (bump-only,
+> never freed → never reused), so they survive the recursion untouched; the only
+> RC value crossing the recursion is the returned `Option[IoError]`, which is safe.
+> This RC/arena interaction (a heap array held live across a recursive allocating
+> call) is a latent self-host bug worth a standalone fix — noted on #2649.
+>
+> **Status update (2026-07, dependencies-as-the-call-graph): the fs leaves share a
+> Fern `__fern_io_error`.** `stat` / `read_file` / `remove_file` / `write_file` /
+> `temp_dir` / `read_dir` / `remove_dir_all` no longer *inline* the five-way errno→variant classification
+> (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
+> `EINTR→Interrupted`, else `Other`) — they **call** a single Fern classifier,
+> `rt_src_io_error`. The needed helpers + `io_error` are emitted as one bundle
+> module (only the needed ones, gated on the union of their needs), so the standard
+> inter-procedural RC analysis threads each helper→`io_error` call as an ordinary
+> call-graph edge (`io_error` consumes its fresh path arg; the helpers hand it a
+> fresh copy, never their borrowed `path`). This is the #2649 end-state in
+> miniature — a helper's dependency is a real call, not a hand-tracked inline.
+> (`temp_dir` additionally calls the `monotonic_ns` builtin, op-mediated, so it
+> composes in the bundle unchanged.) The arm64 / AST backends keep the register-ABI
+> hand-asm `__fern_io_error`; this is x86-64 IR only. Verified RC-neutral against
+> the pre-consolidation inlined bodies (identical arena growth) and byte-identical
+> on the self-compile fixpoint.
 
 Tier-2 helpers were stuck for one reason: **Fern had no way to write a byte
 to a computed heap address.** `s[i]` *reads* a byte; there was no `s[i] = b`,
@@ -54,6 +131,14 @@ nominal.
 | `__raw_store_ptr(ptr: i32, off: i32, v: i32)` | `mov %v, (%ptr,%off*W)` | store a word-sized slot (W = pointer width); for writing box `{data,len}` fields and array slots |
 | `__raw_load_ptr(ptr: i32, off: i32): i32` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
 | `__raw_string(data: i32, len: i32): string` | alloc a 16-byte box `{data, len}` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface |
+| `__syscall3(nr: i32, a1: i32, a2: i32, a3: i32): i32` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
+| `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
+| `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
+| `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
+
+Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64
+math reuses the **existing** `__load_i64(addr): i64` intrinsic (#4375) — no new
+op was added for that.
 
 `__raw_string` is the key: it lets a helper allocate a byte buffer with
 `__raw_alloc`, fill it with `__raw_store8`, and hand back a real `string` the
@@ -142,9 +227,16 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    **`str_replace`** — the remaining per-byte string builders, one slice each
    (or grouped by similarity), following the established four-backend +
    AST/IR-lock-in-test pattern.
-5. **The syscall leaves** (`read_file`, clocks, `random_bytes`) via a
-   `__syscall3`-style intrinsic — a separate sub-floor, deferred until the
-   string builders are done.
+5. **The syscall leaves** (`read_file`, clocks, `random_bytes`) via the
+   `__syscall3` intrinsic — a separate sub-floor. **In progress:** `__syscall3`
+   landed; `random_bytes` (`rt_src_random_bytes`) and the three clocks
+   (`rt_src_monotonic_ns` / `_now_unix_ms` / `_now_ns`, which also needed
+   `__raw_scratch` + reused `__load_i64`) moved to Fern on the x86-64 IR path. The
+   syscall *number* is arch-specific (x86-64 getrandom = 318 / clock_gettime =
+   228, arm64 = 278 / 113) and the `rt_src_*` sources are shared between the
+   register backends, so arm64/AST parity needs an arch-parameterised source (or
+   a `__sysno_*` constant); wasm keeps its WASI bundles. `read_file` + the fs
+   family (multi-syscall + `stat` scratch + Result) follow.
 
 Each slice ships with AST + IR lock-in tests (the helper compiles from Fern,
 the hand-asm label is gone) and reuses the existing behavioural coverage, and

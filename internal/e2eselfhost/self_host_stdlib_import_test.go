@@ -50,8 +50,8 @@ func TestSelfHostStdlibImportX86_64(t *testing.T) {
 		// Leaf module (std/math has no imports of its own): range(0,10)
 		// sums to 45; minus 3 = 42.
 		{"std-math-leaf", "import \"std/math\";\nfunction main(): i32 {\n var r: i32[] = math.range(0, 10);\n var sum: i32 = 0;\n for x in r { sum = sum + x; }\n return sum - 3;\n}\n", 42},
-		// Transitive: std/sort imports std/string. min(1)+max(9)+32 = 42.
-		{"std-sort-transitive", "import \"std/sort\";\nfunction main(): i32 {\n var a: i32[] = [5, 3, 8, 1, 9, 2];\n var s: i32[] = sort.sort_i32_asc(a);\n return s[0] + s[5] + 32;\n}\n", 42},
+		// Transitive: core/cmp imports std/sort imports std/string. min(1)+max(9)+32 = 42.
+		{"std-sort-transitive", "import \"core/cmp\";\nfunction main(): i32 {\n var a: i32[] = [5, 3, 8, 1, 9, 2];\n var s: i32[] = cmp.sort(a);\n return s[0] + s[5] + 32;\n}\n", 42},
 		// std/json imports core/map, whose open-addressing source pokes
 		// raw memory through the low-level intrinsics (__alloc / __load_* /
 		// __store_* / __ptr_width / __memset) and the RC intrinsics. Before

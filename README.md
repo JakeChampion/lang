@@ -6,9 +6,12 @@
 [standard library](https://jakechampion.github.io/lang/stdlib/) ·
 [playground](https://jakechampion.github.io/lang/playground/))
 
-Fern is a small statically-typed language with several backends, written
-in Go, built for fast-startup CLI tools and short-lived edge-function HTTP
-servers. Targets so far:
+Fern is a small statically-typed, general-purpose language with several
+backends, written in Go. It grew up around two workloads it's especially
+good at — fast-startup CLI tools and short-lived edge-function HTTP
+servers — and is broadening out from there into a language you can reach
+for generally, including long-running programs (its own self-hosted
+compiler among them). Targets so far:
 
 - **ARM64 / aarch64** Linux ELF — the **default** target (Raspberry Pi 4+,
   AWS Graviton, Android, qemu-aarch64). Assembled and linked **in-process**
@@ -86,6 +89,13 @@ wasmtime run factorial.wasm
 ./fern -fmt -w examples/factorial.fern     # overwrite the file in place
 ./fern -fmt -d examples/factorial.fern     # print a unified diff against
                                            # the file; exits 1 when they differ
+
+# Per-package capability report (net / fs / env / subprocess / time / random;
+# see docs/PACKAGE-CAPABILITIES-BRIEF.md). Grants are also ENFORCED on every
+# compile / -check / -interp: a dependency whose fern.toml entry carries
+# `capabilities = [...]` gets an E070 error when it reaches outside the grant
+# (dependencies without the key warn for now).
+./fern -capabilities app/main.fern
 
 # Literate programming (Knuth-style named chunks; see docs/LITERATE.md)
 ./fern -interp examples/literate/fizzbuzz.fern.md   # tangle in memory, then run

@@ -150,7 +150,115 @@ var bodies: string[] = async.with_deadline(250, [
 
 ---
 
-## 6. The awaitable fetch: `fetch.fetch_future`
+## 6. Deterministic simulation: the `Driver` seam and `std/sim`
+
+Everything nondeterministic the combinators do funnels through one seam: the
+`async.Driver` trait (`poll_ready` / `now_ns` / `timer` / `drop_token`). Each
+combinator has an `*_on(drv, …)` sibling — `gather_on` / `race_on` /
+`with_deadline_on` — carrying the loop; the plain forms delegate to it with the
+real driver (whose methods are exactly the `poll` / `monotonic_ns` /
+`wasm_timer_pollable` / `wasm_pollable_drop` builtins).
+
+`std/sim` substitutes a virtual driver (`docs/DST-PLATFORM-BRIEF.md`): a
+virtual clock starting at 0 ns that advances only inside `poll_ready`, tokens
+that encode their ready-at time, and a seeded PRNG breaking readiness ties —
+so a whole fan-out is a pure function of the seed, on every backend
+**including the interpreter** (where fd-backed futures never resolve on the
+real driver). Deadlines become exact virtual-time assertions instead of
+sleeps:
+
+```fern
+import "std/async";
+import "std/sim";
+
+var d: sim.Sim = sim.new(7);
+var fs: async.Future[string][] = [
+    sim.future_at(d, 40000000, "late"),   // ready at 40ms of virtual time
+    sim.future_at(d, 10000000, "early")   // ready at 10ms
+];
+var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+// got == [None, Some("early")], and d.now_ns() == exactly 25000000
+```
+
+`sim.future_at(d, at_ns, v)` resolves to `v` at virtual time `at_ns`;
+`sim.future_chain(d, at_ns, step_ns, n, v)` re-suspends `n` times (the
+`__fetch_drain` shape) before resolving. See
+`examples/tests/sim_driver_test.fern`.
+
+### SimNet — scripted upstreams
+
+`sim.Net` is the sim sibling of `fetch.fetch_future`: register scripted
+endpoints (host/port, optional path — `""` is a host:port wildcard — body,
+first-byte latency, chunking schedule), then fetch them through the
+combinators. The futures honour the real fetch contract: the body on
+success, `""` immediately for an unregistered (dead) upstream, one
+re-suspension per scheduled chunk with the accumulated body resolving at
+the last chunk's virtual time. Registration is value-returning
+(`n = n.serve(...)`); each endpoint carries a shared `hits` counter for
+call assertions.
+
+```fern
+var d: sim.Sim = sim.new(1);
+var n: sim.Net = sim.net(d);
+n = n.serve(1, 80, "/k", "primary", 30000000);          // one chunk at 30ms
+n = n.serve_chunked(2, 80, "/big", "abcdefghij",
+        5000000, 5000000, sim.chunks_of(10, 4));        // [4,4,2] at 5/10/15ms
+var fs: async.Future[string][] = [
+    n.fetch_future(1, 80, "/k"),
+    n.fetch_future(2, 80, "/big"),
+    n.fetch_future(9, 80, "/k")                          // unregistered -> Ready("")
+];
+var got: string[] = async.gather_on(d, fs, "");
+// got == ["primary", "abcdefghij", ""], d.now_ns() == exactly 30000000,
+// n.hits(1, 80, "/k") == 1
+```
+
+See `examples/tests/sim_net_test.fern`.
+
+### Fault injection — seed-driven flaky upstreams
+
+Registered endpoints take injected faults, value-returning like `serve`
+(a fault registration for an unknown endpoint is a no-op; faulted
+fetches still count as hits):
+
+- `n.fault_fail(host, port, path)` — every fetch resolves immediately to
+  `""`, the real fetch's connect/send failure.
+- `n.fault_stall(host, port, path)` — every fetch suspends on a
+  never-ready token and never resolves: `gather_on` fills the slot with
+  `on_incomplete`, `with_deadline_on` drops it with `None` at exactly
+  the virtual deadline.
+- `n.fault_partial(host, port, path, k)` — the half-dead connection:
+  the first `min(k, #chunks)` scheduled chunks arrive at their normal
+  virtual times, then the upstream goes silent and the future never
+  resolves (even `k >= #chunks` withholds the terminating close;
+  `k <= 0` stalls before the first byte).
+- `n.fault_flaky(host, port, path, p_percent)` — probabilistic wrapper
+  over the endpoint's fault mode (defaulting it to fail): every fetch
+  of a flaky endpoint consumes exactly one draw from the sim PRNG, in
+  program order, and the fault fires when the draw lands below
+  `p_percent`.
+
+Because the flaky draws come from the same seeded PRNG as `poll_ready`'s
+tie-breaks, a whole flaky fan-out is a pure function of `sim.new(seed)`
+and the call order — a failure is a seed you replay, not a flake.
+`sim.sweep_seeds(n, prop)` is that workflow in miniature: run
+`prop(seed)` over seeds `1..n` and return the first failing seed (0 if
+all pass), with `Sim.rng_state()` available for lockstep assertions.
+See `examples/tests/sim_fault_test.fern`.
+
+That purity claim is itself property-tested: the harness in
+`internal/e2e/sim_property_test.go` generates random sim programs —
+scripted endpoints with random latencies, chunk schedules, and fault
+modes, driven through random `gather_on` / `race_on` /
+`with_deadline_on` pipelines — and requires interp, native x86-64,
+and wasm to print byte-identical digests (results, winners, `None`
+slots, `now_ns`, `rng_state`, hits). Any backend divergence on a sim
+program is a real bug, never a flake; a failure prints the whole
+program and its generator seed for replay
+(`TestSimProperty` / `TestSimProperty_Regressions` /
+`FuzzSimProperty`).
+
+## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[string]
@@ -165,7 +273,7 @@ network byte order — build it with `fetch.ipv4(a,b,c,d)`.)
 
 ---
 
-## 7. How it works (one paragraph)
+## 8. How it works (one paragraph)
 
 A `Future[T]` is either a ready value or an fd plus a continuation. The
 combinators gather the pending futures' fds, block once in the universal `poll`

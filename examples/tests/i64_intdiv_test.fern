@@ -1,0 +1,53 @@
+import "std/test";
+import "std/i64" as i64m;
+// examples/tests/i64_intdiv_test.fern — pure-Fern coverage of std/i64's
+// is_multiple_of / next_power_of_2 / ceil_div / log2_floor: scalar integer
+// helpers ported from std/i32, exact into the i64 range. next_power_of_2 caps
+// at 2^62 (largest power of two a signed i64 holds) and returns 0 above it;
+// log2_floor counts halvings since i64 has no leading_zeros. The Go-side
+// TestI64Intdiv pins these across all four backends; this is the
+// migration-shaped companion. Scalar-only, so self-host clean.
+
+function test_is_multiple_of(): test.TestOutcome {
+    if (!(12 as i64).is_multiple_of(4 as i64)) { return test.fail("12 % 4"); }
+    if ((13 as i64).is_multiple_of(4 as i64)) { return test.fail("13 % 4"); }
+    if ((5 as i64).is_multiple_of(0 as i64)) { return test.fail("div by 0"); }
+    return test.assert_true(true);
+}
+
+function test_next_power_of_2(): test.TestOutcome {
+    if ((5 as i64).next_power_of_2() != (8 as i64)) { return test.fail("5 -> 8"); }
+    if ((16 as i64).next_power_of_2() != (16 as i64)) { return test.fail("16 -> 16"); }
+    return test.assert_true((1 as i64).next_power_of_2() == (1 as i64));
+}
+
+function test_next_power_of_2_cap(): test.TestOutcome {
+    // 2^62 is the largest representable power; above it returns 0.
+    if ((4611686018427387904 as i64).next_power_of_2() != (4611686018427387904 as i64)) {
+        return test.fail("2^62 unchanged");
+    }
+    return test.assert_true(((4611686018427387904 as i64) + 1).next_power_of_2() == (0 as i64));
+}
+
+function test_ceil_div(): test.TestOutcome {
+    if ((10 as i64).ceil_div(3 as i64) != (4 as i64)) { return test.fail("10/3 -> 4"); }
+    if ((9 as i64).ceil_div(3 as i64) != (3 as i64)) { return test.fail("9/3 -> 3"); }
+    return test.assert_true((7 as i64).ceil_div(0 as i64) == (0 as i64));
+}
+
+function test_log2_floor(): test.TestOutcome {
+    // 2^39 < 10^12 < 2^40, so floor(log2) is 39.
+    if ((1000000000000 as i64).log2_floor() != 39) { return test.fail("10^12 -> 39"); }
+    if ((1 as i64).log2_floor() != 0) { return test.fail("1 -> 0"); }
+    return test.assert_true((0 as i64).log2_floor() == (0 - 1));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i64 intdiv");
+    r = r.it("is_multiple_of",      test_is_multiple_of());
+    r = r.it("next_power_of_2",     test_next_power_of_2());
+    r = r.it("next_power_of_2 cap", test_next_power_of_2_cap());
+    r = r.it("ceil_div",            test_ceil_div());
+    r = r.it("log2_floor",          test_log2_floor());
+    return r.finish();
+}

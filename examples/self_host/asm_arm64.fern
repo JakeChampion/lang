@@ -115,18 +115,18 @@ import "./asm_arm64_ir";
 // register never live across a frame access here) via `sub` first.
 function (s: asmcore.EmitState) frame_ldr(reg: string, off: i32): asmcore.EmitState {
     if (off >= 0 - 256) {
-        return s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+        s = s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n"); return s;
     }
     s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
-    return s.write("    ldr " + reg + ", [x16]\n");
+    s = s.write("    ldr " + reg + ", [x16]\n"); return s;
 }
 
 function (s: asmcore.EmitState) frame_str(reg: string, off: i32): asmcore.EmitState {
     if (off >= 0 - 256) {
-        return s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+        s = s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n"); return s;
     }
     s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
-    return s.write("    str " + reg + ", [x16]\n");
+    s = s.write("    str " + reg + ", [x16]\n"); return s;
 }
 
 
@@ -2259,11 +2259,47 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     match (c.callee) {
         parser.ExprIdent(id) => { name = id.name; },
         parser.ExprFieldAccess(fa) => {
+            // s.p.N() — a fn-valued TUPLE ELEMENT call (numeric field = tuple
+            // index), not a method. A method name is never all-digits, so route
+            // it to the generic closure-value call instead of emit_method_call,
+            // which found no method "N" and returned the -1 sentinel (exit 255).
+            // Reading the element (`var g = s.p.N; g()`) already works; this is
+            // the direct-call sibling.
+            if (util.is_all_digits(fa.field)) {
+                s = emit_expr(c.callee, s);          // push closure box
+                var tla: i32 = c.args.len() - 1;
+                while (tla >= 0) {
+                    s = emit_expr(c.args[tla], s);
+                    tla = tla - 1;
+                }
+                s = s.write("    ldr x9, [sp, #" + util.i32_to_string(c.args.len() * 16) + "]\n");
+                s = s.write("    ldr x2, [x9]\n");
+                s = s.write("    blr x2\n");
+                s = s.write("    add sp, sp, #" + util.i32_to_string((c.args.len() + 1) * 16) + "\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             return emit_method_call(c, fa, s);
         },
         _ => {
-            s = s.write("    // call target not ident\n");
-            s = s.write("    mov x0, #0\n");
+            // Generic closure-VALUE call: any callee expression that
+            // evaluates to a closure box — an array element `arr[i]()`,
+            // a tuple element, a call result — not just a bare
+            // ident / lambda / method. Evaluate the callee to its box
+            // ptr, push args above it, then invoke via the closure
+            // convention (box ptr in x9, fn_addr = box[0]). Same shape
+            // as the ExprLambda IIFE arm above; the previous `mov x0, #0`
+            // stub silently compiled such a call to "return 0".
+            s = emit_expr(c.callee, s); // push closure box
+            var cla: i32 = c.args.len() - 1;
+            while (cla >= 0) {
+                s = emit_expr(c.args[cla], s);
+                cla = cla - 1;
+            }
+            s = s.write("    ldr x9, [sp, #" + util.i32_to_string(c.args.len() * 16) + "]\n"); // box ptr (below args)
+            s = s.write("    ldr x2, [x9]\n");
+            s = s.write("    blr x2\n");
+            s = s.write("    add sp, sp, #" + util.i32_to_string((c.args.len() + 1) * 16) + "\n"); // pop args + box
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         }
@@ -2485,12 +2521,33 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             } else if (b.op == "*") {
                 s = s.write("    mul x0, x0, x1\n");
             } else if (b.op == "/") {
-                s = s.write("    sdiv x0, x0, x1\n");
+                // UNSIGNED operands (u32/u64/usize) divide with udiv, not the
+                // signed sdiv — else a u64 value with bit 63 set (e.g. umax()
+                // = (0 as u64) - (1 as u64)) divides as a negative i64 and
+                // 18446744073709551615 / 10 yields 0 instead of the unsigned
+                // quotient (the `# std/u64 to_string umax` printed "/" =
+                // '0' + (-1 % 10)). Mirrors x86 asm.fern's emit_divmod and the
+                // arm64 IR path's ir_bin_asm (div_u tag 25). The signed path is
+                // unchanged. This only fires when a program routes the AST
+                // backend (over the IR budget) — the IR path already did udiv.
+                if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.left, s))
+                        || asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.right, s))) {
+                    s = s.write("    udiv x0, x0, x1\n");
+                } else {
+                    s = s.write("    sdiv x0, x0, x1\n");
+                }
             } else if (b.op == "%") {
                 // ARM64 has no native modulo. Compute via
                 // remainder = lhs - (lhs/rhs)*rhs.
                 // msub x_d, x_n, x_m, x_a → x_d = x_a - x_n*x_m
-                s = s.write("    sdiv x2, x0, x1\n");
+                // Unsigned operands take udiv (see `/` above); the msub is
+                // sign-agnostic (it recomputes lhs - q*rhs).
+                if (asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.left, s))
+                        || asmcore.is_unsigned_tag(asmcore.infer_expr_type(b.right, s))) {
+                    s = s.write("    udiv x2, x0, x1\n");
+                } else {
+                    s = s.write("    sdiv x2, x0, x1\n");
+                }
                 s = s.write("    msub x0, x2, x1, x0\n");
             } else if (b.op == "&") {
                 s = s.write("    and x0, x0, x1\n");
@@ -3297,7 +3354,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         // StmtDefer is lowered away (parser.lower_defers) before emit; this
         // arm only satisfies exhaustiveness — a survivor (e.g. a defer in a
         // lambda body, which lower_defers doesn't descend into) is flagged.
-        parser.StmtDefer(_) => { return s.write("    // unsupported: StmtDefer survived lowering\n"); },
+        parser.StmtDefer(_) => { s = s.write("    // unsupported: StmtDefer survived lowering\n"); return s; },
         parser.StmtReturn(r) => {
             var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));
             // Perceus move-on-return: returning a bare owned array local
@@ -3638,6 +3695,16 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // method call on it dispatches by runtime shape, not the
             // primitive path. See the x86-64 backend for the rationale.
             if (asmcore.ty_is_array(iter_ty)) { elem_ty = asmcore.ty_unknown(); }
+            // `for b in STR` (iterate a string's BYTES): a string box is
+            // { data_ptr @0, len @8 } with byte elements, NOT the array layout
+            // (len @0, 8-byte elements @ base + (idx+1)*8) the loop below
+            // assumes — reading it as an array walks the header as data (#2822).
+            // The IR path desugars this in lower_string_foreach; the AST path
+            // (which emits the runtime helpers via emit_runtime_fern_fn, e.g.
+            // __fern_str_to_i32's `for b in s`) needs the same string-shaped
+            // length load + byte element load. Bytes bind as i32.
+            var is_str_iter: boolean = asmcore.ty_is_string(iter_ty);
+            if (is_str_iter) { elem_ty = asmcore.ty_i32(); }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + util.i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -3656,17 +3723,28 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             var end_lbl: i32 = s.label_n + 2;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 3 };
             s = s.write(".Lfor_top_" + util.i32_to_string(top_lbl) + ":\n");
-            // Condition.
+            // Condition: idx < len. String len is @8; array len is @0.
             s = s.frame_ldr("x0", arr_off);
-            s = s.write("    ldr x1, [x0]\n");
+            if (is_str_iter) {
+                s = s.write("    ldr x1, [x0, #8]\n");
+            } else {
+                s = s.write("    ldr x1, [x0]\n");
+            }
             s = s.frame_ldr("x2", idx_off);
             s = s.write("    cmp x2, x1\n");
             s = s.write("    b.ge .Lfor_end_" + util.i32_to_string(end_lbl) + "\n");
-            // Bind element.
+            // Bind element. String: byte-load data_ptr[idx] (data_ptr @0);
+            // array: 8-byte element at base + (idx+1)*8 (header offset).
             s = s.frame_ldr("x0", arr_off);
-            s = s.frame_ldr("x1", idx_off);
-            s = s.write("    add x1, x1, #1\n");
-            s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            if (is_str_iter) {
+                s = s.write("    ldr x3, [x0]\n");           // data_ptr @0
+                s = s.frame_ldr("x1", idx_off);
+                s = s.write("    ldrb w0, [x3, x1]\n");      // byte at data[idx] (zero-extends)
+            } else {
+                s = s.frame_ldr("x1", idx_off);
+                s = s.write("    add x1, x1, #1\n");
+                s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            }
             s = s.frame_str("x0", elem_off);
             // Body — break → .Lfor_end; continue → .Lfor_cont.
             s = s.push_loop_labels(".Lfor_end_" + util.i32_to_string(end_lbl), ".Lfor_cont_" + util.i32_to_string(cont_lbl));
@@ -3687,15 +3765,15 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         },
         parser.StmtBreak(_) => {
             var lbl: string = s.top_loop_exit();
-            if (lbl.len() == 0) { return s.write("    // break outside loop\n"); }
-            return s.write("    b " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    // break outside loop\n"); return s; }
+            s = s.write("    b " + lbl + "\n"); return s;
         },
         parser.StmtContinue(_) => {
             var lbl: string = s.top_loop_cont();
-            if (lbl.len() == 0) { return s.write("    // continue outside loop\n"); }
-            return s.write("    b " + lbl + "\n");
+            if (lbl.len() == 0) { s = s.write("    // continue outside loop\n"); return s; }
+            s = s.write("    b " + lbl + "\n"); return s;
         },
-        parser.StmtUnknown(_) => { return s.write("    // unsupported: StmtUnknown\n"); }
+        parser.StmtUnknown(_) => { s = s.write("    // unsupported: StmtUnknown\n"); return s; }
     }
     return s;
 }
@@ -3918,8 +3996,8 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
@@ -3941,7 +4019,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         fi = fi + 1;
     }
     // #4355: admit the replaced-STRING-field arm per type from the
@@ -3950,6 +4028,11 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
+    // #5235: seed the plain-fn-pointer-array field registry as needs so
+    // emit_arm64_struct_drop_one buffer-only-decs those fields (no element walk).
+    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
+    var fpi: i32 = 0;
+    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
     // with emit_module's single-unit IR path (so the load_run / emit_module
     // route also emits them — previously only this multi-unit path did, so a
@@ -3973,6 +4056,19 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             s = s.write("    add x0, sp, #8\n");
             s = s.write("    adrp x1, __fern_argv\n");
             s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+            s = s.write("    str x0, [x1]\n");
+        }
+        // Save envp for env() / subprocess (Linux SysV: envp = sp + 16 +
+        // argc*8), gated on heap like the AST _start and the __fern_env
+        // helper. The multi-unit IR _start missed it just like emit_body's;
+        // without it __fern_envp stays null and env() derefs a null base.
+        if (s.has_need("heap")) {
+            s = s.write("    ldr x0, [sp]\n");            // argc
+            s = s.write("    lsl x0, x0, #3\n");          // argc*8
+            s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
+            s = s.write("    add x0, sp, x0\n");          // envp base
+            s = s.write("    adrp x1, __fern_envp\n");
+            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
             s = s.write("    str x0, [x1]\n");
         }
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -4060,7 +4156,14 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         // call — the frame push above shifts them to [sp+48] / [sp+32] /
         // [sp+16].
         var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
-        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING[] field: deep-freed via __fern_str_arr_free (the
+        // strarrfld-gated x86 sibling arm's transcription). Its per-element
+        // __fern_str_free clobbers x10/x11/x12, so the same reload applies.
+        var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        // A replaced fn (closure) field — the x86 fr_clo arm's transcription
+        // (clofld-gated shallow arr_dec, generic branch below).
+        var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
+        if (fr_str || fr_str_arr || fr_clo || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
@@ -4073,11 +4176,16 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
             s = s.write("    str x1, [sp, #-16]!\n");
-            if (fr_str) {
-                s = s.write("    bl __fn___fern_str_free\n");      // rc-aware string free (data buffer + box)
+            if (fr_str || fr_str_arr) {
+                if (fr_str) {
+                    s = s.write("    bl __fn___fern_str_free\n");  // rc-aware string free (data buffer + box)
+                } else {
+                    s = s.write("    bl __fn___fern_str_arr_free\n");  // deep string[] free (rc-guarded)
+                }
                 s = s.write("    add sp, sp, #16\n");
-                // str_free clobbered x10/x11/x12 — reload new/old/snap from
-                // the stack args (shifted +16 by the stp x29,x30 frame).
+                // str_free / str_arr_free clobbered x10/x11/x12 — reload
+                // new/old/snap from the stack args (shifted +16 by the stp
+                // x29,x30 frame).
                 s = s.write("    ldr x10, [sp, #48]\n");           // new
                 s = s.write("    ldr x11, [sp, #32]\n");           // old
                 s = s.write("    ldr x12, [sp, #16]\n");           // snap
@@ -4127,7 +4235,13 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
         var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
-        var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        // A registered PLAIN-fn-pointer array field (#5235): route to the
+        // buffer-only shallow dec (k_scalar arm) instead of the k_box element
+        // WALK — its elements are raw code addresses (a box walk SIGSEGVs). The
+        // arm64 transcription of the x86 emit_ir_struct_drop_one k_fnptr gate.
+        var k_fnptr: boolean = !k_scalar && irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        var k_box: boolean = !k_scalar && !k_fnptr && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
         // A DIRECT nested-struct field (`inner: Inner`): freed SHALLOW via the
         // same __fern_arr_dec as a scalar-array buffer — one level, like a struct-
         // array element box (arr_dec already frees struct boxes). rc-guarded inside
@@ -4137,14 +4251,27 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         // A `string` field is rc-headered (#4294); reclaimed via the rc-aware
         // __fern_str_free (free rc==1, dec rc>1, skip view/literal rc<0), balanced
         // by the shared-irlower construction alias-inc. Mirrors the x86 k_str arm
-        // (#4297 A2). Fires only for reclaimable, non-escaping struct locals.
-        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
+        // (#4297 A2). GATED on the whole-program read scan ("strfldok:<T>"),
+        // exactly like __field_reclaim_<T>'s string arm above: the construction
+        // retain only fires for STRFLDOK-admitted types, so a non-admitted
+        // type's string fields are uncounted aliases this free would dangle —
+        // the merged-bundle IR self-compile corruption (#3425, x86 twin note).
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
         // A DIRECT enum field (`e: MyEnum`, decl_is_enum): freed SHALLOW via the same
         // __fern_arr_dec as the scalar-array / nested-struct box (arr_dec frees enum
         // boxes too) — one level, the variant payload leaks (deferred deep-drop).
         // Construction alias-incs a non-fresh enum field (shared irlower) so this dec
         // is balanced. Mirrors the x86 emit_ir_struct_drop_one k_enum arm. #4297 A2.
         var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+        // A string[] field: deep-freed via __fern_str_arr_free, gated on the
+        // strarrfld admission ("strfldok:arr:<T>") — the arm64 transcription
+        // of the x86 k_str_arr arm (see its comment for the element-freshness
+        // soundness contract).
+        var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        // An fn-typed (closure) field: shallow-freed via the same rc-guarded
+        // __fern_arr_dec as k_struct / k_enum — the arm64 transcription of the
+        // x86 k_clo arm (clofld-gated, captures leak).
+        var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -4230,8 +4357,20 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_str_free\n");           // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    add sp, sp, #16\n");
-        } else if (k_scalar || k_struct || k_enum) {
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box
+            // str_free clobbers x10 (freelist-head scratch) — reload the box
+            // from the frame-relative stack arg so a LATER field's arm reads
+            // a valid pointer. Before this, a string field ordered BEFORE
+            // another rc field left x10 stale and the next arm freed through
+            // garbage (the .ret reload only covered the RETURN, not the loop).
+            s = s.write("    ldr x10, [sp, #16]\n");
+        } else if (k_str_arr) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k string[] buffer
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_str_arr_free\n");       // deep at rc==1 (elements + buffer); shared -> dec
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbers x10/x11/x12)
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box / closure box / fn-ptr array buffer (shallow, no element walk)
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");
             s = s.write("    add sp, sp, #16\n");
@@ -5053,7 +5192,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        // 8 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
+        // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
         // allocation (mirrors the native arm64 emitAllocRuntime) rather than
         // reserved as a huge `.bss` in the loaded image. Two payoffs: the
         // R+W data segment stays tiny (so the binary can be a position-
@@ -5067,8 +5206,8 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // live set outgrew every arena a 32-bit range can hold — the value
         // plumbing is 64-bit throughout, as arm64-darwin's high heap already
         // exercises). Matches the native arm64 backend's heapBytes
-        // (lockstep). The size (8 GiB = 1 << 33) is built in-asm via
-        // `mov #1; lsl #33` below, not a `ldr =N` literal — the in-process
+        // (lockstep). The size (16 GiB = 1 << 34) is built in-asm via
+        // `mov #1; lsl #34` below, not a `ldr =N` literal — the in-process
         // assembler's literal parser is 32-bit and would sign-extend.
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
@@ -5129,7 +5268,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x9, x0\n");                  // save rounded size
         s = s.write("    mov x0, #1\n");
         s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000 — keep in lockstep with the NATIVE arm64 backend, whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower base no-ops every native rc inc/dec)
-        // length = 8 GiB = 0x200000000 = 1 << 33. Built with mov+lsl, not a
+        // length = 16 GiB = 0x400000000 = 1 << 34. Built with mov+lsl, not a
         // `ldr =N` literal: the in-process assembler's literal parser is
         // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
         // mmap would fail with ENOMEM. Raised from 3.5 GiB when the arm64
@@ -5142,9 +5281,9 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // exercises >32-bit heap pointers through the same value plumbing),
         // and the stage-2 fixpoint + the arm64 e2e matrix gate the change.
         s = s.write("    mov x1, #1\n");
-        s = s.write("    lsl x1, x1, #33\n");             // length = 0x200000000 (8 GiB)
+        s = s.write("    lsl x1, x1, #34\n");             // length = 0x400000000 (16 GiB)
         s = s.write("    mov x2, #3\n");                  // PROT_READ | PROT_WRITE
-        s = s.write("    mov x3, #0x22\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    mov x3, #0x4022\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; see native arm64 heapBytes comment)
         s = s.write("    mov x4, #0\n");
         s = s.write("    sub x4, x4, #1\n");              // x4 = -1 (fd)
         s = s.write("    mov x5, #0\n");                  // offset
@@ -5159,7 +5298,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
         s = s.write("    str x0, [x1]\n");
         s = s.write("    mov x2, #1\n");
-        s = s.write("    lsl x2, x2, #33\n");             // 8 GiB
+        s = s.write("    lsl x2, x2, #34\n");             // 16 GiB
         s = s.write("    add x2, x0, x2\n");              // arena end
         s = s.write("    adrp x3, __fern_heap_end\n");
         s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
@@ -5193,6 +5332,19 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, #137\n");
         s = s.write("    svc #0\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
+
+        // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set on
+        // the IR path (asm_arm64_ir.fern kind_tag 88/89). Aborts with exit 134,
+        // matching the x86-64 backend + docs/ARRAY-BOUNDS.md ("an out-of-bounds
+        // index aborts before producing a value; never returns a garbage
+        // value"). A single shared routine keeps each access to a cmp + a b.hs.
+        s = s.write(".globl __fern_oob_abort\n");
+        s = s.write(".type __fern_oob_abort, %function\n");
+        s = s.write("__fern_oob_abort:\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    mov x0, #134\n");
+        s = s.write("    svc #0\n");
+        s = s.write(".size __fern_oob_abort, .-__fern_oob_abort\n");
 
         // __fern_arr_box(x0 = cap element count) -> x0 = array data
         // pointer. Centralises the array box layout (mirrors the x86-64
@@ -8833,6 +8985,16 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x20, x1\n");           // value
         s = s.write("    ldr x21, [x19]\n");        // len
         s = s.write("    ldur x22, [x19, #-16]\n"); // cap (hidden at -16; rc at -8)
+        // #4873 containment gate — the arm64 twin of the x86 gate: an
+        // rc >= 2 receiver is shared, so take the fresh-box copy path even
+        // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
+        // the in-place fast path.
+        s = s.write("    ldur x2, [x19, #-8]\n");   // rc word
+        s = s.write("    cmp x2, #1\n");
+        s = s.write("    b.eq .Larr_push_rc_ok\n");
+        s = s.write("    tbnz x2, #31, .Larr_push_rc_ok\n");
+        s = s.write("    b .Larr_push_grow\n");     // shared → copy (#4873)
+        s = s.write(".Larr_push_rc_ok:\n");
         s = s.write("    cmp x21, x22\n");
         s = s.write("    b.ge .Larr_push_grow\n");  // len >= cap → grow
         // In place: store value at slot (len+1), bump len.
@@ -8843,7 +9005,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, x19\n");
         s = s.write("    b .Larr_push_ret\n");
         s = s.write(".Larr_push_grow:\n");
-        // newcap = cap == 0 ? 4 : cap * 2.
+        // newcap = cap == 0 ? 4 : cap * 2 — except a SHARED receiver with
+        // spare capacity (len < cap, #4873 un-share copy) keeps the same cap
+        // instead of doubling, halving the copy's arena footprint (the
+        // leak-mode self-compile is arena-bound, #3425). The x86 gate has
+        // the same len < cap keep-cap branch.
+        s = s.write("    mov x2, x22\n");
+        s = s.write("    cmp x21, x22\n");
+        s = s.write("    b.lt .Larr_push_cap\n");
         s = s.write("    cmp x22, #0\n");
         s = s.write("    b.ne .Larr_push_dbl\n");
         s = s.write("    mov x2, #4\n");
@@ -8920,6 +9089,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // x1 = start, x2 = end. Source array layout matches the
     // ExprArray emit: [len: 8, e0: 8, …]. Each element is an
     // 8-byte payload — i32 zero-extended or string-box ptr.
+    // Construction-time bounds check (#5419): two unsigned
+    // compares trap unless 0 <= start <= end <= src len —
+    // without them an oversized `end` walked the copy loop
+    // past the source buffer.
     if (s.has_need("arr_slice")) {
         s = s.write("__fern_arr_slice:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -8929,6 +9102,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x19, x0\n");           // src arr
         s = s.write("    mov x20, x1\n");           // start
         s = s.write("    mov x21, x2\n");           // end
+        s = s.write("    ldr x3, [x19]\n");         // src len
+        s = s.write("    cmp x21, x3\n");
+        s = s.write("    b.hi __fern_oob_abort\n"); // end > src len (unsigned) → abort
+        s = s.write("    cmp x20, x21\n");
+        s = s.write("    b.hi __fern_oob_abort\n"); // start > end (unsigned) → abort
         s = s.write("    sub x22, x21, x20\n");     // new len = end - start
         s = s.write("    mov x0, x22\n");            // cap = new len
         s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
@@ -9184,6 +9362,10 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
+    // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
+    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
+    var fpi: i32 = 0;
+    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
     s = emit_runtime(s, darwin);

@@ -42,6 +42,10 @@ var jsonCoreIRCases = []struct {
 	{"nested", "import \"std/json\";\nfunction main(): i32 { match (json.json_parse(\"{\\\"o\\\": {\\\"n\\\": 42}}\")) { Some(v) => { match (json.json_get_object(v, \"o\")) { Some(o) => { match (json.json_get_i32(o, \"n\")) { Some(n) => { return n; }, None => { return 3; }, } }, None => { return 1; }, } }, None => { return 2; }, } }\n"},
 	// null literal + json_is_null predicate. is_null => 5.
 	{"is-null", "import \"std/json\";\nfunction main(): i32 { match (json.json_parse(\"null\")) { Some(v) => { if (json.json_is_null(v)) { return 5; } return 4; }, None => { return 2; }, } }\n"},
+	// f64 extractor: json_get_f64 routes through std/string's
+	// parse_float receiver method — the cross-module method-reference
+	// shape of #5420 — and must still reach `module: IR`. 2.5e1 = 25.
+	{"get-f64", "import \"std/json\";\nfunction main(): i32 { match (json.json_parse(\"{\\\"x\\\": 2.5e1}\")) { Some(v) => { match (json.json_get_f64(v, \"x\")) { Some(x) => { if (x > 24.999 && x < 25.001) { return 25; } return 1; }, None => { return 2; }, } }, None => { return 3; }, } }\n"},
 }
 
 // TestSelfHostJsonCoreIRX86_64 compiles real `import "std/json"` parse

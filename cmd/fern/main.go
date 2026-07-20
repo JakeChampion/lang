@@ -581,6 +581,7 @@ func main() {
 	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
+	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	native := flag.Bool("native", false, "force the in-process pure-Go assembler+linker (internal/native). Already the DEFAULT for arm64/x86-64 Linux and arm64-darwin, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64, arm64, arm64-android); requires -o.")
 	export := flag.String("export", "", "with -shared: comma-separated function names to export in the .so (default: main). Each must be a defined top-level function; it becomes a dynamic symbol resolvable by the loader.")
@@ -600,6 +601,7 @@ func main() {
 	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
 	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. This is the ONLY command that touches the network — build/check/interp read the store and error when a url dependency hasn't been fetched.")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
+	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
 	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source on stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. A document using `file=PATH` blocks tangles to multiple modules, each printed under a `// ==> path <==` banner. With -o set, writes to disk instead: -o DIR receives one file per `file=` module (subdirs created as needed); a single-`<<*>>` document writes -o FILE. No codegen.")
 	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout (or -o FILE) — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. Add -html for a self-contained, styled HTML page (highlighted code + clickable chunk references). No codegen.")
 	weaveHTML := flag.Bool("html", false, "with -weave, emit a self-contained styled HTML page (embedded CSS, Fern syntax highlighting, and clickable `<<chunk>>` cross-reference links) instead of Markdown.")
@@ -615,6 +617,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
 		fmt.Fprintln(os.Stderr, "       fern -interp FILE.fern | fern -interp -    (read from stdin)")
+		fmt.Fprintln(os.Stderr, "       fern -capabilities FILE.fern               (per-package capability usage report)")
 		fmt.Fprintln(os.Stderr, "       fern -tangle FILE.fern.md                  (literate: emit tangled Fern source)")
 		fmt.Fprintln(os.Stderr, "       fern -weave  FILE.fern.md                  (literate: emit woven Markdown)")
 		fmt.Fprintln(os.Stderr, "       fern -targets                                (list supported targets + capabilities)")
@@ -698,6 +701,18 @@ func main() {
 			path = "-"
 		}
 		if err := runCheckTarget(path); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *doCapabilities {
+		if flag.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "usage: fern -capabilities FILE.fern")
+			os.Exit(2)
+		}
+		if err := runCapabilities(flag.Arg(0), os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -798,7 +813,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, *optimize, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -935,6 +950,11 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	if err != nil {
 		return 1, formatErr(err)
 	}
+	if srcPath != "-" {
+		if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+			return 1, formatErr(err)
+		}
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, formatErr(err)
 	}
@@ -1018,6 +1038,11 @@ func runCheck(srcPath string) error {
 	if err != nil {
 		return formatErr(err)
 	}
+	if srcPath != "-" {
+		if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+			return formatErr(err)
+		}
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return formatErr(err)
 	}
@@ -1037,7 +1062,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -1049,6 +1074,16 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	info, err := checker.Check(prog)
 	if err != nil {
 		return 1, e.format(err)
+	}
+	// Per-package capability grants (E070 — the manifest-boundary
+	// sibling of the target-boundary E066 pass below).
+	if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
+		return 1, e.format(err)
+	}
+	// -O: drop assert() checks AFTER type-checking (an ill-typed assert
+	// still fails a release build) and before monomorph/codegen.
+	if optimize {
+		constfold.ElideAsserts(prog)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, e.format(err)

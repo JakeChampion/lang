@@ -1,0 +1,13 @@
+// @inline / @noinline (#4412 Rec §14) are behavior-neutral: the hints
+// steer the native IR inliner but never change results. Pins that the
+// attributes parse and run identically on every backend (the self-host
+// parser parse-tolerates them).
+@inline
+function double(x: i32): i32 { return x + x; }
+
+@noinline
+function triple(x: i32): i32 { return x + x + x; }
+
+function main(): i32 {
+    return double(9) + triple(8);
+}

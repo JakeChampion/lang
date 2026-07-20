@@ -21,13 +21,18 @@
 // builds the line (or "" when filtered) and is pure/testable; the
 // `emit` method is `eprint(render(...))`.
 
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md. The prelude was removed in
-// Phase 5, so a program now `import "std/log";` explicitly to
-// call `log_info(msg)` / etc.
+// No prelude: a program now `import "std/log";` explicitly to
+// call `log_info(msg)` / etc. (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 // for `(n: i32).to_string()` in the structured `int` field helper.
 import "std/i32";
+// for `json_escape` — the ONE shared JSON string escaper (the JSON-lines
+// mode embeds messages / field keys / field values in JSON string
+// literals). #4388 item 4: std/log used to carry a byte-identical private
+// copy; unused std/json functions are tree-shaken, so log-only programs
+// don't pay for the encoder/parser.
+import "std/json";
 
 pub function log_info(msg: string) {
     eprint("[INFO] " + msg);
@@ -83,60 +88,6 @@ pub function new_json_logger(min_level: i32): Logger {
     return Logger { min_level: min_level, json: true };
 }
 
-// `__log_json_escape(s)` — JSON string escaping: backslash and
-// double-quote are backslash-escaped; newline / carriage-return / tab
-// get their short escapes; every other C0 control (0x00-0x08, 0x0B,
-// 0x0C, 0x0E-0x1F) — forbidden bare in a JSON string — is emitted as
-// `\u00XX`. Without the `\u00XX` arm a `msg`/field value carrying an
-// odd byte produced unparseable JSON-lines exactly when it mattered.
-function __log_json_escape(s: string): string {
-    var n: i32 = s.len();
-    // Two-pass exact-size buffer (#4379): the five named escapes (\ " \n \r \t)
-    // expand to 2 bytes, any other control byte (<32) to a 6-byte \u00XX, and
-    // everything else passes through 1:1. Replaces the O(n²) `out = out + …` that
-    // recopied the growing result each byte on the hot structured-log path.
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        var c: i32 = s[i];
-        if (c == 92 || c == 34 || c == 10 || c == 13 || c == 9) { total = total + 2; }
-        else if (c < 32) { total = total + 6; }
-        else { total = total + 1; }
-        i = i + 1;
-    }
-    var buf: u8[] = __alloc_u8(total);
-    var pos: i32 = 0;
-    i = 0;
-    while (i < n) {
-        var c: i32 = s[i];
-        if (c == 92)      { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 92 as u8);  pos = pos + 2; }   // \\
-        else if (c == 34) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 34 as u8);  pos = pos + 2; }   // \"
-        else if (c == 10) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 110 as u8); pos = pos + 2; }   // \n
-        else if (c == 13) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 114 as u8); pos = pos + 2; }   // \r
-        else if (c == 9)  { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 116 as u8); pos = pos + 2; }   // \t
-        else if (c < 32) {
-            buf = buf.with(pos, 92 as u8);       // '\'
-            buf = buf.with(pos + 1, 117 as u8);  // 'u'
-            buf = buf.with(pos + 2, 48 as u8);   // '0'
-            buf = buf.with(pos + 3, 48 as u8);   // '0'
-            buf = buf.with(pos + 4, __log_hex_lower((c >> 4) & 15) as u8);
-            buf = buf.with(pos + 5, __log_hex_lower(c & 15) as u8);
-            pos = pos + 6;
-        } else {
-            buf = buf.with(pos, s[i] as u8);
-            pos = pos + 1;
-        }
-        i = i + 1;
-    }
-    return string_from_bytes(buf);
-}
-
-// Lowercase hex character byte for a nibble (0-15).
-function __log_hex_lower(d: i32): i32 {
-    if (d < 10) { return 48 + d; }   // '0'..'9'
-    return 87 + d;                    // 10 -> 'a' (97)
-}
-
 // A `LogEntry` is a pending record: a level plus accumulated structured
 // fields, not yet emitted. Build one with `logger.at(level)` (or a
 // level shortcut), attach fields with `.str` / `.int` / `.bool`, then
@@ -173,7 +124,7 @@ pub function (lg: Logger) error_(): LogEntry { return lg.at(level_error()); }
 // JSON mode).
 pub function (e: LogEntry) str(key: string, val: string): LogEntry {
     var t: string = e.text + " " + key + "=" + val;
-    var j: string = e.json + ",\"" + __log_json_escape(key) + "\":\"" + __log_json_escape(val) + "\"";
+    var j: string = e.json + ",\"" + json.json_escape(key) + "\":\"" + json.json_escape(val) + "\"";
     return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 
@@ -181,7 +132,7 @@ pub function (e: LogEntry) str(key: string, val: string): LogEntry {
 // in JSON mode).
 pub function (e: LogEntry) int(key: string, val: i32): LogEntry {
     var t: string = e.text + " " + key + "=" + val.to_string();
-    var j: string = e.json + ",\"" + __log_json_escape(key) + "\":" + val.to_string();
+    var j: string = e.json + ",\"" + json.json_escape(key) + "\":" + val.to_string();
     return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 
@@ -190,7 +141,7 @@ pub function (e: LogEntry) bool(key: string, val: boolean): LogEntry {
     var vs: string = "false";
     if (val) { vs = "true"; }
     var t: string = e.text + " " + key + "=" + vs;
-    var j: string = e.json + ",\"" + __log_json_escape(key) + "\":" + vs;
+    var j: string = e.json + ",\"" + json.json_escape(key) + "\":" + vs;
     return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 
@@ -200,7 +151,7 @@ pub function (e: LogEntry) bool(key: string, val: boolean): LogEntry {
 pub function (e: LogEntry) render(msg: string): string {
     if (e.level < e.min_level) { return ""; }
     if (e.is_json) {
-        return "{\"level\":\"" + level_name(e.level) + "\",\"msg\":\"" + __log_json_escape(msg) + "\"" + e.json + "}\n";
+        return "{\"level\":\"" + level_name(e.level) + "\",\"msg\":\"" + json.json_escape(msg) + "\"" + e.json + "}\n";
     }
     return "[" + level_name(e.level) + "] " + msg + e.text + "\n";
 }

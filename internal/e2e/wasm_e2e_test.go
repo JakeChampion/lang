@@ -2055,7 +2055,7 @@ function main(): i32 {
 	}
 }
 
-// `s.parse_float(): Option[f32]` — accepts integer-only,
+// `s.parse_float(): Option[f64]` — accepts integer-only,
 // integer.fraction, .fraction, and exponent forms. The
 // helper bumps a saturating mantissa accumulator to avoid
 // overflow on very-long inputs while keeping the magnitude
@@ -2066,12 +2066,12 @@ function main(): i32 {
 func TestWASMParseFloat(t *testing.T) {
 	src := `
 import "std/string";
-function near(actual: f32, expected: f32, eps: f32): boolean {
-		var diff: f32 = actual - expected;
+function near(actual: f64, expected: f64, eps: f64): boolean {
+		var diff: f64 = actual - expected;
 		if (diff < 0.0) { diff = 0.0 - diff; }
-		var bound: f32 = expected;
+		var bound: f64 = expected;
 		if (bound < 0.0) { bound = 0.0 - bound; }
-		var rel: f32 = bound * eps;
+		var rel: f64 = bound * eps;
 		if (rel < eps) { rel = eps; }
 		return diff < rel;
 	}
@@ -3874,10 +3874,11 @@ function main(): i32 {
 }
 
 // Closure created inside a loop body captures the iteration's
-// per-iteration `ic` snapshot — each closure value reads its
-// own captured slot, NOT the loop variable's final value. The
-// language's by-value-at-make-time capture semantics is what
-// gives the per-iteration shape.
+// per-iteration `ic` binding — each closure value reads its
+// own captured slot, NOT the loop variable's final value. `ic`
+// is re-DECLARED (never assigned) each iteration, so it is not
+// boxed into a shared cell (#5301 boxes only captured-and-
+// assigned locals) and every closure keeps its own binding.
 func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
 	src := `function main(): i32 {
     var arr: ((i32) => i32)[] = [];
@@ -6752,14 +6753,14 @@ function main(): i32 {
 		var g: f64 = 1.5;
 		if (g.to_string() != "1.5") { return 21; }
 
-		// Round-trip through parse_float for tolerance check.
+		// Round-trip through parse_float (f64 domain) for tolerance check.
 		match ("3.14".parse_float()) {
 			Some(x) => {
 				// x.to_string() should produce something that
-				// parses back to ≈ 3.14 (within f32 epsilon).
+				// parses back to ≈ 3.14.
 				match (x.to_string().parse_float()) {
 					Some(y) => {
-						var diff: f32 = y - 3.14;
+						var diff: f64 = y - 3.14;
 						if (diff < 0.0) { diff = 0.0 - diff; }
 						if (diff > 0.001) { return 30; }
 					},
@@ -17595,5 +17596,38 @@ function main(): i32 {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got exit %d, want 0 (sub-i32 arithmetic wraps to width)", got)
+	}
+}
+
+// TestWASMWideKeyMapDispatch pins the wasmbin closure-target local
+// indexing (#5042 follow-on). core/map's default hash adapters are
+// NO-CAPTURE named functions referenced as function VALUES by the
+// builtin-key dispatchers; that makes them closure targets, which
+// appends an env_ptr param to their wasm type — but closureconv never
+// adds their `__env` IR param (nothing to capture; the reference is in
+// stdlib runtime code), so the env slot sits between the declared
+// params and the body locals and every body-local index must shift by
+// one (bodySlotIdx). The bug was latent while such functions had no
+// body locals; __map_hash_wide's i64 local turned it into a module-wide
+// validation error ("expected i32, found i64") — ANY wasm module
+// importing core/map failed to instantiate. The i64-keyed map here
+// both forces the module to validate and exercises the wide adapter's
+// shifted locals at runtime (wrong indexing would mis-hash and miss).
+func TestWASMWideKeyMapDispatch(t *testing.T) {
+	src := `
+import "core/map";
+function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    var big: i64 = (7 as i64) << (33 as i64);
+    m = m.insert(big, 40);
+    m = m.insert(3 as i64, 2);
+    if (m.get_or(big, 0) != 40) { return 1; }
+    if (m.get_or(3 as i64, 0) != 2) { return 2; }
+    if (m.get_or(9 as i64, 7) != 7) { return 3; }
+    return 0;
+}
+`
+	if code := runWasm(t, src); code != 0 {
+		t.Errorf("wide-key map dispatch: exit = %d, want 0", code)
 	}
 }

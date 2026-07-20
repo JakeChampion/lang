@@ -1,0 +1,65 @@
+import "std/test";
+import "std/array";
+// examples/tests/array_rotate_test.fern — pure-Fern coverage of std/array's
+// structural rotation verbs rotate_left / rotate_right (free + method forms):
+// cyclic shift by n (mod len), wrap when n >= len, negative n rotates the other
+// way, n%len==0 / empty → unchanged. Kept as its own suite so the self-host
+// merged bundle stays under the asm_ir IR budget; uses assert_eq_array /
+// assert_true (not the generic assert_eq[i32]) so it stays clear of the
+// self-host monomorph gap.
+//
+// The i32 cases here are self-host-gated; STRING-element rotation is covered
+// only by the Go-side native differential (TestNativeArrayRotate exercises a
+// string[] rotate on all four native backends) because the self-host compiler
+// miscompiles the generic rotate over pointer-payload (string) elements —
+// returning an empty array — a self-host codegen gap unrelated to the (correct)
+// stdlib body, tracked separately.
+
+function test_left(): test.TestOutcome {
+    return test.assert_eq_array([1, 2, 3, 4, 5].rotate_left(2), [3, 4, 5, 1, 2]);
+}
+
+function test_right(): test.TestOutcome {
+    return test.assert_eq_array([1, 2, 3, 4, 5].rotate_right(2), [4, 5, 1, 2, 3]);
+}
+
+function test_free_fn(): test.TestOutcome {
+    return test.assert_eq_array(array.rotate_left([10, 20, 30], 1), [20, 30, 10]);
+}
+
+function test_wrap(): test.TestOutcome {
+    // n >= len wraps: 7 % 5 == 2.
+    return test.assert_eq_array([1, 2, 3, 4, 5].rotate_left(7), [3, 4, 5, 1, 2]);
+}
+
+function test_zero_shift(): test.TestOutcome {
+    return test.assert_eq_array([1, 2, 3].rotate_left(0), [1, 2, 3]);
+}
+
+function test_full_shift(): test.TestOutcome {
+    // n == len → unchanged.
+    return test.assert_eq_array([1, 2, 3].rotate_left(3), [1, 2, 3]);
+}
+
+function test_negative(): test.TestOutcome {
+    // rotate_left(-1) == rotate_right(1).
+    return test.assert_eq_array([1, 2, 3, 4].rotate_left(0 - 1), [1, 2, 3, 4].rotate_right(1));
+}
+
+function test_empty(): test.TestOutcome {
+    var e: i32[] = [];
+    return test.assert_true(array.rotate_left(e, 3).len() == 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array rotate");
+    r = r.it("rotate_left",   test_left());
+    r = r.it("rotate_right",  test_right());
+    r = r.it("free fn",       test_free_fn());
+    r = r.it("wrap n>=len",   test_wrap());
+    r = r.it("zero shift",    test_zero_shift());
+    r = r.it("full shift",    test_full_shift());
+    r = r.it("negative",      test_negative());
+    r = r.it("empty",         test_empty());
+    return r.finish();
+}

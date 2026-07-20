@@ -1,0 +1,62 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_hyperbolic_test.fern — pure-Fern coverage of
+// std/float.sinh / cosh / tanh: the hyperbolic trig functions, built on the
+// natural exp. Reference values at x=1, odd/even symmetry, the cosh²-sinh²==1
+// identity, and tanh's ±1 saturation. Both f64 and f32. The Go-side
+// TestFloatHyperbolic pins these across interp / x86-64 / arm64 (wasmbin skips
+// libm exp, the same gap exp/log/sin carry); this is the migration-shaped
+// companion. Built on __exp_f64, which lowers on the self-host asm_ir path, so
+// this rides both self-host gates too.
+
+function test_at_zero(): test.TestOutcome {
+    if (!float_near((0.0).sinh(), 0.0)) { return test.fail("sinh 0"); }
+    if (!float_near((0.0).cosh(), 1.0)) { return test.fail("cosh 0"); }
+    return test.assert_eq_f64_near((0.0).tanh(), 0.0, 0.001);
+}
+
+function test_at_one(): test.TestOutcome {
+    if (!float_near((1.0).sinh(), 1.1752011936)) { return test.fail("sinh 1"); }
+    if (!float_near((1.0).cosh(), 1.5430806348)) { return test.fail("cosh 1"); }
+    return test.assert_eq_f64_near((1.0).tanh(), 0.7615941560, 0.001);
+}
+
+function test_symmetry(): test.TestOutcome {
+    // sinh is odd, cosh is even.
+    if (!float_near((0.0 - 1.0).sinh(), 0.0 - 1.1752011936)) { return test.fail("sinh odd"); }
+    return test.assert_eq_f64_near((0.0 - 1.0).cosh(), 1.5430806348, 0.001);
+}
+
+function test_identity(): test.TestOutcome {
+    // cosh² - sinh² == 1 for all x.
+    var c: f64 = (2.0).cosh();
+    var s: f64 = (2.0).sinh();
+    return test.assert_eq_f64_near(c * c - s * s, 1.0, 0.001);
+}
+
+function test_tanh_saturation(): test.TestOutcome {
+    if (!float_near((50.0).tanh(), 1.0)) { return test.fail("tanh +sat"); }
+    return test.assert_eq_f64_near((0.0 - 50.0).tanh(), 0.0 - 1.0, 0.001);
+}
+
+function test_f32(): test.TestOutcome {
+    if (!float_near((1.0 as f32).sinh() as f64, 1.1752011936)) { return test.fail("sinh f32"); }
+    return test.assert_eq_f64_near((1.0 as f32).tanh() as f64, 0.7615941560, 0.001);
+}
+
+function float_near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.001;
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float sinh/cosh/tanh");
+    r = r.it("at zero",          test_at_zero());
+    r = r.it("at one",           test_at_one());
+    r = r.it("symmetry",         test_symmetry());
+    r = r.it("identity",         test_identity());
+    r = r.it("tanh saturation",  test_tanh_saturation());
+    r = r.it("f32",              test_f32());
+    return r.finish();
+}

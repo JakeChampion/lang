@@ -234,3 +234,216 @@ function main(): i32 { return clamp_zero(0 - 5); }`)
 		t.Errorf("expected a wrapper block for the early-return inline:\n%s", p)
 	}
 }
+
+// `@noinline` excludes an otherwise-trivially-inlineable callee: the
+// OpCallDirect survives (#4412 Rec §14).
+func TestInlineHintNeverBlocksInlining(t *testing.T) {
+	p := loweredAndInlined(t, `@noinline
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { return dbl(7); }`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	var sawCall bool
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "dbl" {
+			sawCall = true
+		}
+	}
+	if !sawCall {
+		t.Fatalf("@noinline dbl should NOT have been inlined:\n%s", p)
+	}
+}
+
+// `@inline` lifts the size cap: a callee over inlineSizeLimit ops still
+// substitutes. The body is a long straight-line accumulator chain that
+// comfortably exceeds the cap; without the hint it stays a call.
+func TestInlineHintAlwaysLiftsSizeCap(t *testing.T) {
+	body := "var a: i32 = x;\n"
+	for i := 0; i < 60; i++ {
+		body += "a = a + x;\na = a - 1;\n"
+	}
+	src := "function big(x: i32): i32 {\n" + body + "return a;\n}\n" +
+		"function main(): i32 { return big(3); }"
+
+	// Baseline: over the cap, not inlined.
+	p := loweredAndInlined(t, src)
+	if fn := findFunc(p, "big"); fn != nil && len(fn.Ops) <= inlineSizeLimit {
+		t.Fatalf("test premise broken: big has %d ops, need > %d", len(fn.Ops), inlineSizeLimit)
+	}
+	mustContainOp(t, p, "main", OpCallDirect)
+
+	// Hinted: same body inlines.
+	p2 := loweredAndInlined(t, "@inline\n"+src)
+	main := findFunc(p2, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "big" {
+			t.Fatalf("@inline big should have been inlined despite exceeding the size cap:\n%s", p2)
+		}
+	}
+}
+
+// The loop-depth site policy (#4412 Rec §7): a callee between the flat
+// cap (80) and the loop cap (160) inlines at a call site inside a loop
+// but stays a call at top level — the same candidate, decided per site.
+func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
+	body := "var a: i32 = x;\n"
+	for i := 0; i < 8; i++ {
+		body += "a = a + x;\na = a - 1;\n"
+	}
+	// seed is @noinline so the top-level args are genuine call results
+	// (non-const), keeping those sites off the const-arg boost. mid is
+	// called at TWO top-level sites plus the loop site, so even after the
+	// loop call inlines mid still has two references — it never becomes
+	// single-use, and the loop-depth boost is what this test isolates.
+	src := "@noinline\nfunction seed(k: i32): i32 { return k + 1; }\n" +
+		"function mid(x: i32): i32 {\n" + body + "return a;\n}\n" +
+		"function main(): i32 {\n" +
+		"var base: i32 = seed(9);\n" +
+		"var s: i32 = mid(base);\n" + // top-level call 1: must stay a call
+		"var u: i32 = mid(base + 1);\n" + // top-level call 2: keeps refs >= 2
+		"var i: i32 = 0;\n" +
+		"while (i < 3) { s = s + mid(i); i = i + 1; }\n" + // loop site: inlines
+		"return s + u;\n}"
+	p := loweredAndInlined(t, src)
+	mid := findFunc(p, "mid")
+	if mid == nil {
+		t.Fatal("mid not found")
+	}
+	if n := len(mid.Ops); n <= inlineSizeLimit || n > inlineLoopSizeLimit {
+		t.Fatalf("test premise broken: mid has %d ops, need %d < n <= %d", n, inlineSizeLimit, inlineLoopSizeLimit)
+	}
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	calls := 0
+	depth := 0
+	callDepths := []int{}
+	for _, op := range main.Ops {
+		switch op.Kind {
+		case OpLoop:
+			depth++
+		case OpEnd:
+			// Close whichever scope — for this simple shape only the
+			// loop matters and OpBlock/OpIf nesting inside it keeps
+			// depth >= 1, which is all the assertion needs.
+		}
+		if op.Kind == OpCallDirect && op.Str == "mid" {
+			calls++
+			callDepths = append(callDepths, depth)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("expected the two top-level calls to survive (loop call inlined), found %d calls at depths %v:\n%s", calls, callDepths, p)
+	}
+	for _, d := range callDepths {
+		if d != 0 {
+			t.Fatalf("surviving calls should be the top-level ones, got depth %d:\n%s", d, p)
+		}
+	}
+}
+
+// The const-arg boost (#4412 Rec §7): a callee between the flat cap and
+// the loop cap inlines at a NON-loop site when every argument is a
+// literal — Fold then collapses the substituted body — but stays a call
+// when an argument is non-constant. Same candidate, same top-level
+// depth, decided by argument constness.
+func TestInlineConstArgsBoostsSizeCap(t *testing.T) {
+	body := "var a: i32 = x + y;\n"
+	for i := 0; i < 8; i++ {
+		body += "a = a + x;\na = a - y;\n"
+	}
+	mid := "function mid(x: i32, y: i32): i32 {\n" + body + "return a;\n}\n"
+
+	// Premise: mid is over the flat cap but within the loop cap.
+	probe := loweredAndInlined(t, mid+"function main(): i32 { return mid(2, 3); }")
+	if fn := findFunc(probe, "mid"); fn != nil {
+		if n := len(fn.Ops); n <= inlineSizeLimit || n > inlineLoopSizeLimit {
+			t.Fatalf("test premise broken: mid has %d ops, need %d < n <= %d", n, inlineSizeLimit, inlineLoopSizeLimit)
+		}
+	}
+
+	// mid is called at TWO top-level sites in each program below, so it
+	// never becomes single-use — this isolates the const-arg boost from
+	// the single-use rule.
+	//
+	// All-constant args: both sites inline (const boost).
+	pConst := loweredAndInlined(t, mid+"function main(): i32 { return mid(2, 3) + mid(4, 5); }")
+	if main := findFunc(pConst, "main"); main != nil {
+		for _, op := range main.Ops {
+			if op.Kind == OpCallDirect && op.Str == "mid" {
+				t.Fatalf("all-constant-arg calls should inline over the flat cap:\n%s", pConst)
+			}
+		}
+	}
+
+	// Non-constant args (a param) at both sites: they stay calls (flat
+	// cap, no const boost, and refs == 2 so no single-use boost either).
+	pVar := loweredAndInlined(t, mid+"function main(): i32 { var k: i32 = 3; return mid(2, k + 1) + mid(k, 5); }")
+	if main := findFunc(pVar, "main"); main != nil {
+		calls := 0
+		for _, op := range main.Ops {
+			if op.Kind == OpCallDirect && op.Str == "mid" {
+				calls++
+			}
+		}
+		if calls != 2 {
+			t.Fatalf("non-constant-arg calls of a multi-use callee should stay calls at non-loop sites, found %d:\n%s", calls, pVar)
+		}
+	}
+}
+
+// The single-use rule (#4412 Rec §7): a callee referenced exactly once
+// program-wide inlines at that sole site even when it is over the flat
+// cap, outside any loop, and called with non-constant args — the body
+// moves to the one site and dead-func elimination drops the original,
+// so code size is net-neutral. A second reference removes the guarantee
+// and the same body stays a call.
+func TestInlineSingleUseLiftsSizeCap(t *testing.T) {
+	body := "var a: i32 = x;\n"
+	for i := 0; i < 8; i++ {
+		body += "a = a + x;\na = a - 1;\n"
+	}
+	// seed is @noinline so the arg is a genuine (non-constant) call result.
+	defs := "@noinline\nfunction seed(k: i32): i32 { return k + 1; }\n" +
+		"function big(x: i32): i32 {\n" + body + "return a;\n}\n"
+
+	// Premise: big is over the flat cap but within the loop cap.
+	probe := loweredAndInlined(t, defs+"function main(): i32 { var k: i32 = seed(9); return big(k); }")
+	if fn := findFunc(probe, "big"); fn != nil {
+		if n := len(fn.Ops); n <= inlineSizeLimit || n > inlineLoopSizeLimit {
+			t.Fatalf("test premise broken: big has %d ops, need %d < n <= %d", n, inlineSizeLimit, inlineLoopSizeLimit)
+		}
+	}
+
+	// Single reference, non-const arg, no loop: inlines via the
+	// single-use rule (big becomes dead and is elided).
+	pOne := probe
+	if main := findFunc(pOne, "main"); main != nil {
+		for _, op := range main.Ops {
+			if op.Kind == OpCallDirect && op.Str == "big" {
+				t.Fatalf("a single-use callee should inline over the flat cap:\n%s", pOne)
+			}
+		}
+	}
+
+	// Two references: no single-use guarantee, non-const args, no loop —
+	// both stay calls.
+	pTwo := loweredAndInlined(t, defs+"function main(): i32 { var k: i32 = seed(9); return big(k) + big(k + 1); }")
+	if main := findFunc(pTwo, "main"); main != nil {
+		calls := 0
+		for _, op := range main.Ops {
+			if op.Kind == OpCallDirect && op.Str == "big" {
+				calls++
+			}
+		}
+		if calls != 2 {
+			t.Fatalf("a twice-referenced over-cap callee should stay calls, found %d:\n%s", calls, pTwo)
+		}
+	}
+}

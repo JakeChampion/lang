@@ -108,7 +108,7 @@ function wasm_binop(op: string, a: string, b: string): string {
 // emit_inst lowers one value-defining instruction to a `(local.set …)`.
 // param and phi are handled elsewhere (wasm params / predecessor edges).
 function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
-    if (ins.kind == "const_str") {
+    if (ins.kind_tag == 5) {  // const_str
         // Materialise the literal [len, b0, b1, …] on the heap (one i32 word
         // per element). build_func emits one compact const_str; the backend
         // expands it (so the IR stays small for string-heavy functions).
@@ -124,16 +124,16 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
         }
         return o;
     }
-    if (ins.kind == "const_float") {
+    if (ins.kind_tag == 4) {  // const_float
         return "    (local.set " + util.i32_to_string(ins.result) + " (f64.const " + ins.str + "))\n";
     }
-    if (ins.kind == "const_int" || ins.kind == "const_bool") {
+    if (ins.kind_tag == 1 || ins.kind_tag == 2) {
         return "    (local.set " + util.i32_to_string(ins.result) + " (i32.const " + util.i32_to_string(ins.imm) + "))\n";
     }
-    if (ins.kind == "copy") {
+    if (ins.kind_tag == 7) {  // copy
         return "    (local.set " + util.i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
     }
-    if (ins.kind == "binary") {
+    if (ins.kind_tag == 9) {  // binary
         // Float arithmetic (f64 result) / comparison (f64 operands, i32 result).
         if (isfloat[ins.result] == 1) {
             return "    (local.set " + util.i32_to_string(ins.result) + " (" + wasm_fbinop(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
@@ -143,7 +143,7 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
         }
         return "    (local.set " + util.i32_to_string(ins.result) + " " + wasm_binop(ins.str, loc(ins.args[0]), loc(ins.args[1])) + ")\n";
     }
-    if (ins.kind == "unary") {
+    if (ins.kind_tag == 10) {  // unary
         if (ins.str == "-" && isfloat[ins.args[0]] == 1) {
             return "    (local.set " + util.i32_to_string(ins.result) + " (f64.neg " + loc(ins.args[0]) + "))\n";
         }
@@ -161,7 +161,7 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
         }
         return "    (local.set " + util.i32_to_string(ins.result) + " (i32.eqz " + loc(ins.args[0]) + "))\n";
     }
-    if (ins.kind == "call") {
+    if (ins.kind_tag == 11) {  // call
         var expr: string = "(call $__fn_" + ins.str;
         var i: i32 = 0;
         while (i < ins.args.len()) { expr = expr + " " + loc(ins.args[i]); i = i + 1; }
@@ -172,7 +172,7 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
     // 4-byte i32 word, so the native backends' 8-byte word stride / pointer
     // width collapses to a uniform 4-byte word here (element i lives at
     // base + i*4; imm element widths are ignored — every slot is one i32).
-    if (ins.kind == "alloc") {
+    if (ins.kind_tag == 14) {  // alloc
         // Reserve the result words off __hp, then bump. The word count is imm
         // (compile-time) unless args[0] is present — a runtime size scaled ×4.
         var out: string = "    (local.set " + util.i32_to_string(ins.result) + " (global.get $__hp))\n";
@@ -181,32 +181,32 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
         }
         return out + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + util.i32_to_string(ins.imm * 4) + ")))\n";
     }
-    if (ins.kind == "load_elem") {
+    if (ins.kind_tag == 15) {  // load_elem
         return "    (local.set " + util.i32_to_string(ins.result) + " (i32.load (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2)))))\n";
     }
-    if (ins.kind == "store_elem") {
+    if (ins.kind_tag == 16) {  // store_elem
         // No result — a pure memory store at base + index*4.
         return "    (i32.store (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2))) " + loc(ins.args[2]) + ")\n";
     }
     // Strings (byte arrays in the [len, c0, c1, …] word layout) + I/O, lowered
     // to calls into the runtime helpers emitted by emit_program.
-    if (ins.kind == "concat") {
+    if (ins.kind_tag == 17) {  // concat
         return "    (local.set " + util.i32_to_string(ins.result) + " (call $__fern_ssa_concat " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
     }
-    if (ins.kind == "streq") {
+    if (ins.kind_tag == 18) {  // streq
         return "    (local.set " + util.i32_to_string(ins.result) + " (call $__fern_ssa_streq " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
     }
-    if (ins.kind == "print") {
+    if (ins.kind_tag == 19) {  // print
         // No result — write the string's bytes (plus a trailing newline) to
         // fd imm (1=stdout, 2=stderr).
         return "    (call $__fern_ssa_print " + loc(ins.args[0]) + " (i32.const " + util.i32_to_string(ins.imm) + "))\n";
     }
-    if (ins.kind == "funcaddr") {
+    if (ins.kind_tag == 13) {  // funcaddr
         // A function value is its slot in the function table (wasm has no raw
         // code pointers); slot i holds the closure-callable form of funcs[i].
         return "    (local.set " + util.i32_to_string(ins.result) + " (i32.const " + util.i32_to_string(util.index_of_str(fnnames, ins.str)) + "))\n";
     }
-    if (ins.kind == "call_indirect") {
+    if (ins.kind_tag == 12) {  // call_indirect
         // args[0] is the table slot (a function value); args[1..] the call
         // args, with the closure env passed last. call_indirect takes the args
         // then the table index, typed by the call's arity ($clos<nargs>).
@@ -234,7 +234,7 @@ function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32): string {
     var k: i32 = 0;
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
-        if (ins.kind == "phi") {
+        if (ins.kind_tag == 8) {  // phi
             out = out + "    (local.set " + util.i32_to_string(ins.result) + " " + loc(ins.args[sl]) + ")\n";
         }
         k = k + 1;
@@ -246,15 +246,15 @@ function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32): string {
 // index; `ret` exits the function, `br` / `brif` set $pc and loop back.
 function emit_term(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
     var t: ssa.STerm = blk.term;
-    if (t.kind == "ret") {
+    if (t.kind_tag == 1) {  // const_int
         return "    (return " + loc(t.value) + ")\n";
     }
-    if (t.kind == "br") {
+    if (t.kind_tag == 2) {  // const_bool
         var out: string = emit_phi_moves(f, blk.id, t.target);
         out = out + "    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.target)) + "))\n";
         return out + "    (br $L)\n";
     }
-    if (t.kind == "brif") {
+    if (t.kind_tag == 3) {  // const_i64
         var out2: string = "    (if " + loc(t.cond) + "\n";
         out2 = out2 + "      (then (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.t)) + ")))\n";
         out2 = out2 + "      (else (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.f)) + "))))\n";
@@ -269,7 +269,7 @@ function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32, fnnames: string[], i
     var k: i32 = 0;
     while (k < blk.insts.len()) {
         var ins: ssa.SInst = blk.insts[k];
-        if (ins.kind != "param" && ins.kind != "phi") {
+        if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             out = out + emit_inst(ins, fnnames, isfloat);
         }
         k = k + 1;
@@ -283,7 +283,7 @@ function func_returns_float(f: ssa.SFunc, isfloat: i32[]): boolean {
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
         var t: ssa.STerm = f.blocks[bi].term;
-        if (t.kind == "ret" && isfloat[t.value] == 1) { return true; }
+        if (t.kind_tag == 1 && isfloat[t.value] == 1) { return true; }
         bi = bi + 1;
     }
     return false;
@@ -362,17 +362,17 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
 // kind. param / phi are structural (handled outside emit_inst) and count
 // as supported.
 function inst_supported(ins: ssa.SInst): boolean {
-    var kind: string = ins.kind;
+    var kind: i32 = ins.kind_tag;
     // f64_bits / f64_from_bits reinterprets produce / consume a 64-bit i64
     // pattern, which doesn't fit wasm32's i32 value model — fall back to the
     // AST wasm emitter for programs that use them.
-    if (kind == "unary") { return ins.str != "f64_bits" && ins.str != "f64_from_bits"; }
-    return kind == "const_int" || kind == "const_bool" || kind == "binary"
-        || kind == "call" || kind == "param" || kind == "copy"
-        || kind == "phi" || kind == "alloc" || kind == "load_elem"
-        || kind == "store_elem" || kind == "concat" || kind == "streq"
-        || kind == "print" || kind == "funcaddr" || kind == "call_indirect"
-        || kind == "const_float" || kind == "const_str";
+    if (kind == 10) { return ins.str != "f64_bits" && ins.str != "f64_from_bits"; }   // unary
+    return kind == 1 || kind == 2 || kind == 9                       // const_int / const_bool / binary
+        || kind == 11 || kind == 6 || kind == 7                       // call / param / copy
+        || kind == 8 || kind == 14 || kind == 15                      // phi / alloc / load_elem
+        || kind == 16 || kind == 17 || kind == 18                     // store_elem / concat / streq
+        || kind == 19 || kind == 13 || kind == 12                     // print / funcaddr / call_indirect
+        || kind == 4 || kind == 5;                                    // const_float / const_str
 }
 
 // supported reports whether every instruction in every function is in the
@@ -399,7 +399,7 @@ pub function supported(funcs: ssa.SFunc[]): boolean {
 
 // uses_kind reports whether any instruction in any function has the given
 // kind — used to emit a runtime helper (and its imports) only when needed.
-function uses_kind(funcs: ssa.SFunc[], kind: string): boolean {
+function uses_kind(funcs: ssa.SFunc[], kind_tag: i32): boolean {
     var i: i32 = 0;
     while (i < funcs.len()) {
         var b: i32 = 0;
@@ -407,7 +407,7 @@ function uses_kind(funcs: ssa.SFunc[], kind: string): boolean {
             var blk: ssa.SBlock = funcs[i].blocks[b];
             var k: i32 = 0;
             while (k < blk.insts.len()) {
-                if (blk.insts[k].kind == kind) { return true; }
+                if (blk.insts[k].kind_tag == kind_tag) { return true; }
                 k = k + 1;
             }
             b = b + 1;
@@ -492,7 +492,7 @@ function max_indirect_arity(funcs: ssa.SFunc[]): i32 {
             var blk: ssa.SBlock = funcs[i].blocks[b];
             var k: i32 = 0;
             while (k < blk.insts.len()) {
-                if (blk.insts[k].kind == "call_indirect") {
+                if (blk.insts[k].kind_tag == 12) {  // call_indirect
                     var n: i32 = blk.insts[k].args.len() - 1;
                     if (n > m) { m = n; }
                 }
@@ -516,7 +516,7 @@ function is_funcaddr_target(funcs: ssa.SFunc[], name: string): boolean {
             var blk: ssa.SBlock = funcs[i].blocks[b];
             var k: i32 = 0;
             while (k < blk.insts.len()) {
-                if (blk.insts[k].kind == "funcaddr" && blk.insts[k].str == name) { return true; }
+                if (blk.insts[k].kind_tag == 13 && blk.insts[k].str == name) { return true; }
                 k = k + 1;
             }
             b = b + 1;
@@ -553,7 +553,7 @@ function clos_wrapper(f: ssa.SFunc): string {
 pub function emit_program(funcs: ssa.SFunc[]): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-    var has_print: boolean = uses_kind(funcs, "print");
+    var has_print: boolean = uses_kind(funcs, 19);
     if (has_print) {
         out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
     }
@@ -568,7 +568,7 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
     var fnnames: string[] = [];
     var ni: i32 = 0;
     while (ni < funcs.len()) { fnnames = fnnames.append(funcs[ni].name); ni = ni + 1; }
-    var has_clos: boolean = uses_kind(funcs, "funcaddr") || uses_kind(funcs, "call_indirect");
+    var has_clos: boolean = uses_kind(funcs, 13) || uses_kind(funcs, 12);
     if (has_clos) {
         var maxa: i32 = max_indirect_arity(funcs);
         var a: i32 = 0;
@@ -599,8 +599,8 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
             wi = wi + 1;
         }
     }
-    if (uses_kind(funcs, "concat")) { out = out + concat_helper(); }
-    if (uses_kind(funcs, "streq")) { out = out + streq_helper(); }
+    if (uses_kind(funcs, 17)) { out = out + concat_helper(); }
+    if (uses_kind(funcs, 18)) { out = out + streq_helper(); }
     if (has_print) { out = out + print_helper(); }
     var chunks: string[] = [];
     var i: i32 = 0;

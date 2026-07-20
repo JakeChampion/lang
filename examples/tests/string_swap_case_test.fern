@@ -1,0 +1,52 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_swap_case_test.fern — pure-Fern coverage of
+// std/string.swap_case: toggle the case of every ASCII letter (A-Z <-> a-z),
+// passing digits / punctuation / non-ASCII through unchanged (Python's
+// str.swapcase, ASCII-only). Covers mixed case, all-upper / all-lower,
+// non-letters, empty, and the involution property. Kept as its own suite so the
+// self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
+// The Go-side TestStringSwapCase pins these across all four backends; this is
+// the migration-shaped (pure-Fern, std/test-driven) companion.
+
+function test_mixed(): test.TestOutcome {
+    return test.assert_true("Hello World".swap_case() == "hELLO wORLD");
+}
+
+function test_all_lower(): test.TestOutcome {
+    return test.assert_true("abc".swap_case() == "ABC");
+}
+
+function test_all_upper(): test.TestOutcome {
+    return test.assert_true("ABC".swap_case() == "abc");
+}
+
+function test_non_letters(): test.TestOutcome {
+    // Digits and punctuation pass through unchanged.
+    return test.assert_true("123!@#".swap_case() == "123!@#");
+}
+
+function test_empty(): test.TestOutcome {
+    return test.assert_true("".swap_case() == "");
+}
+
+function test_mixed_with_digits(): test.TestOutcome {
+    return test.assert_true("MixedCase123".swap_case() == "mIXEDcASE123");
+}
+
+function test_involution(): test.TestOutcome {
+    // swap_case is its own inverse.
+    return test.assert_true("Hello, World!".swap_case().swap_case() == "Hello, World!");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string swap_case");
+    r = r.it("mixed",             test_mixed());
+    r = r.it("all lower",         test_all_lower());
+    r = r.it("all upper",         test_all_upper());
+    r = r.it("non letters",       test_non_letters());
+    r = r.it("empty",             test_empty());
+    r = r.it("mixed with digits", test_mixed_with_digits());
+    r = r.it("involution",        test_involution());
+    return r.finish();
+}

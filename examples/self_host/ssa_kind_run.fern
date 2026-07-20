@@ -1,0 +1,86 @@
+// examples/self_host/ssa_kind_run.fern — round-trip driver for the SSA
+// integer kind registry (ssa.fern's kind_id / kind_name for SInst and
+// term_id / term_name for STerm, issue #4394 lever 2 / #5351).
+//
+// It walks BOTH registries (ids 1..kind_count() / 1..term_count()) and
+// asserts the id<->name bijection — kind_id(kind_name(id)) == id and
+// kind_name(id) is never the "invalid" sentinel — so a kind added to one
+// direction but not the other (or a duplicate id) fails here rather than
+// silently misdispatching a backend once the int tag is wired. It also
+// pins both sentinel contracts: unknown SInst kind -> 0 / id 0 or
+// out-of-range -> "invalid", and the STerm none sentinel (term_id("") == 0,
+// term_name(0) == "" — t_none's empty-string kind maps to tag 0).
+//
+// The companion Go test (internal/e2eselfhost/self_host_ssa_kind_test.go)
+// asserts the exact stdout and an exit code of 0 (zero failures), pinning
+// the registry end-to-end through the self-host -> native pipeline.
+
+import "./ssa";
+import "./util";
+
+function main(): i32 {
+    var n: i32 = ssa.kind_count();
+
+    // 1. Full-table SInst bijection sweep.
+    var failures: i32 = 0;
+    var ok: i32 = 0;
+    var id: i32 = 1;
+    while (id <= n) {
+        var name: string = ssa.kind_name(id);
+        var back: i32 = ssa.kind_id(name);
+        if (name == "invalid" || back != id) {
+            failures = failures + 1;
+        } else {
+            ok = ok + 1;
+        }
+        id = id + 1;
+    }
+
+    var out: string = "";
+    out = out + "kind_count=" + util.i32_to_string(n) + "\n";
+    out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
+    out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
+
+    // 2. SInst invalid contract: unknown kind -> 0, and 0 / out-of-range id
+    //    -> the "invalid" sentinel.
+    out = out + "unknown_id=" + util.i32_to_string(ssa.kind_id("not_an_ssa_kind")) + "\n";
+    out = out + "id0=" + ssa.kind_name(0) + "\n";
+    out = out + "oob=" + ssa.kind_name(n + 1) + "\n";
+
+    // 3. Spot-check stable ids (locks the actual numbers into the golden, so
+    //    a reorder that still bijects is visible).
+    out = out + "const_int=" + util.i32_to_string(ssa.kind_id("const_int")) + "\n";
+    out = out + "binary=" + util.i32_to_string(ssa.kind_id("binary")) + "\n";
+    out = out + "phi=" + util.i32_to_string(ssa.kind_id("phi")) + "\n";
+    out = out + "store_elem=" + util.i32_to_string(ssa.kind_id("store_elem")) + "\n";
+    out = out + "write_file=" + util.i32_to_string(ssa.kind_id("write_file")) + "\n";
+
+    // 4. Full-table STerm bijection sweep + the none sentinel.
+    var tn: i32 = ssa.term_count();
+    var tfailures: i32 = 0;
+    var tok: i32 = 0;
+    var tid: i32 = 1;
+    while (tid <= tn) {
+        var tname: string = ssa.term_name(tid);
+        var tback: i32 = ssa.term_id(tname);
+        if (tname == "" || tback != tid) {
+            tfailures = tfailures + 1;
+        } else {
+            tok = tok + 1;
+        }
+        tid = tid + 1;
+    }
+    out = out + "term_count=" + util.i32_to_string(tn) + "\n";
+    out = out + "term_bijection_ok=" + util.i32_to_string(tok) + "\n";
+    out = out + "term_bijection_failures=" + util.i32_to_string(tfailures) + "\n";
+    out = out + "term_none_id=" + util.i32_to_string(ssa.term_id("")) + "\n";
+    var tnone: string = ssa.term_name(0);
+    out = out + "term_none_name_len=" + util.i32_to_string(tnone.len()) + "\n";
+    out = out + "ret=" + util.i32_to_string(ssa.term_id("ret")) + "\n";
+    out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
+
+    // Every line above carries its own trailing "\n": emit with `write`.
+    write(out);
+
+    return failures + tfailures;
+}

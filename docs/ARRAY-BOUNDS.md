@@ -36,6 +36,24 @@ both a negative index and `index >= len`.
 All four agree on the observable contract: an out-of-bounds index
 aborts before producing a value.
 
+## Slice construction
+
+Constructing a slice — `a[lo:hi]` — is checked the same way
+(#5419): the program aborts unless `0 <= lo <= hi <= len(a)`.
+`lo == hi == len` is legal (an empty slice at the boundary), and
+the half-open forms check only the bound that is present (`a[lo:]`
+requires `lo <= len`, `a[:hi]` requires `hi <= len`). Without the
+construction check an oversized `hi` built a view extending past
+the source; the access-time check compares against the slice's
+*own* length, so every element of that view — including the bytes
+past the source — was readable. Backends abort exactly as for an
+index: natives exit 134 (the IR routes construction through the
+`__slice_range(lo, hi, len)` helper), wasm traps, the interpreter
+reports `slice [lo:hi] out of range for length N` and exits
+non-zero. The self-host backends check inside their copying
+helpers (`__fern_arr_slice` / `$__fern_substr`) and the inline
+`str_slice` view emit, branching to the shared `__fern_oob_abort`.
+
 ## Cost
 
 Every array / slice element access carries one length load + compare +

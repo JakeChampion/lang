@@ -62,6 +62,24 @@ var reuseDifferentialCases = []struct {
 	// going forward. Array-field and nested-struct-field donors.
 	{"own-param-donor-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2] + u; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 32, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-array-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { var u: i32 = d.id + d.items[0]; var c = H { id: 5, items: [7, 8, 9] }; var s: i32 = c.id + c.items[0] + c.items[2] + u; if (s != 32) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Family 2h widened (struct_fields_reusable_param): Map / leak-safe tuple /
+	// leak-safe Option fields are admitted on the own-param families — all three
+	// are leak-only boxes (released nowhere), so the reuse arm's release walk
+	// skips them and no donor-freshness proof is needed (enum / string stay
+	// excluded: their release proof reads a bind literal a param doesn't have).
+	// Map field values: both a bare ident and a map-returning CALL fire.
+	// The call-valued shape once crashed on this path (reuse on or off) and
+	// was excluded; that bug has been fixed upstream, so the -call case
+	// below pins it as a firing reuse shape.
+	{"own-param-donor-map-field", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); var c = C { id: 10, m: mm }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-map-field-call", `struct C { id: i32, m: Map[i32, i32] } function make_map(): Map[i32, i32] { var mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); return mm; } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var c = C { id: 10, m: make_map() }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-tuple-field", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var u: i32 = d.id + d.t.0; var c = T2 { id: 10, t: (7, 8) }; return c.id + c.t.1 + u; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 22, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-tuple-field-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var u: i32 = d.id + d.t.0; var c = T2 { id: 10, t: (7, 8) }; var s: i32 = c.id + c.t.1 + u; if (s != 22) { return 99; } return __rc_underflow(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"own-param-donor-opt-field", `struct O1 { id: i32, o: Option[i32] } function f(own d: O1): i32 { var u: i32 = d.id; match (d.o) { Some(v) => { u = u + v; }, None => {} } var c = O1 { id: 10, o: Some(9) }; var r: i32 = c.id + u; match (c.o) { Some(v) => { r = r + v; }, None => {} } return r; } function main(): i32 { return f(O1 { id: 3, o: Some(2) }); }`, 24, "call __fn___fern_alloc_reuse"},
+	// Own-param SELF-OVERWRITE with a CARRIED tuple field: `c = T2 { ...d, id: 10 }`
+	// moves d's tuple pointer with the reused box (leak-only, no per-field balance).
+	{"own-param-funcupdate-tuple-carried", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var c = T2 { ...d, id: 10 }; return c.id + c.t.0 + c.t.1; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 13, "call __fn___fern_alloc_reuse"},
+	{"own-param-funcupdate-tuple-carried-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { var c = T2 { ...d, id: 10 }; var s: i32 = c.id + c.t.0 + c.t.1; if (s != 13) { return 99; } return __rc_underflow(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0, "call __fn___fern_alloc_reuse"},
 	{"own-param-donor-nested-detector", `struct Inner { a: i32, b: i32 } struct Outer { id: i32, inner: Inner } function bump(own d: Outer): i32 { var u: i32 = d.id + d.inner.a; var c = Outer { id: 5, inner: Inner { a: 7, b: 8 } }; var s: i32 = c.id + c.inner.a + c.inner.b + u; if (s != 23) { return 99; } return __rc_underflow(); } function main(): i32 { return bump(Outer { id: 1, inner: Inner { a: 2, b: 3 } }); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 1g — OWN-PARAM base in the SELF-OVERWRITE family (#4356 slice 12):
 	// `var c = T { ...own_d, f: v }` functional-update of an owned param reuses
@@ -133,6 +151,17 @@ var reuseDifferentialCases = []struct {
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).
 	{"enum-donor", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; return t + y.p + y.q; }`, 37, "call __fn___fern_alloc_reuse"},
 	{"enum-donor-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; var s = t + y.p + y.q; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// Enum-donor recipient WIDENED to the cross field-kind set (the reuse-audit
+	// follow-through): a recipient with an ENUM field (fresh variant-ctor value;
+	// released at exit via the k_enum drop arm) or a leak-only TUPLE field now
+	// reuses a consumed scalar-enum donor's box. The donor's old slots are all
+	// scalars, so the emitter's no-release field writes stay sound; the fresh
+	// values are sole-owned (no alias-inc). Exit codes cross-checked against
+	// native -interp (18 / 24).
+	{"enum-donor-enum-field-recipient", `enum St { On(i32), Off } enum D2 { P(i32, i32), Q } struct M { tag: i32, st: St } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = M { tag: 2, st: On(9) }; var r: i32 = 0; match (y.st) { On(v) => { r = v + y.tag + u; }, Off => { r = 0; } } return r; }`, 18, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-enum-field-recipient-detector", `enum St { On(i32), Off } enum D2 { P(i32, i32), Q } struct M { tag: i32, st: St } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = M { tag: 2, st: On(9) }; var r: i32 = 0; match (y.st) { On(v) => { r = v + y.tag + u; }, Off => { r = 0; } } if (r != 18) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-tuple-field-recipient", `enum D2 { P(i32, i32), Q } struct T { tag: i32, t: (i32, i32) } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = T { tag: 2, t: (7, 8) }; return y.tag + y.t.0 + y.t.1 + u; }`, 24, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-tuple-field-recipient-detector", `enum D2 { P(i32, i32), Q } struct T { tag: i32, t: (i32, i32) } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = T { tag: 2, t: (7, 8) }; var s: i32 = y.tag + y.t.0 + y.t.1 + u; if (s != 24) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 5 — enum->enum cross-local reuse (emit_enum_cross_reuse).
 	{"enum-cross", `enum E { A(i32[]), B(i32[]) } function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; } function main(): i32 { return f(); }`, 12, "call __fn___fern_alloc_reuse"},
 	{"enum-cross-detector", `enum E { A(i32[]), B(i32[]) } function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 12) { return 99; } return __rc_underflow(); } function main(): i32 { return f(); }`, 0, "call __fn___fern_alloc_reuse"},
@@ -141,6 +170,50 @@ var reuseDifferentialCases = []struct {
 	{"inarm-scalar", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, 9, "call __fn___fern_alloc_reuse"},
 	{"inarm-array-move", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } return r; } function main(): i32 { return go(); }`, 64, "call __fn___fern_alloc_reuse"},
 	{"inarm-array-replace-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } if (r != 18) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// string[] fields (#4356 Delta B, rc-element arrays): admitted to the
+	// cross / self-overwrite families with element-fresh array-literal values
+	// gated on BOTH sides (strarr_lit_all_elems_fresh in donor_enum_fields_fresh
+	// / cross_recipient_fields_fresh / the override walk); the reuse arm
+	// deep-frees the superseded field via __fern_str_arr_free and the
+	// self-overwrite fresh arm rc-incs carried copies. Exit codes cross-checked
+	// against native -interp (6 / 4 / 9); detectors prove no over-release.
+	{"strarr-field-cross", `struct P { tags: string[], n: i32 } function main(): i32 { var a: P = P { tags: ["x", "y"], n: 1 }; var s1: i32 = a.tags.len() + a.n; var b: P = P { tags: ["z"], n: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.tags.len() + b.n; }`, 6, "call __fn___fern_alloc_reuse"},
+	{"strarr-field-self-overwrite", `struct P { tags: string[], n: i32 } function main(): i32 { var d: P = P { tags: ["x", "y"], n: 1 }; var c: P = P { ...d, tags: ["z", "w", "v"] }; if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n; }`, 4, "call __fn___fern_alloc_reuse"},
+	{"strarr-field-carried-copy", `struct P { tags: string[], n: i32 } function main(): i32 { var d: P = P { tags: ["x", "y"], n: 1 }; var c: P = P { ...d, n: 5 }; if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + c.tags[0].len() + c.tags[1].len(); }`, 9, "call __fn___fern_alloc_reuse"},
+	{"strarr-field-churn-detector", `struct P { tags: string[], n: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: P = P { tags: ["x", "y"], n: i }; var c: P = P { ...d, tags: ["z"] }; if (c.tags.len() + c.n != 1 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	// fn (closure) fields (#4356 Delta B, native's FuncType kind): admitted to
+	// the cross / self-overwrite / enum-donor families. The coarse "fn"
+	// spelling reads as enum-like, so the freshness walks test fn BEFORE their
+	// enum arm (fn_field_value_is_fresh: a lambda literal or its lifted
+	// __mkclo$ spelling) and the enum-like release arm's shallow rc-guarded
+	// dec IS the k_clo env-box release. A donor whose own closure field is
+	// CALLED stays conservatively excluded by the general escape walk (a
+	// method-shaped receiver use) — same as every other field kind. Exit
+	// codes cross-checked against native -interp (17 / 21 / 15 / 11).
+	{"fn-field-cross", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var a: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var s1: i32 = a.id + 4; var b: H = H { f: function (x: i32): i32 { return x * 2; }, id: 2 }; return s1 + b.f(5) + b.id; }`, 17, "call __fn___fern_alloc_reuse"},
+	{"fn-field-self-overwrite", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var d: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var c: H = H { ...d, f: function (x: i32): i32 { return x * 4; } }; if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id; }`, 21, "call __fn___fern_alloc_reuse"},
+	{"fn-field-carried-copy", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var d: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var c: H = H { ...d, id: 7 }; if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id; }`, 15, "call __fn___fern_alloc_reuse"},
+	{"fn-field-churn-detector", `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: H = H { f: function (x: i32): i32 { return x + 1; }, id: i }; var c: H = H { ...d, f: function (x: i32): i32 { return x + 2; } }; if (c.f(10) + c.id != 12 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-fn-field-recipient", `enum D2 { P(i32, i32), Q } struct M { tag: i32, g: (i32) => i32 } function main(): i32 { var x: D2 = P(3, 4); var u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } var y = M { tag: 2, g: function (q: i32): i32 { return q + 1; } }; return y.g(1) + y.tag + u; }`, 11, "call __fn___fern_alloc_reuse"},
+	// struct[] / enum[] box-element-array fields (#4356 Delta B, the last
+	// rc-element-array kind): admitted with element-fresh array-literal
+	// values on both sides (boxarr_lit_all_elems_fresh) and released
+	// per-element via __fern_arrarr_free; struct[] restricted to
+	// scalar-field element types (nothing under the box to leak). Exit
+	// codes cross-checked against native -interp (15 / 0 / 13 / 17 / 16).
+	{"boxarr-struct-cross", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var a: W = W { items: [In { k: 1, n: 2 }, In { k: 3, n: 4 }], id: 1 }; var s1: i32 = a.items.len() + a.items[1].k + a.id; var b: W = W { items: [In { k: 5, n: 6 }], id: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.items.len() + b.items[0].n + b.id; }`, 15, "call __fn___fern_alloc_reuse"},
+	{"boxarr-struct-churn-detector", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var a: W = W { items: [In { k: i, n: 2 }, In { k: 3, n: 4 }], id: i }; var t: i32 = a.items.len() + a.items[0].k + a.id; var b: W = W { items: [In { k: 5, n: i }], id: i + 1 }; if (t != 2 + i + i) { bad = 1; } if (b.items.len() + b.items[0].n + b.id != 2 + i + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(1000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"boxarr-enum-cross", `enum St { On(i32), Off } struct W { sts: St[], id: i32 } function main(): i32 { var a: W = W { sts: [On(3), Off], id: 1 }; var s1: i32 = a.sts.len() + a.id; var b: W = W { sts: [On(7)], id: 2 }; var s2: i32 = b.sts.len() + b.id; match (b.sts[0]) { On(v) => { s2 = s2 + v; }, Off => {} } if (__rc_underflow() != 0) { return 99; } return s1 + s2; }`, 13, "call __fn___fern_alloc_reuse"},
+	{"boxarr-self-overwrite", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var d: W = W { items: [In { k: 1, n: 2 }], id: 6 }; var c: W = W { ...d, items: [In { k: 7, n: 8 }, In { k: 9, n: 10 }] }; if (__rc_underflow() != 0) { return 99; } return c.items.len() + c.items[1].k + c.id; }`, 17, "call __fn___fern_alloc_reuse"},
+	{"boxarr-carried-copy", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var d: W = W { items: [In { k: 1, n: 2 }, In { k: 3, n: 4 }], id: 6 }; var c: W = W { ...d, id: 9 }; if (__rc_underflow() != 0) { return 99; } return c.items.len() + c.items[0].k + c.items[1].n + c.id; }`, 16, "call __fn___fern_alloc_reuse"},
+	// MIXED-field interaction shapes (the seams between the fn / string[] /
+	// string / enum / nested-struct admissions): one struct carrying several
+	// release-armed kinds at once, under cross reuse and a churn-scale
+	// self-overwrite. Exit codes cross-checked against native -interp
+	// (19 / 0 / 118); the detectors prove no arm double-fires.
+	{"mixed-fn-strarr-str-cross", `struct W { f: (i32) => i32, tags: string[], name: string, id: i32 } function main(): i32 { var a: W = W { f: function (x: i32): i32 { return x + 1; }, tags: ["p", "q"], name: "aa", id: 1 }; var s1: i32 = a.id + a.tags.len() + a.name.len(); var b: W = W { f: function (x: i32): i32 { return x * 2; }, tags: ["r"], name: "bbb", id: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.f(4) + b.tags.len() + b.name.len() + b.id; }`, 19, "call __fn___fern_alloc_reuse"},
+	{"mixed-selfoverwrite-churn-detector", `struct W { f: (i32) => i32, tags: string[], name: string, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: W = W { f: function (x: i32): i32 { return x + 1; }, tags: ["p", "q"], name: "aa", id: i }; var c: W = W { ...d, f: function (x: i32): i32 { return x + 2; }, tags: ["z"] }; if (c.f(10) + c.tags.len() + c.name.len() + c.id != 15 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(1000000); if (v != 0) { return 90; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"mixed-enum-fn-cross", `enum St { On(i32), Off } struct W { f: (i32) => i32, st: St, id: i32 } function main(): i32 { var a: W = W { f: function (x: i32): i32 { return x + 1; }, st: On(7), id: 1 }; var s1: i32 = a.id; match (a.st) { On(v) => { s1 = s1 + v; }, Off => {} } var b: W = W { f: function (x: i32): i32 { return x * 2; }, st: Off, id: 2 }; var s2: i32 = b.f(4) + b.id; match (b.st) { On(v) => { s2 = s2 + v; }, Off => { s2 = s2 + 100; } } if (__rc_underflow() != 0) { return 99; } return s1 + s2; }`, 118, "call __fn___fern_alloc_reuse"},
 	// ENUMRE — the in-place enum reassign upgrade (emit_enum_inplace_reassign),
 	// gated with the layer; reuse-off falls back to emit_enum_reclaim_store's
 	// free+alloc. No distinct call symbol, so no witness string — the asm
@@ -221,6 +294,58 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 			}
 			if gotOff != tc.want {
 				t.Errorf("%s: reuse-off exited %d, want %d", tc.name, gotOff, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostStrarrReuseExclusionX86_64 pins the string[] AND fn reuse
+// admissions' NEGATIVE space: an ALIASED value (a bare local ident as a donor
+// field / a self-overwrite override) fails the freshness gate
+// (strarr_lit_all_elems_fresh / fn_field_value_is_fresh), so no reuse fires —
+// the emitted asm carries no __fern_alloc_reuse call — and the alias stays
+// usable after the second construction (values cross-checked against native
+// -interp: 10 / 4 / 25 / 18 / 8 / 12), with the rc-underflow detector clean.
+func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"aliased-donor-field", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k", "m"]; var a: P = P { tags: xs, n: 1 }; var s1: i32 = a.tags.len() + a.n; var b: P = P { tags: ["z"], n: 2 }; var live: i32 = xs.len() + xs[0].len() + xs[1].len(); if (__rc_underflow() != 0) { return 99; } return s1 + b.tags.len() + b.n + live; }`, 10},
+		{"aliased-override", `struct P { tags: string[], n: i32 } function main(): i32 { var xs: string[] = ["k"]; var d: P = P { tags: ["x"], n: 1 }; var c: P = P { ...d, tags: xs, n: 2 }; var live: i32 = xs[0].len(); if (__rc_underflow() != 0) { return 99; } return c.tags.len() + c.n + live; }`, 4},
+		{"aliased-fn-donor-field", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var a: H = H { f: g, id: 1 }; var s1: i32 = a.f(5) + a.id; var b: H = H { f: function (x: i32): i32 { return x + 1; }, id: 2 }; var live: i32 = g(3); if (__rc_underflow() != 0) { return 99; } return s1 + b.f(5) + b.id + live; }`, 25},
+		{"aliased-fn-override", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var d: H = H { f: function (x: i32): i32 { return x + 1; }, id: 1 }; var c: H = H { ...d, f: g, id: 2 }; var live: i32 = g(3); if (__rc_underflow() != 0) { return 99; } return c.f(5) + c.id + live; }`, 18},
+		{"aliased-boxarr-donor-field", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { var xs: In[] = [In { k: 1, n: 2 }]; var a: W = W { items: xs, id: 1 }; var s1: i32 = a.items.len() + a.id; var b: W = W { items: [In { k: 5, n: 6 }], id: 2 }; var live: i32 = xs[0].k + xs[0].n; if (__rc_underflow() != 0) { return 99; } return s1 + b.items.len() + b.id + live; }`, 8},
+		{"rcfield-element-type-excluded", `struct In2 { xs: i32[], k: i32 } struct W { items: In2[], id: i32 } function main(): i32 { var a: W = W { items: [In2 { xs: [1, 2], k: 3 }], id: 1 }; var s1: i32 = a.items.len() + a.items[0].k + a.id; var b: W = W { items: [In2 { xs: [4], k: 5 }], id: 2 }; if (__rc_underflow() != 0) { return 99; } return s1 + b.items.len() + b.items[0].xs[0] + b.id; }`, 12},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if strings.Contains(string(asm), "call __fn___fern_alloc_reuse") {
+				t.Errorf("%s: asm contains an alloc_reuse call — the aliased string[] value was wrongly admitted to reuse", tc.name)
+			}
+			bin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(bin)
+			} else {
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s exited %d, want %d (99 = over-release)", tc.name, code, tc.want)
 			}
 		})
 	}

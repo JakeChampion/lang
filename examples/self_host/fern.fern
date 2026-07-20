@@ -324,7 +324,7 @@ function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
                 var k: i32 = 0;
                 while (k < blk.insts.len()) {
                     var ins: ssa.SInst = blk.insts[k];
-                    if (ins.kind == "call" || ins.kind == "funcaddr") {
+                    if (ins.kind_tag == 11 || ins.kind_tag == 13) {   // call / funcaddr
                         if (!util.has_str(known, ins.str) && !util.has_str(unknown, ins.str)) {
                             unknown = unknown.append(ins.str);
                         }
@@ -536,9 +536,7 @@ function main(): i32 {
         // result becomes the process exit code (VInt → its value,
         // VBool → 1/0), matching interp_run.fern. A non-i32/bool
         // result exits 254.
-        // Lower `defer` the same way the emit path does (module_with_
-        // builtins) so the interpreter and the backends agree.
-        var result: interp.Value = interp.eval_module(parser.lower_defers_module(merged));
+        var result: interp.Value = interp.eval_module(merged);
         match (result) {
             interp.VInt(iv) => { return iv.v; },
             interp.VBool(bv) => {

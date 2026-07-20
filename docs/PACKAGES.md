@@ -43,12 +43,23 @@ lib = "lib.fern"      # entry module for `import "<name>"` (default)
 helper = { path = "../helper" }                    # local directory
 webkit = { url = "https://example.com/webkit.tar.gz",
            hash = "sha256:<64 hex of the archive bytes>" }
+kv = { path = "../kv", capabilities = ["net"] }    # capability grant
 ```
 
 The parser (`internal/manifest`) is a strict TOML subset — sections,
 quoted strings, inline tables — and rejects anything else with a
 pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
 `helper = "1.2"` errors (versions are MAJOR.MINOR.PATCH).
+
+An optional `capabilities = ["net", …]` on any dependency form grants
+the dependency the listed v1 capabilities (`net`, `fs`, `env`,
+`subprocess`, `time`, `random` — an unknown name is a manifest error).
+When the key is present, the checker enforces it by call-graph
+reachability (E070); without the key, reaches print as warnings for
+now. Grants attenuate: a governed dependency may grant its own
+dependencies at most the capabilities it holds itself — an amplifying
+grant is a load-time manifest error. See
+docs/PACKAGE-CAPABILITIES-BRIEF.md.
 
 ## Hash-addressed dependencies + `fern -fetch` (slice 2)
 
@@ -225,6 +236,21 @@ version absent from the index is a precise error, never a silent
 round-up. Example: root wants `foo >= 1.1.0` and `bar >= 1.0.0`, but
 `foo@1.1.0` requires `bar >= 2.0.0`, so the lock pins `bar = 2.0.0`.
 
+MVS's minimum-only constraint language cannot express "not 1.9, it's
+broken" — deliberately (an upper bound documents a bug instead of fixing
+it). The escape hatch is Go's: a top-level **`[exclude]`** table banning
+specific versions, applied **only from the manifest `fern -resolve` runs
+on** (a dependency's `[exclude]` is ignored, preserving determinism):
+
+```toml
+[exclude]
+bar = ["1.9.0", "1.9.1"]   # a demand for 1.9.0/1.9.1 rounds up to the
+                           # next non-excluded indexed version
+```
+
+Excluding every version at or above a demand is a precise error;
+excluding a version nothing demands is a no-op.
+
 The build reads only `fern.lock` — never the index or the network (the
 no-build-time-network constraint). A versioned dep whose lock is missing
 errors pointing at `fern -resolve`; a locked url version absent from the
@@ -247,8 +273,8 @@ subset.
 | `[workspace]` + `workspace = true` deps | ✅ | ✅ |
 | vendored mode (`vendor/`) | ✅ | ✅ |
 | versioned deps via `fern.lock` (`path` source) | ✅ | ✅ |
-| `url`+hash deps + content-addressed store | ✅ | ❌ blocked (see below) |
-| versioned deps whose lock source is a `url` | ✅ | ❌ blocked (see below) |
+| `url`+hash deps + content-addressed store | ✅ | ✅ read-only (see below) |
+| versioned deps whose lock source is a `url` | ✅ | ✅ read-only (see below) |
 | CLI commands `-fetch` / `-vendor` / `-add` / `-check` / `-resolve` | ✅ | n/a — the self-host build is a *compiler driver*, not the `fern` CLI |
 
 The self-hosted loader (`examples/self_host/modloader.fern` +
@@ -259,12 +285,15 @@ takes precedence), and versioned deps pinned in `fern.lock` to a `path`
 source. All need no network or cache lookup.
 
 The **store-backed** forms — `url` deps, and versioned deps whose lock
-source is a `url` — are *blocked*: they live in the per-machine
-content-addressed store (`$FERN_CACHE_DIR|<user-cache>/fern/pkgs/<hex>/`),
-and the self-host runtime has `read_file`/`read_dir`/`stat`/`args()` but
-**no `getenv`/home-dir access**, so it cannot compute the store path.
-Closing that gap needs a new runtime builtin (a `getenv`/cache-dir
-intrinsic), not a loader change (tracked in #4907).
+source is a `url` — resolve since #4949: the loader computes the store
+path (`$FERN_CACHE_DIR/pkgs/<hex>/`, else `<user-cache>/fern/pkgs/<hex>/`
+via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
+`env` runtime builtin and reads the unpacked package from it —
+`modloader.load_from_store`, mirroring native `pkgcache.Root()`/`Dir()`.
+**Read-only**: populating and sha256-verifying the store stays a native
+`fern -fetch` responsibility (the no-build-time-network constraint), so
+the self-host loader trusts an already-populated store exactly as the
+native loader does at build time.
 
 The self-host wiring is **additive** throughout — consulted only when a
 `fern.toml` is actually present — so the compiler's own manifest-less

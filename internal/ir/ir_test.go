@@ -1374,11 +1374,11 @@ func TestLowerCallIndirectCarriesSig(t *testing.T) {
 		if op.Kind != OpCallIndirect {
 			continue
 		}
-		if op.Sig == nil {
+		if op.Sig() == nil {
 			t.Fatalf("OpCallIndirect.Sig is nil:\n%s", prog)
 		}
-		if len(op.Sig.Params) != 2 {
-			t.Errorf("Sig.Params = %d, want 2", len(op.Sig.Params))
+		if len(op.Sig().Params) != 2 {
+			t.Errorf("Sig.Params = %d, want 2", len(op.Sig().Params))
 		}
 		return
 	}

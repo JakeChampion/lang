@@ -118,11 +118,14 @@ type NeverType struct{}
 // FloatType represents an IEEE-754 binary float. Width is 32 or
 // 64; the non-polymorphic zero value is f32 (the parser spells
 // `f32` as `FloatType{Width:0, Spelling:"f32"}`, so Width=0 must
-// keep meaning f32 there). Both widths are wired through every
-// backend. An unsettled float literal carries Polymorphic=true,
-// for which NormalWidth defaults to f64 — see NormalWidth.
+// keep meaning f32 there). `float` is the width-unqualified
+// alias for f64 (#5363) — the parser spells it
+// `FloatType{Width:64, Spelling:"float"}`. Both widths are wired
+// through every backend. An unsettled float literal carries
+// Polymorphic=true, for which NormalWidth defaults to f64 — see
+// NormalWidth.
 //
-// Spelling matches NumberType.Spelling — captures the keyword
+// Spelling matches NumberType.Spelling — captures the type name
 // the parser saw (`"float"`, `"f32"`, ...) so the formatter can
 // preserve it on round-trip.
 type FloatType struct {
@@ -1124,6 +1127,25 @@ var RcReuseEnabled = true
 // so test subprocesses and the CLI can toggle it without a fork.
 var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 
+// LeakCheckEnabled gates the native leak detector (#5362 slice 1): a
+// compile-time build mode that counts every __fern_alloc (count +
+// 16-rounded bytes) and every __fern_free (count + identically rounded
+// bytes) in BSS quads and prints one summary line to stderr at process
+// exit — both the `_start` epilogue and the `exit()` builtin's
+// __fern_exit:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = alloc_bytes − free_bytes. Both sides count the SAME
+// (size+15)&-16 rounding, so a block's alloc and eventual free always
+// cancel exactly and live_bytes is exact, not approximate.
+// __fern_alloc_reuse's in-place path counts as NEITHER an alloc nor a
+// free (see the emitter comments). x86-64 + arm64; wasm ignores the
+// flag. With the flag OFF the emitted asm is byte-identical to a build
+// without the feature. Settable via FERN_LEAKCHECK=1 (the
+// RcReuseDropGuided precedent) so the CLI can toggle it without a fork.
+var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
+
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside
 // RcFreeEnabled). Instead of recycling a freed array buffer, the
@@ -1462,8 +1484,10 @@ type FloatLit struct {
 	P     Position
 	Value float64
 	// Width is set by the checker once a concrete float type is
-	// known (`var x: f64 = 1.5` → 64). 0 means "default f32" for
-	// backwards compatibility.
+	// known (`var x: f32 = 1.5` → 32). 0 means the literal stayed
+	// unsettled; every consumer (interp, IR lowering) defaults it
+	// to f64, the language's primary float — see
+	// FloatType.NormalWidth.
 	Width int
 }
 type Ident struct {
@@ -2030,6 +2054,11 @@ type If struct {
 	Cond Expr
 	Then Stmt
 	Else Stmt // may be nil
+	// IsAssert marks an `assert(cond[, msg])` desugar (parseAssert), so the
+	// `-O` elision pass can drop the whole check (mirrors Loop.IsTodo's
+	// marker precedent). Asserts must be side-effect-free — elision removes
+	// the condition evaluation along with the check.
+	IsAssert bool
 }
 
 // IfLet is `if let <Variant>(b1, b2, …) = <expr> { … }
@@ -2314,11 +2343,19 @@ type Var struct {
 // validates Init is a tuple of arity len(Names) and registers a
 // synthetic local under TempName so the IR can keep the tuple
 // pointer in a slot for the per-name field loads.
+//
+// Struct destructure `let Point { x, y } = expr;` reuses the same node
+// with Fields non-nil (parallel to Names): Names[i] binds the struct
+// field Fields[i] instead of tuple element i. StructName is the named
+// struct type written in the pattern (checked against Init's type). For
+// the tuple form Fields is nil and StructName is empty.
 type Destructure struct {
-	P        Position
-	Names    []string
-	Init     Expr
-	TempName string // checker-stamped: name of the synthesised tuple-holding local.
+	P          Position
+	Names      []string
+	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
+	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
+	Init       Expr
+	TempName   string // checker-stamped: name of the synthesised tuple/struct-holding local.
 }
 type ExprStmt struct {
 	P    Position
@@ -2334,6 +2371,13 @@ type Match struct {
 	P    Position
 	Tag  Expr
 	Arms []*MatchArm
+	// StructMatch is the scrutinee's struct type name when this is a
+	// match on a struct value (arms are struct patterns `S { x, y }`,
+	// which bind fields irrefutably). Empty for enum / tuple / literal
+	// matches. Stamped by the checker (checkStructMatch) so the IR and
+	// interpreter lower the arms as struct field-binds rather than
+	// enum-variant matches.
+	StructMatch string
 }
 
 // MatchArm is one pattern → body pair. The Bindings are the
@@ -2383,6 +2427,14 @@ type MatchArm struct {
 	NamedFields bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	// RangeHi, when non-nil, marks a range pattern `lo..hi => …` /
+	// `lo..=hi => …` on a scalar scrutinee: Literal holds the low bound,
+	// RangeHi the high bound, and RangeInclusive distinguishes `..=`
+	// (inclusive hi) from `..` (exclusive hi). Lowered to the compound
+	// bound test `scr >= lo && scr <op> hi` on the same literal-match
+	// path as `==` arms.
+	RangeHi        Expr
+	RangeInclusive bool
 	// TupleElems is a tuple pattern `(p0, p1, …) => …` on a tuple-typed
 	// scrutinee — one element per scrutinee tuple element (arity checked
 	// by the checker). Nil for non-tuple patterns; mutually exclusive
@@ -2411,6 +2463,9 @@ type MatchExpr struct {
 	// IsFloat is set by the checker when the unified arm type is
 	// `f32` so the wasm backend picks `block (result f32)`.
 	IsFloat bool
+	// StructMatch mirrors Match.StructMatch: the scrutinee struct type
+	// name when the arms are struct patterns `S { x, y }`. Empty otherwise.
+	StructMatch string
 }
 
 // MatchExprArm is the expression-form arm. Body is an Expr; all
@@ -2425,6 +2480,10 @@ type MatchExprArm struct {
 	NamedFields   bool // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
+	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see
+	// MatchArm.RangeHi. Literal holds the low bound.
+	RangeHi        Expr
+	RangeInclusive bool
 	// TupleElems is a tuple pattern on a tuple-typed scrutinee — see
 	// MatchArm.TupleElems. BindingTypes runs parallel to it.
 	TupleElems []TuplePatElem
@@ -2500,6 +2559,16 @@ type Param struct {
 	// parameter — the parser rejects that.
 	Default Expr
 }
+
+// InlineHint is a source-level inlining directive on a function decl
+// (`@inline` / `@noinline` — #4412 Rec §14).
+type InlineHint int
+
+const (
+	InlineHintNone   InlineHint = iota // no attribute — heuristic decides
+	InlineHintAlways                   // @inline — lift the size cap
+	InlineHintNever                    // @noinline — never a candidate
+)
 
 type FuncDecl struct {
 	P    Position
@@ -2657,6 +2726,12 @@ type FuncDecl struct {
 	// Default false; set by the parser for `async function`. See
 	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 	Async bool
+	// InlineHint carries a source-level `@inline` / `@noinline`
+	// attribute (#4412 Rec §14): Always lifts the IR inliner's size
+	// cap for this function (shape-safety exclusions still apply);
+	// Never excludes it from inlining entirely. None (the zero
+	// value) leaves the heuristic in charge.
+	InlineHint InlineHint
 	// IsSynthesisedHandlerMain marks the auto-`main()` the
 	// checker emits for handler-shaped programs (a top-level
 	// `handle(req: HttpRequest): HttpResponse` with no
@@ -3099,6 +3174,17 @@ type Program struct {
 	// won't re-register `core/map`'s helpers when modload already
 	// pulled the module in (directly or transitively).
 	LoadedStdlibPaths map[string]bool
+	// CapGrants records the capability grants declared in the loaded
+	// manifests (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2), keyed by
+	// the dependency package's resolved directory: for every dependency
+	// entry carrying a `capabilities` key, the granted v1 capabilities
+	// (sorted; the union when several manifests grant the same package).
+	// A key mapping to an empty slice means `capabilities = []` (nothing
+	// granted); a package directory absent from the map is ungoverned —
+	// cmd/fern's enforcement warns instead of erroring for it
+	// (warn-and-allow). modload populates this during loading; nil when
+	// no manifest grants anything.
+	CapGrants map[string][]string
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
 	// codegen) ignore this field; the formatter walks it alongside

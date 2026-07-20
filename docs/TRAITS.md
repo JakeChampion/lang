@@ -520,7 +520,15 @@ Seven traits are derivable today (`deriveKind`, `synthesizeDerives`):
 Each composes through the same trait on every field/payload, so a type is
 `@derive`-able as soon as its fields are — and a generic type derives a
 *parametric* impl (`@derive(Hash) struct Box[T]` → `impl[T: Hash] Hash for
-Box[T]`). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
+Box[T]`). For the field-wise-comparing kinds (`Eq`/`Ord`/`Hash`) that
+requirement is enforced up front (#5392): a field (or variant payload)
+type with no impl, no derive of its own, and no covering method set draws
+one positioned E021 at the deriving decl (`cannot @derive(Ord) for Foo:
+field x of type i32 does not implement Ord — add \`impl Ord for i32\``)
+and the broken method is not synthesised. Both checkers enforce it — the
+native pre-check is `preCheckDeriveFields` (checker.go), the self-host's
+is `e021_derive_field_diags` (checker.fern, reading the `derives` list
+the parser stamps on each StructDecl). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
 `Json` in `std/json` (it returns canonical JSON text and reuses the
 `JsonValue` encoder's string escaper). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/
 `Json` are mirrored in the self-hosted compiler's `synth_*`; `Default` is

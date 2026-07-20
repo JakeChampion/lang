@@ -645,46 +645,42 @@ function is_resolvable_value(name: string, s: Scope): boolean {
 // FuncSigs builtins and the self-host emitter's dispatched names.
 // Over-inclusion is safe (it only suppresses E001 for that name), so the
 // list errs toward completeness.
+function builtin_function_names(): string[] {
+    return [
+        // I/O + process + environment
+        "print", "write", "eprint", "print_int", "eprint_int", "putchar",
+        "exit", "args", "arg_at", "args_count", "env", "subprocess",
+        // stdin / readers
+        "stdin", "stdout", "stderr", "read_line", "read_int", "read_all_stdin",
+        "open_reader", "open_writer", "open_appender",
+        // filesystem
+        "read_file", "write_file", "read_dir", "remove_dir_all", "remove_file",
+        "stat", "temp_dir",
+        // clocks + randomness + sleep + reactor readiness
+        "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
+        "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
+        "wasm_pollable_drop", "wasm_block", "wasm_poll",
+        // maps + string builder + bytes + the free-function `len(a)` form.
+        // (`len` is a self-host emitter builtin — the self-host accepts both
+        // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and
+        // reports E001 on `len(a)`, so this is a deliberate leniency vs Go,
+        // like the `bool`/`boolean` one; not differentially tested.)
+        "map_new", "map_new_i32", "strbuf_append", "strbuf_reset",
+        "strbuf_take", "string_from_bytes", "chr", "len",
+        // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
+        // front-end builtin (like map_new); get/set are method calls, not
+        // bare names, so only the constructor needs the E001 suppression.
+        "cell_new",
+        // float / int bit reinterprets
+        "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
+        // networking
+        "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close",
+        "udp_send", "tcp_connect", "tcp_pollable"
+    ];
+}
+
 function is_builtin_function(name: string): boolean {
-    // I/O + process + environment
-    if (name == "print" || name == "write" || name == "eprint"
-        || name == "print_int" || name == "eprint_int" || name == "putchar"
-        || name == "exit" || name == "args" || name == "arg_at"
-        || name == "args_count" || name == "env" || name == "subprocess") { return true; }
-    // stdin / readers
-    if (name == "stdin" || name == "stdout" || name == "stderr"
-        || name == "read_line" || name == "read_int" || name == "read_all_stdin"
-        || name == "open_reader" || name == "open_writer" || name == "open_appender") { return true; }
-    // filesystem
-    if (name == "read_file" || name == "write_file" || name == "read_dir"
-        || name == "remove_dir_all" || name == "remove_file" || name == "stat"
-        || name == "temp_dir") { return true; }
-    // clocks + randomness + sleep + reactor readiness
-    if (name == "now_unix_ms" || name == "now_ns" || name == "monotonic_ns"
-        || name == "sleep_ms" || name == "random_bytes" || name == "random_i32"
-        || name == "poll" || name == "timer_fd" || name == "wasm_timer_pollable"
-        || name == "wasm_pollable_drop" || name == "wasm_block"
-        || name == "wasm_poll") { return true; }
-    // maps + string builder + bytes + the free-function `len(a)` form.
-    // (`len` is a self-host emitter builtin — the self-host accepts both
-    // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and
-    // reports E001 on `len(a)`, so this is a deliberate leniency vs Go,
-    // like the `bool`/`boolean` one; not differentially tested.)
-    if (name == "map_new" || name == "map_new_i32"
-        || name == "strbuf_append" || name == "strbuf_reset" || name == "strbuf_take"
-        || name == "string_from_bytes" || name == "chr" || name == "len") { return true; }
-    // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
-    // front-end builtin (like map_new); get/set are method calls, not bare
-    // names, so only the constructor needs the E001 suppression here.
-    if (name == "cell_new") { return true; }
-    // float / int bit reinterprets
-    if (name == "f64_bits" || name == "f64_from_bits"
-        || name == "f32_bits" || name == "f32_from_bits") { return true; }
-    // networking
-    if (name == "tcp_listen" || name == "tcp_accept" || name == "tcp_recv"
-        || name == "tcp_send" || name == "tcp_close" || name == "udp_send"
-        || name == "tcp_connect" || name == "tcp_pollable") { return true; }
-    return false;
+    return util.index_of_str(builtin_function_names(), name) >= 0;
 }
 
 // is_resolvable_callee reports whether a bare-identifier CALL target
@@ -949,10 +945,21 @@ function field_index(ssig: StructSig, name: string): i32 {
 // false-positived E038 when the payload was passed to a typed function,
 // and E003 on assignment to it.) A struct-union member `type U = A | B` is
 // a genuine user struct with no `__ev` marker, so its binding is the whole
-// struct — `t_struct(name)`, matching the Go checker. A variant whose
-// struct sig is unknown falls back to the membership name too.
+// struct — `t_struct(name)`, matching the Go checker.
+//
+// A built-in payload variant (`Some` / `Ok` / `Err` and the payload
+// `JsonValue` variants) has NO struct sig at all: its inner type isn't
+// recoverable here because a built-in generic enum resolves name-only
+// (`Option[i32]` → the bare union `Option`, dropping the i32 — see
+// type_from_ref_su). Binding such a payload as `t_struct("Some")` mis-typed
+// it as the variant WRAPPER, which spuriously tripped E003 on a downstream
+// `x = <payload>` (e.g. `match (n.checked_mul(b)) { Some(v) => { r = v; } }`
+// where `r` is i32) — #5205. With the payload type unknowable, bind it as
+// unknown so those walks skip it, matching the Go checker's practical
+// outcome (no spurious diagnostic).
 function variant_binding_type(s: Scope, type_name: string): Type {
     var ss: StructSig = s.lookup_struct(type_name);
+    if (ss.name.len() == 0) { return t_unknown("built-in variant payload `" + type_name + "`"); }
     var i: i32 = 0;
     while (i < ss.field_names.len()) {
         if (ss.field_names[i] == "__ev") { return ss.field_types[i]; }
@@ -968,6 +975,7 @@ function variant_binding_type(s: Scope, type_name: string): Type {
 // variant_binding_type (which is the idx==0 case).
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
     var ss: StructSig = s.lookup_struct(type_name);
+    if (ss.name.len() == 0) { return t_unknown("built-in variant payload `" + type_name + "`"); }
     var want: string = "__ev";
     if (idx > 0) { want = "__ev" + util.i32_to_string(idx); }
     var i: i32 = 0;
@@ -2567,6 +2575,18 @@ function type_label(t: Type): string {
         TypeUnknown(_) => { return "unknown"; },
     }
     return "unknown";
+}
+
+// e042_ret_label renders a known-primitive declared return type with the
+// native checker's ast spelling: bool prints "boolean" there (TS-heritage
+// keyword), everything else matches type_label. Callers guard with
+// is_primitive_type, so no other variant reaches the fallthrough.
+function e042_ret_label(t: Type): string {
+    match (t) {
+        TypeBool(_) => { return "boolean"; },
+        _ => { return type_label(t); }
+    }
+    return type_label(t);
 }
 
 // append_diags concatenates two diagnostic lists.
@@ -4733,7 +4753,22 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var tgt: Type = type_from_name(u.op[3:u.op.len()]);
                 var cot: Type = check_expr(u.operand, s);
                 if (is_primitive_type(tgt) && is_primitive_type(cot)) {
-                    if (!as_cast_allowed(cot, tgt)) {
+                    // E069 (#5053): reinterpreting a 32-bit-only value (i32 /
+                    // u32) as `string` via `as` truncates a pointer — the high
+                    // 32 bits were lost when the value became i32, so this
+                    // recovers a corrupt pointer once the heap exceeds 4 GiB
+                    // (arm64-darwin). A `usize` source is pointer-width and
+                    // stays allowed — but `usize` types to `unknown` here (not
+                    // a primitive), so it never reaches this arm: the guard is
+                    // zero-false-positive over the primitives the self-host
+                    // knows. Only the `string` target is modelled (an array /
+                    // struct target is not is_primitive_type here), matching the
+                    // sound-subset conservatism of E033/E042 above; the Go
+                    // checker carries the full array/struct-target rule.
+                    if (type_eq(tgt, t_string()) && (type_eq(cot, t_i32()) || type_eq(cot, t_u32()))) {
+                        out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
+                    }
+                    else if (!as_cast_allowed(cot, tgt)) {
                         out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
                     }
                 }
@@ -4762,6 +4797,31 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var trt: Type = check_expr(u.operand, s);
                 if (is_primitive_type(trt)) {
                     out = out.append(dg_at("E042", "`?` operator requires an Option or Result value, got " + type_label(trt), u.line, u.col));
+                }
+                // E042 return-shape (#4363 item 1): `?` on a KNOWN
+                // Option/Result operand additionally requires the
+                // surrounding function to return the same builtin enum.
+                // Sound subset of the Go rule: only fires when the
+                // declared return type resolved to a KNOWN primitive —
+                // never a possible Option/Result — so an unknown / union
+                // / struct / undeclared return is left to the Go checker
+                // and every legal `?` (whose return types to the matching
+                // name-only union) is untouched. Mismatched-enum returns
+                // (`?` on Option in a Result-returning fn) are also left
+                // to the Go checker: the name-only union can't render the
+                // return's generic args the way the native message does.
+                else {
+                    match (trt) {
+                        TypeUnion(tu) => {
+                            if (tu.name == "Option" && is_primitive_type(s.ret_type)) {
+                                out = out.append(dg_at("E042", "`?` on Option requires the surrounding function to return Option[_], got " + e042_ret_label(s.ret_type), u.line, u.col));
+                            }
+                            else if (tu.name == "Result" && is_primitive_type(s.ret_type)) {
+                                out = out.append(dg_at("E042", "`?` on Result requires the surrounding function to return Result[_, E], got " + e042_ret_label(s.ret_type), u.line, u.col));
+                            }
+                        },
+                        _ => { }
+                    }
                 }
             }
         },
@@ -4955,6 +5015,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             while (li < lm.params.len()) {
                 lsc = lsc.bind(lm.params[li].name, type_from_name_with_structs_unions(lm.params[li].type_name, s.structs, s.unions));
                 li = li + 1;
+            }
+            // A return inside the lambda returns from the LAMBDA — thread
+            // its declared return type (or unknown when undeclared) so the
+            // E042 return-shape check and the return-value walks don't read
+            // the enclosing function's return type. Mirrors the lambda-body
+            // scope in check_expr's ExprLambda arm.
+            if (lm.ret_type.len() > 0) {
+                lsc = lsc.with_ret_type(type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions));
+            } else {
+                lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
             }
             out = stmts_call_diags(lm.body, lsc);
         },
@@ -5942,7 +6012,13 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
 pub struct OwnFunc { name: string, flags: boolean[] }
 struct MovedEntry { mname: string, mline: i32 }
 struct OwnWalk { moved: MovedEntry[], diags: Diag[] }
-struct OwnCtx { owned: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[] }
+// `admit` names the ONE local admitted as an owned argument while
+// walking the RHS of a self-reassign `x = f(..., x, ...)` (#4873 step 0
+// — the old binding dies at the assignment, so its exactly-once
+// own-position occurrence is a transfer). "" outside that walk. The
+// exactly-once check (ow_self_move_admits) makes name-keying equivalent
+// to the native checker's node-keying within the RHS subtree.
+struct OwnCtx { owned: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
     var i: i32 = 0;
@@ -6002,7 +6078,10 @@ function ow_is_owned_expr(e: parser.Expr, ctx: OwnCtx): boolean {
         parser.ExprArray(_) => { return true; },
         parser.ExprTuple(_) => { return true; },
         parser.ExprBinary(b) => { return b.op == "+"; },
-        parser.ExprIdent(id) => { return ow_is_owned(ctx, id.name); },
+        parser.ExprIdent(id) => {
+            if (ctx.admit.len() > 0 && ctx.admit == id.name) { return true; }
+            return ow_is_owned(ctx, id.name);
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => { return ow_struct_known(ctx.structs, cid.name); },
@@ -6011,6 +6090,73 @@ function ow_is_owned_expr(e: parser.Expr, ctx: OwnCtx): boolean {
         },
         _ => { return false; }
     }
+}
+
+// ow_count_ident counts occurrences of `name` as a bare ident anywhere
+// in `e` — the exactly-once probe for the self-reassign move admission.
+// Mirrors mc_mentions_expr's variant coverage; an unhandled variant
+// counts 0, which under-counts and therefore REJECTS (fails safe: the
+// admission needs exactly 1 and a direct-arg hit).
+function ow_count_ident_list(list: parser.Expr[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < list.len()) { n = n + ow_count_ident(list[i], name); i = i + 1; }
+    return n;
+}
+
+function ow_count_ident(e: parser.Expr, name: string): i32 {
+    match (e) {
+        parser.ExprIdent(id) => { if (id.name == name) { return 1; } return 0; },
+        parser.ExprBinary(b) => { return ow_count_ident(b.left, name) + ow_count_ident(b.right, name); },
+        parser.ExprUnary(u) => { return ow_count_ident(u.operand, name); },
+        parser.ExprCall(c) => { return ow_count_ident(c.callee, name) + ow_count_ident_list(c.args, name); },
+        parser.ExprArray(ar) => { return ow_count_ident_list(ar.elements, name); },
+        parser.ExprTuple(tp) => { return ow_count_ident_list(tp.elements, name); },
+        parser.ExprIndex(ix) => { return ow_count_ident(ix.array, name) + ow_count_ident(ix.index, name); },
+        parser.ExprSlice(sl) => { return ow_count_ident(sl.array, name) + ow_count_ident(sl.start, name) + ow_count_ident(sl.end, name); },
+        parser.ExprStructLit(st) => {
+            var n: i32 = 0;
+            if (st.has_base) { n = ow_count_ident(st.base, name); }
+            return n + ow_count_ident_list(st.field_values, name);
+        },
+        parser.ExprFieldAccess(fa) => { return ow_count_ident(fa.obj, name); },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+// ow_self_move_admits recognizes the #4873 step-0 shape for
+// `target = <value>`: value is a plain-ident-callee call to an own-func,
+// target occurs EXACTLY ONCE in the whole RHS (excluding the top-level
+// callee ident), and that occurrence is a direct bare-ident argument in
+// an `own` position. Byte-matches the native SelfReassignOwnMoveArg so
+// the two checkers admit identical programs.
+function ow_self_move_admits(target: string, value: parser.Expr, ctx: OwnCtx): boolean {
+    match (value) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (!ow_is_own_func(ctx.ofuncs, cid.name)) { return false; }
+                    if (ow_count_ident_list(c.args, target) != 1) { return false; }
+                    var flags: boolean[] = ow_func_flags(ctx.ofuncs, cid.name);
+                    var i: i32 = 0;
+                    while (i < c.args.len() && i < flags.len()) {
+                        match (c.args[i]) {
+                            parser.ExprIdent(aid) => {
+                                if (aid.name == target) { return flags[i]; }
+                            },
+                            _ => { }
+                        }
+                        i = i + 1;
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // ow_guard_call: E051 — each argument passed to an `own` parameter of a
@@ -6186,7 +6332,14 @@ function ow_stmt(st: parser.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         parser.StmtAssign(a) => {
             // Reassigning the bare owned param rebinds it to a fresh value, so
             // its consumed state resets; otherwise the rhs is a consume.
-            var rv: OwnWalk = ru_expr(a.value, moved, ctx);
+            // Self-reassign move admission (#4873 step 0): `x = f(..., x, ...)`
+            // with local x passed exactly once, directly, in an `own`
+            // position — admit that occurrence for the RHS walk only.
+            var actx: OwnCtx = ctx;
+            if (!ow_is_owned(ctx, a.target) && ow_self_move_admits(a.target, a.value, ctx)) {
+                actx = OwnCtx { owned: ctx.owned, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: a.target };
+            }
+            var rv: OwnWalk = ru_expr(a.value, moved, actx);
             if (ow_is_owned(ctx, a.target)) {
                 return OwnWalk { moved: ow_moved_del(rv.moved, a.target), diags: rv.diags };
             }
@@ -6289,7 +6442,7 @@ pub function own_diags(mod: parser.Module): Diag[] {
         var p: i32 = 0;
         while (p < fn.params.len()) { if (fn.params[p].own) { owned = owned.append(fn.params[p].name); } p = p + 1; }
         if (owned.len() > 0 || ofuncs.len() > 0) {
-            var ctx: OwnCtx = OwnCtx { owned: owned, ofuncs: ofuncs, structs: mod.structs };
+            var ctx: OwnCtx = OwnCtx { owned: owned, ofuncs: ofuncs, structs: mod.structs, admit: "" };
             var nomoved: MovedEntry[] = [];
             var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
             out = append_diags(out, r.diags);
@@ -6530,31 +6683,23 @@ pub function e049_diags(mod: parser.Module): Diag[] {
 function e064_unknown_bare(type_name: string, struct_names: string[], union_names: string[]): boolean {
     if (type_name.len() == 0) { return false; }
     if (type_name == "void" || type_name == "Self") { return false; }
-    // Sub-word / pointer-width integer builtins the type resolver below
-    // doesn't enumerate (it only knows i32/i64/u32/u64). These are the
-    // remaining integer keywords the parser accepts (parser.go parseType:
-    // u8/usize); the Go checker treats them as real types, and
-    // stdlib byte/pointer code uses `var b: u8` and `var p: usize`
-    // pervasively, so the E064 rule must not flag them — otherwise every
-    // program importing std/string (a dozen `u8` body vars) or anything
-    // pulling in core/int (`usize` scratch pointers) diverges from the
-    // oracle. byte/char/isize/i8/i16/u16 are intentionally absent: not
-    // valid types, so the Go checker rejects them and the self-host must
-    // keep flagging them.
-    if (type_name == "u8" || type_name == "usize") { return false; }
+    // Builtin type keywords the simple name resolver
+    // (`type_from_name_with_names_and_unions`) doesn't enumerate — it only
+    // knows i32/i64/u32/u64 among integers. u8/usize: the parser accepts
+    // them (parser.go parseType), the Go checker treats them as real types,
+    // and the stdlib uses them pervasively (`var b: u8` in std/string,
+    // `var p: usize` scratch pointers in core/int), so flagging them would
+    // diverge from the oracle on every program importing those modules.
+    // `str` (the borrowed-string view, #4813): the self-host parser erases
+    // a BARE `str` to "string" at the parse boundary, but a `str` inside a
+    // generic argument (`Option[str]`) keeps its verbatim spelling — a real
+    // native type, so the generic-arg widening must not flag it.
+    // byte/char/isize/i8/i16/u16 are intentionally absent: not valid types,
+    // so the Go checker rejects them and the self-host must keep flagging.
+    if (type_name == "u8" || type_name == "usize" || type_name == "str") { return false; }
     // The parser coarses a function type (`() => R`) to the tag "fn" and some
     // shapes to "tuple"; neither is a user nominal, so don't flag them.
     if (type_name == "fn" || type_name == "tuple") { return false; }
-    // Sub-word integer keywords the parser accepts but the simple name resolver
-    // (`type_from_name_with_names_and_unions`) doesn't model — it only knows
-    // i32/i64/u32/u64 among integers. The stdlib uses these as body-var
-    // annotations (`var b: u8` in std/string, `var p: usize` scratch pointers in
-    // core/int), so without this allowlist the E064 body-var walk false-positives
-    // on every program importing them, diverging from the Go oracle (which
-    // accepts both) and bailing the module off the IR path. `byte`/`char`/
-    // `isize`/`i8`/`i16`/`u16` are NOT valid types, so the Go checker rejects
-    // them too — keep flagging those.
-    if (type_name == "u8" || type_name == "usize") { return false; }
     var i: i32 = 0;
     while (i < type_name.len()) {
         var ch: i32 = type_name[i];
@@ -6661,6 +6806,90 @@ function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_name
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
                 out = append_diags(out, e064_var_diags(one, struct_names, union_names, extra_known));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e057_cell_elem_ok reports whether a TypeRef is a permitted `Cell[T]`
+// element — the self-host analog of the native isCellElemType
+// (checker.go): a cycle-free scalar (i32/i64/u32/u64/f64/boolean) or
+// string. Everything else — struct / enum / array / tuple / another Cell /
+// generic instantiation / `str` view — could reconstruct a reference
+// cycle, which the immutable-data model forbids (docs/CELL-TYPE-PLAN.md).
+function e057_cell_elem_ok(a: parser.TypeRef): boolean {
+    if (a.array_depth > 0 || a.is_tuple || a.args.len() > 0) { return false; }
+    if (a.base == "i32" || a.base == "i64" || a.base == "u32" || a.base == "u64") { return true; }
+    return a.base == "f64" || a.base == "boolean" || a.base == "string";
+}
+
+// e057_annot_labels_tref walks a parsed annotation and collects the
+// rendered element spelling of every `Cell[X]` whose element is not a
+// permitted cell element — the ANNOTATION form of E057 (#4363 item 2).
+// Mirrors native resolveType's recursion into generic arguments and tuple
+// elements, so a Cell nested anywhere in the spelling (`Option[Cell[P]]`,
+// `(i32, Cell[P])`, `Cell[P][]`) fires. The caller restricts this to
+// contexts with no type parameter in scope (the E064 scoping), so a
+// generic's `Cell[T]` — which native admits as a ParamType element — is
+// never flagged.
+function e057_annot_labels_tref(tr: parser.TypeRef): string[] {
+    var out: string[] = [];
+    if (!tr.is_tuple && tr.base == "Cell" && tr.args.len() == 1 && !e057_cell_elem_ok(tr.args[0])) {
+        out = out.append(parser.render_type_ref(tr.args[0]));
+    }
+    var i: i32 = 0;
+    while (i < tr.args.len()) {
+        var inner: string[] = e057_annot_labels_tref(tr.args[i]);
+        var k: i32 = 0;
+        while (k < inner.len()) { out = out.append(inner[k]); k = k + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e057_annot_diags parses one annotation spelling and emits E057 (at the
+// caller-supplied anchor) for each offending `Cell[X]` in it, byte-matching
+// the native message. An empty / un-annotated spelling emits nothing.
+function e057_annot_diags(type_name: string, line: i32, col: i32): Diag[] {
+    var out: Diag[] = [];
+    if (type_name.len() == 0) { return out; }
+    var labels: string[] = e057_annot_labels_tref(parser.parse_type_ref(type_name));
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        out = out.append(dg_at("E057", "Cell[" + labels[i] + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid", line, col));
+        i = i + 1;
+    }
+    return out;
+}
+
+// e057_var_diags walks a (non-generic, non-method) function body and
+// reports the annotation-form E057 for any `var x: T` annotation embedding
+// a `Cell[<composite>]`. Recurses into control-flow blocks exactly like
+// e064_var_diags (not into nested function / lambda bodies).
+function e057_var_diags(stmts: parser.Stmt[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                out = append_diags(out, e057_annot_diags(v.type_name, v.line, v.col));
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e057_var_diags(f.then_body));
+                out = append_diags(out, e057_var_diags(f.else_body));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, e057_var_diags(w.body)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e057_var_diags(fr.body)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, e057_var_diags(m.arms[a].body)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e057_var_diags(one));
             },
             _ => { }
         }
@@ -7426,6 +7655,122 @@ function e021_diags(mod: parser.Module): Diag[] {
     return out;
 }
 
+// e021_derive_field_known reports whether a derive-field type name is
+// one the conformance pre-check can reason about: a primitive scalar or
+// a declared struct / enum name. Composite shapes (`i32[]`, tuples,
+// maps, closures) and unknown names stay silent — matching the native
+// pre-check, which skips any type it cannot name.
+function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
+    if (fty == "i32" || fty == "i64" || fty == "u32" || fty == "u64"
+        || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "string") { return true; }
+    var i: i32 = 0;
+    while (i < mod.structs.len()) { if (mod.structs[i].name == fty) { return true; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < mod.enums.len()) { if (mod.enums[j].name == fty) { return true; } j = j + 1; }
+    return false;
+}
+
+// e021_derive_conforms reports whether derive-field type `fty` satisfies
+// trait `tr` (requirement record at `treq_idx`): an explicit `impl tr
+// for fty`, or fty providing every required trait method as a receiver
+// method — which captures both an inherent method set and a field type
+// whose OWN @derive already synthesised the methods at parse time.
+// Mirrors e021_conforms' bias: a trait with no required methods
+// conforms only via the explicit impl.
+function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty: string): boolean {
+    if (e021_has_impl(mod, tr, fty)) { return true; }
+    var reqs: string[] = mod.trait_reqs[treq_idx].methods;
+    if (reqs.len() == 0) { return false; }
+    var mi: i32 = 0;
+    while (mi < reqs.len()) {
+        if (e021_recv_method_idx(mod, fty, reqs[mi]) < 0) { return false; }
+        mi = mi + 1;
+    }
+    return true;
+}
+
+// e021_derive_one_diag returns the E021 for ONE @derive(tr) on type
+// `tname` (struct fields or flattened enum variant payloads: labels[i]
+// names types[i] in the message), or none. Gates mirror the native
+// pre-check (#5392): only the field-wise-comparing kinds Eq / Ord /
+// Hash, only a trait declared in this module, only known non-generic
+// field types; the first non-conforming field draws the single
+// diagnostic at the deriving decl.
+function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): Diag[] {
+    var kind: string = parser.derive_simple_name(tr);
+    if (kind != "Eq" && kind != "Ord" && kind != "Hash") { return []; }
+    var tidx: i32 = e021_trait_idx(tr, mod.trait_reqs);
+    if (tidx < 0) { return []; }
+    var fi: i32 = 0;
+    while (fi < ftys.len()) {
+        var fty: string = ftys[fi];
+        if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
+            if (!e021_derive_conforms(mod, tr, tidx, fty)) {
+                return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
+            }
+        }
+        fi = fi + 1;
+    }
+    return [];
+}
+
+// e021_derive_field_diags reports E021 (#5392) for a struct/enum
+// @derive(Eq/Ord/Hash) whose field (variant payload) type does not
+// implement the derived trait — the self-host mirror of the native
+// checker's preCheckDeriveFields. One diagnostic per (type, trait),
+// at the deriving declaration.
+function e021_derive_field_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        var sd: parser.StructDecl = mod.structs[si];
+        if (sd.enum_owner.len() == 0 && sd.derives.len() > 0) {
+            var labels: string[] = [];
+            var ftys: string[] = [];
+            var fj: i32 = 0;
+            while (fj < sd.fields.len()) {
+                labels = labels.append("field " + sd.fields[fj].name);
+                ftys = ftys.append(sd.fields[fj].type_name);
+                fj = fj + 1;
+            }
+            var di: i32 = 0;
+            while (di < sd.derives.len()) {
+                out = append_diags(out, e021_derive_one_diag(mod, sd.derives[di], sd.name, labels, ftys, sd.type_params, sd.line, sd.col));
+                di = di + 1;
+            }
+        }
+        si = si + 1;
+    }
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        var ed: parser.EnumDecl = mod.enums[ei];
+        var elabels: string[] = [];
+        var eftys: string[] = [];
+        var ederives: string[] = [];
+        var vi: i32 = 0;
+        while (vi < mod.structs.len()) {
+            var vs: parser.StructDecl = mod.structs[vi];
+            if (vs.enum_owner == ed.name) {
+                if (ederives.len() == 0) { ederives = vs.derives; }
+                var pk: i32 = 0;
+                while (pk < vs.fields.len()) {
+                    elabels = elabels.append("variant " + vs.name + " payload");
+                    eftys = eftys.append(vs.fields[pk].type_name);
+                    pk = pk + 1;
+                }
+            }
+            vi = vi + 1;
+        }
+        var edi: i32 = 0;
+        while (edi < ederives.len()) {
+            out = append_diags(out, e021_derive_one_diag(mod, ederives[edi], ed.name, elabels, eftys, ed.type_params, ed.line, ed.col));
+            edi = edi + 1;
+        }
+        ei = ei + 1;
+    }
+    return out;
+}
+
 // e021_object_unsafe_method returns the name of a required method that makes
 // `trait_name` NOT object-safe (so it can't be used as `dyn T`), or "" when the
 // trait is object-safe or unknown. A trait method breaks object-safety when it
@@ -7971,14 +8316,20 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 if (pu.len() > 0) {
                     body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"", efn.line, efn.col));
                 }
+                // E057 annotation form: a `Cell[<composite>]` anywhere in a
+                // parameter annotation (same conservative non-generic scope,
+                // so a generic's `Cell[T]` is never flagged).
+                body_diags = append_diags(body_diags, e057_annot_diags(efn.params[epi].type_name, efn.line, efn.col));
                 epi = epi + 1;
             }
             var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names, e064_extra);
             if (ru.len() > 0) {
                 body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"", efn.line, efn.col));
             }
+            body_diags = append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
             // Body `var x: T` annotations (same non-generic scope).
             body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names, e064_extra));
+            body_diags = append_diags(body_diags, e057_var_diags(efn.body));
         }
         efi = efi + 1;
     }
@@ -8046,6 +8397,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 if (fu.len() > 0) {
                     body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"", esd.line, esd.col));
                 }
+                // E057 annotation form for a struct FIELD (`c: Cell[P]`),
+                // same non-generic, non-enum-variant scope as E064.
+                body_diags = append_diags(body_diags, e057_annot_diags(esd.fields[efj].type_name, esd.line, esd.col));
                 efj = efj + 1;
             }
         }
@@ -8053,7 +8407,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis.
-    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_derive_field_diags(mod)), e021_object_safety_diags(mod)), e060_e062_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

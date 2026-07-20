@@ -103,9 +103,11 @@ var keywords = map[string]bool{
 	"boolean": true,
 	"void":    true,
 	"string":  true,
-	// Sized numeric type names. Pre-i64/usize codebases shipped
-	// `number` / `float` as aliases for `i32` / `f32`; those were
-	// removed in the legacy-cleanup pass — use the sized names.
+	// Sized numeric type names. The legacy `number` alias for
+	// `i32` was removed in the legacy-cleanup pass. `float` is
+	// the width-unqualified alias for f64 (#5363), handled
+	// contextually in the parser's type position — never a
+	// keyword, so `float.pi()` module calls keep working.
 	// isize/i8/i16/u16 were retired (issue #4408): isize had zero
 	// uses, and i8/i16/u16 carried a full per-stride backend cost
 	// for a handful of call sites — i32/u32 cover them now.

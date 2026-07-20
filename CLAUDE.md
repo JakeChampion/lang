@@ -26,10 +26,17 @@ This language started TypeScript-flavoured (the syntax for functions, `var`,
 `if/else`, struct literals, etc. all came from TS) but **that's no longer the
 target**. It's evolving into its own thing. When designing new features —
 syntax, type system, error handling, stdlib shape — feel free to look beyond
-TS for inspiration. The stated use cases are small fast-startup CLI tools and
-short-lived edge-function-style HTTP servers, so cribbing from Roc, MoonBit,
-Rust, Zig, Go is more productive than reaching for TS conventions when they
-don't fit.
+TS for inspiration. Fern is now a **general-purpose** language: the two
+workloads it grew up around — small fast-startup CLI tools and short-lived
+edge-function-style HTTP servers — remain the places it's most polished,
+but they're no longer the boundary of what it's for. Long-running,
+allocation-heavy programs are in scope too (the self-hosted compiler is the
+proof: it's exactly such a program, and it's what drove the move from
+arena-and-forget to reference counting). Cribbing from Roc, MoonBit, Rust,
+Zig, Go is more productive than reaching for TS conventions when they don't
+fit — and when a design choice trades general-purpose fitness for a
+narrow edge/CLI optimisation, weigh that trade explicitly rather than
+assuming short-lived-process semantics.
 
 Concretely: don't justify a design choice with "this is how TS does it" if a
 better shape exists. Treat the existing TS-shaped surface as historical, not
@@ -204,10 +211,38 @@ socket set — `poll` / `timer_fd` / `wasm_timer_pollable` /
 `wasm_pollable_drop` / `tcp_*` / `subprocess` — which need the
 component-model wasi interfaces the bare core-wasm+preview1 backend
 doesn't wire; these are actively worked in parallel, **avoid**. Net: the
-tractable goal-1 IR-widening work is essentially done; the next frontier
-is **goal 2** (the Perceus port — reuse analysis is the remaining large,
-memory-safety-critical piece; inc/dec, borrow, drop-specialisation, and
-per-type struct-drop / field-reclaim slices already landed).
+tractable goal-1 IR-widening work is essentially done. **Goal 2 (the
+Perceus port) is ALSO substantially complete** — despite what older
+notes here said, constructor reuse is implemented and enabled in the
+self-host (self-overwrite, cross-local, enum-donor, consuming-match,
+tuple reuse, nested-struct fields), exercised by the byte-identical
+self-compile; see `docs/SELFHOST-PERCEUS-REUSE.md`'s correction
+header. The remaining reuse deltas are MARGINAL (struct reuse with
+enum / Map / closure / tuple pointer fields — §3 Delta B). The real
+remaining frontier for retiring the legacy AST emitters is the
+per-module epic's step 5 (#3457), which is blocked on the wasm
+component-model sub-issues (#4315–#4320 — actively worked in
+parallel, **avoid**). When picking up "the next task", VERIFY tracker
+state against the code first: issues #4451/#4363/#4346 have repeatedly
+lagged reality (the checker-codes filter is already deleted, the
+ill_typed_hint fallback already landed, the arm64 per-module
+close_needs UAF is already fixed and regression-guarded).
+**Caveat (2026-07): runtime-correctness probing still pays.** The
+path-probe drivers only tell you WHERE a program lowers, not whether the
+lowered code is RIGHT. Differential probing (native `-interp` exit code
+vs the self-host-IR-compiled binary's) found a whole closure-dispatch
+bug cluster the probe methodology above misses — escaping-closure /
+closure-array shapes that lowered on the IR path but SIGSEGV'd or
+silently miscompiled at runtime (#5001/#5007/#5009/#5026 + the
+param/branch/transitive/direct-index fixes). The once-known **fn-typed
+tuple elements** gap is now CLOSED end-to-end: parse_type_name only
+coarsens a parenthesized `=>` type to "fn" when there is NO depth-1
+comma (a tuple's fn segments coarsen individually via coarsen_fn_elems
+→ "(fn, i32)"), the lift pass wraps every fn-valued tuple element into
+a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
+`t.N(args)` dispatch + closure-local binding (self-host side pinned by
+`TestSelfHostTupleFnIR*`, native side by
+`internal/e2e/tuple_fn_elem_test.go`).
 
 ## Engineering bar (non-negotiable)
 
@@ -238,15 +273,51 @@ per-type struct-drop / field-reclaim slices already landed).
   regex across the `test-e2e-*` workflows (the selfhost lane round-robins
   the union of both packages' `TestSelfHost*` lists), each well under its
   10-min job timeout.
-- **Self-host driver builds peak at ~16–18 GB RAM — enable swap if they
-  get OOM-killed.** Every `buildSelfHostBin` / `buildBin` of a self-host
-  driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern` /
-  `wasm_ir_run.fern` / …) assembles a multi-thousand-function `.s`, and
-  `as` alone spikes to ~8 GB; with the `go test` package compile plus a
-  second concurrent `as`, the peak crosses ~16 GB. On the ~15 GB-RAM
-  container with **no swap** this trips the kernel OOM-killer: the build
-  dies with `signal: killed` / **exit 137** (reads like a test failure but
-  is an OOM — not a real failure) and can even bounce the whole container.
+- **Self-host driver builds are memory-heavy but the harness now self-limits
+  — swap is generally NOT needed.** Every `buildSelfHostBin` / `buildBin` of
+  a self-host driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern`
+  / `wasm_ir_run.fern` / …) emits a multi-thousand-function asm text. The
+  peak is comfortably under a 16 GB host:
+  - The x86-64 backend flips the self-host compiler's one lowering
+    monster (`irlower__lower_expr`, ~9.75M IR ops) from the inline rc
+    fast-path to the `call __fern_rc_dec/inc` form (the arm64 backend's
+    long-standing `rcInlineOK` mechanism, backported — behaviour-identical).
+    That cut the `asm_ir_run` driver asm from ~1028 MB → ~470 MB.
+  - The cold driver emit runs under a **refcounted soft heap cap**
+    (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0`
+    disables), `ir.Op` keeps its rare payload fields (Str2 / Sig /
+    ArgTypes / CaptureSlots) in an `OpExt` side-table (96 B/op, was
+    160), and both native backends **release each function's IR as
+    it is emitted** (`ip.Funcs[i] = nil` in the emit loop) so the IR is
+    reclaimed incrementally instead of peaking alongside the output
+    buffer: at default GOGC the emit ballooned to ~9 GB RSS of mostly-
+    garbage in 134 s; capped + shrunk + released it runs ~3.7 GB in
+    ~40 s. Output is byte-identical.
+  - Driver binaries are **assembled + linked in-process** by the pure-Go
+    native assembler (`internal/native/x86_64` + `internal/native/elf` —
+    the same pipeline `cmd/fern -target x86-64` uses by default): ~25 s /
+    ~2.6 GB where GNU `as` took ~36 s at ~4.7 GB plus a link, and the
+    ~470 MB `.s` never touches disk. Any assembler error falls back to
+    the old gcc(+lld) path automatically. `CachedLink` does the same for
+    HUGE self-host-emitted asm (the stage-2 self-compile, ≥ 8 MB) —
+    which previously ran GNU `as`+bfd with no memory reservation at all
+    — while small program links stay on gcc/bfd unchanged.
+  - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted
+    semaphore around the cold emit+link: it reserves each heavy build's
+    estimated peak (`FERN_BUILD_HEAVY_MB`, default 4300) against a budget
+    (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy
+    builds can't stack past the host's RAM and OOM the run. Two cold
+    driver builds now fit a 16 GB host concurrently; bigger hosts
+    parallelise further up to the budget.
+
+  If a build is still OOM-killed (`signal: killed` / **exit 137** during
+  the Go emit, or `as`/gcc on the fallback path — reads like a test failure
+  but is an OOM), lower `FERN_BUILD_HEAVY_MB` / `FERN_BUILD_MEM_BUDGET_MB`
+  / `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral swap file (a
+  container restart wipes it):
+  ```
+  fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  ```
   **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
   OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
   the fixed bump arena (x86 8 GiB, arm64 8 GiB) is exhausted — a REAL
@@ -255,21 +326,14 @@ per-type struct-drop / field-reclaim slices already landed).
   self-host-built compiler's live set grows with every compiler-source
   addition, and when it hits the arena wall the test "OOMs" on CI with no
   kernel OOM anywhere. Before writing off a 137 as infra, check WHICH
-  process died: `as`/gcc during a build = OOM (rerun/swap); a Fern binary
-  mid-run = arena exhaustion (measure with /proc RSS vs the arena size —
-  see docs/RC-PERCEUS-SELF-HOST-PORT.md, 2026-07-11 entry).
-  It is *total-RAM* pressure, not a cgroup cap (`memory.limit_in_bytes` is
-  effectively unlimited), so swap fixes it. Re-create swap each session if
-  self-host builds start OOM-ing (it's ephemeral — a container restart
-  wipes it):
-  ```
-  fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-  ```
-  Watch with `free -m` mid-build: a healthy run pushes a few GB into swap
-  at the assembler peak and completes. Also keep `/` from filling — stale
-  `/tmp/selfhost-bincache-*` dirs (~1 GB each, one per build) pile up;
-  `rm -rf /tmp/selfhost-bincache-*` reclaims them (regenerable caches), and
-  a swapfile needs the free space.
+  process died: `as`/gcc/the Go emit during a build = host-RAM OOM (lower the
+  budget knobs / add swap); a Fern binary mid-run = arena exhaustion (measure
+  with /proc RSS vs the arena size — see docs/RC-PERCEUS-SELF-HOST-PORT.md,
+  2026-07-11 entry). Host-RAM OOM is *total-RAM* pressure, not a cgroup cap
+  (`memory.limit_in_bytes` is effectively unlimited). Also keep `/` from
+  filling — stale `/tmp/selfhost-bincache-*` dirs (~1 GB each, one per build)
+  pile up; `rm -rf /tmp/selfhost-bincache-*` reclaims them (regenerable
+  caches).
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the
@@ -306,6 +370,31 @@ per-type struct-drop / field-reclaim slices already landed).
   helper-emission gap, the `for x in m { ... }` struct-lit clash),
   fix it in the same PR with its own test rather than leaving it
   for later.
+
+## Erasure — deletion is half the job
+
+Coding agents add by reflex and rarely subtract. Counteract this constantly:
+a diff that removes lines is at least as valuable as one that adds them.
+
+- **Swap rule.** When a task replaces X with Y, fully deleting X is part of
+  the task. No "keep the old path for compatibility" unless explicitly
+  requested. "Lambda is `\x.f` now, not `λx.f`" — bad: parser accepts both;
+  good: `λx.f` is gone from parser, tests, and docs. Bug fix — bad: a
+  special-case `if` shields the symptom; good: the cause dies. Behavior
+  change — bad: old-behavior tests linger or get dodged; good: deleted.
+- **Comments.** No narration comments inside function bodies. A refactor
+  that makes a comment stale deletes or rewrites it in the same diff. A
+  done TODO leaves with the fix. Same for stale notes in docs/ and this file.
+- **New code.** Scan for an existing concept to reuse before introducing a
+  new one; find the simplest shape. If something confused you while reading,
+  that's a bad abstraction — untangle it if it's in your blast radius.
+- **Scope.** Full force on everything the current task touches. Deleting
+  beyond that (retiring a backend, unifying parallel emit layers) is a
+  roadmap decision — propose it, don't drive-by it. The asm backends'
+  emit layers are deliberately parallel; the legacy AST emitters retire
+  via #3457, not opportunistically.
+- Before finishing any task: what did this change make obsolete, and did
+  I delete it?
 
 ## Literate programming
 
