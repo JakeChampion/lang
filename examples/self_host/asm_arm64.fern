@@ -8380,8 +8380,9 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x21, x2\n");           // val
         // x24 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
         // fresh sole-owned string temp, from irlower o.width bit 1; bit 1 =
-        // owncols: i32-key AND i32-value map whose keys()/values() reads
-        // snapshot, so the map solely owns its column buffers — #4353). x24 is
+        // owncols: i32/string-column map whose keys()/values() reads ALL
+        // snapshot, so the map solely owns its column buffers — #4353/#5335).
+        // x24 is
         // callee-saved (already stp'd) and otherwise unused here, so it survives
         // the probe loop's __fern_str_eq calls without extra saves; bit 0 is
         // tested at .Lms_found to free the DISCARDED new key on an overwrite
@@ -8431,13 +8432,15 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write(".Lms_found_nokf:\n");
         s = s.write("    b .Lms_ret\n");
         s = s.write(".Lms_append:\n");
-        // owncols (x24 bit 1, #4353): an i32-key/i32-value map's keys()/values()
-        // reads SNAPSHOT (__fern_map_snapshot_col), so the map is the sole owner
-        // of its column buffers — route the appends through the reclaim-on-grow
-        // __fern_arr_push_owned (frees the superseded rc==1 buffer, closing the
-        // cap-0 grow-leak #4877). Every other map keeps the LEAK-ONLY
-        // __fern_arr_push: its keys()/values() still return the RAW buffer (an
-        // uncounted alias) that an owned grow would free from under a live read.
+        // owncols (x24 bit 1, #4353/#5335): a map whose columns ALL snapshot on
+        // read (i32 → __fern_map_snapshot_col, string →
+        // __fern_map_snapshot_col_str) is the sole owner of its column buffers —
+        // route the appends through the reclaim-on-grow __fern_arr_push_owned
+        // (frees the superseded rc==1 buffer, closing the cap-0 grow-leak
+        // #4877). Flag-1 alias columns (i64/f64/struct/generic) keep the
+        // LEAK-ONLY __fern_arr_push: their keys()/values() still return the RAW
+        // buffer (an uncounted alias) that an owned grow would free from under a
+        // live read.
         s = s.write("    tbnz x24, #1, .Lms_append_owned\n");
         s = s.write("    ldr x0, [x19]\n");
         s = s.write("    mov x1, x20\n");

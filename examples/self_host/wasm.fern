@@ -8932,9 +8932,10 @@ pub function map_helpers(): string {
     // element is $__fern_rc_inc'd, so the fresh array co-owns its elements
     // and the deep post-loop release ($__fern_arr_dec_ptr — dec each element
     // then the buffer) balances exactly. The map keeps its construction-incs.
-    // Used only at the `for`-loop positions (flag 2), where irlower emits the
-    // deep release; the var/expr positions keep the plain non-retaining
-    // snapshot (flag 1 after the irlower clamp), matching prior behaviour.
+    // Emitted for every flag-2 (string-column) read: the `for`-loop positions
+    // pair it with irlower's post-loop deep release; a var/expr-position read
+    // (#5335, the un-clamped `var ks = m.keys()`) leaks the retained copy
+    // (bounded per read) until a SARR-credited release lands.
     o = o + "  (func $__fern_map_snapshot_inc (param $box i32) (param $src i32) (result i32)\n";
     o = o + "    (local $arr i32) (local $i i32) (local $n i32)\n";
     o = o + "    (local.set $arr (call $__fern_map_snapshot (local.get $box) (local.get $src)))\n";

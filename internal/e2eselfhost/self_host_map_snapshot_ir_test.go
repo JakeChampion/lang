@@ -201,10 +201,10 @@ function main(): i32 {
 }`, "map-keys-loop-break", 0)
 
 	// MIXED map (i32 keys, string values): the keys column snapshots (scalar)
-	// while the values column keeps its alias + MAPVS deep-release — the
-	// snapshot must not disturb that balance (no underflow, values intact),
-	// and the grow stays on the leak-only push (owncols requires BOTH columns
-	// scalar).
+	// while the values column snapshots with retain + MAPVS deep-release — the
+	// snapshot must not disturb that balance (no underflow, values intact).
+	// Since #5335 this map is owncols too (both columns snapshot-kind), so the
+	// set(3, ..) grow frees the superseded buffers under the live ks snapshot.
 	run(t, `function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;

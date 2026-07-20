@@ -13,12 +13,12 @@ import (
 // routed to __fern_map_free_ks (keys column freed via __fern_str_arr_free); a
 // `Map[string, string]` with fresh keys AND values routes to __fern_map_free_kvs
 // (both columns). Flatness is DIFFERENTIAL against a LITERAL-keyed
-// Map[string, i32] baseline so the shared arr_push grow-leak cancels: since
-// #4353's owned grow, an i32-keyed map no longer shares that floor (i32/boolean
-// values normalize to i32 in the type tag, so any i32-keyed scalar map is
-// owncols and its grow frees the superseded buffers) — a string-keyed map with
-// .rodata literal keys has the identical buffer shape and stays on the
-// leak-only push. The maps are built-and-dropped without a lookup
+// Map[string, i32] baseline: originally chosen to share the arr_push grow-leak
+// floor; since #5335's general owncols BOTH sides free their superseded grow
+// buffers (string columns are snapshot-kind now), so the shared floor is ~zero
+// and the one-directional assert (fresh-keyed side must not grow MORE than the
+// literal-keyed baseline, whose per-call literal key boxes still leak) holds
+// with margin. The maps are built-and-dropped without a lookup
 // (m.has("a"+"b") would allocate a fresh lookup-key temp that leaks independently).
 func TestSelfHostMapKsReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

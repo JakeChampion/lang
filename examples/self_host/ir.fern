@@ -596,13 +596,15 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind_tag: 1
 // ignore bits 0/1's vconsume half (their maps don't rc-manage values
 // per-insert — the MAPVS/MAPKS credits free them at reclaim) but read bit 1
 // (kconsume: free the discarded fresh key on an overwrite, #4881/#4885).
-// Bit 2 = `owncols` (#4353 grow-leak): the map's key AND value types are BOTH
-// i32, so — now that scalar keys()/values() snapshot-copy instead of aliasing
+// Bit 2 = `owncols` (#4353 grow-leak, general case #5335): the map's key AND
+// value columns BOTH read back as snapshots (i32 columns snapshot-copy, string
+// columns snapshot with per-element retain), so no keys()/values() read aliases
 // the raw column buffers — the map is the SOLE owner of its keys[]/vals[]
 // buffers and the register map_set's grow path may free the superseded buffer
-// (__fern_arr_push_owned) instead of leaking it. String/pointer/i64/f64
-// columns keep owncols=0 (their keys()/values() still alias, slice 3). wasm
-// ignores bit 2 (its map already frees old buffers on grow).
+// (__fern_arr_push_owned) instead of leaking it. i64/f64/struct/generic
+// columns keep owncols=0 (their reads still raw-alias — irlower's
+// map_kv_elem_flag 1). wasm ignores bit 2 (its map already frees old buffers
+// on grow).
 // `valwide` (carried in i64_imm as 1) marks an 8-byte i64/u64 VALUE. The x86-64
 // and arm64 runtimes store the value 8-byte unconditionally (movq / str x), so
 // they ignore it; it exists so the wasm IR deferral gate can keep an i64/u64-VALUE

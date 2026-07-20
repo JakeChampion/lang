@@ -4896,3 +4896,46 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (`var v=m.get_or(k, live); ... use(v); use(live)` → no double-free), fresh-
   default reclaim, plus modload/load/heap-bump fixpoints byte-identical.
   Refs #4353 #4451.
+
+- 2026-07-20: **#5335 (#4353 layer 0, general case) — string-column owncols +
+  expression-position string snapshot, LANDED.** The "slice-2-for-strings"
+  the slice-3 entry deferred. Two coupled irlower changes (backends needed
+  ZERO instruction changes — the owncols bit and the flag-2 snapshot calls
+  were already decoded on x86-64/arm64, and wasm ignores bit 2 / already had
+  `$__fern_map_keys_inc`):
+  - `map_owncols` is now DEFINED from `map_kv_elem_flag` (owned ⇔ neither
+    column is flag 1), so i32/string column combinations in any mix are owned
+    and `__fern_map_set` frees the superseded keys/vals buffers on every grow
+    (`__fern_arr_push_owned`). i64/u64/f64 / struct / generic / unparseable
+    columns remain flag-1 alias reads and keep the leak-only push. The
+    invariant "owned ⇒ every read snapshots" is structural: a new column kind
+    added to map_kv_elem_flag as non-1 automatically becomes owned, so it must
+    snapshot on read.
+  - The expression-position `var ks = m.keys()` / `m.values()` string-column
+    CLAMP (flag 2 → 1, the slice-3 leftover) is REMOVED — required for the
+    widening: with owned grow, the old raw-buffer alias dangles the moment a
+    later insert grows the map (empirically pinned: the alias probes read
+    garbage len under clamp+owncols). A string-column expression read now
+    takes the RETAINING snapshot (`__fern_map_snapshot_col_str`); the copy +
+    its per-element incs leak at that position (bounded per read, the same
+    class as the scalar expression-position copy — a SARR-credited release is
+    still the follow-up), and it fixes the native divergence (native
+    keys()/values() are snapshots; the alias saw in-place len drift).
+  SOUNDNESS: exactly the slice-1+2 argument extended — no read of an owned
+  map's columns can alias its raw buffers (i32 → flag-0 copy, string →
+  flag-2 retaining copy), so the grow-free never dangles a read; the
+  pre-existing generic-view hole (`Map[K, V]` signature reads = flag 1, no
+  owncols at ITS set sites, but a concrete-typed set elsewhere can still grow)
+  is unchanged in kind and still unreachable in-tree. VERIFIED:
+  TestSelfHostMapStrColOwncolsIRX86_64 (strval/strkey/strkv grow-churn
+  heap-bump fixpoints N=50 == N=5000; keys()/values()-before-grow snapshot
+  probes — the old revert-reason UAF shape — value-correct; strkv + i64
+  churn correctness; an owncols-flag asm grep pinning bit 1 SET for
+  string-column maps and CLEAR for i64-value maps; fixed cases double-checked
+  against the native `-interp` oracle differentially) + the pre-existing map
+  suites (fixpoint/vs/ks/snapshot/reclaim, x86 + wasm) + the byte-identical
+  self-compile fixpoint. Probe lesson recorded: a `m.get_or("k" + "0", ..)`
+  computed string LOOKUP key leaks its concat temp per call (pre-existing,
+  unrelated to columns — it drowned the first grow-probe draft; slice 4's
+  counted-reads design is where lookup temps get owners). Refs #5335 #4353
+  #4451.

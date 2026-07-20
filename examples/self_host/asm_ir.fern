@@ -2461,8 +2461,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -48(%rbp), or 0
     // %r9 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
     // fresh, sole-owned string temp, from irlower's is_fresh_str_temp; bit 1 =
-    // owncols: i32-key AND i32-value map whose keys()/values() reads snapshot,
-    // so the map solely owns its column buffers — #4353). Saved to the frame
+    // owncols: i32/string-column map whose keys()/values() reads ALL snapshot,
+    // so the map solely owns its column buffers — #4353/#5335). Saved to the frame
     // because the probe loop's __fern_str_eq / eq-fn calls clobber caller-saved
     // %r9; bit 0 is reloaded at .Lms_found to free the DISCARDED new key on an
     // overwrite (the register twin of the wasm #4876 fix — a recurring computed
@@ -2541,16 +2541,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lms_found_nokf:\n");
     s = s.write("    jmp .Lms_ret\n");
     s = s.write(".Lms_append:\n");
-    // owncols (flag bit 1, #4353): an i32-key/i32-value map's keys()/values()
-    // reads SNAPSHOT (kinds 131/132 flag 0 → __fern_map_snapshot_col), so the
-    // map is the sole owner of its column buffers — route the appends through
-    // the reclaim-on-grow __fern_arr_push_owned (frees the superseded rc==1
-    // buffer, closing the cap-0 grow-leak #4877). Every other map (string /
-    // pointer / i64/f64 column, generic view) keeps the LEAK-ONLY
-    // __fern_arr_push: its keys()/values() still return the RAW keys@0 / vals@8
-    // buffer (an uncounted alias), and arr_push_owned would free the buffer a
-    // live `var ks = m.keys()` still points to (use-after-free). The leak keeps
-    // that buffer alive until the string-column snapshot lands (slice 3).
+    // owncols (flag bit 1, #4353/#5335): a map whose columns ALL snapshot on
+    // read — i32 columns via __fern_map_snapshot_col (kinds 131/132 flag 0),
+    // string columns via __fern_map_snapshot_col_str (flag 2) — is the sole
+    // owner of its column buffers, so route the appends through the
+    // reclaim-on-grow __fern_arr_push_owned (frees the superseded rc==1
+    // buffer, closing the cap-0 grow-leak #4877). Flag-1 alias columns
+    // (i64/f64/struct/generic view) keep the LEAK-ONLY __fern_arr_push: their
+    // keys()/values() still return the RAW keys@0 / vals@8 buffer (an
+    // uncounted alias), and arr_push_owned would free the buffer a live
+    // `var vs = m.values()` still points to (use-after-free).
     s = s.write("    movq -56(%rbp), %rax\n");      // reload flag bits
     s = s.write("    testq $2, %rax\n");            // bit 1 = owncols
     s = s.write("    jnz .Lms_append_owned\n");
@@ -4313,13 +4313,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             //     (o.width bit 1, set by irlower's is_fresh_str_temp). map_set
             //     frees the discarded key on an overwrite so a recurring computed
             //     key doesn't leak (the register twin of wasm #4876).
-            //   bit 1 = owncols (o.width bit 2, #4353): i32-key AND i32-value map
-            //     — its keys()/values() reads snapshot (kinds 131/132 flag 0), so
-            //     the map solely owns its column buffers and the grow path may
-            //     free the superseded buffer (__fern_arr_push_owned).
-            // A string-keyed / string-valued map has owncols clear → %r9 bit 1 = 0
-            // → old leak-only grow, and an i32/interned key is never fresh → bit 0
-            // = 0 → no overwrite key free: exactly the historical behaviour.
+            //   bit 1 = owncols (o.width bit 2, #4353/#5335): every column of the
+            //     map snapshots on read (i32 → kinds 131/132 flag 0, string →
+            //     flag 2), so the map solely owns its column buffers and the grow
+            //     path may free the superseded buffer (__fern_arr_push_owned).
+            // A map with an i64/f64/struct/generic column has owncols clear →
+            // %r9 bit 1 = 0 → old leak-only grow (its reads raw-alias the
+            // buffer), and an i32/interned key is never fresh → bit 0 = 0 → no
+            // overwrite key free: exactly the historical behaviour.
             var r9bits: i32 = 0;
             if (o.width == 2 || o.width == 3 || o.width == 6 || o.width == 7) { r9bits = r9bits + 1; }
             if (o.width >= 4) { r9bits = r9bits + 2; }
@@ -4367,8 +4368,8 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // __fern_map_snapshot_col so the result is an owned array (the
             // exit sweep reclaims the copy, not the map's live buffer) and a
             // later growing m.set can free the superseded buffer without
-            // dangling this read. Pointer/string column (i32_imm 1): keep the
-            // historical raw-buffer alias (slice 3).
+            // dangling this read. i64/f64/struct/generic column (i32_imm 1):
+            // keep the historical raw-buffer alias (and owncols stays clear).
             if (o.i32_imm == 0) {
                 s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
             } else if (o.i32_imm == 2) {
