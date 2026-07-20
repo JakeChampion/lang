@@ -1,6 +1,11 @@
 package e2e
 
-import "testing"
+import (
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // TestPegModule exercises std/peg end-to-end on the compiled backends
 // (the TAP suite in examples/tests/peg_test.fern covers the full API
@@ -112,4 +117,37 @@ function main(): i32 {
 			t.Errorf("wasm exit = %d, want %d", code, want)
 		}
 	})
+}
+
+// TestX86_64PegTapRunsNatively is the full-file gate for #5402: the
+// unmodified examples/tests/peg_test.fern TAP suite — formerly the one
+// genuine crash left in the natively-compiled examples corpus — must
+// compile through the full CLI pipeline on x86-64 and run all 18 cases
+// green. TestPegLeftRecursion pins the minimized trigger on every
+// backend; this pins the corpus file itself (the exact repro command
+// from the issue), #5404-style, so a regression anywhere in the
+// std/peg + std/test native path surfaces here.
+func TestX86_64PegTapRunsNatively(t *testing.T) {
+	_, runner := x86_64Tooling(t)
+	fern := buildFernCLI(t)
+	out := filepath.Join(t.TempDir(), "peg_tap")
+	if o, err := exec.Command(fern, "-target", "x86-64", "-o", out,
+		"../../examples/tests/peg_test.fern").CombinedOutput(); err != nil {
+		t.Fatalf("native compile of peg_test.fern failed: %v\n%s", err, o)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(out)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], out)...)
+	}
+	tap, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("TAP binary exit = %d, want 0\n%s", code, tap)
+	}
+	for _, w := range []string{"# tests 18", "# pass 18", "# fail 0"} {
+		if s := string(tap); !strings.Contains(s, w) {
+			t.Errorf("TAP output missing %q:\n%s", w, s)
+		}
+	}
 }
