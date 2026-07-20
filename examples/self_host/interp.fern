@@ -1050,7 +1050,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
         j = j + 1;
     }
     var step: StepResult = eval_block(fv.body, env);
-    if (is_noreturn(step.ret)) {
+    if (step.sig != 1) {
         return v_err("closure reached end without `return`");
     }
     return step.ret;
@@ -1197,7 +1197,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
-            if (is_noreturn(step.ret)) {
+            if (step.sig != 1) {
                 return v_err("method `" + name + "` reached end without `return`");
             }
             return step.ret;
@@ -1242,7 +1242,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
-            if (is_noreturn(step.ret)) {
+            if (step.sig != 1) {
                 return v_err("function `" + name + "` reached end without `return`");
             }
             return step.ret;
@@ -1350,13 +1350,21 @@ function value_eq(a: Value, b: Value): boolean {
     return false;
 }
 
-// eval_stmt returns the (new env, optional return value). The
-// returned env carries `var x = …;` bindings forward; the value
-// is non-VErr only for StmtReturn — every other shape leaves it
-// VErr("__noreturn__") which the driver loop reads as "keep
-// going". Using VErr for the sentinel keeps everything in the
-// same union type without growing it for a one-off Option.
-pub struct StepResult { env: Env, ret: Value }
+// eval_stmt returns (new env, control signal, optional value). The
+// returned env carries `var x = …;` bindings forward. Control flow
+// rides the DEDICATED `sig` channel (SH-002) — never the Value union,
+// so a user value like Err("__break__") can no longer be mistaken for
+// a loop signal (the old encoding keyed break/continue/return off
+// magic VErr message strings). `ret` is meaningful only for SIG 1:
+// a `return`'s value, or a runtime error propagating outward (both
+// stop execution identically, exactly as before).
+//   sig 0 = none (keep going; ret is a placeholder, never read)
+//   sig 1 = stop (return value or runtime error in ret)
+//   sig 2 = break     sig 3 = continue
+pub struct StepResult { env: Env, ret: Value, sig: i32 }
+
+function step_none(env: Env): StepResult { return StepResult { env: env, ret: VErr { msg: "" }, sig: 0 }; }
+function step_stop(env: Env, v: Value): StepResult { return StepResult { env: env, ret: v, sig: 1 }; }
 
 function eval_stmt(st: parser.Stmt, env: Env): StepResult {
     match (st) {
@@ -1367,27 +1375,27 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             var val: Value = eval_expr(v.init, env);
             // A runtime error in the initializer aborts the function rather
             // than being bound and silently swallowed (#4348 item 4). eval_expr
-            // never yields the __noreturn__ sentinel (that's statement-level),
-            // so any VErr here is a real error to propagate.
-            if (is_err(val)) { return StepResult { env: env, ret: val }; }
+            // only ever yields VALUES (control signals are statement-level,
+            // on the sig channel), so any VErr here is a real error to propagate.
+            if (is_err(val)) { return step_stop(env, val); }
             var env2: Env = env.bind(v.name, coerce_int_width(val, v.type_name));
-            return StepResult { env: env2, ret: v_err("__noreturn__") };
+            return step_none(env2);
         },
         parser.StmtReturn(r) => {
             var val: Value = eval_expr(r.value, env);
-            return StepResult { env: env, ret: val };
+            return step_stop(env, val);
         },
         parser.StmtExpr(x) => {
             var val: Value = eval_expr(x.value, env);
             // A runtime error in an expression-statement aborts rather than
             // being dropped and swallowed (#4348 item 4). Otherwise the value
             // is discarded (expression-statements are side-effect only here).
-            if (is_err(val)) { return StepResult { env: env, ret: val }; }
-            return StepResult { env: env, ret: v_err("__noreturn__") };
+            if (is_err(val)) { return step_stop(env, val); }
+            return step_none(env);
         },
         parser.StmtIf(ifs) => {
             var cv: Value = eval_expr(ifs.cond, env);
-            if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
+            if (is_err(cv)) { return step_stop(env, cv); }
             match (cv) {
                 VBool(b) => {
                     var body: parser.Stmt[] = ifs.else_body;
@@ -1399,11 +1407,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     // slots in place).
                     var base: i32 = env.names.len();
                     var step: StepResult = eval_block(body, env);
-                    return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
                 },
-                _ => { return StepResult { env: env, ret: v_err("if cond not bool") }; }
+                _ => { return step_stop(env, v_err("if cond not bool")); }
             }
-            return StepResult { env: env, ret: v_err("unreachable if-arm") };
+            return step_stop(env, v_err("unreachable if-arm"));
         },
         parser.StmtWhile(w) => {
             // Loop until cond is false or the body returns.
@@ -1427,37 +1435,37 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             var base: i32 = env.names.len();
             while (true) {
                 var cv: Value = eval_expr(w.cond, cur);
-                if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
+                if (is_err(cv)) { return step_stop(env, cv); }
                 match (cv) {
                     VBool(b) => {
-                        if (!b.v) { return StepResult { env: cur, ret: v_err("__noreturn__") }; }
+                        if (!b.v) { return step_none(cur); }
                     },
-                    _ => { return StepResult { env: env, ret: v_err("while cond not bool") }; }
+                    _ => { return step_stop(env, v_err("while cond not bool")); }
                 }
                 var step: StepResult = eval_block(w.body, cur);
                 // break inside the loop exits immediately —
                 // discard the body's env, return noreturn so
                 // the surrounding stmt list continues.
-                if (is_break(step.ret)) {
-                    return StepResult { env: trim_env(step.env, base), ret: v_err("__noreturn__") };
+                if (step.sig == 2) {
+                    return step_none(trim_env(step.env, base));
                 }
                 // continue trims body-local bindings and loops.
-                if (is_continue(step.ret)) {
+                if (step.sig == 3) {
                     cur = trim_env(step.env, base);
                     continue;
                 }
-                if (!is_noreturn(step.ret)) {
-                    // A return inside the loop short-circuits all
-                    // remaining iterations.
+                if (step.sig == 1) {
+                    // A return (or error) inside the loop short-circuits
+                    // all remaining iterations.
                     return step;
                 }
                 cur = trim_env(step.env, base);
             }
-            return StepResult { env: cur, ret: v_err("__noreturn__") };
+            return step_none(cur);
         },
         parser.StmtAssign(a) => {
             var av: Value = eval_expr(a.value, env);
-            if (is_err(av)) { return StepResult { env: env, ret: av }; }
+            if (is_err(av)) { return step_stop(env, av); }
             // update silently no-ops on undefined names; surface
             // the error explicitly so a mistake is observable in
             // tests.
@@ -1468,15 +1476,15 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                 i = i - 1;
             }
             if (!found) {
-                return StepResult { env: env, ret: v_err("assign to undefined `" + a.target + "`") };
+                return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
             }
-            return StepResult { env: env.update(a.target, av), ret: v_err("__noreturn__") };
+            return step_none(env.update(a.target, av));
         },
         parser.StmtMatch(m) => {
             // Evaluate the scrutinee. An error in the scrutinee
             // propagates without running any arm.
             var sv: Value = eval_expr(m.scrutinee, env);
-            if (is_err(sv)) { return StepResult { env: env, ret: sv }; }
+            if (is_err(sv)) { return step_stop(env, sv); }
             // Walk arms top-to-bottom and run the first that
             // matches. Variant patterns require a VStruct
             // scrutinee whose type_name matches the pattern's
@@ -1568,7 +1576,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     var pass: boolean = true;
                     if (arm.has_guard) {
                         var gv: Value = eval_expr(arm.guard, bodyEnv);
-                        if (is_err(gv)) { return StepResult { env: trim_env(bodyEnv, base), ret: gv }; }
+                        if (is_err(gv)) { return step_stop(trim_env(bodyEnv, base), gv); }
                         match (gv) {
                             VBool(gb) => { pass = gb.v; },
                             _ => { pass = false; }
@@ -1576,23 +1584,23 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     }
                     if (pass) {
                         var step: StepResult = eval_block(arm.body, bodyEnv);
-                        return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                        return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
                     }
                 }
                 i = i + 1;
             }
-            return StepResult { env: env, ret: v_err("non-exhaustive match") };
+            return step_stop(env, v_err("non-exhaustive match"));
         },
-        parser.StmtBreak(_) => { return StepResult { env: env, ret: v_err("__break__") }; },
-        parser.StmtContinue(_) => { return StepResult { env: env, ret: v_err("__continue__") }; },
+        parser.StmtBreak(_) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 }; },
+        parser.StmtContinue(_) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 }; },
         parser.StmtFor(f) => {
             // Evaluate the iter expression — must be a VArr.
             var iv: Value = eval_expr(f.iter, env);
-            if (is_err(iv)) { return StepResult { env: env, ret: iv }; }
+            if (is_err(iv)) { return step_stop(env, iv); }
             var elems: Value[] = [];
             match (iv) {
                 VArr(a) => { elems = a.elements; },
-                _ => { return StepResult { env: env, ret: v_err("for-in iter not an array") }; }
+                _ => { return step_stop(env, v_err("for-in iter not an array")); }
             }
             // Each iteration binds f.var_name to the current
             // element, walks the body, then trims back to the
@@ -1604,23 +1612,23 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             while (i < elems.len()) {
                 var iter_env: Env = cur.bind(f.var_name, elems[i]);
                 var step: StepResult = eval_block(f.body, iter_env);
-                if (is_break(step.ret)) {
-                    return StepResult { env: trim_env(step.env, base), ret: v_err("__noreturn__") };
+                if (step.sig == 2) {
+                    return step_none(trim_env(step.env, base));
                 }
-                if (is_continue(step.ret)) {
+                if (step.sig == 3) {
                     cur = trim_env(step.env, base);
                     i = i + 1;
                     continue;
                 }
-                if (!is_noreturn(step.ret)) { return step; }
+                if (step.sig == 1) { return step; }
                 cur = trim_env(step.env, base);
                 i = i + 1;
             }
-            return StepResult { env: cur, ret: v_err("__noreturn__") };
+            return step_none(cur);
         },
-        parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
+        parser.StmtUnknown(u) => { return step_stop(env, v_err("parser-side unknown stmt: " + u.kind)); }
     }
-    return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
+    return step_stop(env, v_err("unhandled Stmt variant"));
 }
 
 // trim_env drops bindings past index `base`. Used by the while
@@ -1647,43 +1655,19 @@ function trim_env(e: Env, base: i32): Env {
 // same trim per iteration but keeps it. Both rely on the fact
 // that update() rewrites slots in place, so reassignments to
 // outer-scoped names sit at index < base and survive the trim.
-// First non-__noreturn ret short-circuits the walk.
+// The first non-zero sig short-circuits the walk.
 function eval_block(body: parser.Stmt[], env: Env): StepResult {
     var cur: Env = env;
     var i: i32 = 0;
     while (i < body.len()) {
         var r: StepResult = eval_stmt(body[i], cur);
         cur = r.env;
-        if (!is_noreturn(r.ret)) {
-            return StepResult { env: cur, ret: r.ret };
+        if (r.sig != 0) {
+            return StepResult { env: cur, ret: r.ret, sig: r.sig };
         }
         i = i + 1;
     }
-    return StepResult { env: cur, ret: v_err("__noreturn__") };
-}
-
-function is_noreturn(v: Value): boolean {
-    match (v) {
-        VErr(e) => { return e.msg == "__noreturn__"; },
-        _ => { return false; }
-    }
-    return false;
-}
-
-function is_break(v: Value): boolean {
-    match (v) {
-        VErr(e) => { return e.msg == "__break__"; },
-        _ => { return false; }
-    }
-    return false;
-}
-
-function is_continue(v: Value): boolean {
-    match (v) {
-        VErr(e) => { return e.msg == "__continue__"; },
-        _ => { return false; }
-    }
-    return false;
+    return step_none(cur);
 }
 
 // eval_program drives the stmt list. Stops at the first return
@@ -1695,7 +1679,7 @@ function eval_program(prog: parser.Stmt[]): Value {
     while (i < prog.len()) {
         var r: StepResult = eval_stmt(prog[i], env);
         env = r.env;
-        if (!is_noreturn(r.ret)) { return r.ret; }
+        if (r.sig != 0) { return r.ret; }
         i = i + 1;
     }
     return v_err("program reached end without `return`");
@@ -1727,7 +1711,7 @@ pub function eval_module(raw_mod: parser.Module): Value {
     while (j < mod.top_stmts.len()) {
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
         env = r.env;
-        if (!is_noreturn(r.ret)) { return r.ret; }
+        if (r.sig != 0) { return r.ret; }
         j = j + 1;
     }
     return v_err("module has no `main` and no top-level `return`");
