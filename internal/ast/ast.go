@@ -2371,6 +2371,13 @@ type Match struct {
 	P    Position
 	Tag  Expr
 	Arms []*MatchArm
+	// StructMatch is the scrutinee's struct type name when this is a
+	// match on a struct value (arms are struct patterns `S { x, y }`,
+	// which bind fields irrefutably). Empty for enum / tuple / literal
+	// matches. Stamped by the checker (checkStructMatch) so the IR and
+	// interpreter lower the arms as struct field-binds rather than
+	// enum-variant matches.
+	StructMatch string
 }
 
 // MatchArm is one pattern → body pair. The Bindings are the
@@ -2456,6 +2463,9 @@ type MatchExpr struct {
 	// IsFloat is set by the checker when the unified arm type is
 	// `f32` so the wasm backend picks `block (result f32)`.
 	IsFloat bool
+	// StructMatch mirrors Match.StructMatch: the scrutinee struct type
+	// name when the arms are struct patterns `S { x, y }`. Empty otherwise.
+	StructMatch string
 }
 
 // MatchExprArm is the expression-form arm. Body is an Expr; all

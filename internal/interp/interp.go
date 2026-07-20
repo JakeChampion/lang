@@ -2659,6 +2659,46 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
 		}
+		// Struct scrutinee: struct-pattern arms `S { x, y }` bind the named
+		// fields irrefutably; the first arm whose guard passes runs. The
+		// checker (checkStructMatch) stamps StructMatch and guarantees an
+		// irrefutable arm exists.
+		if st, ok := tag.(*Struct); ok && x.StructMatch != "" {
+			for _, arm := range x.Arms {
+				armEnv := newEnv(e)
+				if !arm.IsWildcard {
+					for _, b := range arm.Bindings {
+						fv, ok := st.Fields[b]
+						if !ok {
+							return result{}, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, b)
+						}
+						armEnv.declare(b, fv)
+					}
+				}
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return result{}, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
+				r, err := i.execBlock(arm.Body, armEnv)
+				if err != nil {
+					return result{}, err
+				}
+				if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+					return r, nil
+				}
+				return result{flow: flowNormal}, nil
+			}
+			return result{flow: flowNormal}, nil
+		}
 		// Tuple scrutinee: tuple-pattern arms `(p0, p1, …)`. A tuple
 		// value is an Array; a literal element dispatches by equality,
 		// a binder element always matches and binds, `_` is ignored.
