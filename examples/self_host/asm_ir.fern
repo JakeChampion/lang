@@ -3934,8 +3934,18 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // reads as a huge unsigned) with one branch to the shared abort —
             // which lives in the heap runtime block, so mark the need (a module
             // whose only array touch is a read must still pull the block in).
+            // Bounds-check elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc,
+            // the foreach counted reads) drops the cmp + jae — the `idx < arr_len`
+            // guard ran immediately before, so the read is provably in bounds. The
+            // existing checked path already relies on i32 indices being upper-bits
+            // clean (its cmpq compares the full %rcx), so the elided form is
+            // equally safe without a separate zero-extend.
             s = s.need("heap");
-            s = s.write("    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            if (o.i32_imm == 1) {
+                s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            } else {
+                s = s.write("    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            }
         } else if (o.kind_tag == 89) {  // arr_set
             // pop val (top), idx, base; store at data+(idx+1)*8. Same bounds
             // check as arr_get: an out-of-range write aborts, never corrupts.
