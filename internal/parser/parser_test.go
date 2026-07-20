@@ -1607,18 +1607,27 @@ function f(e: E): i32 {
 	}
 }
 
-// Or-patterns are restricted to variant / `_` patterns: a `|` between literal
-// patterns is the bitwise-or operator on the literal-match path, so it is
-// rejected with a clear diagnostic rather than silently meaning `1 | 2 == 3`.
-func TestMatchLiteralOrPatternRejected(t *testing.T) {
-	_, err := Parse(`function f(n: i32): i32 {
+// Literal or-patterns (`1 | 2 => …`) parse now (#5355): each alternative is
+// its own literal pattern, so the shared clone-desugar expands them into
+// separate literal arms. Tuple or-patterns stay rejected, since they'd bind
+// different names per alternative.
+func TestMatchLiteralOrPatternParses(t *testing.T) {
+	if _, err := Parse(`function f(n: i32): i32 {
 	return match (n) {
 		1 | 2 => 10,
 		_ => 0,
 	};
+}`); err != nil {
+		t.Fatalf("literal or-pattern should parse now, got %v", err)
+	}
+	_, err := Parse(`function f(t: (i32, i32)): i32 {
+	return match (t) {
+		(0, y) | (y, 0) => 1,
+		_ => 0,
+	};
 }`)
 	if err == nil {
-		t.Fatal("expected a parse error for a literal or-pattern, got none")
+		t.Fatal("expected a parse error for a tuple or-pattern, got none")
 	}
 	if !strings.Contains(err.Error(), "or-patterns") {
 		t.Errorf("error should mention or-patterns; got %v", err)
