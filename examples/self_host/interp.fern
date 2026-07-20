@@ -1396,6 +1396,16 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
         parser.StmtIf(ifs) => {
             var cv: Value = eval_expr(ifs.cond, env);
             if (is_err(cv)) { return step_stop(env, cv); }
+            // lower_defers_module's synthesized cleanup guards
+            // (`if (__dfa0) { … }`) condition on i32 FLAGS, not bools —
+            // normalise a VInt cond to its non-zero truth here (#4348
+            // item 1). Checker-validated user programs can only reach
+            // this arm with a bool, so user-facing semantics are
+            // unchanged.
+            match (cv) {
+                VInt(civ) => { cv = VBool { v: civ.v != 0 }; },
+                _ => {}
+            }
             match (cv) {
                 VBool(b) => {
                     var body: parser.Stmt[] = ifs.else_body;
@@ -1458,6 +1468,12 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     // A return (or error) inside the loop short-circuits
                     // all remaining iterations.
                     return step;
+                }
+                // A deeper labeled break/continue (#4348 item 2): this loop
+                // is one of the levels being unwound — peel one level and
+                // re-propagate to the enclosing loop.
+                if (step.sig > 3) {
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
                 }
                 cur = trim_env(step.env, base);
             }
@@ -1591,8 +1607,15 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return step_stop(env, v_err("non-exhaustive match"));
         },
-        parser.StmtBreak(_) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 }; },
-        parser.StmtContinue(_) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 }; },
+        // A labeled break/continue carries its resolve_labels_module-baked
+        // relative loop depth (tag 0 = innermost) in the sig encoding
+        // (#4348 item 2): sig 2+2d = break out of d+1 loops, 3+2d =
+        // continue the d-th enclosing loop. Each loop arm consumes sig
+        // 2/3 and peels one level off anything deeper (sig - 2), so a
+        // 2-level `break outer` unwinds both loops instead of silently
+        // degrading to the innermost (which hung `outer: while(true)`).
+        parser.StmtBreak(b) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 + b.tag * 2 }; },
+        parser.StmtContinue(c) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 }; },
         parser.StmtFor(f) => {
             // Evaluate the iter expression — must be a VArr.
             var iv: Value = eval_expr(f.iter, env);
@@ -1621,6 +1644,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     continue;
                 }
                 if (step.sig == 1) { return step; }
+                // A deeper labeled break/continue (#4348 item 2): peel one
+                // level and re-propagate to the enclosing loop.
+                if (step.sig > 3) {
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
+                }
                 cur = trim_env(step.env, base);
                 i = i + 1;
             }
@@ -1694,7 +1722,13 @@ pub function eval_module(raw_mod: parser.Module): Value {
     // call) to counting while-loops up front — the interpreter's StmtFor only
     // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
     // (The IR path keeps the `__range` shape for irlower.lower_range_for.)
-    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(raw_mod));
+    // Lower `defer` to its scope-exit position HERE (#4348 item 1) rather
+    // than relying on each caller: the stdin drivers (interp_run) fed the
+    // raw module straight in, so StmtDefer's recurse-arm executed deferred
+    // actions eagerly at their source position (native 2 / eager 101 on the
+    // timing-sensitive repro). lower_defers_module is idempotent on a
+    // defer-free module, so callers that already lowered stay correct.
+    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(raw_mod)));
     // Fold each enum into the alias table as a synthetic union so a method
     // declared on the enum type dispatches on its variant values.
     var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);

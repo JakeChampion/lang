@@ -261,6 +261,27 @@ var interpProgs = []struct {
 	{"i64-compare", "function main(): i32 { var x: i64 = 5000000000; if (x > 4000000000) { return 1; } return 0; }", 1},
 	// i32 arithmetic is unchanged — overflow still wraps via the 32-bit path.
 	{"i32-overflow-unchanged", "function main(): i32 { var x: i32 = 100000; return x * 100000; }", 0},
+	// defer runs at SCOPE EXIT, not at its source position (#4348 item 1):
+	// eval_module now runs lower_defers_module itself, so the stdin driver —
+	// which feeds the raw module straight in — no longer executes the deferred
+	// action eagerly. Eager execution sets r=101 BEFORE the if, so the
+	// timing-sensitive shape returns 101 instead of native's 2.
+	{"defer-scope-exit", "function main(): i32 { var r = 2; defer { r = 101; } if (r == 2) { return 2; } return r; }", 2},
+	// The lowering's synthesized cleanup guards (`if (__dfa0) …`) condition on
+	// i32 flags; the interp normalises an int cond to its non-zero truth. A
+	// mid-body read after the defer still sees the pre-defer value.
+	{"defer-not-eager-mid-body", "function main(): i32 { var r = 1; defer { r = 100; } var x = r + 1; if (x == 2) { return 2; } return 3; }", 2},
+	// Labeled break unwinds MULTIPLE loop levels (#4348 item 2): the
+	// resolve_labels-baked depth now rides the sig encoding (2+2d) and each
+	// loop arm peels one level. Pre-fix the depth was ignored, `break outer`
+	// broke only the inner loop, and `outer: while (true)` hung forever.
+	{"labeled-break-two-level", "function main(): i32 { var s = 0; outer: while (true) { var i = 0; while (i < 10) { s = s + 1; if (s >= 11) { break outer; } i = i + 1; } } return s; }", 11},
+	// Labeled continue re-enters the OUTER loop (depth 3+2d), skipping the
+	// inner loop's remaining iterations: 3 outer iterations * 2 inner steps.
+	{"labeled-continue-two-level", "function main(): i32 { var s = 0; outer: for i in [1, 2, 3] { var j = 0; while (j < 5) { s = s + 1; if (j == 1) { continue outer; } j = j + 1; } } return s; }", 6},
+	// Unlabeled break/continue still bind to the innermost loop (depth 0 —
+	// the encoding's base case, unchanged).
+	{"unlabeled-break-innermost", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var j = 0; while (j < 10) { if (j == 2) { break; } s = s + 1; j = j + 1; } i = i + 1; } return s; }", 6},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
