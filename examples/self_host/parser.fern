@@ -2152,6 +2152,149 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
     return s_if(e_bool(true), outer, []);
 }
 
+// ---- Struct-pattern match (`match (p) { Point { x, y } => … }`) ----
+//
+// The self-host has no named-field ENUM variant patterns, so an
+// `Ident {` at an arm position is unambiguously a STRUCT pattern. A struct
+// has one shape, so a struct-pattern arm is irrefutable — it binds the named
+// fields and (with a guard) the first arm whose guard passes runs. It
+// desugars at parse time, like build_tuple_match, into the `done`-flag chain
+// with per-field `var bind = tmp.field;` binds — no checker/irlower changes:
+// the field reads + ifs lower through the ordinary paths.
+struct StructArm { is_wild: boolean, binds: string[], fields: string[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+
+// parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields; a trailing
+// `..` marks omitted fields), the cursor on the struct-name ident. Returns the
+// parallel binding + field name lists (equal, shorthand). The struct name is
+// not retained — the scrutinee's type drives field resolution at lowering.
+function parse_struct_arm_pattern(p: Par): (string[], string[], Par) {
+    var binds: string[] = [];
+    var fields: string[] = [];
+    if (p.peek_ident().len() > 0) { p = p.advance(); } // struct name
+    if (p.peek_punct() == "{") { p = p.advance(); }
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        if (p.peek_punct() == "..") { p = p.advance(); break; }
+        var fld: string = p.peek_ident();
+        if (fld.len() > 0) { p = p.advance(); }
+        binds = binds.append(fld);
+        fields = fields.append(fld);
+        if (p.peek_punct() == ",") { p = p.advance(); }
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return (binds, fields, p);
+}
+
+function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: i32): Stmt {
+    if (arms.len() == 0) { return s_unknown("empty struct match"); }
+    var base: string = "__sm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
+    var tmp: string = base + "_v";
+    var done: string = base + "_d";
+    var outer: Stmt[] = [];
+    outer = outer.append(s_var(tmp, "", scrut));
+    outer = outer.append(s_var(done, "", e_bool(false)));
+    var ai: i32 = 0;
+    while (ai < arms.len()) {
+        var a: StructArm = arms[ai];
+        var cond: Expr = e_unary("!", e_ident(done));
+        var inner: Stmt[] = [];
+        if (a.is_wild) {
+            if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
+            inner = inner.append(s_assign(done, e_bool(true)));
+            var wb: i32 = 0;
+            while (wb < a.body.len()) { inner = inner.append(a.body[wb]); wb = wb + 1; }
+            outer = outer.append(s_if(cond, inner, []));
+            ai = ai + 1;
+            continue;
+        }
+        var binds: Stmt[] = [];
+        var bk: i32 = 0;
+        while (bk < a.binds.len()) {
+            binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
+            bk = bk + 1;
+        }
+        if (a.has_guard) {
+            var guarded: Stmt[] = [];
+            guarded = guarded.append(s_assign(done, e_bool(true)));
+            var gb: i32 = 0;
+            while (gb < a.body.len()) { guarded = guarded.append(a.body[gb]); gb = gb + 1; }
+            var bi: i32 = 0;
+            while (bi < binds.len()) { inner = inner.append(binds[bi]); bi = bi + 1; }
+            inner = inner.append(s_if(a.guard, guarded, []));
+        } else {
+            inner = inner.append(s_assign(done, e_bool(true)));
+            var bi2: i32 = 0;
+            while (bi2 < binds.len()) { inner = inner.append(binds[bi2]); bi2 = bi2 + 1; }
+            var ab: i32 = 0;
+            while (ab < a.body.len()) { inner = inner.append(a.body[ab]); ab = ab + 1; }
+        }
+        outer = outer.append(s_if(cond, inner, []));
+        ai = ai + 1;
+    }
+    return s_if(e_bool(true), outer, []);
+}
+
+// parse_struct_match_arms parses the arm list of a struct match (cursor just
+// past the opening `{`), returning the arms + the first arm's return-type tag.
+// Shared by the statement and expression forms: expr_form=true parses each arm
+// body as a value branch (`parse_branch_body` / a bare tail expr, so the IIFE
+// wrapper yields it); expr_form=false parses a statement block (`parse_block`).
+function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], string, Par) {
+    var arms: StructArm[] = [];
+    var rt: string = "i32";
+    var first: boolean = true;
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var sline: i32 = p.peek_line();
+        var scol: i32 = p.peek_col();
+        var s_wild: boolean = false;
+        var s_binds: string[] = [];
+        var s_fields: string[] = [];
+        if (p.peek_ident() == "_" && p.peek2_punct() != "{") {
+            p = p.advance();
+            s_wild = true;
+        } else {
+            var (spb, spf, spp) = parse_struct_arm_pattern(p);
+            p = spp;
+            s_binds = spb;
+            s_fields = spf;
+        }
+        var s_guard: Expr = e_bool(true);
+        var s_has_guard: boolean = false;
+        if (p.peek_keyword() == "when") {
+            p = p.advance();
+            var (sgr_expr, sgr_p) = parse_expr(p);
+            p = sgr_p;
+            s_guard = sgr_expr;
+            s_has_guard = true;
+        }
+        if (p.peek_punct() == "=>") { p = p.advance(); }
+        var sbody: Stmt[] = [];
+        var sbrt: string = "i32";
+        if (expr_form) {
+            if (p.peek_punct() == "{") {
+                var (sbb_body, sbb_rt, sbb_p) = parse_branch_body(p);
+                p = sbb_p;
+                sbody = sbb_body;
+                sbrt = sbb_rt;
+            } else {
+                var (ser_expr, ser_p) = parse_expr(p);
+                p = ser_p;
+                sbody = [s_return(ser_expr)];
+                sbrt = if_expr_rt(ser_expr);
+            }
+        } else {
+            var (sblk_body, sblk_p) = parse_block(p);
+            p = sblk_p;
+            sbody = sblk_body;
+        }
+        if (first) { rt = sbrt; first = false; }
+        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
+        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return (arms, rt, p);
+}
+
 // parse_branch_body yields a parsed if/match value-branch body: the
 // Stmt[] (leading statements followed by `s_return(tail)`) plus the
 // return-type tag derived from the TAIL expression (the block's value).
@@ -2362,6 +2505,14 @@ function parse_match_expr(p: Par): IfChain {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
         return IfChain { par: p, stmt: build_tuple_match(sr_expr, etarms, mkline, mkcol), rt: rt };
+    }
+    // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (the
+    // self-host has no named-field enum patterns, so it's unambiguous):
+    // desugar to the field-bind flag chain (build_struct_match).
+    if (p.peek_ident().len() > 0 && p.peek2_punct() == "{") {
+        var (smarms, smrt, smp) = parse_struct_match_arms(p, true);
+        p = smp;
+        return IfChain { par: p, stmt: build_struct_match(sr_expr, smarms, mkline, mkcol), rt: smrt };
     }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
@@ -2983,6 +3134,13 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
         return (build_tuple_match(sr_expr, tarms, mkline, mkcol), p);
+    }
+    // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
+    // parse_match_expr) — desugar to the field-bind flag chain.
+    if (p.peek_ident().len() > 0 && p.peek2_punct() == "{") {
+        var (smarms, smrt, smp) = parse_struct_match_arms(p, false);
+        p = smp;
+        return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
     }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
