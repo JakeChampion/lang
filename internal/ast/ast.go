@@ -2443,7 +2443,11 @@ type MatchArm struct {
 	// types) so the IR picks the right per-element load width.
 	TupleElems []TuplePatElem
 	Guard      Expr // optional `when <expr>`; nil for unconditional arms
-	Body       *Block
+	// AtBinding is the `n` in an `@`-pattern `n @ <pattern> => …`: the whole
+	// matched value is also bound to `n` (with the scrutinee's type) in the
+	// arm scope, alongside whatever <pattern> binds. Empty for plain patterns.
+	AtBinding string
+	Body      *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -2488,7 +2492,9 @@ type MatchExprArm struct {
 	// MatchArm.TupleElems. BindingTypes runs parallel to it.
 	TupleElems []TuplePatElem
 	Guard      Expr
-	Body       Expr
+	// AtBinding — the `n` in `n @ <pattern>`; see MatchArm.AtBinding.
+	AtBinding string
+	Body      Expr
 }
 
 func (s *Block) Pos() Position                  { return s.P }

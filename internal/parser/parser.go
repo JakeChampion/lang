@@ -3524,7 +3524,7 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
-		TupleElems: pat.TupleElems, Guard: guard, Body: body,
+		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, Guard: guard, Body: body,
 	}
 }
 
@@ -3768,6 +3768,9 @@ type matchPattern struct {
 	// slot to before re-matching on it. nil (the common case) means a
 	// flat binder — every downstream stage sees only flat arms.
 	subPats []*matchPattern
+	// atBinding is the `n` in an `@`-pattern `n @ <pattern>`: the whole
+	// matched value is also bound to `n`. Empty for plain patterns.
+	atBinding string
 }
 
 // hasNestedSub reports whether any payload slot of this pattern is a
@@ -3809,6 +3812,32 @@ func (p *parser) isNestedPatternStart() bool {
 // leaving the cursor at the optional `|`, `when`, or `=>` that follows.
 func (p *parser) parseMatchPattern() (matchPattern, error) {
 	t := p.peek()
+	// `n @ <pattern>` — bind the whole matched value to `n` while also
+	// matching <pattern>. Recognised only for a real binder name (`_ @ …`
+	// is pointless and rejected as a non-start). Recurse for the sub-pattern
+	// and stamp atBinding on it.
+	if t.Kind == lexer.Ident && t.Text != "_" &&
+		p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "@" {
+		p.advance() // binder name
+		p.advance() // `@`
+		sub, err := p.parseMatchPattern()
+		if err != nil {
+			return sub, err
+		}
+		if sub.atBinding != "" {
+			return sub, p.errorfCode(t.Pos, "P001", "an `@`-pattern cannot nest another `@` binding")
+		}
+		// v1: `@` bindings are supported on variant patterns (`n @ Some(x)`,
+		// `n @ Color.Red`). Literal / tuple / wildcard sub-patterns are
+		// rejected for now — the whole-value capture there is either
+		// redundant (`n @ 0`) or not yet wired through the tuple/literal
+		// lowering.
+		if sub.VariantName == "" || sub.IsWildcard {
+			return sub, p.errorfCode(t.Pos, "P001", "`@` bindings are currently supported only on variant patterns (`n @ Variant(...)`)")
+		}
+		sub.atBinding = t.Text
+		return sub, nil
+	}
 	pat := matchPattern{P: t.Pos}
 	if t.Kind == lexer.Ident && t.Text == "_" {
 		p.advance()
@@ -4110,7 +4139,7 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
-		TupleElems: pat.TupleElems, Guard: guard, Body: body,
+		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, Guard: guard, Body: body,
 	}
 }
 

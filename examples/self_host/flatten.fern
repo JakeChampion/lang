@@ -286,7 +286,8 @@ function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
                 type_name: rewrite_type_name(pv.type_name, ctx),
                 binding: pv.binding,
                 extra_bindings: pv.extra_bindings,
-                nested: pv.nested
+                nested: pv.nested,
+                at_binding: pv.at_binding
             };
         },
         _ => { return p; }

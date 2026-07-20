@@ -8961,6 +8961,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		// declaration order here.
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
+		// `@` binding: the whole matched value, bound at the scrutinee's type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = et
+		}
 		for k, name := range arm.Bindings {
 			armScope.names[name] = arm.BindingTypes[k]
 		}
@@ -9679,6 +9683,9 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = et
+		}
 		for k, name := range arm.Bindings {
 			armScope.names[name] = arm.BindingTypes[k]
 		}
