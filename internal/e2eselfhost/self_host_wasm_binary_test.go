@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"crypto/sha256"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,7 +181,17 @@ func TestSelfHostWasmBinary(t *testing.T) {
 			// 2. Assemble: run the (prebuilt) assembler over target.wat.
 			out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
 			if err != nil {
-				t.Fatalf("run assembler: %v", err)
+				// Surface everything a CI-only failure needs: the
+				// assembler's stderr (wasmtime prints trap/validation
+				// detail there) plus size + hash of both inputs, so a
+				// local repro can confirm it is chewing the same bytes.
+				var stderr []byte
+				if ee, ok := err.(*exec.ExitError); ok {
+					stderr = ee.Stderr
+				}
+				asmWatBytes, _ := os.ReadFile(asmWatPath)
+				t.Fatalf("run assembler: %v\ntarget.wat: %d bytes sha256=%x\nassembler.wat: %d bytes sha256=%x\nassembler stderr:\n%s",
+					err, len(wat), sha256.Sum256(wat), len(asmWatBytes), sha256.Sum256(asmWatBytes), stderr)
 			}
 			var bs []byte
 			for _, tok := range strings.Fields(string(out)) {
@@ -225,7 +236,7 @@ function main(): i32 {
             while (i < bytes.len()) { print_int(bytes[i]); write("\n"); i = i + 1; }
             return 0;
         },
-        Err(e) => { return 1; }
+        Err(e) => { eprint("assembler: read_file(target.wat) failed"); return 1; }
     }
     return 2;
 }
