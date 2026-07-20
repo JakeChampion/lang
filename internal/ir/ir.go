@@ -5742,6 +5742,99 @@ func literalMatchScrName(slot int32) string {
 	return fmt.Sprintf("__lit_match_scr_%d", slot)
 }
 
+// emitStructMatch lowers a `match` on a struct-typed scrutinee (the checker
+// stamped n.StructMatch). Each arm is a struct pattern `S { x, y }` that
+// binds the named fields irrefutably, so the match is an if-chain: cache the
+// scrutinee pointer, then per arm load each bound field from `[ptr+offset]`
+// into a scoped binding slot, run the optional guard (fall through on false),
+// and run the body on a match. Bindings mirror the enum-match load path
+// (bindingSlotScoped + payloadLoadOpFor), reading the borrowed scrutinee's
+// fields without a transfer inc.
+func (b *builder) emitStructMatch(n *ast.Match) error {
+	tagT := b.exprType(n.Tag)
+	st, ok := tagT.(ast.StructType)
+	if !ok {
+		return fmt.Errorf("ir: struct match scrutinee is not a struct type (compiler bug)")
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok {
+		return fmt.Errorf("ir: struct match on unknown struct %q", st.Name)
+	}
+	offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+	scrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__struct_match_scr_%d", scrSlot)] = scrSlot
+	if tagT != nil {
+		b.scratchType[scrSlot] = tagT
+	}
+	if err := b.expr(n.Tag); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: scrSlot})
+	b.openBlock(BlockTypeVoid)
+	matchEndD := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				b.openBlock(BlockTypeVoid)
+				armEndD := b.depth
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpNot})
+				b.brTo(armEndD, true)
+				if err := b.stmt(arm.Body); err != nil {
+					return err
+				}
+				b.brTo(matchEndD, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			b.brTo(matchEndD, false)
+			continue
+		}
+		b.openBlock(BlockTypeVoid)
+		armEndD := b.depth
+		armRestores := []func(){}
+		for i, name := range arm.Bindings {
+			bt := ast.Type(ast.NumberType{})
+			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				bt = arm.BindingTypes[i]
+			}
+			off, ok := offMap[name]
+			if !ok {
+				return fmt.Errorf("ir: struct match field %q not in %s layout (compiler bug)", name, st.Name)
+			}
+			slot, restore := b.bindingSlotScoped(name, bt)
+			armRestores = append(armRestores, restore)
+			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+			b.emit(Op{Kind: OpConstI32, I32: off})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(payloadLoadOpFor(bt, b.ptrW))
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(armEndD, true)
+		}
+		if err := b.stmt(arm.Body); err != nil {
+			return err
+		}
+		for i := len(armRestores) - 1; i >= 0; i-- {
+			armRestores[i]()
+		}
+		b.brTo(matchEndD, false)
+		b.closeScope()
+	}
+	b.closeScope()
+	return nil
+}
+
 // rangeMatchCond builds the boolean test for a range-pattern arm
 // (`lo..hi` / `lo..=hi`): `scrutinee >= lo && scrutinee <op> hi`, where
 // <op> is `<` for an exclusive `..` and `<=` for an inclusive `..=`. The
@@ -5877,6 +5970,129 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 		b.brTo(exitDepth, false)
+		b.closeScope()
+	}
+	b.closeScope()
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+// emitStructMatchExpr is the expression-form counterpart of emitStructMatch:
+// struct-pattern arms bind fields irrefutably and each arm body is an Expr
+// stored into a result slot (mirroring emitLiteralMatchExpr's result handling).
+func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
+	tagT := b.exprType(n.Tag)
+	st, ok := tagT.(ast.StructType)
+	if !ok {
+		return fmt.Errorf("ir: struct match-expr scrutinee is not a struct type (compiler bug)")
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok {
+		return fmt.Errorf("ir: struct match-expr on unknown struct %q", st.Name)
+	}
+	offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+	scrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__struct_match_scr_%d", scrSlot)] = scrSlot
+	if tagT != nil {
+		b.scratchType[scrSlot] = tagT
+	}
+	if err := b.expr(n.Tag); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: scrSlot})
+
+	resultType := ast.Type(ast.NumberType{})
+	if n.IsFloat {
+		resultType = ast.FloatType{}
+	}
+	for _, arm := range n.Arms {
+		if arm == nil || arm.Body == nil {
+			continue
+		}
+		t := b.exprType(arm.Body)
+		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
+			resultType = nt
+			break
+		}
+		if ft, ok := t.(ast.FloatType); ok && !ft.Polymorphic {
+			resultType = ft
+			break
+		}
+		if _, ok := t.(ast.StringType); ok {
+			resultType = ast.StringType{}
+			break
+		}
+		if _, ok := t.(ast.BoolType); ok {
+			resultType = ast.BoolType{}
+			break
+		}
+	}
+	resultSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
+	b.scratchType[resultSlot] = resultType
+
+	b.openBlock(BlockTypeVoid)
+	matchEndD := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				b.openBlock(BlockTypeVoid)
+				armEndD := b.depth
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpNot})
+				b.brTo(armEndD, true)
+				if err := b.emitCountedYield(arm.Body); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+				b.brTo(matchEndD, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.emitCountedYield(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(matchEndD, false)
+			continue
+		}
+		b.openBlock(BlockTypeVoid)
+		armEndD := b.depth
+		armRestores := []func(){}
+		for i, name := range arm.Bindings {
+			bt := ast.Type(ast.NumberType{})
+			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				bt = arm.BindingTypes[i]
+			}
+			off, ok := offMap[name]
+			if !ok {
+				return fmt.Errorf("ir: struct match-expr field %q not in %s layout (compiler bug)", name, st.Name)
+			}
+			slot, restore := b.bindingSlotScoped(name, bt)
+			armRestores = append(armRestores, restore)
+			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+			b.emit(Op{Kind: OpConstI32, I32: off})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(payloadLoadOpFor(bt, b.ptrW))
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+		if arm.Guard != nil {
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(armEndD, true)
+		}
+		if err := b.emitCountedYield(arm.Body); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+		for i := len(armRestores) - 1; i >= 0; i-- {
+			armRestores[i]()
+		}
+		b.brTo(matchEndD, false)
 		b.closeScope()
 	}
 	b.closeScope()
@@ -7063,6 +7279,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			break
 		}
+		// Struct-pattern match: the scrutinee is a struct (the checker
+		// stamped n.StructMatch and dispatched to `checkStructMatch`). A
+		// struct-pattern arm binds fields irrefutably, so lower as an
+		// if-chain — bind fields, run the (optional) guard, fall through
+		// to the next arm on a guard-false, run the body on a match.
+		if n.StructMatch != "" {
+			if err := b.emitStructMatch(n); err != nil {
+				return err
+			}
+			break
+		}
 		// Lower a `match` to: store the scrutinee pointer, load
 		// its tag once, then for each arm test `tag == k` and
 		// branch in. On match, the arm body runs with payload
@@ -7792,6 +8019,14 @@ func (b *builder) expr(e ast.Expr) error {
 		// stored into the result slot before branching out.
 		if isLiteralMatchExprArms(n.Arms) {
 			if err := b.emitLiteralMatchExpr(n); err != nil {
+				return err
+			}
+			return nil
+		}
+		// Struct-pattern match-expr: scrutinee is a struct (checker
+		// stamped n.StructMatch) — see emitStructMatchExpr.
+		if n.StructMatch != "" {
+			if err := b.emitStructMatchExpr(n); err != nil {
 				return err
 			}
 			return nil

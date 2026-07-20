@@ -8843,6 +8843,14 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkTupleMatch(n, tup, s)
 			return
 		}
+		// Struct scrutinee: arms are struct patterns `S { x, y }` (or
+		// `_`) — see checkStructMatch.
+		if st, isStruct := tagT.(ast.StructType); isStruct {
+			if _, known := c.info.Structs[st.Name]; known {
+				c.checkStructMatch(n, st, s)
+				return
+			}
+		}
 		// Non-enum scrutinee: every arm must be a literal pattern
 		// or the wildcard. Dispatch via the literal-pattern shape.
 		// Conventional types are number / string / bool — anything
@@ -9135,6 +9143,104 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 	}
 }
 
+// checkStructMatch type-checks a `match` on a struct-typed scrutinee.
+// A struct has a single shape, so a struct-pattern arm `S { x, y }` is
+// irrefutable (it always matches, modulo a guard) and binds the named
+// fields into the arm scope — the match reduces to "run the first arm
+// whose guard passes". The pattern names must be the scrutinee struct's
+// fields; the pattern's leading name must be the struct type. A guardless
+// struct-pattern arm (or `_`) makes the match exhaustive.
+func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		return
+	}
+	n.StructMatch = st.Name
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	sawIrrefutable := false
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			} else {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if !arm.NamedFields {
+			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.VariantName != st.Name {
+			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		armScope := newScope(s)
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		seen := map[string]bool{}
+		for k, b := range arm.Bindings {
+			var ft ast.Type
+			found := false
+			for _, f := range sd.Fields {
+				if f.Name == b {
+					ft = f.Type
+					if sub != nil {
+						ft = substituteType(ft, sub)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(arm.P, arm.P, st.Name, b, declared)
+				continue
+			}
+			arm.BindingTypes[k] = ft
+			if seen[b] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
+				continue
+			}
+			seen[b] = true
+			armScope.names[b] = ft
+		}
+		irrefutable := true
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
+	}
+}
+
 // checkLiteralMatchExpr is the expression-form counterpart of
 // checkLiteralMatch. Each arm body is an Expr and the unified
 // arm type is returned as the match-expression's result.
@@ -9342,6 +9448,126 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 	return result
 }
 
+// checkStructMatchExpr is the expression-form counterpart of checkStructMatch:
+// struct-pattern arms bind fields irrefutably, each arm body is an Expr, and
+// the unified arm type is the match-expression's result.
+func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *scope) ast.Type {
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		return nil
+	}
+	n.StructMatch = st.Name
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	sawIrrefutable := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
+		if !ast.Equal(result, armT) {
+			if c.assignable(armT, result) {
+				return
+			}
+			if c.assignable(result, armT) {
+				result = armT
+				return
+			}
+			c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
+		}
+	}
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			} else {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if !arm.NamedFields {
+			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
+			continue
+		}
+		if arm.VariantName != st.Name {
+			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
+			continue
+		}
+		armScope := newScope(s)
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		seen := map[string]bool{}
+		for k, b := range arm.Bindings {
+			var ft ast.Type
+			found := false
+			for _, f := range sd.Fields {
+				if f.Name == b {
+					ft = f.Type
+					if sub != nil {
+						ft = substituteType(ft, sub)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(arm.P, arm.P, st.Name, b, declared)
+				continue
+			}
+			arm.BindingTypes[k] = ft
+			if seen[b] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
+				continue
+			}
+			seen[b] = true
+			armScope.names[b] = ft
+		}
+		irrefutable := true
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
+	}
+	if isFloat(result) {
+		n.IsFloat = true
+	}
+	return result
+}
+
 // checkMatchExpr validates an expression-position `match` and
 // returns the unified arm type. Same scrutinee, payload-binding,
 // guard, and exhaustiveness rules as checkMatch — the difference
@@ -9358,6 +9584,12 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		// Tuple scrutinee: arms are tuple patterns + a wildcard.
 		if tup, isTup := tagT.(ast.TupleType); isTup {
 			return c.checkTupleMatchExpr(n, tup, s)
+		}
+		// Struct scrutinee: arms are struct patterns `S { x, y }` + a wildcard.
+		if st, isStruct := tagT.(ast.StructType); isStruct {
+			if _, known := c.info.Structs[st.Name]; known {
+				return c.checkStructMatchExpr(n, st, s)
+			}
 		}
 		// Non-enum scrutinee: arms are literal patterns + a
 		// wildcard. Delegate to the literal-pattern branch.
