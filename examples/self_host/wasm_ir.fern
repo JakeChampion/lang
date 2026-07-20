@@ -986,20 +986,54 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // `wasm-tools component new`. wasm_block makes a wasm_timer_pollable timer
         // observably block (subscribe → block → the duration elapses).
         // wasm_poll (the wasi:io/poll.poll list<pollable> -> list<u32> readiness
-        // multiplexer) does NOT lower on the wasm IR path yet (#4316): its LIST
-        // params/results need component-type metadata (encoded WIT in a custom
-        // section) for `wasm-tools component new` to synthesise the canonical-ABI
-        // adapters — the scalar pollable ops above compose without it, but a
-        // list-typed import cannot. That metadata-emission subsystem (the shared
-        // prerequisite for poll AND the tcp stream/resource imports) is the next
-        // slice. wasm_poll DOES lower on every other backend (native x86-64/arm64
-        // + interp + the self-host register IR paths) as a -1 portability shim.
+        // multiplexer) does NOT lower on the wasm IR path yet (#4316). Its LIST
+        // params/results do need component-type metadata — the scalar pollable
+        // ops above compose without it, a list-typed import cannot — but the
+        // blocker is NOT a metadata-emission subsystem, as this comment used to
+        // claim. Measured 2026-07-20:
+        //
+        //   - `wasm-tools component embed <wit> -w fern` + `component new`
+        //     composes a core module importing `wasi:io/poll@0.2.0` "poll" at
+        //     the canonical (ptr, len, retptr) core signature — no hand-written
+        //     encoder needed. The payload is world-specific and module-
+        //     independent (see internal/wasm/componenttype/doc.go).
+        //   - What actually fails first is the VENDORED WIT: cmd/fern/wit/deps/
+        //     io/poll.wit is a deliberate subset carrying only `pollable.block`
+        //     + the resource drop, so the embed reports "import interface
+        //     wasi:io/poll@0.2.0 is missing function poll". Declaring
+        //     `poll: func(in: list<borrow<pollable>>) -> list<u32>;` there makes
+        //     the compose succeed.
+        //
+        // So the remaining work is: enrich the vendored WIT, regenerate the
+        // fern.bin / http.bin payloads per componenttype/doc.go (and update
+        // world_lift_test.go, which asserts the current subset), emit the import
+        // + a $__fern_wasm_poll helper here (native's buildWasmPollBody in
+        // wasmbin/wasi.go is ~20 instructions and is the reference), and add the
+        // embed step to the compose pipeline — the self-host path runs
+        // `component new` alone today, with no metadata attached at all.
+        //
+        // NOTE the native backend does NOT take this route: it never invokes
+        // wasm-tools, composing in Go instead (component.ClassifyCore ->
+        // component.Compose), which hand-writes the canonical-ABI adapters. That
+        // is why native's wasm_poll works end-to-end against the same subset WIT.
+        //
+        // wasm_poll DOES lower on every other backend (native x86-64/arm64 +
+        // interp + the self-host register IR paths) as a -1 portability shim.
         && !module_emits_op_cached(cache, "wasm_poll")
         // tcp_* client primitives: native lowers them via the IR (socket
         // syscalls + the self-host string ABI for recv/send), but the
         // self-host wasm backend has no socket runtime (wasm sockets need the
         // component-model wasi:sockets interfaces), so a tcp module stays on the
-        // wasm AST path. Same deferral as poll/timer_fd.
+        // wasm AST path (#4318). Same SHAPE as wasm_poll above, and the same
+        // correction applies: the prerequisite is enriching the vendored WIT +
+        // attaching the world payload, not building an encoder. cmd/fern/wit/
+        // deps/sockets/*.wit is 123 lines of deliberate subset ("Vendored subset
+        // of wasi:sockets/network@0.2.0 — the `network` resource ... plus the
+        // `ip-socket-address` variant used by start-bind"), tailored to exactly
+        // what native's Go composer emits. Whatever the self-host emits beyond
+        // that subset has to be declared there before `component new` can
+        // resolve it. Do wasm_poll (#4316) first — it is the smaller instance of
+        // the identical problem and proves the pipeline.
         && !module_emits_op_cached(cache, "tcp_connect")
         && !module_emits_op_cached(cache, "tcp_send")
         && !module_emits_op_cached(cache, "tcp_recv")
