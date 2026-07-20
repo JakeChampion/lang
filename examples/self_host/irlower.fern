@@ -15266,6 +15266,25 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
                 s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
                 s = s.emit(ir.op_drop());
             },
+            // A fresh-string producer element (`(i, "x" + s)` / `.to_string()`,
+            // #4353 item 1): the tuple box sole-owns the fresh box, so the
+            // rc-aware __fern_str_free (immortal skips, shared decs, unique
+            // frees) is exactly balanced. A string LITERAL element points at an
+            // immortal box and takes the default skip below — nothing to free.
+            parser.ExprBinary(_) => {
+                if (tuple_str_elem_fresh(tup.elements[k])) {
+                    s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
+                    s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
+                    s = s.emit(ir.op_drop());
+                }
+            },
+            parser.ExprCall(_) => {
+                if (tuple_str_elem_fresh(tup.elements[k])) {
+                    s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
+                    s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
+                    s = s.emit(ir.op_drop());
+                }
+            },
             parser.ExprTuple(inner) => {
                 var cp: i32[] = path_child(path, k);
                 s = emit_tuple_child_drops(s, slot, cp, inner);          // free inner's children first
@@ -17499,6 +17518,12 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
                     parser.ExprNumber(_) => {},
                     parser.ExprBool(_) => {},
                     parser.ExprIdent(_) => {},
+                    // A string LITERAL element points at an immortal box
+                    // (negative rc — never freed), so the shallow box dec
+                    // is exactly as safe as for a scalar element (#4353
+                    // item 1; previously the whole tuple was rejected and
+                    // even its box leaked).
+                    parser.ExprString(_) => {},
                     _ => { return false; }
                 }
                 i = i + 1;
@@ -17510,16 +17535,57 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
     return false;
 }
 
+// tuple_str_elem_fresh reports whether a tuple element expression PRODUCES a
+// provably fresh string box: a `+` concat with a string-literal (or itself
+// fresh-string) operand — concat always allocates a new box whatever its
+// operands' ownership — or a 0-arg `.to_string()` call. The tuple box sole-owns
+// the result, so the deep-drop's rc-aware __fern_str_free is exactly balanced
+// (#4353 item 1, the string sibling of the fresh-array-literal element). A bare
+// string IDENT element aliases a live local and is NOT fresh (the caller rejects
+// the tuple, leak-safe — same as the array arm's ident exclusion); a plain
+// `a + b` ident concat is excluded too (indistinguishable from numeric add
+// without type info).
+function tuple_str_elem_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op != "+") { return false; }
+            var lok: boolean = false;
+            match (b.left) {
+                parser.ExprString(_) => { lok = true; },
+                _ => { lok = tuple_str_elem_fresh(b.left); }
+            }
+            if (lok) { return true; }
+            match (b.right) {
+                parser.ExprString(_) => { return true; },
+                _ => { return tuple_str_elem_fresh(b.right); }
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "to_string" && c.args.len() == 0) { return true; }
+                },
+                _ => {}
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // tuple_lit_rc_reclaimable reports whether `e` is a tuple literal whose every
-// element is either a flat scalar (Number / Bool / Ident) OR a FRESH array LITERAL
-// (`[..]`), with AT LEAST ONE fresh array literal. Such a `(i, [i, i+1])` builds a
-// fresh sole-owner tuple box whose array element is itself sole-owned (rc=1, a
-// fresh literal aliased nowhere), so a DEEP loop-rebind reclaim — arr_dec each
-// array element, then the box — is exactly balanced (#4357 tuple sibling of the
-// fresh-string struct reclaim). A bare array IDENT element (`(i, xs)`) is EXCLUDED
-// (it aliases a live local, so freeing it would double-release) — that tuple stays
-// on the SHALLOW scalar-tuple path (leak-safe). String / struct pointer elements
-// are excluded too (a first cut to array elements); such a tuple stays shallow.
+// element is either a flat scalar (Number / Bool / Ident), a string LITERAL
+// (immortal box — nothing to free), a FRESH-string producer (concat /
+// `.to_string()`, tuple_str_elem_fresh), OR a FRESH array LITERAL (`[..]`),
+// with AT LEAST ONE rc child to free. Such a `(i, [i, i+1])` / `(i, "x" + s)`
+// builds a fresh sole-owner tuple box whose rc element is itself sole-owned
+// (rc=1, a fresh box aliased nowhere), so a DEEP loop-rebind reclaim — arr_dec /
+// rc-aware str_free each fresh element, then the box — is exactly balanced
+// (#4357 tuple sibling of the fresh-string struct reclaim). A bare array or
+// string IDENT element (`(i, xs)`) is EXCLUDED (it aliases a live local, so
+// freeing it would double-release) — that tuple stays on the SHALLOW
+// scalar-tuple path (leak-safe).
 function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
@@ -17531,6 +17597,20 @@ function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]):
                     parser.ExprNumber(_) => {},
                     parser.ExprBool(_) => {},
                     parser.ExprIdent(_) => {},
+                    // Immortal literal box: admitted, but frees nothing —
+                    // does not by itself make the tuple worth the deep walk.
+                    parser.ExprString(_) => {},
+                    // A fresh-string producer element (`(i, "x" + s)`): the
+                    // deep walk routes it through the rc-aware
+                    // __fern_str_free, so it counts as an rc child.
+                    parser.ExprBinary(_) => {
+                        if (!tuple_str_elem_fresh(tl.elements[i])) { return false; }
+                        any_arr = true;
+                    },
+                    parser.ExprCall(_) => {
+                        if (!tuple_str_elem_fresh(tl.elements[i])) { return false; }
+                        any_arr = true;
+                    },
                     parser.ExprArray(_) => { any_arr = true; },
                     // A fresh STRUCT-literal element with an rc-array field (`(i, P { xs: [..] })`,
                     // #4365): the struct box sole-owns its field buffers, so emit_tuple_child_drops
@@ -17566,9 +17646,10 @@ function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]):
 }
 
 // tuple_lit_has_array reports whether a tuple literal carries a DIRECT or nested
-// array-literal element anywhere — the "at least one buffer to free" test that
-// makes a nested tuple worth crediting (a purely-scalar nested tuple leaks
-// nothing an rc walk would reclaim, so it stays on the shallow path).
+// rc child anywhere — an array-literal, reclaim-struct, or fresh-string element —
+// the "at least one rc child to free" test that makes a nested tuple worth
+// crediting (a purely-scalar / literal-string nested tuple leaks nothing an rc
+// walk would reclaim, so it stays on the shallow path).
 function tuple_lit_has_array(tup: parser.ExprTuple, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < tup.elements.len()) {
@@ -17576,6 +17657,8 @@ function tuple_lit_has_array(tup: parser.ExprTuple, structs: parser.StructDecl[]
             parser.ExprArray(_) => { return true; },
             parser.ExprTuple(inner) => { if (tuple_lit_has_array(inner, structs)) { return true; } },
             parser.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
+            parser.ExprBinary(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
+            parser.ExprCall(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
             _ => {}
         }
         i = i + 1;
