@@ -2577,6 +2577,20 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
+		if x.Fields != nil {
+			st, ok := v.(*Struct)
+			if !ok {
+				return result{}, fmt.Errorf("struct destructure requires a struct, got %T", v)
+			}
+			for i2, name := range x.Names {
+				fv, ok := st.Fields[x.Fields[i2]]
+				if !ok {
+					return result{}, fmt.Errorf("struct %s has no field %q", st.TypeName, x.Fields[i2])
+				}
+				e.declare(name, fv)
+			}
+			return result{flow: flowNormal}, nil
+		}
 		arr, ok := v.(Array)
 		if !ok {
 			return result{}, fmt.Errorf("destructure requires a tuple, got %T", v)

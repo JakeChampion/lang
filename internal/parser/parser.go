@@ -4402,6 +4402,13 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 	if p.match(lexer.Punct, "(") {
 		return p.parseTupleDestructure(kw.Pos)
 	}
+	// Struct-destructuring form: `var Point { x, y } = expr;`. Detected by
+	// an identifier immediately followed by `{` (a plain `var name` decl is
+	// followed by `:`, `=`, or `;`). Same `*ast.Destructure` node as the
+	// tuple form, with Fields set.
+	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{" {
+		return p.parseStructDestructure(kw.Pos)
+	}
 	name, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, err
@@ -4564,6 +4571,12 @@ func (p *parser) parseLetElse() (ast.Stmt, error) {
 	if p.match(lexer.Punct, "(") {
 		return p.parseTupleDestructure(kw.Pos)
 	}
+	// `let Point { x, y } = expr;` — struct destructuring (identifier
+	// immediately followed by `{`). A `let Variant(...)` let-else has `(`
+	// after the name, never `{`, so the two don't collide.
+	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{" {
+		return p.parseStructDestructure(kw.Pos)
+	}
 	variantTok, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, err
@@ -4666,6 +4679,63 @@ func (p *parser) parseTupleDestructure(letPos ast.Position) (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Destructure{P: letPos, Names: names, Init: src}, nil
+}
+
+// parseStructDestructure handles `let Point { x, y } = expr;` /
+// `var Point { x, y } = expr;` — bind each named field of a struct-typed
+// expression into the enclosing scope. Shorthand `{ x }` binds the field
+// `x` to a local `x`; `{ x: nx }` binds field `x` to `nx` (rename). A
+// trailing `..` marks that other fields are intentionally omitted (any
+// subset may be bound; `..` is documentation, not enforcement). The
+// cursor is on the struct-name identifier. Produces the shared
+// *ast.Destructure node with Fields set (struct mode).
+func (p *parser) parseStructDestructure(letPos ast.Position) (ast.Stmt, error) {
+	nameTok := p.advance() // struct-name identifier
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var names, fields []string
+	for !p.match(lexer.Punct, "}") {
+		if p.match(lexer.Punct, "..") {
+			p.advance()
+			break
+		}
+		fieldTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		binding := fieldTok.Text
+		if _, ok := p.accept(lexer.Punct, ":"); ok {
+			bindTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			binding = bindTok.Text
+		}
+		fields = append(fields, fieldTok.Text)
+		names = append(names, binding)
+		if _, ok := p.accept(lexer.Punct, ","); ok {
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, p.errorfCode(letPos, "P001", "struct destructure needs at least one field")
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	src, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.Destructure{P: letPos, Names: names, Fields: fields, StructName: nameTok.Text, Init: src}, nil
 }
 
 // parseTupleParam handles a tuple-destructuring parameter

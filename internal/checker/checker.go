@@ -8651,6 +8651,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// can do one evaluation followed by per-name field
 		// loads.
 		got := c.checkExpr(n.Init, s)
+		if n.Fields != nil {
+			c.checkStructDestructure(n, got, s)
+			return
+		}
 		tup, ok := got.(ast.TupleType)
 		if !ok {
 			if got != nil {
@@ -8690,6 +8694,76 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.checkMatch(n, s)
 	case *ast.FuncDecl:
 		c.checkLocalFunc(n, s)
+	}
+}
+
+// checkStructDestructure validates `let Point { x, y } = expr;` — Init
+// (already type-checked to `got`) must be the named struct type, and each
+// field named in the pattern must exist. Names are registered in the
+// enclosing scope with their field types, plus a hidden temp holding the
+// struct pointer for the IR's one-eval-then-per-field-load lowering,
+// exactly like the tuple form.
+func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *scope) {
+	st, ok := got.(ast.StructType)
+	if !ok {
+		if got != nil {
+			c.errfCode(n.P, "E024", "struct destructure needs a struct expression, got %s", got)
+		}
+		return
+	}
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		return
+	}
+	if n.StructName != "" && n.StructName != st.Name {
+		c.errfCode(n.P, "E024", "struct destructure pattern names %s, but the expression is %s", n.StructName, st.Name)
+		return
+	}
+	c.checkOpaqueAccess(sd, n.P, "destructure a field of")
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	tempName := fmt.Sprintf("__destruct_%d_%d", n.P.Line, n.P.Col)
+	n.TempName = tempName
+	tempVar := &ast.Var{P: n.P, Name: tempName, Type: st}
+	s.names[tempName] = st
+	c.info.VarTypes[tempVar] = st
+	c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
+	for i, name := range n.Names {
+		field := n.Fields[i]
+		var ft ast.Type
+		found := false
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				ft = f.Type
+				if sub != nil {
+					ft = substituteType(ft, sub)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			declared := make([]string, 0, len(sd.Fields))
+			for _, df := range sd.Fields {
+				declared = append(declared, df.Name)
+			}
+			c.errUnknownField(n.P, n.P, st.Name, field, declared)
+			continue
+		}
+		if _, dup := s.names[name]; dup {
+			c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
+			continue
+		}
+		v := &ast.Var{P: n.P, Name: name, Type: ft}
+		s.names[name] = ft
+		c.info.VarTypes[v] = ft
+		c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
 	}
 }
 

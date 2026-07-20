@@ -1757,6 +1757,53 @@ func TestTupleDestructureSingleNameError(t *testing.T) {
 	}
 }
 
+// `let Point { x, y: b, .. } = p;` parses to a *ast.Destructure with
+// Fields set (struct mode), StructName recorded, `y: b` renamed, and the
+// trailing `..` accepted (partial bind). Shares the node with the tuple
+// form so the checker / interp / IR reuse the same lowering.
+func TestStructDestructureParses(t *testing.T) {
+	prog, err := Parse(`struct Point { x: i32, y: i32, z: i32 }
+	function f(): i32 {
+		var p: Point = Point { x: 1, y: 2, z: 3 };
+		let Point { x, y: b, .. } = p;
+		return x + b;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	d, ok := stmts[1].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("second stmt should be *ast.Destructure; got %T", stmts[1])
+	}
+	if d.StructName != "Point" {
+		t.Errorf("StructName = %q, want Point", d.StructName)
+	}
+	if len(d.Fields) != 2 || d.Fields[0] != "x" || d.Fields[1] != "y" {
+		t.Errorf("Fields = %v, want [x y]", d.Fields)
+	}
+	if len(d.Names) != 2 || d.Names[0] != "x" || d.Names[1] != "b" {
+		t.Errorf("Names = %v, want [x b]", d.Names)
+	}
+}
+
+// `var Point { x, y } = p;` parses the same way via the `var` keyword.
+func TestStructDestructureVarKeyword(t *testing.T) {
+	prog, err := Parse(`struct Point { x: i32, y: i32 }
+	function f(): i32 {
+		var p: Point = Point { x: 1, y: 2 };
+		var Point { x, y } = p;
+		return x + y;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Destructure)
+	if !ok || d.Fields == nil {
+		t.Fatalf("second stmt should be a struct-mode *ast.Destructure; got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+}
+
 // TestTupleParamDestructureParses pins the parse-time desugar of a
 // tuple-destructuring parameter `(a, b): (T, U)`: the param list gets
 // a synthetic `__ptuple_<line>_<col>` holder of the annotated type and
