@@ -8305,8 +8305,9 @@ pub function arr_slice_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_slice (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
     o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $na) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
@@ -8328,8 +8329,9 @@ pub function arr_slice8_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_slice8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
     o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
     o = o + "    (i32.store (local.get $na) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
@@ -8370,8 +8372,9 @@ function arr_helpers(): string {
     // a[start:end) (len = cap = end-start), copying the i32 elements.
     o = o + "  (func $__fern_arr_slice (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
     o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $na) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
@@ -8389,8 +8392,9 @@ function arr_helpers(): string {
     o = o + arr_push_wide("f64", "f64");
     o = o + "  (func $__fern_arr_slice8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
     o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
     o = o + "    (i32.store (local.get $na) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
@@ -9074,6 +9078,8 @@ pub function substr_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_substr (param $s i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $len i32) (local $p i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $s))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
     o = o + "    (local.set $len (i32.sub (local.get $end) (local.get $start)))\n";
     o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $len))\n";
@@ -9697,6 +9703,8 @@ pub function strcat_helpers(): string {
     // $__fern_substr(s, start, end): fresh block with s[start:end).
     o = o + "  (func $__fern_substr (param $s i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $len i32) (local $p i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $s))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
     o = o + "    (local.set $len (i32.sub (local.get $end) (local.get $start)))\n";
     o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $len))\n";

@@ -354,11 +354,13 @@ pub function op_str_index(): Op { return op0("str_index"); }
 // `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
 // x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
 // len = end-start] sharing the source bytes. On wasm, strings are inline blocks
-// (no separate data pointer), so it COPIES via $__fern_substr. No bounds check.
+// (no separate data pointer), so it COPIES via $__fern_substr. Bounds-checked at
+// construction (#5419): traps unless 0 <= start <= end <= len.
 pub function op_str_slice(): Op { return op0("str_slice"); }
 // `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
 // (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
-// payloads via __fern_arr_slice. No bounds check (matches the AST path).
+// payloads via __fern_arr_slice. Bounds-checked at construction (#5419):
+// traps unless 0 <= start <= end <= len.
 // `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
 // elements, 64 for f64): the wasm backend selects the 4-byte or 8-byte copy
 // helper. The register backends copy 8-byte slots regardless and ignore it.

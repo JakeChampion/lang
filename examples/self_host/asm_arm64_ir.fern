@@ -145,10 +145,18 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // — never freeing the shared buffer, never clobbering box-8. Closes the last
         // header-less string producer so incing a slice/trim VIEW is a safe no-op.
         // x19/x20/x21 (callee-saved) hold end/start/src across __fern_alloc.
+        // Construction-time bounds check (#5419): trap unless
+        // 0 <= start <= end <= src len (two unsigned compares) — an oversized
+        // `end` otherwise built a view whose bytes extend past the source.
         s = s.mark_heap();
         s = s.write("    ldr x3, [sp], #16\n    ldr x4, [sp], #16\n    ldr x5, [sp], #16\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n    str x21, [sp, #-16]!\n");
         s = s.write("    mov x19, x3\n    mov x20, x4\n    mov x21, x5\n");
+        s = s.write("    ldr x1, [x21, #8]\n");       // src len
+        s = s.write("    cmp x19, x1\n");
+        s = s.write("    b.hi __fern_oob_abort\n");   // end > src len (unsigned) → abort
+        s = s.write("    cmp x20, x19\n");
+        s = s.write("    b.hi __fern_oob_abort\n");   // start > end (unsigned) → abort
         s = s.write("    mov x0, #24\n    bl __fern_alloc\n");
         s = s.write("    mov x1, #-1\n    str x1, [x0]\n");
         s = s.write("    ldr x1, [x21]\n    add x1, x1, x20\n    str x1, [x0, #8]\n");

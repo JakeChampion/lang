@@ -359,6 +359,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
+	if g.usesSliceRange {
+		g.emitSliceRangeRuntime()
+	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
@@ -611,6 +614,7 @@ type generator struct {
 	usesStringFromBytes   bool
 	usesStrSlice          bool
 	usesSliceMake         bool
+	usesSliceRange        bool
 	usesRandomBytes       bool
 	usesRandomI32         bool
 	usesPoll              bool
@@ -934,6 +938,8 @@ func (g *generator) recordUse(target string) {
 	case "__slice_make":
 		g.usesSliceMake = true
 		g.usesAlloc = true
+	case "__slice_range":
+		g.usesSliceRange = true
 	case "__fern_strcat":
 		g.usesStrcat = true
 		g.usesAlloc = true
@@ -2299,6 +2305,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_memcpy"
 		case "__slice_make":
 			target = "__fern_slice_make"
+		case "__slice_range":
+			target = "__fern_slice_range"
 		case "print":
 			target = "__fern_puts"
 		case "write":
@@ -4659,6 +4667,38 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.emit("pop r12")
 	g.emit("ret")
 	g.line(".size __fern_slice_make, .-__fern_slice_make")
+}
+
+// emitSliceRangeRuntime emits `__fern_slice_range(lo, hi, len)` — the
+// slice-construction bounds check (#5419). Traps with exit 134 unless
+// 0 <= lo <= hi <= len, then returns the slice length hi - lo in eax.
+// Two unsigned compares on the sign-extended values cover all four
+// conditions: a negative bound sign-extends to a huge unsigned 64-bit
+// value, so `hi > len` catches hi < 0 and `lo > hi` catches lo < 0.
+// The movsxd normalisation is the same #5294 fix as __str_slice: an
+// i32 bound can arrive with dirty high bits.
+//
+// Calling convention: edi = lo, esi = hi, edx = len (i32s).
+func (g *generator) emitSliceRangeRuntime() {
+	g.line("")
+	g.line(".globl __fern_slice_range")
+	g.line(".type __fern_slice_range, @function")
+	g.label("__fern_slice_range")
+	g.emit("movsxd rdi, edi") // lo (sign-extended from i32)
+	g.emit("movsxd rsi, esi") // hi
+	g.emit("movsxd rdx, edx") // len
+	g.emit("cmp rsi, rdx")
+	g.emit("ja .Lslicerange_trap") // hi > len (unsigned)
+	g.emit("cmp rdi, rsi")
+	g.emit("ja .Lslicerange_trap") // lo > hi (unsigned)
+	g.emit("mov eax, esi")
+	g.emit("sub eax, edi")
+	g.emit("ret")
+	g.label(".Lslicerange_trap")
+	g.emit("mov edi, 134")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.line(".size __fern_slice_range, .-__fern_slice_range")
 }
 
 // emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —

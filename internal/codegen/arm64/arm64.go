@@ -492,6 +492,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
+	if g.usesSliceRange {
+		g.emitSliceRangeRuntime()
+	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
@@ -2551,6 +2554,37 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	g.sizeDirective("__fern_slice_make")
+	g.line(".ltorg")
+}
+
+// emitSliceRangeRuntime emits `__fern_slice_range(lo, hi, len)` — the
+// slice-construction bounds check (#5419). Traps with exit 134 unless
+// 0 <= lo <= hi <= len, then returns the slice length hi - lo in w0.
+// Two unsigned compares on the sign-extended values cover all four
+// conditions: a negative bound sign-extends to a huge unsigned 64-bit
+// value, so `hi > len` catches hi < 0 and `lo > hi` catches lo < 0.
+// The sxtw normalisation is the same #5294 fix as __str_slice: an i32
+// bound can arrive with dirty high bits.
+//
+// Calling convention: w0 = lo, w1 = hi, w2 = len (i32s).
+func (g *generator) emitSliceRangeRuntime() {
+	g.line("")
+	g.line(".global __fern_slice_range")
+	g.typeDirective("__fern_slice_range")
+	g.label("__fern_slice_range")
+	g.emit("sxtw x0, w0") // lo (sign-extended from i32)
+	g.emit("sxtw x1, w1") // hi
+	g.emit("sxtw x2, w2") // len
+	g.emit("cmp x1, x2")
+	g.emit("bhi .Lslicerange_trap") // hi > len (unsigned)
+	g.emit("cmp x0, x1")
+	g.emit("bhi .Lslicerange_trap") // lo > hi (unsigned)
+	g.emit("sub w0, w1, w0")
+	g.emit("ret")
+	g.label(".Lslicerange_trap")
+	g.emit("mov x0, #134")
+	g.syscallExit()
+	g.sizeDirective("__fern_slice_range")
 	g.line(".ltorg")
 }
 
@@ -7765,6 +7799,10 @@ type generator struct {
 	// by recordUse() when the IR's slice-construction path
 	// (a[lo:hi]) lowers to OpCallDirect{__slice_make}.
 	usesSliceMake bool
+	// usesSliceRange pulls in `__fern_slice_range(lo, hi, len)` —
+	// the slice-construction bounds check (#5419): traps unless
+	// 0 <= lo <= hi <= len, returns hi - lo.
+	usesSliceRange bool
 	// usesEnv pulls in `__fern_env(name)` — walks envp for a
 	// NAME=VALUE match. Used by the synthesised auto-main's
 	// `__port_from_env("PORT", 8080)` call.
@@ -10791,6 +10829,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_slice_make"
 			g.usesSliceMake = true
 			g.usesAlloc = true
+		case "__slice_range":
+			target = "__fern_slice_range"
+			g.usesSliceRange = true
 		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
 			g.usesRawIntPokes = true
 		case "__memset":
