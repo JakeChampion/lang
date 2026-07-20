@@ -547,14 +547,16 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			// Pins the LEGACY AST arm64 backend (this table runs the driver
-			// without -ir): it snapshots captures at make time, so the outer
-			// n = 99 is invisible. The oracle (interp) and the IR path are
-			// by-reference and return 99 (#5301) — a known legacy-AST-only
-			// divergence, kept here only to freeze that backend's behavior.
-			"closure-capture-by-value",
+			// Capture is by REFERENCE — one shared cell — so the outer n = 99
+			// is visible inside the closure, matching the interpreter, which
+			// defines the semantics (closureconv.BoxMutatedCaptures, #2896 /
+			// #5301). This expected 5 back when the legacy AST arm64 backend
+			// (this table runs the driver without -ir) still snapshotted at
+			// make time; that divergence has since closed, so the legacy path
+			// now agrees with the oracle and the IR path (#5479).
+			"closure-capture-by-reference",
 			"function main(): i32 { var n = 5; var f = function (): i32 { return n; }; n = 99; return f(); }",
-			5,
+			99,
 			"",
 		},
 		{

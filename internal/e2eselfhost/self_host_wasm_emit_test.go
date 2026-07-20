@@ -758,17 +758,23 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"closure-capture-only", "function main(): i32 { var base: i32 = 100; var get = function(): i32 { return base; }; print_int(get()); return 0; }", 0, "100"},
 		{"closure-capture-string", "function main(): i32 { var name: string = \"world\"; var greet = function(): string { return \"hi \" + name; }; write(greet()); return 0; }", 0, "hi world"},
 		{"closure-capture-string-method", "function main(): i32 { var s: string = \"hello\"; var f = function(): i32 { return s.len(); }; print_int(f()); return 0; }", 0, "5"},
-		// Pins the LEGACY AST wasm backend's make-time snapshot ("1"). The
-		// oracle (interp) and the IR path are by-reference and print 99
-		// (#5301) — a known legacy-AST-only divergence, frozen here.
-		{"closure-snapshot-value", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { return n; }; n = 99; print_int(f()); return 0; }", 0, "1"},
+		// Capture is by REFERENCE: one shared cell, so the outer `n = 99` is
+		// visible inside the closure. That is the designed semantics, not an
+		// accident — closureconv.BoxMutatedCaptures boxes a captured-and-
+		// assigned local into a 1-element cell precisely to match the
+		// interpreter, "which defines the semantics" (#2896 for scalars, #5301
+		// for pointers). This expectation was "1" while these modules lowered
+		// through the LEGACY AST wasm backend, which snapshotted at make time;
+		// they reach the IR path now, so it agrees with the oracle (#5479).
+		{"closure-snapshot-value", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { return n; }; n = 99; print_int(f()); return 0; }", 0, "99"},
 		{"closure-passed-capturing", "function apply(g: fn): i32 { return g(); } function main(): i32 { var k: i32 = 42; print_int(apply(function(): i32 { return k + 1; })); return 0; }", 0, "43"},
 		{"closure-capture-param", "function make(p: i32): i32 { var f = function(x: i32): i32 { return x + p; }; return f(10); } function main(): i32 { print_int(make(5)); return 0; }", 0, "15"},
-		// Legacy AST wasm backend: captures snapshot at creation, so add
-		// always sees total == 0 and this sums 1+2+3. (The oracle and the
-		// IR path read the live total each call — 11 — see #5301; this pin
-		// freezes the legacy backend's divergent behavior only.)
-		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "6"},
+		// The by-reference counterpart in a loop: `add` reads the LIVE total
+		// each call, so this runs 0+1=1, 1+2=3, 3+4=7 -> 11, matching the
+		// oracle. It was "6" (add always seeing total == 0, summing 1+2+3)
+		// while these modules lowered through the legacy AST wasm backend's
+		// make-time snapshot; they reach the IR path now (#5479).
+		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "11"},
 		// Capturing a *struct* into a lambda must keep its struct type so a
 		// `cap.field` read resolves the field offset (it previously emitted
 		// a bogus `(i32.const 0)` because the capture wasn't sv-typed in the

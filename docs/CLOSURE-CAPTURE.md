@@ -1,33 +1,57 @@
 # Closure-capture semantics — the scalar/reference asymmetry
 
-Date: 2026-07-06. Status: shipped and enforced (E049); this document
-writes down the contract both compilers must honour identically.
+Date: 2026-07-06, revised 2026-07-20. Status: shipped and enforced
+(E049); this document writes down the contract both compilers must honour
+identically.
+
+**2026-07-20 correction.** This document originally described capture as
+by-VALUE for scalars — a snapshot taken at closure creation. That was the
+pre-#2896 model and has not been the implemented behaviour for some time:
+#2896 (scalars) and #5301 (pointers) deliberately moved every compiled
+backend to by-REFERENCE to match the interpreter, which defines the
+semantics. Verified unanimous across `-interp`, native x86-64, the
+self-host x86-64 and arm64 backends (both AST and IR paths), and the
+self-host wasm IR path. The E049 half of this document was always accurate
+and is unchanged; only the by-value half was stale (#5479).
 
 ## The rule in one sentence
 
 A closure captures the variables it reads from an enclosing scope **by
-value at the moment the closure is created**, and whether a later mutation
-is *observable* — and whether writing the captured name back is even
-*allowed* — depends on whether the captured type is a scalar or a
-reference.
+reference** — outer and closure share one cell, so a mutation on either
+side is visible to the other — while whether writing the captured name
+back is *allowed* still depends on whether the captured type is a scalar
+or a reference.
 
 ## The two cases
 
 **Scalar captures** — `i32`, `i64`, the unsigned widths (`u8`, `u32`,
-`u64`, `usize`), `f32`, `f64`, and `boolean` — are **copied** into the
-closure's environment. The copy is independent of the outer variable:
+`u64`, `usize`), `f32`, `f64`, and `boolean` — are **shared**, not copied:
 
-- mutating the copy inside the closure is legal (the stateful
+- mutating the capture inside the closure is legal (the stateful
   "counter closure" works), and
-- the mutation is **not** visible in the enclosing scope, and a later
-  change to the outer variable is **not** visible inside the closure.
+- that mutation **is** visible in the enclosing scope, and a later change
+  to the outer variable **is** visible inside the closure.
 
 ```
 function make_counter(): () => i32 {
     var n: i32 = 0;
-    return function (): i32 { n = n + 1; return n; };   // OK — scalar copy
+    return function (): i32 { n = n + 1; return n; };   // OK — shared cell
+}
+
+function main(): i32 {
+    var n: i32 = 1;
+    var f = function (): i32 { return n; };
+    n = 99;
+    return f();          // 99 — one cell, so the outer write is visible
 }
 ```
+
+The mechanism is `closureconv.BoxMutatedCaptures`: a local that is
+captured by some closure AND assigned anywhere in the function — inside
+the closure or in an enclosing scope — is rewritten into a 1-element heap
+cell that both sides share. Gating the box on assignment *anywhere*
+(rather than only inside the closure) is what makes capture cohesively
+by-reference and symmetric in both directions.
 
 **Reference captures** — `string`, arrays, `struct`, `enum`, tuples,
 maps, and trait objects (`dyn`) — share the underlying buffer with the
