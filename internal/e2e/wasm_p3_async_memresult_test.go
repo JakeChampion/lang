@@ -106,6 +106,9 @@ function main(): i32 { return 0; }
 		LowerParams:        []byte{i32, i32, i32}, // (ptr, len, retptr)
 		LowerResults:       []byte{i32},           // status
 		NeedsRealloc:       true,                  // string RESULT materialised in consumer memory
+		ImportParamNames:   []string{"s"},         // echo: async func(s: string) -> string
+		ImportParamVals:    [][]byte{{component.CValtypeString}},
+		ImportResultVal:    []byte{component.CValtypeString},
 	}}, "__async_run", "run", component.CValtypeU32)
 
 	p := filepath.Join(dir, "fern_async_strps.wasm")

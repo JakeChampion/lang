@@ -108,6 +108,9 @@ function main(): i32 { return 0; }
 		LowerParams:        []byte{i32, i32, i32, i32}, // (ptr, len, n, retptr)
 		LowerResults:       []byte{i32},                // status
 		NeedsRealloc:       false,                      // string/scalar PARAMs: caller owns the bytes
+		// fetch: async func(url: string, n: u32) -> u32
+		ImportParamNames:   []string{"url", "n"},
+		ImportParamVals:    [][]byte{{component.CValtypeString}, {component.CValtypeU32}},
 	}}, "__async_run", "run", component.CValtypeU32)
 
 	p := filepath.Join(dir, "fern_async_multiparam.wasm")

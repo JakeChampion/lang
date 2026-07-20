@@ -212,12 +212,18 @@ per-type struct-drop / field-reclaim slices already landed).
 ## Engineering bar (non-negotiable)
 
 - **Confirm passing tests before opening a PR.** Run the full relevant
-  suite locally (including the WASM e2e tests — `wasmtime` lives at
-  `/tmp/wt/wasmtime-v34.0.1-x86_64-linux/`, `wasm-tools` at
-  `/tmp/wt/wasm-tools-1.225.0-x86_64-linux/`, adapter at
-  `/tmp/wt/adapter.wasm`; export the binaries onto `PATH` and set
-  `FERN_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
-  treat that as a missing dependency to fix, not a green light.
+  suite locally (including the WASM e2e tests — the pinned toolchain is
+  **wasmtime v46.0.1 + wasm-tools 1.253.0** (see
+  `.github/actions/setup-fern/action.yml`; the `.claude/hooks/session-start.sh`
+  hook installs them locally under `~/.fern-wasm/`). Export the binaries onto
+  `PATH` and set `FERN_WASI_ADAPTER` to the preview1 adapter so the e2e tests
+  don't SKIP). If a test SKIPs, treat that as a missing dependency to fix, not
+  a green light. **The WASI Preview-3 async/stream/future component tests are
+  wasmtime-version-sensitive**: v46 changed the component-model-async ABI (async
+  functype tag `0x43`; non-reentrant component instances → the async-import
+  composer emits a sibling-nested structure). Running them under an older
+  wasmtime (e.g. a system v37/v39) fails with `invalid leading byte (0x43)` or
+  `cannot enter component instance` — use the pinned v46.
   **Pass `-timeout 30m` when running a *whole* e2e package in one `go test`
   invocation:** the e2e suite is split (#4398 part 3) into
   `internal/e2eselfhost` (the `TestSelfHost*` suite, ~575 files) and

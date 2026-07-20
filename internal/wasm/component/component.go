@@ -121,6 +121,53 @@ func PutInstanceSectionInstantiateComponent(buf []byte, componentIdx uint32) []b
 	return wrapSection(buf, SectionInstance, body)
 }
 
+// PutComponentImportSectionFuncs emits a component-level import section
+// declaring N function imports — the i-th named `names[i]` with the
+// component functype at `typeidxs[i]`. Used by the async-import sibling
+// composition: the consumer is a nested component that IMPORTS each async
+// function it awaits (rather than lowering a bundled provider into itself),
+// so the outer component can link a sibling provider instance to it and the
+// consumer→provider call is a clean cross-instance call. wasmtime v46's
+// component-model reentrancy check rejects the older same-instance lower.
+// Func externdesc kind = 0x01 (mirrors the alias func sort).
+func PutComponentImportSectionFuncs(buf []byte, names []string, typeidxs []uint32) []byte {
+	if len(names) != len(typeidxs) {
+		panic("component: names and typeidxs must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, uint64(len(names)))
+	for i := range names {
+		body = append(body, 0x00) // importname kind = label
+		body = putName(body, names[i])
+		body = append(body, 0x01) // externdesc kind = func
+		body = leb128.UlebU64(body, uint64(typeidxs[i]))
+	}
+	return wrapSection(buf, SectionImport, body)
+}
+
+// PutInstanceSectionInstantiateComponentWithFuncArgs instantiates the
+// component at `componentIdx`, supplying `argNames[i]` = the component func
+// at `funcIdxs[i]`. The component-level analogue of
+// PutCoreInstanceSectionInstantiateWithInstanceArgs for func (sort 0x01)
+// arguments — used to feed sibling provider funcs into the consumer
+// component of the async-import sibling composition.
+func PutInstanceSectionInstantiateComponentWithFuncArgs(buf []byte, componentIdx uint32, argNames []string, funcIdxs []uint32) []byte {
+	if len(argNames) != len(funcIdxs) {
+		panic("component: argNames and funcIdxs must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x00)      // form: instantiate
+	body = leb128.UlebU64(body, uint64(componentIdx))
+	body = leb128.UlebU64(body, uint64(len(argNames))) // vec(args)
+	for i := range argNames {
+		body = putName(body, argNames[i])
+		body = append(body, 0x01) // sort = func
+		body = leb128.UlebU64(body, uint64(funcIdxs[i]))
+	}
+	return wrapSection(buf, SectionInstance, body)
+}
+
 // putName appends a uleb-prefixed UTF-8 name (the component-model
 // name encoding, identical to core wasm names).
 func putName(buf []byte, s string) []byte {
@@ -3088,16 +3135,42 @@ func PutAliasSectionCoreExportFunc(buf []byte, coreInstanceIdx uint32, name stri
 	return wrapSection(buf, SectionAlias, body)
 }
 
+// Component functype form bytes. The canonical (synchronous) functype
+// discriminant is 0x40; the component-model-async proposal adds an async
+// functype form 0x43, required for any component function type referenced by
+// a `canon lift async` / `canon lower async` (wasm-tools >= ~1.25x / wasmtime
+// >= v40 reject the `async` canonical option on a plain 0x40 functype with
+// "the `async` canonical option requires an async function type"). The two
+// encodings are otherwise byte-identical — same params + resultlist grammar —
+// so the async emitters below differ from their sync siblings only in this
+// leading tag. Verified byte-for-byte against wasm-tools 1.253 and run under
+// wasmtime v46 (docs/WASI-PREVIEW3-ASYNC-PLAN.md).
+const (
+	cFunctypeSync  = 0x40
+	cFunctypeAsync = 0x43
+)
+
 // PutTypeSectionOneFunc emits a component-level type section
 // containing one functype with N params + a single anonymous
 // result. Mirrors `put_type_section_one_func`.
 func PutTypeSectionOneFunc(buf []byte, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
+	return putTypeSectionOneFuncTag(buf, cFunctypeSync, paramNames, paramValtypes, resultValtype)
+}
+
+// PutTypeSectionOneFuncAsync is PutTypeSectionOneFunc with the async functype
+// form (0x43) — for a component function type referenced by a `canon lift/lower
+// async`. See the cFunctype* constants.
+func PutTypeSectionOneFuncAsync(buf []byte, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
+	return putTypeSectionOneFuncTag(buf, cFunctypeAsync, paramNames, paramValtypes, resultValtype)
+}
+
+func putTypeSectionOneFuncTag(buf []byte, tag byte, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
 	if len(paramNames) != len(paramValtypes) {
 		panic("component: paramNames and paramValtypes must have equal length")
 	}
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1) types
-	body = append(body, 0x40)      // functype form
+	body = append(body, tag)       // functype form (sync 0x40 / async 0x43)
 	body = leb128.UlebU64(body, uint64(len(paramNames)))
 	for i := range paramNames {
 		body = putName(body, paramNames[i])
@@ -3127,12 +3200,22 @@ func PutTypeSectionOneDefined(buf []byte, defBody []byte) []byte {
 // must stay clear so it isn't read as a negative primitive code), which the
 // single-byte append in PutTypeSectionOneFunc gets wrong. P6 composite exports.
 func PutTypeSectionOneFuncResultIdx(buf []byte, paramNames []string, paramValtypes []byte, resultIdx uint32) []byte {
+	return putTypeSectionOneFuncResultIdxTag(buf, cFunctypeSync, paramNames, paramValtypes, resultIdx)
+}
+
+// PutTypeSectionOneFuncResultIdxAsync is PutTypeSectionOneFuncResultIdx with the
+// async functype form (0x43) — e.g. the stream lift's `() -> stream<elem>`.
+func PutTypeSectionOneFuncResultIdxAsync(buf []byte, paramNames []string, paramValtypes []byte, resultIdx uint32) []byte {
+	return putTypeSectionOneFuncResultIdxTag(buf, cFunctypeAsync, paramNames, paramValtypes, resultIdx)
+}
+
+func putTypeSectionOneFuncResultIdxTag(buf []byte, tag byte, paramNames []string, paramValtypes []byte, resultIdx uint32) []byte {
 	if len(paramNames) != len(paramValtypes) {
 		panic("component: paramNames and paramValtypes must have equal length")
 	}
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1) types
-	body = append(body, 0x40)      // functype form
+	body = append(body, tag)       // functype form (sync 0x40 / async 0x43)
 	body = leb128.UlebU64(body, uint64(len(paramNames)))
 	for i := range paramNames {
 		body = putName(body, paramNames[i])
@@ -3156,12 +3239,23 @@ func leb128SlebBytes(idx uint32) []byte { return leb128.SlebI64(nil, int64(idx))
 // (index result): the P6 composite param/result exports need a mix. The caller
 // emits any referenced defined types first so the indices resolve.
 func PutTypeSectionOneFuncGeneral(buf []byte, paramNames []string, paramVals [][]byte, resultVal []byte) []byte {
+	return putTypeSectionOneFuncGeneralTag(buf, cFunctypeSync, paramNames, paramVals, resultVal)
+}
+
+// PutTypeSectionOneFuncGeneralAsync is PutTypeSectionOneFuncGeneral with the
+// async functype form (0x43) — for an async lift/lower whose param or result is
+// a defined type referenced by index (tuple / stream param).
+func PutTypeSectionOneFuncGeneralAsync(buf []byte, paramNames []string, paramVals [][]byte, resultVal []byte) []byte {
+	return putTypeSectionOneFuncGeneralTag(buf, cFunctypeAsync, paramNames, paramVals, resultVal)
+}
+
+func putTypeSectionOneFuncGeneralTag(buf []byte, tag byte, paramNames []string, paramVals [][]byte, resultVal []byte) []byte {
 	if len(paramNames) != len(paramVals) {
 		panic("component: paramNames and paramVals must have equal length")
 	}
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1) types
-	body = append(body, 0x40)      // functype form
+	body = append(body, tag)       // functype form (sync 0x40 / async 0x43)
 	body = leb128.UlebU64(body, uint64(len(paramNames)))
 	for i := range paramNames {
 		body = putName(body, paramNames[i])

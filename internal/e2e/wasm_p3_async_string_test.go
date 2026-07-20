@@ -125,6 +125,7 @@ function main(): i32 { return 0; }
 		LowerParams:        i32, // (retptr) -> status
 		LowerResults:       i32,
 		NeedsRealloc:       true, // string result: lower carries [async, memory, realloc]
+		ImportResultValtype: component.CValtypeString, // fetch: async func() -> string
 	}}, "__async_run", "run", component.CValtypeU32)
 
 	p := filepath.Join(dir, "fern_async_string.wasm")
@@ -207,6 +208,7 @@ function main(): i32 { return 0; }
 			ProviderExportName: "msg",
 			LowerParams:        i32, LowerResults: i32,
 			NeedsRealloc: true, // string result
+			ImportResultValtype: component.CValtypeString, // msg: async func() -> string
 		},
 	}, "__async_run", "run", component.CValtypeU32)
 
@@ -323,6 +325,10 @@ function main(): i32 { return 0; }
 		LowerParams:        i32,
 		LowerResults:       i32,
 		NeedsRealloc:       true, // list<u8> result: lower carries [async, memory, realloc]
+		// fetch: async func() -> list<u8>. The list<u8> is a defined type
+		// (component type 0); the result references it by index (sleb 0).
+		ImportDefinedTypes: [][]byte{component.InnerTypeList(component.CValtypeU8)},
+		ImportResultVal:    []byte{0x00},
 	}}, "__async_run", "run", component.CValtypeU32)
 
 	p := filepath.Join(dir, "fern_async_list.wasm")

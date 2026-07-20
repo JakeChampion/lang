@@ -85,6 +85,11 @@ function main(): i32 { return 0; }
 		LowerParams:        []byte{i32, i32, i32}, // (x, y, retptr) — tuple flattened
 		LowerResults:       []byte{i32},           // status
 		NeedsRealloc:       false,
+		// add: async func(p: tuple<u32, u32>) -> u32. The tuple is defined
+		// type 0; the param references it by index (sleb 0).
+		ImportDefinedTypes: [][]byte{component.InnerTypeTuple([]byte{component.CValtypeU32, component.CValtypeU32})},
+		ImportParamNames:   []string{"p"},
+		ImportParamVals:    [][]byte{{0x00}},
 	}}, "__async_run", "run", component.CValtypeU32)
 
 	p := filepath.Join(dir, "fern_async_tupleparam.wasm")

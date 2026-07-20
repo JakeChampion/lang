@@ -38,8 +38,8 @@ fi
 # is compiled out of v34) and wasm-tools 1.240 for composing the extern-variant
 # provider components — older pins fail ~40 wasm e2e tests that CI passes.
 WT_DIR="$HOME/.fern-wasm"
-WASMTIME_VER="v37.0.1"
-WASMTOOLS_VER="1.240.0"
+WASMTIME_VER="v46.0.1"
+WASMTOOLS_VER="1.253.0"
 case "$(uname -m)" in
   x86_64)  WT_ARCH="x86_64-linux" ;;
   aarch64) WT_ARCH="aarch64-linux" ;;
