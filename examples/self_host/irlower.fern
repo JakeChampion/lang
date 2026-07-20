@@ -3811,7 +3811,7 @@ function to_json_bytecopy_stmt(on: string, sn: string, kn: string): parser.Stmt 
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0 };
-    var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref };
+    var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref, unchecked: false };
     var app: parser.Stmt = to_json_append_stmt(on, elem);
     var inc: parser.Stmt = parser.StmtAssign { target: kn, value: parser.ExprBinary { op: "+", left: kref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
     return parser.StmtWhile { cond: cond, body: [app, inc], label: "" };
@@ -3839,7 +3839,7 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     var noelse: parser.Stmt[] = [];
     var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse };
     // var $s = aref[$i].to_json();
-    var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref };
+    var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref, unchecked: false };
     var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
     var dvs: parser.Stmt = parser.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false };
     // var $k = 0;
@@ -3915,7 +3915,7 @@ function lower_string_foreach(var_name: string, iter: parser.Expr, body: parser.
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
     var rargs: parser.Expr[] = [zero, lenc];
     var range_iter: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: rargs, line: 0, col: 0, type_argc: 0 };
-    var bind: parser.Stmt = parser.StmtVar { name: var_name, type_name: "", init: parser.ExprIndex { array: sref, index: iref }, line: 0, col: 0, is_str: false };
+    var bind: parser.Stmt = parser.StmtVar { name: var_name, type_name: "", init: parser.ExprIndex { array: sref, index: iref, unchecked: false }, line: 0, col: 0, is_str: false };
     var nbody: parser.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -4984,6 +4984,8 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!bs.ok) { return bs; }
                 bs = lower_expr(ix.index, bs);
                 if (!bs.ok) { return bs; }
+                // #4380 lever 3: drop the bounds check on a proven-in-bounds read.
+                if (ix.unchecked) { return bs.emit(ir.op_arr_get_i64_nc()); }
                 return bs.emit(ir.op_arr_get_i64());
             }
             // An i32-element array indexed in an i64 context (`s64 + a[i]`, a
@@ -6219,6 +6221,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // types as f64 downstream.
             var gw: i32 = 32;
             if (arr_index_is_f64(ix.array, s)) { gw = 64; }
+            // #4380 lever 3: a read the elide pass proved in-bounds (an enclosing
+            // `while (i < arr.len())` guard) drops the per-iteration bounds check.
+            if (ix.unchecked) { return sidx.emit(ir.op_arr_get_nc(gw)); }
             return sidx.emit(ir.op_arr_get(gw));
         },
         parser.ExprSlice(slc) => {
@@ -14684,7 +14689,7 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     var mcref: parser.Expr = parser.ExprIdent { name: mc, line: 0, col: 0 };
     var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
     var range: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: [zero, lencall], line: 0, col: 0, type_argc: 0 };
-    var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref }, parser.ExprIndex { array: mcvref, index: mciref }];
+    var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref, unchecked: false }, parser.ExprIndex { array: mcvref, index: mciref, unchecked: false }];
     var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: insargs, line: 0, col: 0, type_argc: 0 };
     var loopbody: parser.Stmt[] = [parser.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
     st = lower_stmt(parser.StmtFor { var_name: mci, iter: range, body: loopbody, label: "" }, st);
@@ -28529,6 +28534,10 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
 
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
     map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[]): LowerResult {
+    // #4380 lever 3: mark in-bounds `arr[i]` reads (a `while (i < arr.len())`
+    // guard proves them) so the ExprIndex lowering emits op_arr_get_nc. Runs
+    // here — after every AST transform — so no later pass clobbers the flag.
+    fn = parser.FuncDecl { ...fn, body: parser.elide_len_bounded_body(fn.body) };
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
@@ -36442,7 +36451,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
         parser.ExprIndex(ix) => {
             var ixar: LiftExpr = lift_expr_walk(ix.array, acc, gfns);
             var ixir: LiftExpr = lift_expr_walk(ix.index, ixar.acc, gfns);
-            return LiftExpr { expr: parser.ExprIndex { array: ixar.expr, index: ixir.expr }, acc: ixir.acc };
+            return LiftExpr { expr: parser.ExprIndex { array: ixar.expr, index: ixir.expr, unchecked: ix.unchecked }, acc: ixir.acc };
         },
         // Slice bounds + the field-access object can also hold a nested lambda CALL
         // (`a[(iife)(0) : 3]`, `arr[(iife)(0)].v`); recurse so it is hoisted too.
@@ -37146,7 +37155,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             return parser.ExprUnary { op: u.op, operand: subst_fcall_expr(u.operand, fname, lname, capargs), line: u.line, col: u.col };
         },
         parser.ExprIndex(ix) => {
-            return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs) };
+            return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked };
         },
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col };
@@ -37406,7 +37415,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
     var bd: parser.Stmt[] = [];
     var cj: i32 = 0;
     while (cj < caps.len()) {
-        var idx: parser.Expr = parser.ExprIndex { array: parser.ExprIdent { name: "__env", line: 0, col: 0 }, index: parser.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", is_float: false, line: 0, col: 0 } };
+        var idx: parser.Expr = parser.ExprIndex { array: parser.ExprIdent { name: "__env", line: 0, col: 0 }, index: parser.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", is_float: false, line: 0, col: 0 }, unchecked: false };
         bd = bd.append(parser.StmtVar { name: caps[cj], type_name: cap_type(caps[cj], fd, structs, mfuncs), init: idx, line: 0, col: 0, is_str: false });
         cj = cj + 1;
     }
@@ -37941,7 +37950,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
         parser.ExprIndex(ix) => {
             var ar: InlineCloRes = lift_inline_closures_expr(ix.array, fd, funcs, counter, gfns, structs, mfuncs);
             var ir2: InlineCloRes = lift_inline_closures_expr(ix.index, fd, ar.funcs, ar.counter, gfns, structs, mfuncs);
-            return InlineCloRes { expr: parser.ExprIndex { array: ar.expr, index: ir2.expr }, funcs: ir2.funcs, counter: ir2.counter };
+            return InlineCloRes { expr: parser.ExprIndex { array: ar.expr, index: ir2.expr, unchecked: ix.unchecked }, funcs: ir2.funcs, counter: ir2.counter };
         },
         _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
     }
@@ -38286,7 +38295,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
     match (e) {
         parser.ExprIdent(id) => {
             if (util.index_of_str(boxed, id.name) >= 0) {
-                return parser.ExprIndex { array: parser.ExprIdent { name: id.name, line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col } };
+                return parser.ExprIndex { array: parser.ExprIdent { name: id.name, line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col }, unchecked: false };
             }
             return e;
         },
@@ -38310,7 +38319,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             while (i < t.elements.len()) { ne = ne.append(box_rewrite_expr(t.elements[i], boxed, btypes)); i = i + 1; }
             return parser.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes) }; },
+        parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked }; },
         parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes) }; },
         parser.ExprStructLit(sl) => {
             var nv: parser.Expr[] = [];
