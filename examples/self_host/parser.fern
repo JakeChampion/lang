@@ -9646,23 +9646,45 @@ function handle_own_consumed(stmts: Stmt[], funcs: FuncDecl[], name: string): bo
     return false;
 }
 
-// lower_defers_prepass_module fuses insert-resource-drops + lower_defers
-// (#4394 lever 3 / #5352) into ONE module rebuild, the desugar_prepass_module
-// argument applied to the next adjacent pair: both are per-function body
-// rewrites, already order-locked (an owned handle's inserted `defer` must
-// exist before the defer expansion runs), and the one list mutation — the
-// synthesized body-less `[resource-drop]` import funcs — commutes with the
-// body rewrite, which is applied to them exactly as the two-pass sequence
-// did. With no `resource` decls the fast path is exactly lower_defers_module
-// (one rebuild either way).
+// lower_defers_prepass_module fuses ret-type inference + insert-resource-
+// drops + lower_defers (#4394 lever 3 / #5352, #5460) into ONE module
+// rebuild, the desugar_prepass_module argument applied to the next adjacent
+// passes. Ordering is load-bearing twice over: the ret-type fixpoint reads
+// sibling funcs' `ret_type` (a signature FIELD), so it must COMPLETE before
+// any body is rebuilt — it runs first, at the funcs-list level, and only the
+// final list feeds the body rewrites; and an owned handle's inserted `defer`
+// must exist before the defer expansion runs, so the per-function loop
+// inserts then lowers. The one list mutation — the synthesized body-less
+// `[resource-drop]` import funcs — commutes with the body rewrite, which is
+// applied to them exactly as the old pass sequence did.
 pub function lower_defers_prepass_module(mod: Module): Module {
-    if (mod.resources.len() == 0) { return lower_defers_module(mod); }
+    // (1) Ret-type inference (was infer_ret_types_module, which keeps its
+    // standalone form for emit_module_ir_gated's idempotent re-run): stamp
+    // inferred ret_types with a 3-pass fixpoint over the funcs list, so a
+    // call to a later-inferred function resolves.
+    var funcs: FuncDecl[] = mod.funcs;
+    var pass: i32 = 0;
+    while (pass < 3) {
+        var pi: i32 = 0;
+        while (pi < funcs.len()) {
+            var pfd: FuncDecl = funcs[pi];
+            if (pfd.ret_type == "" && pfd.body.len() > 0 && pfd.receiver_type.len() == 0 && pfd.type_param_count == 0) {
+                var inferred: string = irt_infer_func(pfd, funcs);
+                if (inferred != "") { funcs = irt_set_ret(funcs, pi, inferred); }
+            }
+            pi = pi + 1;
+        }
+        pass = pass + 1;
+    }
+    // (2) Per function: resource-drop insertion (skipped without `resource`
+    // decls), then defer expansion — one output-list build.
+    var has_res: boolean = mod.resources.len() > 0;
     var out_funcs: FuncDecl[] = [];
     var needed: string[] = [];
     var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        var f: FuncDecl = mod.funcs[i];
-        if (f.import_iface.len() > 0) { out_funcs = out_funcs.append(lower_defers_func(f)); i = i + 1; continue; }
+    while (i < funcs.len()) {
+        var f: FuncDecl = funcs[i];
+        if (!has_res || f.import_iface.len() > 0) { out_funcs = out_funcs.append(lower_defers_func(f)); i = i + 1; continue; }
         var nbody: Stmt[] = [];
         var j: i32 = 0;
         while (j < f.body.len()) {
@@ -9675,7 +9697,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
                         var iface: string = resource_binding_iface(mod.resources, res);
                         if (iface.len() > 0
                             && !handle_returned(f.body, v.name)
-                            && !handle_own_consumed(f.body, mod.funcs, v.name)) {
+                            && !handle_own_consumed(f.body, funcs, v.name)) {
                             var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
                             nbody = nbody.append(s_defer(s_expr(dropcall)));
                             if (!util.has_str(needed, res)) { needed = needed.append(res); }
@@ -11331,12 +11353,12 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
 pub function module_with_builtins(mod: Module): Module {
     // #4394 lever 3: the three leading desugar passes (resolve_labels →
     // fill_default_args → desugar_ranges) are fused into desugar_prepass_module,
-    // and the adjacent defer pair — owned-WIT-resource drop insertion (P5
-    // slice 3, docs/WIT-BRING-YOUR-OWN.md: the inserted defers must exist
-    // before the defer expansion runs) + lower_defers — into
-    // lower_defers_prepass_module. One module rebuild each instead of
-    // three + two (byte-identical — see their doc comments).
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(infer_ret_types_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
+    // and ret-type inference + the defer pair — owned-WIT-resource drop
+    // insertion (P5 slice 3, docs/WIT-BRING-YOUR-OWN.md: the inserted defers
+    // must exist before the defer expansion runs) + lower_defers — into
+    // lower_defers_prepass_module (#5460). One module rebuild each instead
+    // of three + three (byte-identical — see their doc comments).
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
