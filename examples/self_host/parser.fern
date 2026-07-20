@@ -891,6 +891,30 @@ function (p: Par) peek_ident(): string {
     }
     return "";
 }
+// peek_punct_at / peek_ident_at read the token k slots past the cursor
+// (0 == the cursor), returning "" when it is the wrong kind or out of
+// range. The wider lookahead the struct `@`-pattern dispatch needs to spot
+// `name @ Ident {` before committing to the struct-match desugar.
+function (p: Par) peek_punct_at(k: i32): string {
+    if (p.pos + k < p.toks.len()) {
+        var t: lexer.Token = p.toks[p.pos + k];
+        match (t) {
+            lexer.TokPunct(x) => { return x.text; },
+            _ => { return ""; }
+        }
+    }
+    return "";
+}
+function (p: Par) peek_ident_at(k: i32): string {
+    if (p.pos + k < p.toks.len()) {
+        var t: lexer.Token = p.toks[p.pos + k];
+        match (t) {
+            lexer.TokIdent(x) => { return x.name; },
+            _ => { return ""; }
+        }
+    }
+    return "";
+}
 // peek_is_literal reports whether the cursor sits on a number or
 // string literal token. Used by the match-arm parser to recognise a
 // literal-pattern arm (`0 => …`, `"yes" => …`) — a match on a
@@ -2166,7 +2190,7 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
 // desugars at parse time, like build_tuple_match, into the `done`-flag chain
 // with per-field `var bind = tmp.field;` binds — no checker/irlower changes:
 // the field reads + ifs lower through the ordinary paths.
-struct StructArm { is_wild: boolean, binds: string[], fields: string[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+struct StructArm { is_wild: boolean, binds: string[], fields: string[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields) or
 // `S { x: a, y: b }` (renamed: field `x` bound to local `a`); a trailing
@@ -2221,6 +2245,11 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
             continue;
         }
         var binds: Stmt[] = [];
+        // `@` binding: bind the whole matched struct (the cached scrutinee
+        // `tmp`) to the at-name, in scope for the guard + body.
+        if (a.at_binding.len() > 0) {
+            binds = binds.append(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col));
+        }
         var bk: i32 = 0;
         while (bk < a.binds.len()) {
             binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
@@ -2262,6 +2291,14 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
         var s_wild: boolean = false;
         var s_binds: string[] = [];
         var s_fields: string[] = [];
+        var s_at: string = "";
+        // Optional `name @` prefix: bind the whole matched struct to `name`
+        // while destructuring its fields (`w @ Point { x, y }`).
+        if (p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek2_punct() == "@") {
+            s_at = p.peek_ident();
+            p = p.advance();
+            p = p.advance();
+        }
         if (p.peek_ident() == "_" && p.peek2_punct() != "{") {
             p = p.advance();
             s_wild = true;
@@ -2301,7 +2338,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             sbody = sblk_body;
         }
         if (first) { rt = sbrt; first = false; }
-        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
+        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, at_binding: s_at, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2546,7 +2583,7 @@ function parse_match_expr(p: Par): IfChain {
     // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (the
     // self-host has no named-field enum patterns, so it's unambiguous):
     // desugar to the field-bind flag chain (build_struct_match).
-    if (p.peek_ident().len() > 0 && p.peek2_punct() == "{") {
+    if ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
         var (smarms, smrt, smp) = parse_struct_match_arms(p, true);
         p = smp;
         return IfChain { par: p, stmt: build_struct_match(sr_expr, smarms, mkline, mkcol), rt: smrt };
@@ -3210,7 +3247,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
     }
     // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
     // parse_match_expr) — desugar to the field-bind flag chain.
-    if (p.peek_ident().len() > 0 && p.peek2_punct() == "{") {
+    if ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
         var (smarms, smrt, smp) = parse_struct_match_arms(p, false);
         p = smp;
         return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);

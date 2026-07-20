@@ -5809,6 +5809,14 @@ func (b *builder) emitStructMatch(n *ast.Match) error {
 		b.openBlock(BlockTypeVoid)
 		armEndD := b.depth
 		armRestores := []func(){}
+		// `@` binding: bind the whole matched struct (the scrutinee pointer)
+		// to the at-name, borrowed like the field binds below.
+		if arm.AtBinding != "" {
+			atSlot, atRestore := b.bindingSlotScoped(arm.AtBinding, tagT)
+			armRestores = append(armRestores, atRestore)
+			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+		}
 		for i, name := range arm.Bindings {
 			bt := ast.Type(ast.NumberType{})
 			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
@@ -6076,6 +6084,13 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 		b.openBlock(BlockTypeVoid)
 		armEndD := b.depth
 		armRestores := []func(){}
+		// `@` binding: the whole matched struct (scrutinee pointer), borrowed.
+		if arm.AtBinding != "" {
+			atSlot, atRestore := b.bindingSlotScoped(arm.AtBinding, tagT)
+			armRestores = append(armRestores, atRestore)
+			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+		}
 		for i, name := range arm.Bindings {
 			bt := ast.Type(ast.NumberType{})
 			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
