@@ -63,7 +63,12 @@ pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 // Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
 // an array; `i` must type-check to i32. Out-of-range access at
 // runtime surfaces as VErr from the interp.
-pub struct ExprIndex { array: Expr, index: Expr }
+// `unchecked` is #4380 lever 3: set by elide_len_bounded_body on a READ
+// `arr[i]` proven in-bounds by an enclosing `while (i < arr.len())` guard,
+// so irlower emits op_arr_get_nc (no per-iteration bounds check + len
+// reload). Defaults false; index WRITES are __set_index calls, never
+// ExprIndex, so only reads are ever marked.
+pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean }
 // Postfix slicing `a[start:end]`. Returns a subview of the same
 // kind as `a` (subarray for TypeArray, substring for
 // TypeString). `start` is inclusive, `end` is exclusive — same
@@ -357,7 +362,7 @@ function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { retu
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
 function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements, line: 0, col: 0 }; }
 function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
-function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
+function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index, unchecked: false }; }
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
 }
@@ -6414,7 +6419,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         ExprIndex(ix) => {
             var ar: RExpr = mono_expr(ix.array, env, funcs, ins);
             var idx: RExpr = mono_expr(ix.index, env, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr }, rins: idx.rins };
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false }, rins: idx.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = mono_expr(sl.array, env, funcs, ins);
@@ -6689,7 +6694,7 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
         },
         ExprBinary(b) => { return ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: subst_expr(u.operand, tparams, cts), line: u.line, col: u.col }; },
-        ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts) }; },
+        ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts), unchecked: ix.unchecked }; },
         _ => { return e; }
     }
     return e;
@@ -6769,7 +6774,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
         },
         ExprBinary(b) => { return ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col }; },
-        ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang) }; },
+        ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked }; },
         ExprSlice(sl2) => { return ExprSlice { array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) }; },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col }; },
         _ => { return e; }
@@ -7362,7 +7367,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
         ExprIndex(ix) => {
             var ar: RExpr = ms_expr(ix.array, env, gstructs, funcs, ins);
             var idx: RExpr = ms_expr(ix.index, env, gstructs, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr }, rins: idx.rins };
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false }, rins: idx.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = ms_expr(sl.array, env, gstructs, funcs, ins);
@@ -8234,7 +8239,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         ExprIndex(ix) => {
             var ar: RExpr = me_expr(ix.array, "", env, enums, structs, funcs, ins);
             var ir: RExpr = me_expr(ix.index, "", env, enums, structs, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr }, rins: ir.rins };
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr, unchecked: false }, rins: ir.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = me_expr(sl.array, "", env, enums, structs, funcs, ins);
@@ -10541,7 +10546,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             while (i < t.elements.len()) { ne = ne.append(cf_rw_expr(t.elements[i], f, target)); i = i + 1; }
             return ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target) }; },
+        ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target), unchecked: ix.unchecked }; },
         ExprSlice(sl) => { return ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target) }; },
         ExprStructLit(sl) => {
             var nv: Expr[] = [];
@@ -10582,6 +10587,377 @@ function cf_rw_stmts(stmts: Stmt[], f: string, target: string): Stmt[] {
     var i: i32 = 0;
     while (i < stmts.len()) { out = out.append(cf_rw_stmt(stmts[i], f, target)); i = i + 1; }
     return out;
+}
+
+// ===================================================================
+// #4380 lever 3: syntactic bounds-check elision for len-bounded loops.
+//
+// A purely syntactic pass (mirroring internal/parser/bounds_elide.go) that
+// marks array-index READS `arr[i]` inside a `while (i < arr.len())` loop as
+// Unchecked, so irlower drops the per-iteration bounds check + the per-access
+// `len` reload (op_arr_get_nc). No type info is
+// consulted: the IR honours the flag ONLY on the true array path, so marking a
+// string / map index is a harmless no-op there.
+//
+// Self-host specifics vs the native pass:
+//   - There is no C-style-for AST node (parse_for_stmt desugars it to
+//     `while (true) { … if (!(cond)) break … }` at parse time), so only an
+//     EXPLICIT `while (i < arr.len())` guard is matched. The self-host code
+//     the pass targets uses that idiom near-universally.
+//   - Index WRITES desugar to `__set_index(arr, i, v)` calls, never ExprIndex,
+//     so every `arr[i]` ExprIndex is a read — no write target to mis-mark.
+//   - Closures capture by value and the checker forbids assigning a captured
+//     variable (E049), so a lambda body can never mutate the outer `i` / rebind
+//     `arr`. The safety walks below therefore recurse through statements only
+//     (assignments are always statements; the only expr carrying statements is
+//     a lambda, which cannot touch the outer bindings).
+//
+// An access is marked only when `0 <= i < len(arr)` is syntactically provable:
+//   - the guard is exactly `i < arr.len()` (strict `<`, both operands bare
+//     idents) — the upper bound `i < len`;
+//   - `i` starts at a non-negative integer literal in the statement immediately
+//     before the loop, and every assignment to `i` in the body is
+//     `i = i + <non-negative int literal>` — so `i` is monotonic non-decreasing
+//     and never drops below 0 (the check also guards NEGATIVE indices);
+//   - `arr` is never reassigned and neither `i` nor `arr` is rebound (shadowed)
+//     in the body — so `len(arr)` and the binding stay invariant;
+//   - the access precedes the first statement that assigns `i` (a read after an
+//     increment could reach `len`).
+// Accesses inside a lambda / defer body are never marked: that code runs later,
+// when `i` may have advanced past `len`.
+
+struct LenLoopMatch { ok: boolean, idx: string, arr: string }
+struct LenArrRef { ok: boolean, name: string }
+
+// elide_len_bounded_body is the pass entry: it rewrites a function body,
+// returning a copy with in-bounds `arr[i]` reads marked. Called at
+// irlower.lower_func entry — after every AST transform — so no later pass
+// clobbers the flag and the transform sites all default it to false.
+pub function elide_len_bounded_body(stmts: Stmt[]): Stmt[] {
+    // Recurse into nested statement lists first, so inner loops are handled in
+    // place; then elide while-loops at THIS level (each needs its preceding
+    // statement as the source of `i`'s start value).
+    var lowered: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { lowered = lowered.append(elb_recurse_stmt(stmts[i])); i = i + 1; }
+    var out: Stmt[] = [];
+    var p: i32 = 0;
+    while (p < lowered.len()) {
+        var st: Stmt = lowered[p];
+        match (st) {
+            StmtWhile(w) => { if (p > 0) { st = elb_try_while(w, lowered[p - 1]); } },
+            _ => { }
+        }
+        out = out.append(st);
+        p = p + 1;
+    }
+    return out;
+}
+
+// elb_recurse_stmt rebuilds one statement with elide_len_bounded_body applied to
+// each nested statement list (does NOT descend into lambda bodies — they are
+// lifted to their own FuncDecls before lower_func, each processed separately).
+function elb_recurse_stmt(st: Stmt): Stmt {
+    match (st) {
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var arm: MatchArm = m.arms[i];
+                arms = arms.append(MatchArm { pattern: arm.pattern, body: elide_len_bounded_body(arm.body), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                i = i + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtDefer(d) => { return StmtDefer { action: elb_recurse_stmt(d.action), on_error: d.on_error }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+// elb_try_while checks the invariants for one while-loop and, when they hold,
+// returns the loop with its qualifying body-prefix reads marked. `prev` is the
+// statement immediately before the loop (the source of `i`'s start value).
+function elb_try_while(w: StmtWhile, prev: Stmt): Stmt {
+    var m: LenLoopMatch = elb_loop_match(w.cond);
+    if (!m.ok) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (elb_assigns_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (!elb_idx_monotonic_stmts(w.body, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (!elb_starts_nonneg(prev, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    var nb: Stmt[] = [];
+    var i: i32 = 0;
+    var stop: boolean = false;
+    while (i < w.body.len()) {
+        var st: Stmt = w.body[i];
+        if (!stop && elb_assigns_stmt(st, m.idx)) { stop = true; }
+        if (!stop) { st = elb_mark_stmt(st, m.idx, m.arr); }
+        nb = nb.append(st);
+        i = i + 1;
+    }
+    return StmtWhile { cond: w.cond, body: nb, label: w.label };
+}
+
+// elb_loop_match matches `IDX < ARR.len()` (strict `<`, both operands bare
+// idents, IDX != ARR) and returns (IDX, ARR).
+function elb_loop_match(cond: Expr): LenLoopMatch {
+    match (cond) {
+        ExprBinary(b) => {
+            if (b.op == "<") {
+                match (b.left) {
+                    ExprIdent(li) => {
+                        var la: LenArrRef = elb_len_array(b.right);
+                        if (la.ok && la.name != li.name) { return LenLoopMatch { ok: true, idx: li.name, arr: la.name }; }
+                    },
+                    _ => { }
+                }
+            }
+        },
+        _ => { }
+    }
+    return LenLoopMatch { ok: false, idx: "", arr: "" };
+}
+
+// elb_len_array returns the array-ident of a `A.len()` length expression, where
+// A is a bare ident. Fern has no free `len(A)` function (that idiom is E001), so
+// only the method form is matched.
+function elb_len_array(e: Expr): LenArrRef {
+    match (e) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field == "len" && c.args.len() == 0) {
+                        match (fa.obj) { ExprIdent(id) => { return LenArrRef { ok: true, name: id.name }; }, _ => { } }
+                    }
+                },
+                _ => { }
+            }
+        },
+        _ => { }
+    }
+    return LenArrRef { ok: false, name: "" };
+}
+
+// elb_starts_nonneg proves `idx`'s entry value is a non-negative integer literal
+// from the immediately-preceding `var idx = v` / `idx = v` statement (nothing
+// runs between it and the guard).
+function elb_starts_nonneg(prev: Stmt, idx: string): boolean {
+    match (prev) {
+        StmtVar(v) => { if (v.name == idx) { return elb_is_nonneg_int(v.init); } },
+        StmtAssign(a) => { if (a.target == idx) { return elb_is_nonneg_int(a.value); } },
+        _ => { }
+    }
+    return false;
+}
+
+// elb_is_nonneg_int reports whether e is a non-negative integer literal. The
+// lexer tokenises `-1` as unary-minus over `1`, so a bare integer ExprNumber is
+// always non-negative; the leading-digit guard is belt-and-braces.
+function elb_is_nonneg_int(e: Expr): boolean {
+    match (e) {
+        ExprNumber(n) => {
+            if (n.is_float) { return false; }
+            if (n.text.len() == 0) { return false; }
+            var c0: i32 = n.text[0];
+            return c0 >= 48 && c0 <= 57;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// elb_assigns_stmts / elb_assigns_stmt report whether any `name = …` assignment
+// appears in the statement subtree. Assignments are always statements (the only
+// expr that carries statements is a lambda, which cannot assign the outer name),
+// so no expression walk is needed.
+function elb_assigns_stmts(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (elb_assigns_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function elb_assigns_stmt(st: Stmt, name: string): boolean {
+    match (st) {
+        StmtAssign(a) => { return a.target == name; },
+        StmtIf(f) => { return elb_assigns_stmts(f.then_body, name) || elb_assigns_stmts(f.else_body, name); },
+        StmtWhile(w) => { return elb_assigns_stmts(w.body, name); },
+        StmtFor(fr) => { return elb_assigns_stmts(fr.body, name); },
+        StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) { if (elb_assigns_stmts(m.arms[i].body, name)) { return true; } i = i + 1; }
+            return false;
+        },
+        StmtDefer(d) => { return elb_assigns_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// elb_binds_stmts / elb_binds_stmt report whether the statement subtree rebinds
+// (declares / shadows / iterates) `name` via a `var`, a `for` loop variable, or
+// a match-arm pattern binding.
+function elb_binds_stmts(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (elb_binds_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function elb_binds_stmt(st: Stmt, name: string): boolean {
+    match (st) {
+        StmtVar(v) => { return v.name == name; },
+        StmtFor(fr) => { if (fr.var_name == name) { return true; } return elb_binds_stmts(fr.body, name); },
+        StmtIf(f) => { return elb_binds_stmts(f.then_body, name) || elb_binds_stmts(f.else_body, name); },
+        StmtWhile(w) => { return elb_binds_stmts(w.body, name); },
+        StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (elb_pat_binds(m.arms[i].pattern, name)) { return true; }
+                if (elb_binds_stmts(m.arms[i].body, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        StmtDefer(d) => { return elb_binds_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+function elb_pat_binds(p: Pattern, name: string): boolean {
+    match (p) {
+        PatVariant(pv) => {
+            if (pv.binding == name) { return true; }
+            var i: i32 = 0;
+            while (i < pv.extra_bindings.len()) { if (pv.extra_bindings[i] == name) { return true; } i = i + 1; }
+            var j: i32 = 0;
+            while (j < pv.nested.len()) { if (elb_pat_binds(pv.nested[j], name)) { return true; } j = j + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// elb_idx_monotonic_stmts / _stmt report whether EVERY assignment to `idx` in
+// the subtree is `idx = idx + <non-negative int literal>` (keeps idx monotonic
+// non-decreasing). Any other shape fails.
+function elb_idx_monotonic_stmts(stmts: Stmt[], idx: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (!elb_idx_monotonic_stmt(stmts[i], idx)) { return false; } i = i + 1; }
+    return true;
+}
+function elb_idx_monotonic_stmt(st: Stmt, idx: string): boolean {
+    match (st) {
+        StmtAssign(a) => { if (a.target == idx) { return elb_is_monotonic_incr(a.value, idx); } return true; },
+        StmtIf(f) => { return elb_idx_monotonic_stmts(f.then_body, idx) && elb_idx_monotonic_stmts(f.else_body, idx); },
+        StmtWhile(w) => { return elb_idx_monotonic_stmts(w.body, idx); },
+        StmtFor(fr) => { return elb_idx_monotonic_stmts(fr.body, idx); },
+        StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) { if (!elb_idx_monotonic_stmts(m.arms[i].body, idx)) { return false; } i = i + 1; }
+            return true;
+        },
+        StmtDefer(d) => { return elb_idx_monotonic_stmt(d.action, idx); },
+        _ => { return true; }
+    }
+    return true;
+}
+function elb_is_monotonic_incr(v: Expr, idx: string): boolean {
+    match (v) {
+        ExprBinary(b) => {
+            if (b.op == "+") {
+                match (b.left) {
+                    ExprIdent(li) => { if (li.name == idx) { return elb_is_nonneg_int(b.right); } },
+                    _ => { }
+                }
+            }
+        },
+        _ => { }
+    }
+    return false;
+}
+
+// elb_mark_stmt / elb_mark_stmts / elb_mark_expr rebuild the subtree, setting
+// `unchecked` on every `arr[idx]` read (both operands the exact idents). They do
+// NOT descend into lambda bodies or defer actions — that code runs later, when
+// idx may have advanced past len.
+function elb_mark_stmts(stmts: Stmt[], idx: string, arr: string): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(elb_mark_stmt(stmts[i], idx, arr)); i = i + 1; }
+    return out;
+}
+function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
+    match (st) {
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str }; },
+        StmtReturn(r) => { return StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col }; },
+        StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr) }; },
+        StmtAssign(a) => { return StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
+        StmtIf(f) => { return StmtIf { cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) }; },
+        StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var arm: MatchArm = m.arms[i];
+                arms = arms.append(MatchArm { pattern: arm.pattern, body: elb_mark_stmts(arm.body, idx, arr), line: arm.line, col: arm.col, guard: elb_mark_expr(arm.guard, idx, arr), has_guard: arm.has_guard });
+                i = i + 1;
+            }
+            return StmtMatch { scrutinee: elb_mark_expr(m.scrutinee, idx, arr), arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+function elb_mark_expr(e: Expr, idx: string, arr: string): Expr {
+    match (e) {
+        ExprIndex(ix) => {
+            var mark: boolean = ix.unchecked;
+            match (ix.array) {
+                ExprIdent(aid) => {
+                    match (ix.index) {
+                        ExprIdent(iid) => { if (aid.name == arr && iid.name == idx) { mark = true; } },
+                        _ => { }
+                    }
+                },
+                _ => { }
+            }
+            return ExprIndex { array: elb_mark_expr(ix.array, idx, arr), index: elb_mark_expr(ix.index, idx, arr), unchecked: mark };
+        },
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: elb_mark_expr(b.left, idx, arr), right: elb_mark_expr(b.right, idx, arr), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: elb_mark_expr(u.operand, idx, arr), line: u.line, col: u.col }; },
+        ExprCall(c) => {
+            var na: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { na = na.append(elb_mark_expr(c.args[i], idx, arr)); i = i + 1; }
+            return ExprCall { callee: elb_mark_expr(c.callee, idx, arr), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprArray(a) => {
+            var ne: Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { ne = ne.append(elb_mark_expr(a.elements[i], idx, arr)); i = i + 1; }
+            return ExprArray { elements: ne };
+        },
+        ExprTuple(t) => {
+            var ne: Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { ne = ne.append(elb_mark_expr(t.elements[i], idx, arr)); i = i + 1; }
+            return ExprTuple { elements: ne, line: t.line, col: t.col };
+        },
+        ExprSlice(sl) => { return ExprSlice { array: elb_mark_expr(sl.array, idx, arr), start: elb_mark_expr(sl.start, idx, arr), end: elb_mark_expr(sl.end, idx, arr) }; },
+        ExprStructLit(sl) => {
+            var nv: Expr[] = [];
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { nv = nv.append(elb_mark_expr(sl.field_values[i], idx, arr)); i = i + 1; }
+            var nbase: Expr = sl.base;
+            if (sl.has_base) { nbase = elb_mark_expr(sl.base, idx, arr); }
+            return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: elb_mark_expr(fa.obj, idx, arr), field: fa.field, line: fa.line, col: fa.col }; },
+        _ => { return e; }
+    }
+    return e;
 }
 
 // cf_inline_fn_body inlines every call-only 0-arg fn-value binding in a
