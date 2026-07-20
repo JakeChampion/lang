@@ -58,6 +58,13 @@ function main(): i32 { var v: i32 = churn(20000); if (__rc_underflow() != 0) { r
 		{"strarr-elem-reclaim-flat-wasm", `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0, "yes"},
+		// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[]
+		// re-DECLARED each iteration is freed at the loop REBIND
+		// (emit_strarr_reclaim_store), not at a helper exit. After a 3000-iter
+		// warmup the second churn re-serves from the freelist → flat bump.
+		// Pre-fix the reinit store leaked all 3 element boxes per iteration → 98.
+		{"strarr-elem-reinit-loop-wasm", `function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0, "yes"},
 		// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` — xs keeps the shallow
 		// buffer-only dec; t stays valid, nothing double-frees. 3+2 = 5.
 		{"strarr-elem-alias-excluded-wasm", `function pick(pre: string): i32 { var xs: string[] = [pre + "x", "qq"]; var t: string = xs[0]; return t.len() + xs[1].len(); }

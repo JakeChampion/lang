@@ -78,6 +78,16 @@ function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i
 function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-elem-reclaim-arm64", 0, "yes")
 
+	// LOOP-BODY REINIT (#4353 item 4): a string[] re-DECLARED each iteration is
+	// freed at the loop REBIND (emit_strarr_reclaim_store), not at a helper exit.
+	// Correctness + over-release proof under qemu (the x86 sibling carries the
+	// heap-exhaustion / bounded-high-water leg). xs[1]="abx" (3) + xs[2]="abyy"
+	// (4) = 7 each iteration; a UAF from an early element free would read garbage
+	// (bad=1) or tick the underflow detector (99). underflow 0 + value 7 → 0.
+	run(t, `function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; if (xs[1].len() + xs[2].len() != 7) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-elem-reinit-loop-arm64", 0, "yes")
+
 	// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` — xs stays on the shallow
 	// buffer-only dec, so t reads valid bytes and nothing double-frees. 3+2 = 5.
 	run(t, `function pick(pre: string): i32 { var xs: string[] = [pre + "x", "qq"]; var t: string = xs[0]; return t.len() + xs[1].len(); }

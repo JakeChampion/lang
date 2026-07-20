@@ -103,6 +103,19 @@ function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i
 function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"strarr-elem-reclaim-flat", 0, "yes")
 
+	// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[] local
+	// re-DECLARED each iteration of churn's own loop (not freed at a helper's
+	// exit like the flat case above — freed at the loop REBIND). Pre-fix the
+	// reinit store took the shallow buffer-only dec and leaked all 3 element
+	// boxes + their buffers every iteration; the strarr reinit branch
+	// (emit_strarr_reclaim_store) now frees the prior iteration's elements with
+	// __fern_str_arr_free before the store, so the second churn re-serves from
+	// the freelist and the bump high-water stays flat. Element leaks → 98; a
+	// double-free (reinit + exit sweep both freeing the final box) → 99.
+	run(t, `function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+		"strarr-elem-reinit-loop", 0, "yes")
+
 	// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` is a lasting element alias
 	// the walk can't see through — xs must stay on the shallow buffer-only dec,
 	// so t reads valid bytes after xs's sweep point and nothing double-frees.
