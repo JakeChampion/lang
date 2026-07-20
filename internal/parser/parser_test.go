@@ -1607,10 +1607,11 @@ function f(e: E): i32 {
 	}
 }
 
-// Literal or-patterns (`1 | 2 => …`) parse now (#5355): each alternative is
-// its own literal pattern, so the shared clone-desugar expands them into
-// separate literal arms. Tuple or-patterns stay rejected, since they'd bind
-// different names per alternative.
+// Literal and tuple or-patterns (`1 | 2 => …`, `(0, y) | (y, 0) => …`)
+// both parse now (#5355): each alternative is its own pattern, so the
+// shared clone-desugar expands them into separate arms. Tuple alternatives
+// bind per-alternative (a name may sit in a different element position in
+// each), which the clone-desugar handles without a shared binding set.
 func TestMatchLiteralOrPatternParses(t *testing.T) {
 	if _, err := Parse(`function f(n: i32): i32 {
 	return match (n) {
@@ -1620,17 +1621,13 @@ func TestMatchLiteralOrPatternParses(t *testing.T) {
 }`); err != nil {
 		t.Fatalf("literal or-pattern should parse now, got %v", err)
 	}
-	_, err := Parse(`function f(t: (i32, i32)): i32 {
+	if _, err := Parse(`function f(t: (i32, i32)): i32 {
 	return match (t) {
 		(0, y) | (y, 0) => 1,
 		_ => 0,
 	};
-}`)
-	if err == nil {
-		t.Fatal("expected a parse error for a tuple or-pattern, got none")
-	}
-	if !strings.Contains(err.Error(), "or-patterns") {
-		t.Errorf("error should mention or-patterns; got %v", err)
+}`); err != nil {
+		t.Fatalf("tuple or-pattern should parse now, got %v", err)
 	}
 }
 
@@ -1925,8 +1922,9 @@ func TestTupleMatchPatternParses(t *testing.T) {
 }
 
 // Tuple patterns parse in expression-form match arms too, and the
-// error shapes hold: or-patterns with tuple patterns, singleton
-// tuple patterns, and nested tuple patterns are parse errors.
+// remaining error shapes hold: singleton tuple patterns and nested tuple
+// patterns are parse errors. (Tuple or-patterns now parse — see
+// TestMatchLiteralOrPatternParses.)
 func TestTupleMatchPatternErrors(t *testing.T) {
 	if _, err := Parse(`function f(p: (i32, i32)): i32 {
 		var v = match (p) { (0, y) => y, (a, b) => a };
@@ -1935,10 +1933,6 @@ func TestTupleMatchPatternErrors(t *testing.T) {
 		t.Fatalf("expr-form tuple pattern should parse: %v", err)
 	}
 	cases := map[string]string{
-		"or-pattern": `function f(p: (i32, i32)): i32 {
-			match (p) { (0, y) | (x, 0) => { return 1; }, (a, b) => { return a; } }
-			return 0;
-		}`,
 		"singleton": `function f(p: (i32, i32)): i32 {
 			match (p) { (a) => { return 1; } }
 			return 0;
