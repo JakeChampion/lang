@@ -29,6 +29,7 @@ import "./ir";
 import "./irlower";
 import "./asm_ir";
 import "./asmcore";
+import "./astwalk";
 
 // Linear-memory layout for the no-string array subset, computed exactly as
 // wasm.emit_module does for an empty string table (tab.next = 24, heap_extra =
@@ -885,7 +886,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
 
 // wasm_ir_deferrals_ok is the non-eligible_core half of wasm_eligible evaluated
 // over a pre-lowered cache: the set of ops that DON'T yet lower on the wasm IR
-// backend (poll / timer_fd / the tcp_* socket set / subprocess / wasm_poll — the
+// backend (poll / timer_fd / the tcp_* socket set / wasm_poll — the
 // component-model / socket runtime the bare core-wasm+preview1 backend doesn't
 // wire). Split out of wasm_eligible so the emit dispatch can build the cache
 // ONCE — after the cheap eligible_core AST gate passes — and reuse it for both
@@ -902,6 +903,29 @@ function module_erased_wide(cache: irlower.LowerResult[]): boolean {
     while (i < cache.len()) {
         if (cache[i].erased_wide) { return true; }
         i = i + 1;
+    }
+    return false;
+}
+
+// module_uses_subprocess reports whether any function body calls the
+// `subprocess(cmd, args, stdin)` builtin. subprocess (child-process spawning) is
+// unsupportable on wasm/WASI, so the wasm driver rejects such a program with a
+// clean diagnostic (#4320) instead of routing it to the AST emitter — which has
+// no subprocess runtime and would emit invalid WAT. Detection is syntactic: the
+// bare callee ident `subprocess` as collected by astwalk (a call's callee IS
+// collected; a `.subprocess` field access is not), the same pre-emit gate shape
+// check_call_arity uses.
+pub function module_uses_subprocess(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var ids: string[] = [];
+        var si: i32 = 0;
+        while (si < mod.funcs[fi].body.len()) {
+            ids = astwalk.collect_idents_stmt(mod.funcs[fi].body[si], ids);
+            si = si + 1;
+        }
+        if (util.index_of_str(ids, "subprocess") >= 0) { return true; }
+        fi = fi + 1;
     }
     return false;
 }
@@ -963,7 +987,9 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         && !module_emits_op_cached(cache, "tcp_accept")
         && !module_emits_op_cached(cache, "writer_write")
         && !module_emits_op_cached(cache, "open_file")
-        && !module_emits_op_cached(cache, "subprocess")
+        // subprocess is NOT deferred to the AST path — it is unsupportable on
+        // wasm/WASI, so the driver rejects it with a clean diagnostic before emit
+        // (module_uses_subprocess, #4320). No exclusion here.
         // FFI __c_call<n> has no wasm C-ABI meaning (#4375) — native wasm has no
         // __c_call, so a module using it stays on the wasm AST path here.
         && !module_uses_c_call(cache);
