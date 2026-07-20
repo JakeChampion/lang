@@ -78,17 +78,25 @@ func TestExternResourceHandle(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// A 0-nanosecond timer is immediately ready: subscribe → own<pollable>
-	// (a handle), then ready(handle) → true.
+	// A 0-nanosecond timer becomes ready essentially immediately: subscribe →
+	// own<pollable> (a handle), block(handle) to wait for the deadline, then
+	// ready(handle) → true. (wasmtime v46 no longer reports a 0ns-duration
+	// pollable as ready on the first ready() check without a preceding
+	// block()/poll, so block first for a version-robust check — this still
+	// exercises the resource-handle bridging, which is the point.)
 	const want = "poll-ok"
 	src := `@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): i32;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: i32);
 
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: i32): boolean;
 
 function main(): i32 {
 	var p: i32 = subscribe(0 as u64);
+	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	return 0;
 }`
@@ -195,11 +203,15 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
 	var p: own Pollable = subscribe(0 as u64);
+	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	return 0;
 }`
@@ -302,6 +314,9 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
@@ -310,6 +325,7 @@ function drop_pollable(h: own Pollable): void;
 
 function main(): i32 {
 	var p: own Pollable = subscribe(0 as u64);
+	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	drop_pollable(p);
 	return 0;
@@ -410,11 +426,15 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
 	var p: own Pollable = subscribe(0 as u64);
+	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	return 0;
 }`
