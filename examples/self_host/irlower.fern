@@ -3520,7 +3520,62 @@ function str_local_binding_is_fresh(init: parser.Expr): boolean {
 function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
     if (!expr_is_str(e, s)) { return false; }
     match (e) { parser.ExprString(_) => { return true; }, _ => {} }
+    // `n.to_string()` on a SCALAR receiver is the builtin decimal-text
+    // producer (i32_to_string and its wide-int / f64 siblings) — always a
+    // fresh box, so the concat may free it (#4353 concat-temp finding: this
+    // was the one fresh producer str_local_binding_is_fresh missed, leaking
+    // the temp per `"x" + n.to_string()` evaluation). A struct / enum / dyn
+    // receiver's to_string (user-written or @derive) may return an ALIAS of
+    // a live field, so only a provably-scalar receiver admits.
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprFieldAccess(fa) => {
+                        if (fa.field == "to_string" && tostring_recv_is_scalar(fa.obj, s)) { return true; }
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
     return str_local_binding_is_fresh(e);
+}
+
+// tostring_recv_is_scalar: the receiver of a `.to_string()` is provably a
+// scalar — a number literal, a scalar cast (`x as u32` — any as_* except the
+// pointer-shaped string/array hops), or a local/param slot carrying NO
+// pointer-shape marker (not string / array / struct / enum / dyn / map /
+// tuple / Option — params mark all of these at entry, so an unmarked slot is
+// an i32/i64/u32/u64/f64/f32/bool/subword scalar). Scalar to_string always
+// allocates fresh; anything else may be a user method returning an alias.
+function tostring_recv_is_scalar(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprUnary(u) => {
+            if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                var tgt: string = u.op[3:u.op.len()] + "";
+                return tgt == "i32" || tgt == "i64" || tgt == "u32" || tgt == "u64"
+                    || tgt == "f64" || tgt == "f32" || tgt == "u8" || tgt == "usize";
+            }
+            return false;
+        },
+        parser.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (sl < 0) { return false; }
+            if (s.is_str_slot(sl) || s.is_arr_slot(sl)) { return false; }
+            if (s.struct_type_of_slot(sl).len() > 0) { return false; }
+            if (s.map_type_of(sl).len() > 0) { return false; }
+            if (s.locals[sl].tuple_elems.len() > 0) { return false; }
+            if (s.locals[sl].opt_type.len() > 0) { return false; }
+            if (s.locals[sl].is_strarr || s.locals[sl].is_arrarr || s.locals[sl].is_f64arr
+                    || s.locals[sl].is_i64arr || s.locals[sl].is_closurearr || s.locals[sl].is_fnarr) { return false; }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // emit_str_concat_reclaim lowers a string concat `b.left + b.right`, and frees any
