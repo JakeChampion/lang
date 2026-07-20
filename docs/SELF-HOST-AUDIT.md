@@ -84,18 +84,31 @@ These are not just smells — they can produce wrong output today.
   `StepSignal` union (`SigReturn(Value)|SigBreak|SigContinue|SigError`) distinct
   from `Value`; distinct `OpBreak`/`OpContinue` ops in the VM.
 
-- [ ] **SH-003 — `watbin` encodes a trap on unknown opcode.** `watbin.fern:556-645,
-  683-696` — `arith_opcode`/`mem_load_opcode`/`mem_store_opcode` `return 0` on no
-  match; `0x00` is `unreachable`, so an unhandled instruction silently emits a
-  broken module. Severity **High**. _Fix:_ return `-1` / a `(found, byte)` result
-  and raise an explicit "unknown opcode" error.
+- [x] **SH-003 — `watbin` silently drops unknown instructions.** _Done:_ the
+  opcode tables' `return 0` sentinel made an unhandled instruction fall
+  through BOTH encoder paths (folded `enc_instr` and the flat token loop)
+  and emit NOTHING — the module encoded with the operation missing, so it
+  failed validation with a baffling type mismatch or ran with wrong values
+  (the `sat_trunc_opcode` comment records a real instance). Both
+  fallthroughs now `eprint` the op and `exit(1)` when a NAMED op reaches
+  them (empty/unnamed nodes keep the lenient skip). Verified benign-token
+  clean across the wasm-binary, CLI (`-target wasm-bin`), leb128,
+  ret-struct-field, streq-helper, and arm64-builds suites.
 
-- [ ] **SH-004 — `parse_f64` does not round-trip to nearest double.**
-  `watbin.fern:381-413` accumulates `v*10+digit` then scales by `0.1`-fractions,
-  feeding exact IEEE-754 bit emission (`f64_bits`). Any literal not exactly
-  representable that way emits wrong bits. Severity **High**. _Fix:_ a
-  correctly-rounding decimal parser, or thread the front-end's already-parsed
-  bits through.
+- [x] **SH-004 — `parse_f64` does not round-trip to nearest double.** _Done:_
+  all three assembler parsers (`watbin.parse_f64`, `x86_gas_parse_f64`,
+  `arm64_parse_f64`) replaced with a correctly-rounding decimal parser —
+  the classic exact decimal-shift algorithm (digit buffer + movable point,
+  grade-school ÷2/×2 to binary-normalize, bit extraction, round-to-nearest
+  ties-to-even, with subnormal/±inf/±0 handling). The reference copy +
+  commentary live in `watbin.fern` (`pf64_*` / `parse_f64_bits`); the other
+  two mirror it verbatim (the assemblers are deliberately import-free).
+  Pinned bit-exact against `strconv.ParseFloat` by
+  `TestSelfHostParseF64{Watbin,X86Gas,Arm64}` on a corpus of the compiler's
+  libm constant spellings, the hard subnormal/overflow boundary literals
+  (`2.4703282292062327e-324` et al.), and 17-digit round-trip spellings of
+  seeded random doubles. This closes the in-process-vs-GNU-as float-bit
+  parity gap (the `.Lfc_*` tables assembled ULPs off in-process before).
 
 - [x] **SH-005 — `x86_gas` silently drops unsupported mnemonics.** _Done:_
   `X86Asm` grew an `unknown: string[]` list; the three silent-skip sites in
@@ -107,11 +120,20 @@ These are not just smells — they can produce wrong output today.
   the x86_gas unit driver (unknown one-operand / two-operand / cmpb-form
   each recorded; clean programs record nothing).
 
-- [ ] **SH-006 — `arm64_gas_reg` defaults unknown registers to x0.**
-  `arm64_native.fern:1219-1231` returns `0` (=x0) for any unrecognised register
-  token → wrong-register miscompile. Companion: `arm64_gas_atoi:1174-1205`
-  silently skips non-digit bytes. Severity **High**. _Fix:_ sentinel `-1` +
-  record on `p.unknown`; assert `p.unknown` empty at end of assembly.
+- [x] **SH-006 — `arm64_gas_reg` defaults unknown registers to x0.** _Done:_
+  the decode is strict — x0..x30 / w0..w30, d0..s31, sp/lr/xzr/wzr, and
+  `-1` for anything else (including digit-suffix garbage like `x1a`,
+  previously 1 via the lenient atoi, and out-of-range `x31`/`x99`).
+  Because the encoders would fold `-1` into garbage bits, a `-1` alone is
+  not centrally catchable (`& 31` masks alias it to xzr/sp), so
+  `arm64_gas_program`'s line loop pre-scans every instruction's operands
+  for REGISTER-SHAPED tokens (x/w/d/s + digit lead, top-level or inside a
+  `[...]` memory operand) that fail the decode and records them on
+  `p.unknown` — the same gate that already refuses unknown mnemonics, so
+  the driver rejects the output before a corrupt encoding can run. Pinned
+  by the gas self-test (strict-decode units + program-level recording +
+  clean-program control); the whole-compiler arm64-builds suite proves no
+  benign token trips the shape heuristic.
 
 - [x] **SH-007 — `ssa_wasm` `index_of_str` returned 0 (not −1) on miss.** _Done:_
   consolidated all three util-host copies (`ssa`, `ssa_wasm`, `wasm`) onto one

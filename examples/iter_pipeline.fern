@@ -1,12 +1,12 @@
-// Iterator pipeline — a tour of the core/iter + std/sort stdlib.
+// Iterator pipeline — a tour of the core/iter + core/cmp stdlib.
 //
 // `core/iter` is a generic iterator protocol (`Iterator[T]`); `iter.of(xs)`
 // adapts a plain `T[]` into one, and the eager `filter` / `map` transforms plus
-// the `sum` reducer thread through it. `std/sort` sorts the result. None of this
-// is built into the language — it is ordinary Fern over the trait machinery, and
-// it lowers on every backend (interp / x86-64 / arm64 / wasm).
+// the `sum` reducer thread through it. `core/cmp`'s generic `sort` sorts the
+// result. None of this is built into the language — it is ordinary Fern over the
+// trait machinery, and it lowers on every backend (interp / x86-64 / arm64 / wasm).
 import "core/iter" as iter;
-import "std/sort" as sort;
+import "core/cmp" as cmp;
 
 function main(): i32 {
   var xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
@@ -17,7 +17,7 @@ function main(): i32 {
   var total = iter.sum(iter.of(squares));
 
   // Sort the evens ascending: [2, 4, 6, 8].
-  var asc = sort.sort_i32_asc(evens);
+  var asc = cmp.sort(evens);
 
   // 120 + 2*10 + 8 = 148.
   return total + asc[0] * 10 + asc[3];

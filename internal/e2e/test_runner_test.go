@@ -2242,8 +2242,8 @@ func TestRunnerArrayStatsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/sort_f64_test.fern` covers std/sort's sort_f64_asc /
-// sort_f64_desc — bottom-up merge sort of an f64[], the float siblings of the
+// `examples/tests/sort_f64_test.fern` covers core/cmp's generic sort /
+// sort_desc over an f64[] — bottom-up merge sort, the float siblings of the
 // integer sorts. On the interp gate and both self-host gates; the Go-side
 // TestSortF64 pins native compilation on all four backends (f64 arrays are
 // scalar-payload, so no wasm skip). Passing → exit 0.

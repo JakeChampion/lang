@@ -74,10 +74,6 @@ import "std/string";
 // out of `Map.keys()` in any order). Std/json is already a
 // stdlib module, so the dependency is just an in-stdlib link.
 import "std/json";
-// `assert_set_eq_*` sorts both inputs before comparing so the
-// order-independent multiset compare reuses the existing
-// sort helpers rather than rolling its own pair-finder.
-import "std/sort";
 
 // TestRunner — per-suite accumulator. Threaded through each
 // `.it(name, result)` call. `failures` keeps the formatted
@@ -1332,12 +1328,12 @@ pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f
 
 // `assert_set_eq_i32(actual, expected)` — multiset
 // equality for i32[]. Sorts both inputs ascending via
-// `sort_i32_asc` then delegates to the ordered comparison
+// `cmp.sort` then delegates to the ordered comparison
 // — O(n²) on the sort but n is bounded by the array size
 // the test produced.
 
 // `assert_set_eq_string(actual, expected)` — multiset
-// equality for string[]. Sorts both via `sort_strings_asc`
+// equality for string[]. Sorts both via `cmp.sort`
 // then delegates to ordered compare.
 
 // `assert_subset_i32(superset, subset)` — every element of
@@ -1701,11 +1697,11 @@ pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): TestOutcome {
 // non-decreasing order on strings. Delegates to the
 // `sort.string_cmp` ordering used elsewhere in the stdlib
 // so "sorted" here means the same thing as
-// `sort_strings_asc(arr)` would produce.
+// `cmp.sort(arr)` would produce.
 
 // `assert_sorted_desc_i32(arr)` — strictly the inverse of
 // `_asc_i32`: every adjacent pair must satisfy
-// `arr[i-1] >= arr[i]`. Use this to pin `sort_i32_desc(...)`
+// `arr[i-1] >= arr[i]`. Use this to pin `cmp.sort_desc(...)`
 // output or any reverse-sorted-by-construction code path.
 
 // `assert_sorted_desc_string(arr)` — descending lexicographic.
@@ -1886,8 +1882,8 @@ pub function assert_file_size(path: string, expected: i64): TestOutcome {
 pub function assert_eq_dir_listing(dir: string, expected_names: string[]): TestOutcome {
     match (read_dir(dir)) {
         Ok(names) => {
-            var actual_sorted: string[] = sort.sort_strings_asc(names);
-            var expected_sorted: string[] = sort.sort_strings_asc(expected_names);
+            var actual_sorted: string[] = cmp.sort(names);
+            var expected_sorted: string[] = cmp.sort(expected_names);
             return assert_eq_array(actual_sorted, expected_sorted);
         },
         Err(_) => {

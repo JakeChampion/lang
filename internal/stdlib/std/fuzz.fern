@@ -436,7 +436,7 @@ pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], ite
 // order. Hidden / `_`-prefixed entries are skipped so
 // scratch metadata doesn't get treated as fuzz input.
 
-import "std/sort";
+import "core/cmp";
 
 // fuzz_corpus_from_dir(path) — load every regular file under
 // `path` as a seed string. Returns the seeds via Result so
@@ -449,11 +449,11 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
         Ok(names) => {
             // Stable order so the verbatim-seed pass + the
             // mutation pass both walk the corpus the same
-            // way each run. Qualified `sort.sort_strings_asc`
-            // call so modload's rewriter routes correctly
-            // under the user-side mangled-load path too
-            // (the flat-load path would resolve the bare name).
-            var sorted: string[] = sort.sort_strings_asc(names);
+            // way each run. Qualified `cmp.sort` call so
+            // modload's rewriter routes correctly under the
+            // user-side mangled-load path too (the flat-load
+            // path would resolve the bare name).
+            var sorted: string[] = cmp.sort(names);
             var seeds: string[] = [];
             var i: i32 = 0;
             while (i < sorted.len()) {

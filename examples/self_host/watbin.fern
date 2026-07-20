@@ -373,26 +373,122 @@ function parse_dec_i64(s: string): i64 {
 }
 
 // parse_f64 parses a decimal float literal (sign, integer part, optional
-// fraction, optional e±exponent) into an f64. NOTE: this digit-by-digit
-// accumulation is the nearest f64 for exactly-representable literals and
-// within ~1 ULP otherwise — fine for the values emit_module produces and
-// the truncate-to-int results the tests assert, but not a bit-exact strtod
-// for every decimal.
-function parse_f64(s: string): f64 {
+// fraction, optional e±exponent) into the NEAREST f64 — round-to-nearest,
+// ties-to-even, bit-exact with a correctly-rounding strtod (SH-004). The
+// old digit-by-digit accumulation was within ~1 ULP but not exact, so the
+// in-process assemble of a 17-digit round-trip spelling (e.g. the
+// compiler's own libm constant tables) could differ from the GNU-as path
+// by an ULP.
+//
+// Method — the classic exact decimal-shift algorithm (a digit buffer with
+// a movable decimal point, halved/doubled in grade-school decimal, as in
+// Go's strconv/decimal.go): collect the significant digits D so the value
+// is 0.D × 10^dp; binary-normalize into [0.5, 1) by exact ÷2/×2 counting
+// the binary exponent; pull the mantissa bits by repeated ×2 (the carry
+// out of the integer place is the next bit); round on the next bit + a
+// sticky flag (buffer remainder, or digits truncated at parse). Assemble-
+// time only, so the O(digits × exponent) shifting cost is irrelevant.
+// Keep in sync with x86_gas_parse_f64 (x86_gas.fern) and arm64_parse_f64
+// (arm64_native.fern) — the three assemblers are deliberately import-free,
+// so the algorithm is mirrored, not shared.
+pub function parse_f64(s: string): f64 {
+    return f64_from_bits(parse_f64_bits(s));
+}
+
+// pf64_div2 halves the fraction buffer 0.B (grade-school left-to-right),
+// returning the new buffer. May append one digit; drops a leading zero by
+// signalling via the first element sentinel — the caller adjusts dp, so
+// this returns the raw halved digits INCLUDING a possible leading zero.
+function pf64_div2(b: i32[]): i32[] {
+    var out: i32[] = [];
+    var r: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.len()) {
+        var cur: i32 = r * 10 + b[i];
+        out = out.append(cur / 2);
+        r = cur % 2;
+        i = i + 1;
+    }
+    if (r != 0) { out = out.append(5); }
+    return out;
+}
+
+// pf64_mul2 doubles the fraction buffer 0.B (right-to-left with carry).
+// A carry out of the front means the value reached [1, 2): the caller
+// consumes it as the next binary digit. Returns carry * 1000000 + ... no —
+// Fern has no multi-return here; the carry is prepended as a FIRST element
+// (0 or 1) and the caller splits it off.
+function pf64_mul2(b: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(0); i = i + 1; }
+    var carry: i32 = 0;
+    var j: i32 = b.len() - 1;
+    while (j >= 0) {
+        var cur: i32 = b[j] * 2 + carry;
+        out = out.with(j, cur % 10);
+        carry = cur / 10;
+        j = j - 1;
+    }
+    var res: i32[] = [carry];
+    var k: i32 = 0;
+    while (k < out.len()) { res = res.append(out[k]); k = k + 1; }
+    return res;
+}
+
+// pf64_sub returns b[from : upto) as a fresh array (slices are a distinct
+// type here, so buffer trims copy).
+function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = from;
+    while (i < upto) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
+// pf64_all_zero reports whether every digit in b is zero.
+function pf64_all_zero(b: i32[]): boolean {
+    var i: i32 = 0;
+    while (i < b.len()) {
+        if (b[i] != 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function parse_f64_bits(s: string): i64 {
     var i: i32 = 0;
     var neg: boolean = false;
     if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
-    var v: f64 = 0.0;
+    else if (s.len() > 0 && s[0] == 43) { i = 1; }
+    var signbit: i64 = 0;
+    if (neg) { var one: i64 = 1; signbit = one << 63; }
+    // Collect significant digits (cap 40 — beyond that only stickiness
+    // matters) and the decimal point position: value = 0.digits × 10^dp.
+    var digits: i32[] = [];
+    var dp: i32 = 0;
+    var sticky: boolean = false;
+    var started: boolean = false;
     while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-        v = v * 10.0 + ((s[i] - 48) as f64);
+        var d: i32 = s[i] - 48;
+        if (started || d != 0) {
+            started = true;
+            if (digits.len() < 40) { digits = digits.append(d); }
+            else { if (d != 0) { sticky = true; } }
+            dp = dp + 1;
+        }
         i = i + 1;
     }
     if (i < s.len() && s[i] == 46) {        // '.'
         i = i + 1;
-        var scale: f64 = 0.1;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            v = v + ((s[i] - 48) as f64) * scale;
-            scale = scale / 10.0;
+            var fd: i32 = s[i] - 48;
+            if (started || fd != 0) {
+                started = true;
+                if (digits.len() < 40) { digits = digits.append(fd); }
+                else { if (fd != 0) { sticky = true; } }
+            } else {
+                dp = dp - 1;                // leading fraction zero shifts the point
+            }
             i = i + 1;
         }
     }
@@ -402,14 +498,97 @@ function parse_f64(s: string): f64 {
         if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
         else if (i < s.len() && s[i] == 43) { i = i + 1; }
         var exp: i32 = 0;
-        while (i < s.len() && s[i] >= 48 && s[i] <= 57) { exp = exp * 10 + (s[i] - 48); i = i + 1; }
-        var p: f64 = 1.0;
-        var k: i32 = 0;
-        while (k < exp) { p = p * 10.0; k = k + 1; }
-        if (eneg) { v = v / p; } else { v = v * p; }
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            if (exp < 100000) { exp = exp * 10 + (s[i] - 48); }
+            i = i + 1;
+        }
+        if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
     }
-    if (neg) { return 0.0 - v; }
-    return v;
+    // Trailing zeros in the significand carry no information; trimming
+    // keeps the sticky/remainder tests honest.
+    while (digits.len() > 0 && digits[digits.len() - 1] == 0) {
+        digits = pf64_sub(digits, 0, digits.len() - 1);
+    }
+    if (digits.len() == 0) { return signbit; }          // ±0.0
+    // Decimal-magnitude clamps keep the shift loops bounded: |value| is in
+    // [10^(dp-1), 10^dp), so dp > 310 overflows every double and dp < -350
+    // underflows below half the minimum subnormal.
+    if (dp > 310) { var inf: i64 = 2047; return signbit | (inf << 52); }
+    if (dp < 0 - 350) { return signbit; }
+    // Binary-normalize 0.digits × 10^dp into v × 2^bexp with v in [0.5, 1).
+    // While the decimal point is right of the front (value >= 1), halve;
+    // while the value is below 0.5, double. dp reaches 0 first, then the
+    // leading-digit test finishes the job.
+    var bexp: i32 = 0;
+    while (dp > 0) {
+        var hb: i32[] = pf64_div2(digits);
+        if (hb.len() > 0 && hb[0] == 0) {
+            digits = pf64_sub(hb, 1, hb.len());
+            dp = dp - 1;
+        } else {
+            digits = hb;
+        }
+        bexp = bexp + 1;
+        while (digits.len() > 0 && digits[digits.len() - 1] == 0) { digits = pf64_sub(digits, 0, digits.len() - 1); }
+    }
+    while (dp < 0 || (digits.len() > 0 && digits[0] < 5)) {
+        var db: i32[] = pf64_mul2(digits);
+        if (db[0] != 0) {
+            // Carry out of the fraction: 2×0.D >= 1, i.e. C.D' × 10^dp.
+            // Renormalize as 0.(C D') × 10^(dp+1) — the carry becomes the
+            // new leading digit and the point advances. (Only reachable
+            // while dp < 0: at dp == 0 the loop only runs when the lead
+            // digit is < 5, so doubling cannot carry.)
+            digits = db;
+            dp = dp + 1;
+        } else {
+            digits = pf64_sub(db, 1, db.len());
+        }
+        bexp = bexp - 1;
+        while (digits.len() > 0 && digits[digits.len() - 1] == 0) { digits = pf64_sub(digits, 0, digits.len() - 1); }
+        if (digits.len() == 0) { return signbit; }
+    }
+    // v in [0.5, 1), value = v × 2^bexp = 1.f × 2^(bexp-1): biased exponent
+    // E = bexp + 1022. E >= 2047 overflows; E <= 0 goes subnormal with
+    // 52 + E mantissa bits; below -1 it is under half the minimum
+    // subnormal and rounds to zero.
+    var e: i32 = bexp + 1022;
+    if (e >= 2047) { var inf2: i64 = 2047; return signbit | (inf2 << 52); }
+    var nbits: i32 = 53;
+    if (e <= 0) { nbits = 52 + e; }
+    if (nbits < 0) { return signbit; }
+    var mant: i64 = 0;
+    var k2: i32 = 0;
+    while (k2 < nbits) {
+        var mb: i32[] = pf64_mul2(digits);
+        mant = mant * 2 + (mb[0] as i64);
+        digits = pf64_sub(mb, 1, mb.len());
+        k2 = k2 + 1;
+    }
+    // Round to nearest, ties to even: round bit is the next binary digit;
+    // sticky is any remainder (or parse-time truncation).
+    var rb: i32[] = pf64_mul2(digits);
+    var roundbit: i32 = rb[0];
+    var rest: i32[] = pf64_sub(rb, 1, rb.len());
+    var st: boolean = sticky || !pf64_all_zero(rest);
+    if (roundbit == 1 && (st || (mant & 1) == 1)) { mant = mant + 1; }
+    if (e <= 0) {
+        // Subnormal: the E field is 0 and `bits = mant` — and a subnormal
+        // that rounded up to 2^52 IS the smallest normal (E=1, f=0), which
+        // this encoding produces arithmetically.
+        return signbit | mant;
+    }
+    var full: i64 = 1;
+    full = full << 53;
+    if (mant == full) {
+        // 1.111…1 rounded up to 10.00…0: renormalize.
+        mant = mant / 2;
+        e = e + 1;
+        if (e >= 2047) { var inf3: i64 = 2047; return signbit | (inf3 << 52); }
+    }
+    var hidden: i64 = 1;
+    hidden = hidden << 52;
+    return signbit | ((e as i64) << 52) | (mant - hidden);
 }
 
 // hexval maps an ASCII hex digit to its value.
@@ -794,6 +973,10 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.append(36);
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
+    if (op == "unreachable") {
+        out = out.append(0);   // 0x00 unreachable
+        return out;
+    }
     if (op == "return") {
         if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames)); }
         out = out.append(15);
@@ -957,6 +1140,15 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.append(ao);
         return out;
     }
+    // No handler claimed the node: an unknown instruction here was silently
+    // DROPPED (SH-003) — the module encoded with the operation missing, so
+    // it either failed validation with a baffling type mismatch or ran with
+    // wrong values (the sat_trunc note above records a real instance). A
+    // named op that reaches this point is an encoder gap: fail loudly.
+    if (op.len() > 0) {
+        eprint("watbin: unknown instruction: " + op);
+        exit(1);
+    }
     return out;
 }
 
@@ -1068,6 +1260,9 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
         } else if (op == "end") {
             out = out.append(11);
             i = i + 1;
+        } else if (op == "unreachable") {
+            out = out.append(0);   // 0x00 unreachable
+            i = i + 1;
         } else if (op == "return") {
             out = out.append(15);
             i = i + 1;
@@ -1094,6 +1289,11 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 out = leb_u32(out, stf);
             } else if (ao != 0) {
                 out = out.append(ao);   // arithmetic / comparison (no immediate)
+            } else if (op.len() > 0) {
+                // Unknown flat-form instruction: previously skipped silently
+                // (SH-003), leaving the operation out of the encoded module.
+                eprint("watbin: unknown instruction: " + op);
+                exit(1);
             }
             i = i + 1;
         }

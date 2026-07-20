@@ -5,7 +5,7 @@ import "testing"
 // Differential coverage for std/array.median_f64 / range_f64 — the median
 // (averaging the two middles for even length) and the max-min spread. Both
 // return Option[f64] (None for empty), so the wasmbin leg skips (the enum-i64/
-// f64 gap avg_f64 / variance_f64 already carry). median_f64 rides sort_f64_asc;
+// f64 gap avg_f64 / variance_f64 already carry). median_f64 rides cmp.sort;
 // range_f64 is a single pass. Returns 42 iff every check holds across interp /
 // x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const arrayMedianRangeProg = `
