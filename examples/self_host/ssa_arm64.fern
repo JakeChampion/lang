@@ -516,7 +516,22 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     chunks = chunks.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
-    if (frame > 0) { chunks = chunks.append("    sub sp, sp, #" + util.i32_to_string(frame) + "\n"); }
+    if (frame > 0 && frame <= 4095) {
+        chunks = chunks.append("    sub sp, sp, #" + util.i32_to_string(frame) + "\n");
+    } else if (frame > 4095) {
+        // AArch64 add/sub take a 12-bit immediate (<= 4095, or a 4096-multiple via
+        // LSL #12); a larger frame (a function with many SSA values) must be
+        // materialized into a scratch register first, else `as` rejects it as
+        // "immediate out of range". x9 is free at the prologue — the params are
+        // still in x0..x7 / d0..d7 (spilled just below) and the frame value is
+        // dead after the sub — and movk supplies the high 16 bits for a very large
+        // frame. The epilogue restores via `mov sp, x29`, so it needs no immediate.
+        var lo: i32 = frame & 65535;
+        var hi: i32 = (frame / 65536) & 65535;
+        chunks = chunks.append("    mov x9, #" + util.i32_to_string(lo) + "\n");
+        if (hi != 0) { chunks = chunks.append("    movk x9, #" + util.i32_to_string(hi) + ", lsl #16\n"); }
+        chunks = chunks.append("    sub sp, sp, x9\n");
+    }
     // Spill incoming args: f64 params arrive in d0…, integer/pointer params in
     // x0… (two AAPCS64 sequences).
     var p: i32 = 0;
