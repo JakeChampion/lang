@@ -10,7 +10,9 @@ import (
 )
 
 // stdlibConcatCase compiles a REAL no-import std module (concatenated with a main —
-// the single-module trick the std/json / std/hex / std/base64 self-host tests use)
+// the single-module trick the std/hex / std/base64 self-host tests use; std/json
+// migrated off it to the loader driver when json grew a real cross-module
+// method dependency, #5420)
 // through the self-host IR path on x86-64 + wasm, confirming the module's functions
 // lower end-to-end. crypto/sha256 is the standout: it drives the whole u32-heavy
 // SHA-256 message schedule + compression (rotr / shr_u / wrapping add) through the

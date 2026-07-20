@@ -469,6 +469,23 @@ function main(): i32 {
     }
     return 0;
 }`},
+		// json_get_f64 routes through std/string's `s.parse_float()`
+		// receiver method — the cross-module method reference #5420
+		// tracked (std/json's private parser twin is deleted). Scaled
+		// i32 prints keep the comparison float-format independent.
+		{"stdlib_json_get_f64", `import "std/json";
+import "std/i32";
+function main(): i32 {
+    match (json.json_parse("{\"pi\":3.5,\"big\":2.5e1,\"neg\":-0.5}")) {
+        Some(v) => {
+            match (json.json_get_f64(v, "pi")) { Some(x) => { print(((x * 2.0) as i32).to_string()); }, None => { print("nopi"); } }
+            match (json.json_get_f64(v, "big")) { Some(x) => { print((x as i32).to_string()); }, None => { print("nobig"); } }
+            match (json.json_get_f64(v, "neg")) { Some(x) => { print(((x * 0.0 - x * 4.0) as i32).to_string()); }, None => { print("noneg"); } }
+        },
+        None => { print("parsefail"); }
+    }
+    return 0;
+}`},
 		{"stdlib_hex_base64", `import "std/hex";
 import "std/base64";
 function main(): i32 {
