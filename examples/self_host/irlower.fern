@@ -4269,7 +4269,13 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
 pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprNumber(n) => { return n.is_float; },
-        parser.ExprIdent(id) => { return s.is_f64_slot(s.slot_of(id.name)); },
+        parser.ExprIdent(id) => {
+            if (s.is_f64_slot(s.slot_of(id.name))) { return true; }
+            // A bare `const` ident is a call to its zero-arg accessor, so it is
+            // f64 exactly when that accessor returns f64 — the f64 sibling of
+            // infer_expr_width's const case (#4801).
+            return s.slot_of(id.name) < 0 && s.is_const_fn(id.name) && s.is_f64_ret_fn(id.name);
+        },
         parser.ExprBinary(b) => {
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
                 return expr_is_f64(b.left, s) || expr_is_f64(b.right, s);
@@ -4721,6 +4727,14 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         },
         parser.ExprIdent(id) => {
             if (s.is_i64_slot(s.slot_of(id.name))) { return 64; }
+            // A bare ident naming a `const` is a CALL to its zero-arg accessor
+            // (the ExprIdent lowering rule emits op_call_direct for it), so its
+            // width is the accessor's RETURN width — the same is_i64_ret_fn
+            // query the ExprCall arm below makes. Without this a `const B: i64`
+            // read as `B + 1` inferred 32, so the lowering emitted i32.add over
+            // a value the accessor returns as i64 and wasmtime rejected the
+            // module with "type mismatch: expected i32, found i64" (#4801).
+            if (s.slot_of(id.name) < 0 && s.is_const_fn(id.name) && s.is_i64_ret_fn(id.name)) { return 64; }
             return 32;
         },
         parser.ExprBinary(b) => {
