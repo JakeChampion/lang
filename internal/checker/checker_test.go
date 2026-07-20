@@ -2058,6 +2058,11 @@ function main(): i32 { return 0; }`, "must bind all"},
 		{`enum E { V(i32) }
 function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
 function main(): i32 { return 0; }`, "positional payloads"},
+		// renaming (`field: local`) is not supported for enum named-field
+		// patterns — only struct-scrutinee matches allow it.
+		{`enum E { V { a: i32 } }
+function f(e: E): i32 { match (e) { V { a: x } => { return x; }, } return 0; }
+function main(): i32 { return 0; }`, "does not support renaming"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)

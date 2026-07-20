@@ -2670,10 +2670,14 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(e)
 				if !arm.IsWildcard {
-					for _, b := range arm.Bindings {
-						fv, ok := st.Fields[b]
+					for k, b := range arm.Bindings {
+						field := b
+						if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
+							field = arm.FieldNames[k]
+						}
+						fv, ok := st.Fields[field]
 						if !ok {
-							return result{}, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, b)
+							return result{}, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, field)
 						}
 						armEnv.declare(b, fv)
 					}
@@ -3370,10 +3374,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(env)
 				if !arm.IsWildcard {
-					for _, b := range arm.Bindings {
-						fv, ok := st.Fields[b]
+					for k, b := range arm.Bindings {
+						field := b
+						if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
+							field = arm.FieldNames[k]
+						}
+						fv, ok := st.Fields[field]
 						if !ok {
-							return nil, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, b)
+							return nil, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, field)
 						}
 						armEnv.declare(b, fv)
 					}

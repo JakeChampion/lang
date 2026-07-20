@@ -8959,6 +8959,24 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		// types `v` as `number`, not the abstract `T`. A named-field
 		// pattern (`Rect { w, h }`) is validated + reordered into
 		// declaration order here.
+		if arm.NamedFields {
+			renamed := false
+			for i := range arm.Bindings {
+				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != arm.Bindings[i] {
+					if !renamed {
+						c.errfCode(arm.P, "E015", "enum named-field pattern for %s does not support renaming (`field: local`) — bind the field by name (`%s { %s }`)", variant.Name, variant.Name, arm.FieldNames[i])
+						renamed = true
+					}
+					arm.Bindings[i] = arm.FieldNames[i]
+				}
+			}
+			// Enum variant patterns never project through FieldNames (only
+			// struct matches do), and resolveVariantBindings reorders
+			// Bindings into declaration order — leaving FieldNames stale.
+			// Clear it so a re-check (post-monomorph) doesn't misfire the
+			// rename guard on a legitimately reordered shorthand pattern.
+			arm.FieldNames = nil
+		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
 		// `@` binding: the whole matched value, bound at the scrutinee's type.
@@ -9199,10 +9217,17 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		seen := map[string]bool{}
 		for k, b := range arm.Bindings {
+			// b is the LOCAL bound; the projected FIELD is FieldNames[k]
+			// (== b for the shorthand `S { x }`; a rename `S { x: nx }`
+			// projects field x into local nx).
+			field := b
+			if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
+				field = arm.FieldNames[k]
+			}
 			var ft ast.Type
 			found := false
 			for _, f := range sd.Fields {
-				if f.Name == b {
+				if f.Name == field {
 					ft = f.Type
 					if sub != nil {
 						ft = substituteType(ft, sub)
@@ -9216,7 +9241,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 				for _, df := range sd.Fields {
 					declared = append(declared, df.Name)
 				}
-				c.errUnknownField(arm.P, arm.P, st.Name, b, declared)
+				c.errUnknownField(arm.P, arm.P, st.Name, field, declared)
 				continue
 			}
 			arm.BindingTypes[k] = ft
@@ -9522,10 +9547,17 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		seen := map[string]bool{}
 		for k, b := range arm.Bindings {
+			// b is the LOCAL bound; the projected FIELD is FieldNames[k]
+			// (== b for the shorthand `S { x }`; a rename `S { x: nx }`
+			// projects field x into local nx).
+			field := b
+			if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
+				field = arm.FieldNames[k]
+			}
 			var ft ast.Type
 			found := false
 			for _, f := range sd.Fields {
-				if f.Name == b {
+				if f.Name == field {
 					ft = f.Type
 					if sub != nil {
 						ft = substituteType(ft, sub)
@@ -9539,7 +9571,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 				for _, df := range sd.Fields {
 					declared = append(declared, df.Name)
 				}
-				c.errUnknownField(arm.P, arm.P, st.Name, b, declared)
+				c.errUnknownField(arm.P, arm.P, st.Name, field, declared)
 				continue
 			}
 			arm.BindingTypes[k] = ft
@@ -9680,6 +9712,24 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 		if arm.Guard == nil {
 			covered[arm.VariantName] = true
+		}
+		if arm.NamedFields {
+			renamed := false
+			for i := range arm.Bindings {
+				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != arm.Bindings[i] {
+					if !renamed {
+						c.errfCode(arm.P, "E015", "enum named-field pattern for %s does not support renaming (`field: local`) — bind the field by name (`%s { %s }`)", variant.Name, variant.Name, arm.FieldNames[i])
+						renamed = true
+					}
+					arm.Bindings[i] = arm.FieldNames[i]
+				}
+			}
+			// Enum variant patterns never project through FieldNames (only
+			// struct matches do), and resolveVariantBindings reorders
+			// Bindings into declaration order — leaving FieldNames stale.
+			// Clear it so a re-check (post-monomorph) doesn't misfire the
+			// rename guard on a legitimately reordered shorthand pattern.
+			arm.FieldNames = nil
 		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)

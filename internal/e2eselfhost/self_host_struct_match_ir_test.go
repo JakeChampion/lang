@@ -63,6 +63,29 @@ function area(p: Point): i32 {
   };
 }
 function main(): i32 { return area(Point { x: 4, y: 4 }) + area(Point { x: 3, y: 5 }); }`},
+	{"rename_stmt", `struct Point { x: i32, y: i32 }
+function f(p: Point): i32 { match (p) { Point { x: a, y: b } => { return a * 10 + b; } } return 0; }
+function main(): i32 { return f(Point { x: 3, y: 7 }); }`},
+	{"rename_expr", `struct Point { x: i32, y: i32 }
+function area(p: Point): i32 {
+  return match (p) {
+    Point { x: a, y: b } when a == b => a * 10,
+    Point { x: a, y: b } => a + b,
+  };
+}
+function main(): i32 { return area(Point { x: 4, y: 4 }) + area(Point { x: 3, y: 5 }); }`},
+	{"rename_partial", `struct P { x: i32, y: i32, z: i32 }
+function f(p: P): i32 { match (p) { P { y: m } => { return m; } } return 0; }
+function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`},
+	{"rename_mixed", `struct Named { id: i32, label: string }
+function f(n: Named): i32 {
+  match (n) {
+    Named { id: k, label } when k > 5 => { return label.len() + 10; },
+    Named { id, label: s } => { return s.len(); },
+  }
+  return 0;
+}
+function main(): i32 { return f(Named { id: 9, label: "abcd" }) * 10 + f(Named { id: 1, label: "ab" }); }`},
 }
 
 func TestSelfHostStructMatchX86_64(t *testing.T) {
