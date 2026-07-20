@@ -76,13 +76,18 @@ These are not just smells — they can produce wrong output today.
   `OpError { msg }` opcode remains the ideal end state (see SH-040) but carries a
   3-match-site blast radius (`disasm.fern` enumerates all 60 `Op` variants).
 
-- [ ] **SH-002 — Control flow rides magic error strings.** `interp.fern:996-1009,
-  1264-1286` encodes return/break/continue as `VErr("__noreturn__" /
-  "__break__" / "__continue__")`; `vm.fern:1033-1036` uses jump targets
-  `-1001`/`-1002`. A user `VErr` whose message collides, or a typo in a literal,
-  silently breaks control flow. Severity **High**. _Fix:_ a dedicated
-  `StepSignal` union (`SigReturn(Value)|SigBreak|SigContinue|SigError`) distinct
-  from `Value`; distinct `OpBreak`/`OpContinue` ops in the VM.
+- [x] **SH-002 — Control flow rides magic error strings.** _Done:_
+  `StepResult` grew a dedicated `sig: i32` channel (0 = none, 1 = stop —
+  a `return`'s value or a runtime error in `ret`, 2 = break, 3 =
+  continue) built via `step_none`/`step_stop`; every construction and
+  consumer (loop break/continue handling, `eval_block` short-circuit,
+  function-body enders, the top-stmts driver) keys off `sig`, and the
+  `VErr("__noreturn__"/"__break__"/"__continue__")` sentinels + their
+  `is_*` matchers are deleted — no Value can be mistaken for a control
+  signal, and a typo'd literal can no longer silently break control
+  flow. (The `vm.fern` `-1001`/`-1002` half of this entry is obsolete:
+  that VM was retired after the audit was written; the file no longer
+  exists.)
 
 - [x] **SH-003 — `watbin` silently drops unknown instructions.** _Done:_ the
   opcode tables' `return 0` sentinel made an unhandled instruction fall
