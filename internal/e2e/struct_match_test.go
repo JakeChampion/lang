@@ -84,6 +84,14 @@ function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`,
 		want: 42,
 	},
 	{
+		// An explicit trailing `..` marks intentionally-omitted fields.
+		name: "rest_marker",
+		src: `struct P { x: i32, y: i32, z: i32 }
+function f(p: P): i32 { match (p) { P { x, .. } => { return x; } } return 0; }
+function main(): i32 { return f(P { x: 55, y: 6, z: 7 }); }`,
+		want: 55,
+	},
+	{
 		// Expression-form struct match: each arm body is an expr and the
 		// match yields the unified result.
 		name: "expr_form",
