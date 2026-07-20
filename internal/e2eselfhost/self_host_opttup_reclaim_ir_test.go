@@ -100,6 +100,66 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
+	// STRING-element payload (#4353 item 2, probe p4): `Option[(i32, string)]`
+	// with a fresh producer element — construction str_box's the element into
+	// a fresh copy, the type-driven drop routes it through the rc-aware
+	// __fern_str_free. Previously the string tag rejected admission and all
+	// three levels leaked per iteration.
+	{"opttup-string-elem-churn", `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var o: Option[(i32, string)] = Some((i, "v" + i.to_string())); match (o) { Some(p) => { acc = (acc + p.0 + p.1.len()) % 251; }, None => {} } i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 5000) { var o2: Option[(i32, string)] = Some((j, "v" + j.to_string())); match (o2) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// Mixed string + array elements — both freed by the type-driven walk.
+	{"opttup-string-arr-mixed-churn", `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var o: Option[(string, i32[])] = Some(("tag", [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0.len() + p.1[0]) % 251; }, None => {} } i = i + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var j: i32 = 0;
+    while (j < 5000) { var o2: Option[(string, i32[])] = Some(("tag", [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// IDENT-string-element negative: `Some((i, s))` aliases a live local at a
+	// string position — admission (tuple_arg_payload_fresh) rejects, nothing
+	// freed, s stays valid, detector zero.
+	{"opttup-string-ident-elem-safe", `function main(): i32 {
+    var s: string = "seven";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var o: Option[(i32, string)] = Some((i, s)); match (o) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } i = i + 1; }
+    if (s.len() != 5) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// STRING-EXTRACTION negative: `Some(p) => keep = p.1` pulls the owned
+	// string element out of the arm — the escape walker treats a bare
+	// non-scalar p.N as an escape, the local is NOT credited (leak-safe),
+	// keep stays valid.
+	{"opttup-string-extract-safe", `function main(): i32 {
+    var keep: string = "";
+    var i: i32 = 0;
+    while (i < 100) {
+        var o: Option[(i32, string)] = Some((i, "k" + i.to_string()));
+        match (o) { Some(p) => { keep = p.1; }, None => {} }
+        i = i + 1;
+    }
+    if (keep.len() < 2) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostOptTupReclaimIRX86_64 drives the cases through the self-hosted
