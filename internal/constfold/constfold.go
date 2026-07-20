@@ -44,10 +44,14 @@ func Fold(prog *ast.Program) error {
 			continue
 		}
 		gotT := litType(val)
-		if cd.Type != nil && !ast.Equal(cd.Type, gotT) {
-			errs = append(errs, fmt.Errorf("%s: const %s: declared type %s does not match initialiser type %s",
-				cd.P, cd.Name, cd.Type, gotT))
-			continue
+		if cd.Type != nil {
+			if err := settleConstLit(cd.Type, val); err != nil {
+				errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
+				continue
+			}
+			// The declared type is the const's type once the literal has
+			// settled to it — not litType's default reading of the literal.
+			gotT = cd.Type
 		}
 		values[cd.Name] = val
 		types[cd.Name] = gotT
@@ -266,6 +270,82 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 // litType returns the ast.Type that matches a folded literal. Only
 // the four scalar literal kinds appear here — everything else would
 // have been rejected as non-constant in evalConst.
+// settleConstLit checks a const's resolved literal against its declared type
+// and, when they agree, stamps the declared width onto the literal node.
+//
+// It replaces a bare `ast.Equal(declared, litType(val))` comparison, which was
+// wrong for every numeric const whose declared width was not the literal's
+// default reading: litType reports `NumberType{}` (i32) for ANY integer literal
+// and `FloatType{}` (f32) for any float one, so `const B: i64 = 5000000000` was
+// rejected as "declared type i64 does not match initialiser type i32" — as was
+// the perfectly ordinary `const B: i64 = 5` — and `const H: f64 = 3.5` as
+// "does not match initialiser type f32". (ast.Equal claims in its NumberType
+// doc comment to treat Polymorphic as a match-anything wildcard, but it does
+// not; it compares NormalWidth and signedness.)
+//
+// Stamping matters as much as accepting: the substituter inlines this literal
+// node at every reference, so without a width the i64 const would reach the IR
+// as an `i32.const` and the f64 one as an f32. Fixes #5477.
+func settleConstLit(want ast.Type, val ast.Expr) error {
+	switch w := want.(type) {
+	case ast.NumberType:
+		// usize (WidthPtr) has no fixed width here — leave it to the old
+		// exact-match path rather than range-check against an unknown width.
+		if w.IsPointerWidth() {
+			break
+		}
+		lit, ok := val.(*ast.NumberLit)
+		if !ok {
+			break
+		}
+		if !intFits(lit.Value, w.NormalWidth(), w.IsSigned()) {
+			return fmt.Errorf("initialiser %d is out of range for %s", lit.Value, want)
+		}
+		lit.Width = w.NormalWidth()
+		lit.IsUnsigned = !w.IsSigned()
+		return nil
+	case ast.FloatType:
+		lit, ok := val.(*ast.FloatLit)
+		if !ok {
+			break
+		}
+		lit.Width = w.NormalWidth()
+		return nil
+	}
+	if got := litType(val); !ast.Equal(want, got) {
+		return fmt.Errorf("declared type %s does not match initialiser type %s", want, got)
+	}
+	return nil
+}
+
+// intFits reports whether v is representable in a `width`-bit integer of the
+// given signedness. A u64's upper half is unrepresentable in the int64 the
+// literal is parsed into, so an unsigned 64-bit type accepts any non-negative
+// value.
+func intFits(v int64, width int, signed bool) bool {
+	if !signed && v < 0 {
+		return false
+	}
+	switch width {
+	case 8:
+		if signed {
+			return v >= -128 && v <= 127
+		}
+		return v <= 255
+	case 16:
+		if signed {
+			return v >= -32768 && v <= 32767
+		}
+		return v <= 65535
+	case 32:
+		if signed {
+			return v >= -2147483648 && v <= 2147483647
+		}
+		return v <= 4294967295
+	}
+	return true // 64-bit: any int64 value fits (u64's high half is unreachable here)
+}
+
 func litType(e ast.Expr) ast.Type {
 	switch e.(type) {
 	case *ast.NumberLit:
@@ -397,6 +477,47 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		}
 	case *ast.FieldAccess:
 		s.walkExpr(&x.Target)
+	// The forms below were missing, so a const referenced inside any of them
+	// was never substituted and reached the checker as a bare Ident — "E001:
+	// undefined identifier" for a const that is plainly in scope. `N as i32`
+	// was the common one (#5477); the rest are the same hole in the other
+	// compound expressions.
+	case *ast.CastExpr:
+		s.walkExpr(&x.Inner)
+	case *ast.DowncastExpr:
+		s.walkExpr(&x.Inner)
+	case *ast.SliceExpr:
+		s.walkExpr(&x.Source)
+		if x.Low != nil {
+			s.walkExpr(&x.Low)
+		}
+		if x.High != nil {
+			s.walkExpr(&x.High)
+		}
+	case *ast.TupleLit:
+		for i := range x.Elems {
+			s.walkExpr(&x.Elems[i])
+		}
+	case *ast.MapLit:
+		for i := range x.Entries {
+			s.walkExpr(&x.Entries[i].Key)
+			s.walkExpr(&x.Entries[i].Value)
+		}
+	case *ast.EnumLit:
+		for i := range x.Args {
+			s.walkExpr(&x.Args[i])
+		}
+	case *ast.FString:
+		for i := range x.Parts {
+			if x.Parts[i].Expr != nil {
+				s.walkExpr(&x.Parts[i].Expr)
+			}
+		}
+		if x.Desugared != nil {
+			s.walkExpr(&x.Desugared)
+		}
+	case *ast.Lambda:
+		s.walkBlock(x.Body)
 	}
 }
 
@@ -407,9 +528,13 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 	switch v := src.(type) {
 	case *ast.NumberLit:
-		return &ast.NumberLit{P: pos, Value: v.Value}
+		// Width / IsUnsigned carry the declared type settleConstLit stamped on
+		// the const's literal; dropping them here put every substitution site
+		// back at the i32 default, so `const B: i64 = 5000000000` reached the
+		// checker as an i32 literal and failed E047 "does not fit in i32".
+		return &ast.NumberLit{P: pos, Value: v.Value, Width: v.Width, IsUnsigned: v.IsUnsigned}
 	case *ast.FloatLit:
-		return &ast.FloatLit{P: pos, Value: v.Value}
+		return &ast.FloatLit{P: pos, Value: v.Value, Width: v.Width}
 	case *ast.BoolLit:
 		return &ast.BoolLit{P: pos, Value: v.Value}
 	case *ast.StringLit:
