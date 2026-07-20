@@ -5742,6 +5742,17 @@ func literalMatchScrName(slot int32) string {
 	return fmt.Sprintf("__lit_match_scr_%d", slot)
 }
 
+// anyArmAtBinding reports whether any arm carries an `@` binding
+// (`n @ Variant(...)`), which forces the heap-form match path.
+func anyArmAtBinding(arms []*ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.AtBinding != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // emitStructMatch lowers a `match` on a struct-typed scrutinee (the checker
 // stamped n.StructMatch). Each arm is a struct pattern `S { x, y }` that
 // binds the named fields irrefutably, so the match is an if-chain: cache the
@@ -7306,7 +7317,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// but pair-form-eligibility already excludes those cases
 		// upstream so the fast path always covers Option[i32]
 		// matches end-to-end.
-		pairFormScrutinee := b.isPairFormScrutinee(n.Tag)
+		// An `@` binding needs the whole scrutinee box, so it forces the
+		// heap-form path (the pair-form fast path splits the value into a
+		// (tag, payload) pair with no single box pointer to bind).
+		pairFormScrutinee := b.isPairFormScrutinee(n.Tag) && !anyArmAtBinding(n.Arms)
 		var (
 			ptrSlot, tagSlot, payloadSlot int32
 		)
@@ -7465,6 +7479,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 					b.emit(payloadLoadOpFor(bt, b.ptrW))
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			// `@` binding: bind the whole matched value (the scrutinee box
+			// pointer) to the at-name. Pair-form is disabled when any arm has
+			// an `@` binding (the pairFormScrutinee gate), so ptrSlot always
+			// holds the box here. Borrowed, like the payload binds.
+			if arm.AtBinding != "" {
+				atSlot, atRestore := b.bindingSlotScoped(arm.AtBinding, b.exprType(n.Tag))
+				armRestores = append(armRestores, atRestore)
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
 			}
 			// Consuming match: the bindings are now copied into their own slots,
 			// so the scrutinee box is dead (its pointer payloads were MOVED into
@@ -8151,6 +8175,13 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpAdd})
 				b.emit(payloadLoadOpFor(bt, b.ptrW))
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			// `@` binding: bind the whole matched value (scrutinee box pointer).
+			if arm.AtBinding != "" {
+				atSlot, atRestore := b.bindingSlotScoped(arm.AtBinding, b.exprType(n.Tag))
+				exprArmRestores = append(exprArmRestores, atRestore)
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
 			}
 			if arm.Guard != nil {
 				if err := b.expr(arm.Guard); err != nil {
