@@ -8481,6 +8481,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                 _ => {}
                             }
                         },
+                        // `m.make()(args)` — the inner call is a METHOD returning
+                        // a closure, invoked immediately without ever binding to a
+                        // local. The sibling of the `var f = m.make()` case in the
+                        // closure-local binding match: both call sites only ever
+                        // inspected a bare-ident callee, so a method-returned
+                        // closure was dispatched as a bare fn pointer and wasm
+                        // trapped with `undefined element: out of bounds table
+                        // access`. Keyed by bare method name, matching how
+                        // closure_ret_fns_of registers methods. #4801.
+                        parser.ExprFieldAccess(cocfa) => {
+                            if (util.index_of_str(s.closure_fns, cocfa.field) >= 0) { coc_is_closure = true; }
+                        },
                         _ => {}
                     }
                     // A callee that returns a CLOSURE box [funcval, caps…] (a
@@ -11503,6 +11515,25 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // result is a closure box, so bind h a closure local; else
                     // `h()` bare-calls the box pointer as code (SIGSEGV).
                     if (s.is_closure_local("RETCLO$" + cid.name)) { clo_init = true; }
+                },
+                // `var f = m.make()` where the METHOD returns a closure. The
+                // arm above only ever saw a bare-ident callee (a free
+                // function), so a method-returned closure fell through here
+                // unbound: `f` stayed a plain fn-value local, and `f(21)`
+                // lowered as a direct call_indirect passing the BOX POINTER as
+                // the table index instead of unpacking the box (load the fn
+                // index, push the env first). wasm trapped with
+                // `undefined element: out of bounds table access`; the register
+                // backends jumped through the box pointer. #4801.
+                //
+                // closure_ret_fns_of registers methods under their BARE name
+                // (it appends funcs[i].name without receiver qualification), so
+                // the method name is the key here — matching how the registry
+                // already stores it, and introducing no collision it does not
+                // already have.
+                parser.ExprFieldAccess(mfa) => {
+                    if (util.index_of_str(s.closure_fns, mfa.field) >= 0) { clo_init = true; }
+                    if (util.index_of_str(s.closure_fns, "RETCLO2:" + mfa.field) >= 0) { clo_init = true; init_retclo = true; }
                 },
                 _ => { }
             }
