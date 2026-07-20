@@ -34,6 +34,9 @@ TestSelfHostStdTestE2E 18
 # `wasm-tools component new` compose plus a wasmtime run; the four heaviest
 # also cold-build their own driver. The rest of the family sits at ~4s.
 TestSelfHostWasmComponentEndToEnd 54
+# The last #4801 quarantine entry, un-quarantined once its final subtests were
+# fixed. ~680 subtests through one warm driver, measured on the x86-64 lane.
+TestSelfHostWasmRun 125
 TestSelfHostWasmComponentAdapter 30
 TestSelfHostWasmComponentReadFile 29
 TestSelfHostWasmComponentStdout 28
