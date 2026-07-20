@@ -2612,15 +2612,16 @@ pub function (s: string) parse_int_radix(base: i32): Option[i32] {
     return int.parse_int_radix(s, base);
 }
 
-// `s.parse_float()` — decimal f32 parser. Grammar:
+// `s.parse_float()` — decimal f64 parser (f64 is the language's
+// primary float, #5363). Grammar:
 //   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
 // At least one of integer or fraction digits required;
 // trailing garbage rejected. Mantissa accumulates into an
 // i64 with a saturation cap at 1e15; beyond that, extra
 // digits are skipped while `exp_adj` keeps the magnitude
-// right. Final value = `(f32) mantissa * 10^exp_adj`,
+// right. Final value = `(f64) mantissa * 10^exp_adj`,
 // sign applied via `0.0 - v`.
-pub function (s: string) parse_float(): Option[f32] {
+pub function (s: string) parse_float(): Option[f64] {
     var n: i32 = s.len();
     if (n == 0) { return None; }
 
@@ -2695,11 +2696,11 @@ pub function (s: string) parse_float(): Option[f32] {
 
     if (i < n) { return None; }   // trailing garbage
 
-    // v = (f32) mantissa * 10^exp_adj
-    var v: f32 = mantissa as f32;
-    while (exp_adj > 0) { v = v * 10.0 as f32; exp_adj = exp_adj - 1; }
-    while (exp_adj < 0) { v = v / 10.0 as f32; exp_adj = exp_adj + 1; }
-    if (neg) { v = 0.0 as f32 - v; }
+    // v = (f64) mantissa * 10^exp_adj
+    var v: f64 = mantissa as f64;
+    while (exp_adj > 0) { v = v * 10.0; exp_adj = exp_adj - 1; }
+    while (exp_adj < 0) { v = v / 10.0; exp_adj = exp_adj + 1; }
+    if (neg) { v = 0.0 - v; }
     return Some(v);
 }
 
