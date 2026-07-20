@@ -957,6 +957,15 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.append(ao);
         return out;
     }
+    // No handler claimed the node: an unknown instruction here was silently
+    // DROPPED (SH-003) — the module encoded with the operation missing, so
+    // it either failed validation with a baffling type mismatch or ran with
+    // wrong values (the sat_trunc note above records a real instance). A
+    // named op that reaches this point is an encoder gap: fail loudly.
+    if (op.len() > 0) {
+        eprint("watbin: unknown instruction: " + op);
+        exit(1);
+    }
     return out;
 }
 
@@ -1094,6 +1103,11 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 out = leb_u32(out, stf);
             } else if (ao != 0) {
                 out = out.append(ao);   // arithmetic / comparison (no immediate)
+            } else if (op.len() > 0) {
+                // Unknown flat-form instruction: previously skipped silently
+                // (SH-003), leaving the operation out of the encoded module.
+                eprint("watbin: unknown instruction: " + op);
+                exit(1);
             }
             i = i + 1;
         }
