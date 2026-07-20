@@ -880,6 +880,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // pow_func / …) that wasm_ir_run pulls in when a module calls one — see the
     // fexp/flog/fsin/fcos/fpow arms below (kind_tag 62+), which emit
     // `call $__fern_<op>_f64`. They are NOT in the deferral list.
+    if (!module_externs_scalar(mod)) { return false; }
     if (!asm_ir.eligible_core(mod)) { return false; }
     return wasm_ir_deferrals_ok(lower_all_for(mod));
 }
@@ -1006,7 +1007,7 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
 // keeps the ineligible-module bootstrap path from ever lowering (#4652). Uses
 // eligible_core (not all_eligible) so function-value modules lower on wasm.
 pub function should_use_ir_core(mod: parser.Module): boolean {
-    return asmcore.new_state().use_ir && asm_ir.eligible_core(mod);
+    return asmcore.new_state().use_ir && module_externs_scalar(mod) && asm_ir.eligible_core(mod);
 }
 
 // Preview-2 component-model imports for the wasm reactor's timer-pollable ops
@@ -1028,6 +1029,98 @@ pub function wasi_pollable_drop_import(): string {
 // wasm_timer_pollable observably block. Same wasi:io/poll interface as the drop.
 pub function wasi_pollable_block_import(): string {
     return "  (import \"wasi:io/poll@0.2.0\" \"[method]pollable.block\" (func $__fern_wasi_pollable_block (param i32)))\n";
+}
+
+// extern_valtype maps a scalar extern param/result type to its core valtype —
+// the IR-path twin of wasm.wat_extern_valtype (wasm_ir can't import wasm). A
+// resource handle (`own R` / `borrow R`) is an opaque i32 at the canonical ABI.
+function extern_valtype(t: string): string {
+    if (irlower.is_f64_scalar_type_name(t)) { return "f64"; }
+    if (t == "i64" || t == "u64" || t == "s64") { return "i64"; }
+    return "i32";
+}
+
+// extern_type_scalar is the positive-list of `@import` extern types that are a
+// single core valtype at the canonical ABI: the integer/bool scalars, the f64
+// class, and the opaque resource handles. Sound over complete — anything
+// unrecognised (string, list, record, sum, …) keeps the module on the AST
+// path, whose wrapper machinery lowers those shapes.
+function extern_type_scalar(t: string): boolean {
+    if (t == "i32" || t == "u32" || t == "boolean" || t == "u8") { return true; }
+    if (t == "i64" || t == "u64" || t == "s64") { return true; }
+    if (irlower.is_f64_scalar_type_name(t)) { return true; }
+    if (t.len() >= 4 && t[0:4] == "own ") { return true; }
+    if (t.len() >= 7 && t[0:7] == "borrow ") { return true; }
+    return false;
+}
+
+// module_externs_scalar reports whether every `@import` extern in the module
+// has only scalar params and a scalar (or void) result — the extern subset the
+// IR path emits directly (extern_import_lines). Gated into wasm_eligible /
+// should_use_ir_core so a composite-shaped extern module falls back to the AST
+// emitter instead of importing with a wrong core signature. Extern-free
+// modules trivially pass, so the gate is inert on existing programs.
+pub function module_externs_scalar(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (f.import_iface.len() > 0) {
+            var p: i32 = 0;
+            while (p < f.params.len()) {
+                if (!extern_type_scalar(f.params[p].type_name)) { return false; }
+                p = p + 1;
+            }
+            if (f.ret_type.len() > 0 && f.ret_type != "void" && !extern_type_scalar(f.ret_type)) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// extern_import_lines emits the core wasm import for every body-less
+// `@import("iface","wit")` extern function in the module — the IR-path sibling
+// of wasm.extern_imports, restricted to the scalar shapes module_externs_scalar
+// admits onto the IR path. A call to the extern resolves to `$name` like any
+// free function; a void extern's call site pushes a dummy 0 so the statement-
+// level drop balances (see emit_function_ir). Includes the auto-drop pass's
+// synthesized `[resource-drop]` imports (#5337). Empty when the module
+// declares no externs, so existing programs are byte-identical.
+pub function extern_import_lines(mod: parser.Module): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (f.import_iface.len() > 0) {
+            out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name;
+            var p: i32 = 0;
+            while (p < f.params.len()) {
+                out = out + " (param " + extern_valtype(f.params[p].type_name) + ")";
+                p = p + 1;
+            }
+            if (f.ret_type.len() > 0 && f.ret_type != "void") {
+                out = out + " (result " + extern_valtype(f.ret_type) + ")";
+            }
+            out = out + "))\n";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// extern_is_void reports whether `name` is a body-less `@import` extern free
+// function with no declared result. Defined functions always produce a result
+// on the wasm IR path (a void body returns a dummy 0), so only IMPORT call
+// sites need the re-balancing dummy — a void import's core signature must
+// match the host exactly, with no result to push.
+function extern_is_void(funcs: parser.FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
+            return funcs[i].import_iface.len() > 0 && (funcs[i].ret_type.len() == 0 || funcs[i].ret_type == "void");
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
@@ -2038,6 +2131,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    call " + wasm_helper_symbol(o.str) + "\n";
         } else if (o.kind_tag == 149) {  // call_direct
             out = out + "    call $" + o.str + "\n";
+            // A void `@import` extern's core import has NO result (the
+            // signature must match the host exactly), but every IR call site
+            // assumes the uniform one-result convention — push a dummy 0 so
+            // the statement-level drop balances (the same dummy-result pattern
+            // the print/write ops use).
+            if (extern_is_void(funcs, o.str)) { out = out + "    i32.const 0\n"; }
         } else if (o.kind_tag == 147) {  // dyn_dispatch
             // `dyn Trait` method call. Receiver (arg0) + args are in argc
             // consecutive locals from base_slot. Read the receiver's type id
@@ -2239,6 +2338,9 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
     var csparams: string[] = irlower.consume_safe_params_interproc(mod.funcs, bparams);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
+        // A body-less `@import` extern is a core IMPORT (extern_import_lines),
+        // not a defined function — a stub body here would duplicate $name.
+        if (mod.funcs[fi].import_iface.len() > 0) { fi = fi + 1; continue; }
         out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, mod.funcs, bparams, csparams);
         fi = fi + 1;
     }

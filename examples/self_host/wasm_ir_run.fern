@@ -175,6 +175,11 @@ function main(): i32 {
         if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_timer_pollable")) { o = o + wasm_ir.wasi_subscribe_duration_import(); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_pollable_drop")) { o = o + wasm_ir.wasi_pollable_drop_import(); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_block")) { o = o + wasm_ir.wasi_pollable_block_import(); }
+        // `@import` extern declarations (scalar shapes only — wasm_eligible
+        // gates composite-shaped externs to the AST fallback): the same core
+        // function imports the emit_module_mode IR branch emits, including the
+        // auto-drop pass's synthesized `[resource-drop]` imports (#5337).
+        o = o + wasm_ir.extern_import_lines(mod);
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the

@@ -38978,7 +38978,13 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     if (acc.counter != 0) {
         result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
     }
-    return parser.lower_defers_module(result);
+    // Owned-WIT-resource auto-drop (#5337): insert the `defer __resource_drop_R`
+    // calls + synthesize the `[resource-drop]` imports BEFORE the defer
+    // expansion, so a module driven straight down the IR funnel (no
+    // module_with_builtins prep) finalizes its owned handles on every exit path
+    // too. Inert on resource-free modules; idempotent on a module the AST prep
+    // already processed (the synthesized drop functions are the marker).
+    return parser.lower_defers_module(parser.insert_resource_drops_module(result));
 }
 
 // ============== #4873 port: cross-function in-place growth containment ==============

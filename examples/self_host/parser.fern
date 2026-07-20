@@ -9646,17 +9646,86 @@ function handle_own_consumed(stmts: Stmt[], funcs: FuncDecl[], name: string): bo
     return false;
 }
 
+// insert_resource_drops_module is the standalone owned-resource drop pass (the
+// self-host mirror of the Go internal/ir/insert_resource_drops.go). For each
+// owned `own R` top-level local that is not moved, it appends the
+// `defer __resource_drop_R(local);` right after the declaration and synthesizes
+// the body-less `[resource-drop]` import functions — WITHOUT expanding the
+// defers (the caller's defer lowering does that, running the drop on every exit
+// path). Two callers: lower_defers_prepass_module (the module_with_builtins /
+// AST prep) and irlower.lift_lambdas (the shared IR funnel, #5337 — previously
+// the IR path never inserted drops, so owned resources were finalized only on
+// the AST path). Structurally inert on a resource-free module (returned
+// unchanged), and idempotent: the synthesized drop functions mark the pass as
+// already run (mirroring the native pass's guard), so a module prepped by
+// module_with_builtins is not double-dropped when it reaches the IR funnel.
+pub function insert_resource_drops_module(mod: Module): Module {
+    if (mod.resources.len() == 0) { return mod; }
+    var g: i32 = 0;
+    while (g < mod.funcs.len()) {
+        var gn: string = mod.funcs[g].name;
+        if (gn.len() >= 16 && gn[0:16] == "__resource_drop_") { return mod; }
+        g = g + 1;
+    }
+    var out_funcs: FuncDecl[] = [];
+    var needed: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: FuncDecl = mod.funcs[i];
+        if (f.import_iface.len() > 0) { out_funcs = out_funcs.append(f); i = i + 1; continue; }
+        var nbody: Stmt[] = [];
+        var j: i32 = 0;
+        while (j < f.body.len()) {
+            var s: Stmt = f.body[j];
+            nbody = nbody.append(s);
+            match (s) {
+                StmtVar(v) => {
+                    var res: string = handle_resource_of(v.type_name);
+                    if (res.len() > 0) {
+                        var iface: string = resource_binding_iface(mod.resources, res);
+                        if (iface.len() > 0
+                            && !handle_returned(f.body, v.name)
+                            && !handle_own_consumed(f.body, mod.funcs, v.name)) {
+                            var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
+                            nbody = nbody.append(s_defer(s_expr(dropcall)));
+                            if (!util.has_str(needed, res)) { needed = needed.append(res); }
+                        }
+                    }
+                },
+                _ => {},
+            }
+            j = j + 1;
+        }
+        out_funcs = out_funcs.append(FuncDecl { ...f, body: nbody });
+        i = i + 1;
+    }
+    var no_tp: string[] = [];
+    var no_body: Stmt[] = [];
+    var k: i32 = 0;
+    while (k < needed.len()) {
+        var rn: string = needed[k];
+        var iface2: string = resource_binding_iface(mod.resources, rn);
+        var wit2: string = resource_binding_wit(mod.resources, rn);
+        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
+        out_funcs = out_funcs.append(FuncDecl {
+            name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
+            type_params: no_tp, params: hp, ret_type: "void", body: no_body,
+            line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0, bound_traits: [], fip: false, ret_str: false
+        });
+        k = k + 1;
+    }
+    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+}
+
 // lower_defers_prepass_module fuses ret-type inference + insert-resource-
-// drops + lower_defers (#4394 lever 3 / #5352, #5460) into ONE module
-// rebuild, the desugar_prepass_module argument applied to the next adjacent
-// passes. Ordering is load-bearing twice over: the ret-type fixpoint reads
-// sibling funcs' `ret_type` (a signature FIELD), so it must COMPLETE before
-// any body is rebuilt — it runs first, at the funcs-list level, and only the
-// final list feeds the body rewrites; and an owned handle's inserted `defer`
-// must exist before the defer expansion runs, so the per-function loop
-// inserts then lowers. The one list mutation — the synthesized body-less
-// `[resource-drop]` import funcs — commutes with the body rewrite, which is
-// applied to them exactly as the old pass sequence did.
+// drops + lower_defers (#4394 lever 3 / #5352, #5460) into ONE prep pass.
+// Ordering is load-bearing twice over: the ret-type fixpoint reads sibling
+// funcs' `ret_type` (a signature FIELD), so it must COMPLETE before any body
+// is rebuilt — it runs first, at the funcs-list level, and only the final
+// list feeds the body rewrites; and an owned handle's inserted `defer` must
+// exist before the defer expansion runs, so insert_resource_drops_module
+// (inert without `resource` decls) runs between inference and the
+// per-function defer expansion.
 pub function lower_defers_prepass_module(mod: Module): Module {
     // (1) Ret-type inference (was infer_ret_types_module, which keeps its
     // standalone form for emit_module_ir_gated's idempotent re-run): stamp
@@ -9676,57 +9745,16 @@ pub function lower_defers_prepass_module(mod: Module): Module {
         }
         pass = pass + 1;
     }
-    // (2) Per function: resource-drop insertion (skipped without `resource`
-    // decls), then defer expansion — one output-list build.
-    var has_res: boolean = mod.resources.len() > 0;
+    // (2) Resource-drop insertion (a no-op without `resource` decls), then the
+    // per-function defer expansion over the augmented list.
+    var imod: Module = insert_resource_drops_module(Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs });
     var out_funcs: FuncDecl[] = [];
-    var needed: string[] = [];
     var i: i32 = 0;
-    while (i < funcs.len()) {
-        var f: FuncDecl = funcs[i];
-        if (!has_res || f.import_iface.len() > 0) { out_funcs = out_funcs.append(lower_defers_func(f)); i = i + 1; continue; }
-        var nbody: Stmt[] = [];
-        var j: i32 = 0;
-        while (j < f.body.len()) {
-            var s: Stmt = f.body[j];
-            nbody = nbody.append(s);
-            match (s) {
-                StmtVar(v) => {
-                    var res: string = handle_resource_of(v.type_name);
-                    if (res.len() > 0) {
-                        var iface: string = resource_binding_iface(mod.resources, res);
-                        if (iface.len() > 0
-                            && !handle_returned(f.body, v.name)
-                            && !handle_own_consumed(f.body, funcs, v.name)) {
-                            var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
-                            nbody = nbody.append(s_defer(s_expr(dropcall)));
-                            if (!util.has_str(needed, res)) { needed = needed.append(res); }
-                        }
-                    }
-                },
-                _ => {},
-            }
-            j = j + 1;
-        }
-        out_funcs = out_funcs.append(lower_defers_func(FuncDecl { ...f, body: nbody }));
+    while (i < imod.funcs.len()) {
+        out_funcs = out_funcs.append(lower_defers_func(imod.funcs[i]));
         i = i + 1;
     }
-    var no_tp: string[] = [];
-    var no_body: Stmt[] = [];
-    var k: i32 = 0;
-    while (k < needed.len()) {
-        var rn: string = needed[k];
-        var iface2: string = resource_binding_iface(mod.resources, rn);
-        var wit2: string = resource_binding_wit(mod.resources, rn);
-        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
-        out_funcs = out_funcs.append(lower_defers_func(FuncDecl {
-            name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
-            type_params: no_tp, params: hp, ret_type: "void", body: no_body,
-            line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0, bound_traits: [], fip: false, ret_str: false
-        }));
-        k = k + 1;
-    }
-    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: out_funcs, structs: imod.structs, aliases: imod.aliases, imports: imod.imports, top_stmts: imod.top_stmts, enums: imod.enums, resources: imod.resources, exports: imod.exports, impls: imod.impls, trait_reqs: imod.trait_reqs };
 }
 
 // ---------------------------------------------------------------------------

@@ -12600,6 +12600,12 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_emits_op_cached(ir_cache, "read_file")) {
             ir_out = ir_out + file_imports();
         }
+        // `@import` extern declarations (scalar shapes only —
+        // should_use_ir_core gates composite-shaped externs to the AST emitter
+        // below): each becomes a core function import, including the
+        // auto-drop pass's synthesized `[resource-drop]` imports (#5337).
+        // Empty for extern-free modules.
+        ir_out = ir_out + wasm_ir.extern_import_lines(mod);
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
         // supplies the distinct values + offsets; the byte encoding reuses this
