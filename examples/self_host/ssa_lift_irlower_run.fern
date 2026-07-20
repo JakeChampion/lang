@@ -50,10 +50,13 @@ function main(): i32 {
         var fn: parser.FuncDecl = mod.funcs[i];
         // Real per-function lowering: AST -> ir.Op[] (the asm_ir backend's input).
         var lr: irlower.LowerResult = irlower.lower_func_for(fn, [], mod.structs, mod.funcs);
-        if (!lr.ok) { return 3; }
+        // Bails are LOUD (#5452): a silent exit 3/4 gave the harness nothing
+        // to compare when a driver behaves differently across environments —
+        // the failure message now names the function and the bail reason.
+        if (!lr.ok) { eprint("ssa_lift_irlower: irlower bail in " + fn.name + "\n"); return 3; }
         // Lift the real IR to SSA. nslots = params + declared locals.
         var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops, mod.structs);
-        if (!lf.ok) { return 4; }
+        if (!lf.ok) { eprint("ssa_lift_irlower: lift bail in " + fn.name + ": " + lf.bail + "\n"); return 4; }
         funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lf.func, empty), empty)));
         i = i + 1;
     }
