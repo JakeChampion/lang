@@ -95,12 +95,20 @@ These are not just smells — they can produce wrong output today.
   clean across the wasm-binary, CLI (`-target wasm-bin`), leb128,
   ret-struct-field, streq-helper, and arm64-builds suites.
 
-- [ ] **SH-004 — `parse_f64` does not round-trip to nearest double.**
-  `watbin.fern:381-413` accumulates `v*10+digit` then scales by `0.1`-fractions,
-  feeding exact IEEE-754 bit emission (`f64_bits`). Any literal not exactly
-  representable that way emits wrong bits. Severity **High**. _Fix:_ a
-  correctly-rounding decimal parser, or thread the front-end's already-parsed
-  bits through.
+- [x] **SH-004 — `parse_f64` does not round-trip to nearest double.** _Done:_
+  all three assembler parsers (`watbin.parse_f64`, `x86_gas_parse_f64`,
+  `arm64_parse_f64`) replaced with a correctly-rounding decimal parser —
+  the classic exact decimal-shift algorithm (digit buffer + movable point,
+  grade-school ÷2/×2 to binary-normalize, bit extraction, round-to-nearest
+  ties-to-even, with subnormal/±inf/±0 handling). The reference copy +
+  commentary live in `watbin.fern` (`pf64_*` / `parse_f64_bits`); the other
+  two mirror it verbatim (the assemblers are deliberately import-free).
+  Pinned bit-exact against `strconv.ParseFloat` by
+  `TestSelfHostParseF64{Watbin,X86Gas,Arm64}` on a corpus of the compiler's
+  libm constant spellings, the hard subnormal/overflow boundary literals
+  (`2.4703282292062327e-324` et al.), and 17-digit round-trip spellings of
+  seeded random doubles. This closes the in-process-vs-GNU-as float-bit
+  parity gap (the `.Lfc_*` tables assembled ULPs off in-process before).
 
 - [x] **SH-005 — `x86_gas` silently drops unsupported mnemonics.** _Done:_
   `X86Asm` grew an `unknown: string[]` list; the three silent-skip sites in
