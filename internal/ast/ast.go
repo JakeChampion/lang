@@ -2343,11 +2343,19 @@ type Var struct {
 // validates Init is a tuple of arity len(Names) and registers a
 // synthetic local under TempName so the IR can keep the tuple
 // pointer in a slot for the per-name field loads.
+//
+// Struct destructure `let Point { x, y } = expr;` reuses the same node
+// with Fields non-nil (parallel to Names): Names[i] binds the struct
+// field Fields[i] instead of tuple element i. StructName is the named
+// struct type written in the pattern (checked against Init's type). For
+// the tuple form Fields is nil and StructName is empty.
 type Destructure struct {
-	P        Position
-	Names    []string
-	Init     Expr
-	TempName string // checker-stamped: name of the synthesised tuple-holding local.
+	P          Position
+	Names      []string
+	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
+	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
+	Init       Expr
+	TempName   string // checker-stamped: name of the synthesised tuple/struct-holding local.
 }
 type ExprStmt struct {
 	P    Position

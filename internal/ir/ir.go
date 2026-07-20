@@ -6904,22 +6904,59 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// drop's is_unique / null guards no-op on the NULL.
 		b.emitVarReinitDropOld(n.TempName, tempIdx)
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
-		// Recover the tuple element types from the synthetic
-		// temp so we can pick the right per-element load op +
-		// offset.
-		var tup ast.TupleType
-		for _, v := range b.info.Locals[b.fn] {
-			if v.Name == n.TempName {
-				if t, ok := v.Type.(ast.TupleType); ok {
-					tup = t
+		// Recover the per-name element types + offsets. Tuple mode
+		// reads them off the synthetic temp's tuple type; struct mode
+		// (n.Fields set) reads the field offset off the struct layout
+		// and the concrete element type off the checker-registered
+		// binding local. Both feed the identical per-name load loop.
+		var elemTypes []ast.Type
+		var offs []int32
+		if n.Fields != nil {
+			var stName string
+			for _, v := range b.info.Locals[b.fn] {
+				if v.Name == n.TempName {
+					if t, ok := v.Type.(ast.StructType); ok {
+						stName = t.Name
+					}
+					break
 				}
-				break
 			}
+			sd, ok := b.info.Structs[stName]
+			if !ok {
+				return fmt.Errorf("ir: struct destructure temp %q has unknown struct type (compiler bug)", n.TempName)
+			}
+			offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+			for i, fname := range n.Fields {
+				off, ok := offMap[fname]
+				if !ok {
+					return fmt.Errorf("ir: struct destructure field %q not in layout (compiler bug)", fname)
+				}
+				offs = append(offs, off)
+				var et ast.Type
+				for _, v := range b.info.Locals[b.fn] {
+					if v.Name == n.Names[i] {
+						et = v.Type
+						break
+					}
+				}
+				elemTypes = append(elemTypes, et)
+			}
+		} else {
+			var tup ast.TupleType
+			for _, v := range b.info.Locals[b.fn] {
+				if v.Name == n.TempName {
+					if t, ok := v.Type.(ast.TupleType); ok {
+						tup = t
+					}
+					break
+				}
+			}
+			if len(tup.Elems) != len(n.Names) {
+				return fmt.Errorf("ir: destructure arity mismatch (compiler bug)")
+			}
+			offs, _ = tupleElemLayout(tup.Elems, b.ptrW)
+			elemTypes = tup.Elems
 		}
-		if len(tup.Elems) != len(n.Names) {
-			return fmt.Errorf("ir: destructure arity mismatch (compiler bug)")
-		}
-		offs, _ := tupleElemLayout(tup.Elems, b.ptrW)
 		for i, name := range n.Names {
 			nameIdx, ok := b.locals[name]
 			if !ok {
@@ -6928,7 +6965,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: tempIdx})
 			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 			b.emit(Op{Kind: OpAdd})
-			b.emit(payloadLoadOpFor(tup.Elems[i], b.ptrW))
+			b.emit(payloadLoadOpFor(elemTypes[i], b.ptrW))
 			// Dup-on-projection: a pointer-shaped element is extracted by
 			// reference (the load copies the box's stored pointer without
 			// an inc). The binding now co-owns it alongside the tuple box,
@@ -6937,7 +6974,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// deep-drop dec of the same element. Without the dup the
 			// binding and the tuple's drop would both release one
 			// reference for a single count (double free / underflow).
-			if _, isStr := tup.Elems[i].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+			if _, isStr := elemTypes[i].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 				// Two-word string element (wasm + arm64-TwoWordOverride):
 				// dup via __fern_str_inc (consumes + re-pushes the
 				// (data, len) pair) so the binding co-owns the buffer
@@ -6945,12 +6982,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// drop __fern_str_dec would free the buffer under the
 				// still-live binding (UAF).
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
-			} else if _, isStr := tup.Elems[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			} else if _, isStr := elemTypes[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				// Native single-word string element: dup via __fern_rc_inc
 				// so the binding co-owns the buffer alongside the tuple
 				// box's later dec.
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-			} else if arrElemIsRcTracked(tup.Elems[i]) {
+			} else if arrElemIsRcTracked(elemTypes[i]) {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
 			// Loop-body reclamation: like the temp above, a binding declared

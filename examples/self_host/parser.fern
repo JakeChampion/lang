@@ -390,6 +390,42 @@ function s_var(name: string, type_name: string, init: Expr): Stmt {
 function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i32): Stmt {
     return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false };
 }
+
+// parse_struct_destructure consumes `{ x, y: b, .. } = E;` with the cursor
+// on the opening `{` (the struct-type name already consumed as `struct_name`).
+// It encodes the whole binding as ONE StmtVar the way tuple destructure does:
+// `name` carries the comma-joined BINDING names ("x,b"), and `type_name`
+// carries the marker "@sd:<StructName>:<comma-joined FIELD names>". irlower's
+// lower_struct_destructure decodes it into per-field `var bind = tmp.field;`
+// binds. A trailing `..` marks intentionally-omitted fields (partial bind).
+function parse_struct_destructure(p: Par, struct_name: string, line: i32, col: i32): (Stmt, Par) {
+    p = p.advance(); // consume `{`
+    var bindings: string = "";
+    var fields: string = "";
+    var first: boolean = true;
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        if (p.peek_punct() == "..") { p = p.advance(); break; }
+        var fld: string = p.peek_ident();
+        if (fld.len() > 0) { p = p.advance(); }
+        var bind: string = fld;
+        if (p.peek_punct() == ":") {
+            p = p.advance();
+            var bn: string = p.peek_ident();
+            if (bn.len() > 0) { p = p.advance(); bind = bn; }
+        }
+        if (!first) { bindings = bindings + ","; fields = fields + ","; }
+        bindings = bindings + bind;
+        fields = fields + fld;
+        first = false;
+        if (p.peek_punct() == ",") { p = p.advance(); }
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    if (p.peek_punct() == "=") { p = p.advance(); }
+    var (init_expr, ip) = parse_expr(p);
+    p = ip;
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return (s_var_at(bindings, "@sd:" + struct_name + ":" + fields, init_expr, line, col), p);
+}
 function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
 // s_return_at carries the `return` keyword position so E002 / E012 point at it.
 function s_return_at(value: Expr, line: i32, col: i32): Stmt { return StmtReturn { value: value, line: line, col: col }; }
@@ -3574,6 +3610,11 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_unknown("missing var name"), p);
         }
         p = p.advance();
+        // Struct destructure `var Point { x, y } = E;` / `let Point { … } = E;`
+        // — `name` is the struct type, the `{` opens the field pattern.
+        if (p.peek_punct() == "{") {
+            return parse_struct_destructure(p, name, vline, vcol);
+        }
         // let-else payload bindings: `let Variant(b1, b2, …) = E else { … }`.
         // The first binding is `le_binding`; any further ones go to
         // `le_extra` (matching parse_pattern's PatVariant shape, so the
