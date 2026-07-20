@@ -17076,6 +17076,17 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         xreuse = cross_reuse_sites(stmts, s.structs, s.return_fresh_struct_ret_fns);
         xtuple = cross_tuple_reuse_sites(stmts);
     }
+    // Consumed rc-payload Option/Result frees, PER-BLOCK (#4353 item 2): the
+    // fn-level pass scans only top-level fn-body statements, so a LOOP-LOCAL
+    // `var o = Some(<rc payload>)` consumed by exactly one match in the same
+    // nested block leaked payload + box on every iteration. Same classifier
+    // and gates (single match, dead-after, non-escaping, borrowing arms),
+    // applied to THIS block's own statement list. A var matched in a
+    // DIFFERENT block never qualifies (candidate requires var + match in one
+    // list), lower_block is called for nested bodies only (the fn body has
+    // its own loop), and block-level reuse donors are struct/tuple boxes
+    // (never Option locals) — so each box is freed at most once.
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -17187,6 +17198,21 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             }
         }
         if (!st.ok) { return st; }
+        // Consumed rc-payload option/result free: if statement i is the consuming
+        // match of a block-local candidate, deep-drop its payload then free the
+        // box now (string payloads via the rc-aware str_free) — the block-level
+        // mirror of the fn-body loop's rcoptfrees emission.
+        var rk: i32 = 0;
+        while (rk < rcopt.idxs.len()) {
+            if (rcopt.idxs[rk] == i) {
+                var rslot: i32 = st.slot_of(rcopt.names[rk]);
+                if (rslot >= st.n_params) {
+                    if (rcopt.strs[rk]) { st = emit_opt_str_payload_drop(st, rslot); }
+                    else { st = emit_opt_payload_drop(st, rslot); }
+                }
+            }
+            rk = rk + 1;
+        }
         if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
         i = i + 1;
     }
