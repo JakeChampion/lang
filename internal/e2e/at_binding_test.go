@@ -1,10 +1,10 @@
-// `@` bindings on variant and struct patterns (#5356): `match (b) { n @
-// Full(v) => … }` / `match (p) { w @ Point { x, y } => … }` bind the whole
-// matched value to the `@`-name (at the scrutinee's type) alongside the
-// payload / field binds. The whole value is a borrowed reference to the
-// scrutinee (box or struct pointer). Tuple / literal / wildcard sub-patterns
-// stay rejected (v1). These pin the native binaries against the interp
-// oracle; a couple also run through wasm.
+// `@` bindings on variant, struct, and tuple patterns (#5356): `n @ Full(v)`
+// / `w @ Point { x, y }` / `w @ (a, b)` bind the whole matched value to the
+// `@`-name (at the scrutinee's type) alongside the payload / field / element
+// binds. The whole value is a borrowed reference to the scrutinee (box,
+// struct pointer, or tuple pointer). Literal / wildcard sub-patterns stay
+// rejected (v1). These pin the native binaries against the interp oracle; a
+// couple also run through wasm.
 package e2e
 
 import (
@@ -105,6 +105,32 @@ function f(p: Point): i32 { match (p) { w @ Point { x: nx, y: ny } => { return w
 function main(): i32 { return f(Point { x: 1, y: 2 }); }`,
 		want: 112, // 100 + 10 + 2
 	},
+	{
+		// `@` on a tuple pattern: `w` is the whole tuple, `x` the bound
+		// element. w.0 * 10 + x.
+		name: "tuple_whole_and_elems",
+		src: `function f(t: (i32, i32)): i32 {
+  match (t) {
+    w @ (1, x) => { return w.0 * 10 + x; },
+    _ => { return 0; },
+  }
+  return 0 - 1;
+}
+function main(): i32 { return f((1, 5)); }`,
+		want: 15, // 1*10 + 5
+	},
+	{
+		// Expression form + a guard referencing the tuple `@` binding.
+		name: "tuple_expr_guard_uses_at",
+		src: `function f(t: (i32, i32)): i32 {
+  return match (t) {
+    w @ (a, b) when w.1 > 0 => a + b,
+    _ => 0,
+  };
+}
+function main(): i32 { return f((4, 6)); }`,
+		want: 10,
+	},
 }
 
 func TestAtBindingX86_64(t *testing.T) {
@@ -143,13 +169,10 @@ func TestAtBindingWasm(t *testing.T) {
 	}
 }
 
-// `@` on a non-variant sub-pattern (tuple / literal / wildcard) is rejected
-// (v1 restriction), and a nested `@` is rejected.
+// `@` on a literal or wildcard sub-pattern is rejected (v1 restriction), and
+// a nested `@` is rejected. (Variant / struct / tuple `@` are supported.)
 func TestAtBindingRejected(t *testing.T) {
 	cases := []string{
-		// `@` on a tuple pattern
-		`function f(t: (i32, i32)): i32 { match (t) { n @ (a, b) => { return a; }, } return 0; }
-function main(): i32 { return 0; }`,
 		// `@` on a literal
 		`function f(x: i32): i32 { match (x) { n @ 0 => { return 1; }, _ => { return 2; } } return 0; }
 function main(): i32 { return 0; }`,

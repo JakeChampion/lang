@@ -3844,12 +3844,12 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			return sub, p.errorfCode(t.Pos, "P001", "an `@`-pattern cannot nest another `@` binding")
 		}
 		// v1: `@` bindings are supported on variant patterns (`n @ Some(x)`,
-		// `n @ Color.Red`). Literal / tuple / wildcard sub-patterns are
-		// rejected for now — the whole-value capture there is either
-		// redundant (`n @ 0`) or not yet wired through the tuple/literal
-		// lowering.
-		if sub.VariantName == "" || sub.IsWildcard {
-			return sub, p.errorfCode(t.Pos, "P001", "`@` bindings are currently supported only on variant patterns (`n @ Variant(...)`)")
+		// `n @ Color.Red`), struct patterns (`n @ Point { x, y }`, which carry
+		// a VariantName), and tuple patterns (`n @ (a, b)`). Literal and
+		// wildcard sub-patterns stay rejected — the whole-value capture there
+		// is redundant (`n @ 0`) or pointless (`n @ _`).
+		if (sub.VariantName == "" && sub.TupleElems == nil) || sub.IsWildcard {
+			return sub, p.errorfCode(t.Pos, "P001", "`@` bindings are supported on variant, struct, and tuple patterns, not on literal or `_` patterns")
 		}
 		sub.atBinding = t.Text
 		return sub, nil
