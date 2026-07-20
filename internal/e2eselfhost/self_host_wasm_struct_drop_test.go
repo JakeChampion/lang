@@ -108,6 +108,21 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
 			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
+		// DEPTH-2 DEEP-DROP (#5336): `Outer { mid: Mid }`, `Mid { inner: Inner }`,
+		// `Inner { items: i32[] }`. nested_field_deep_drop_ok admits arbitrary acyclic
+		// depth, so $__struct_drop_Outer calls $__struct_drop_Mid, which must ITSELF
+		// recursively call $__struct_drop_Inner (releasing the depth-2 inner.items
+		// buffer). The wantBody asserts the transitive $__struct_drop_Mid body (proving
+		// struct_drop_types walked the whole DAG, not just depth-1). 400k churn cycles
+		// stay bounded under the cap ⇒ the depth-2 buffer is reclaimed; a depth-1-only
+		// deep-drop leaks inner.items → over the cap → trap.
+		{
+			"nested-struct-field-deep-drop-depth2",
+			"struct Inner { items: i32[] } struct Mid { inner: Inner, m: i32 } struct Outer { mid: Mid, tag: i32 } " +
+				"function mk(): i32 { var o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 }; return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag; } " +
+				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 26; }",
+			"(func $__struct_drop_Mid (param $box i32) (result i32)\n    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+		},
 		// STRING field (#4297 A2 — the k_str path): a reclaimable struct (it has the
 		// `items` rc-array field, so it gets a $__struct_drop) whose `name: string`
 		// field is now freed too. `name` is a FRESH concat (sole-owned rc=1, no

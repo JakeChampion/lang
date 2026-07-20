@@ -1,0 +1,25 @@
+import "std/array";
+// find_last / rposition: right-to-left mirrors of find / position, in both
+// free-function and method form. Distinct nonzero exit per failure; 42 = pass.
+// Runs interp / x86-64 / arm64 / wasm.
+function is_even(x: i32): boolean { return x % 2 == 0; }
+function gt10(x: i32): boolean { return x > 10; }
+function main(): i32 {
+    var xs: i32[] = [1, 4, 3, 8, 5, 6, 7];
+    // free-function form
+    match (array.find_last(xs, is_even)) { Some(x) => { if (x != 6) { return 1; } }, None => { return 2; } }
+    match (array.rposition(xs, is_even)) { Some(i) => { if (i != 5) { return 3; } }, None => { return 4; } }
+    // method form
+    match (xs.find_last(is_even)) { Some(x) => { if (x != 6) { return 5; } }, None => { return 6; } }
+    match (xs.rposition(is_even)) { Some(i) => { if (i != 5) { return 7; } }, None => { return 8; } }
+    // sanity vs the first-match originals
+    match (xs.find(is_even)) { Some(x) => { if (x != 4) { return 9; } }, None => { return 10; } }
+    // no match -> None
+    match (xs.find_last(gt10)) { Some(x) => { return 11; }, None => {} }
+    match (xs.rposition(gt10)) { Some(i) => { return 12; }, None => {} }
+    // empty -> None
+    var e: i32[] = [];
+    match (e.find_last(is_even)) { Some(x) => { return 13; }, None => {} }
+    match (e.rposition(is_even)) { Some(i) => { return 14; }, None => {} }
+    return 42;
+}

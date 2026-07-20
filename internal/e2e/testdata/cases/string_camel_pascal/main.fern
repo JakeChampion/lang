@@ -1,0 +1,23 @@
+import "std/string";
+// camel_case / pascal_case: the inverse of snake_case / kebab_case.
+// Each check returns a distinct nonzero exit on failure; the final 42
+// marks all-pass. Runs across interp / x86-64 / arm64 / wasm.
+function chk(got: string, want: string): boolean { return got == want; }
+function main(): i32 {
+    if (!chk("foo_bar_baz".camel_case(), "fooBarBaz")) { return 1; }
+    if (!chk("http-server".camel_case(), "httpServer")) { return 2; }
+    if (!chk("hello world".pascal_case(), "HelloWorld")) { return 3; }
+    if (!chk("foo_bar".pascal_case(), "FooBar")) { return 4; }
+    if (!chk("HTTP_SERVER".camel_case(), "httpServer")) { return 5; }
+    if (!chk("".camel_case(), "")) { return 6; }
+    if (!chk("__foo__bar__".camel_case(), "fooBar")) { return 7; }
+    if (!chk("  hello   world  ".pascal_case(), "HelloWorld")) { return 8; }
+    if (!chk("already".pascal_case(), "Already")) { return 9; }
+    if (!chk("x".camel_case(), "x")) { return 10; }
+    if (!chk("user_id_2".camel_case(), "userId2")) { return 11; }
+    if (!chk("-".camel_case(), "")) { return 12; }
+    if (!chk("fooBar".camel_case(), "foobar")) { return 13; }
+    if (!chk("foo".pascal_case(), "Foo")) { return 14; }
+    if (!chk("fooBarBaz".snake_case().camel_case(), "fooBarBaz")) { return 15; }
+    return 42;
+}

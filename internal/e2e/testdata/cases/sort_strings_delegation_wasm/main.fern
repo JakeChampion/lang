@@ -1,22 +1,24 @@
-// Regression for #4829: std/sort's string sorts delegate to the
-// generic `sort_by(arr, string_cmp)` / inline-desc-lambda /
-// `sort_by(arr, string_cmp_ci)`. On the wasm backend this made
-// `string_cmp` BOTH a direct-call target (here, and inside std/sort's
-// own helpers) AND a closure value passed to `sort_by`. The
-// closure-target ABI appends an env_ptr param to such a function's
-// wasm signature, but the direct-call sites supplied only the natural
-// args — a stack underflow that failed `-target wasm` validation
-// ("expected i32 but nothing on stack") while interp / x86-64 / arm64
-// all passed. The fix pushes a dummy env_ptr at direct calls to
-// env-appended closure targets (see calleeEnvAppended in wasmbin).
+// Regression for #4829: std/sort's case-insensitive string sort delegates to
+// the generic `sort_by(arr, string_cmp_ci)`. On the wasm backend this makes
+// `string_cmp_ci` BOTH a direct-call target (here) AND a closure value passed
+// to `sort_by`. The closure-target ABI appends an env_ptr param to such a
+// function's wasm signature, but the direct-call sites supplied only the
+// natural args — a stack underflow that failed `-target wasm` validation
+// ("expected i32 but nothing on stack") while interp / x86-64 / arm64 all
+// passed. The fix pushes a dummy env_ptr at direct calls to env-appended
+// closure targets (see calleeEnvAppended in wasmbin).
 //
-// This is the minimal driver that reproduces via the REAL std/sort
-// module (the synthetic single-module cases don't — the mangled
-// std/sort function set is what leaves string_cmp env-appended without
-// the closureconv __env param). prop_sort_strings is the exhaustive
-// property companion; this one pins the exact direct-call + delegation
-// shape on every backend.
+// This is the minimal driver that reproduces via the REAL std/sort module
+// (the synthetic single-module cases don't — the mangled std/sort function set
+// is what leaves the comparator env-appended without the closureconv __env
+// param). The case/desc string sorts now route through core/cmp's generic
+// `sort` / `sort_desc` over `impl Ord for string` (which direct-calls
+// `string_cmp`), while `sort_strings_asc_ci` still passes `string_cmp_ci` as a
+// closure — keeping the #4829 both-direct-and-closure shape alive.
+// prop_sort_strings is the exhaustive property companion; this one pins the
+// exact direct-call + delegation shape on every backend.
 import "std/sort";
+import "core/cmp";
 
 function main(): i32 {
     // Direct call to the mangled `string_cmp` — the env-appended
@@ -32,13 +34,13 @@ function main(): i32 {
 
     var arr: string[] = ["cherry", "Apple", "banana", "apple", "", "date"];
 
-    var asc: string[] = sort.sort_strings_asc(arr);
+    var asc: string[] = cmp.sort(arr);
     if (asc[0] != "" || asc[1] != "Apple") {
         print("asc FAILED");
         return 1;
     }
 
-    var desc: string[] = sort.sort_strings_desc(arr);
+    var desc: string[] = cmp.sort_desc(arr);
     if (desc[0] != "date") {
         print("desc FAILED");
         return 1;

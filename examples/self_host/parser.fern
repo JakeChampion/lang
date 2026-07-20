@@ -63,7 +63,12 @@ pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 // Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
 // an array; `i` must type-check to i32. Out-of-range access at
 // runtime surfaces as VErr from the interp.
-pub struct ExprIndex { array: Expr, index: Expr }
+// `unchecked` is #4380 lever 3: set by elide_len_bounded_body on a READ
+// `arr[i]` proven in-bounds by an enclosing `while (i < arr.len())` guard,
+// so irlower emits op_arr_get_nc (no per-iteration bounds check + len
+// reload). Defaults false; index WRITES are __set_index calls, never
+// ExprIndex, so only reads are ever marked.
+pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean }
 // Postfix slicing `a[start:end]`. Returns a subview of the same
 // kind as `a` (subarray for TypeArray, substring for
 // TypeString). `start` is inclusive, `end` is exclusive — same
@@ -134,7 +139,12 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // further bindings written in `Variant(a, b, …)`. The self-host's variants are
 // single-payload, so a multi-binding pattern is a payload-arity error (E015) —
 // extra_bindings lets the checker count them; codegen still uses `binding`.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[] }
+// `nested`, when non-empty (a single element), holds a sub-pattern for the
+// payload position — `Some(Ok(n))` parses `Some` with nested = [Ok(n)]. The
+// parser desugars a nested arm into a flat outer arm whose body re-matches the
+// payload on an inner `match` (desugar_nested_arms), so the checker / codegen
+// only ever see flat arms; empty (the common case) means a plain binder.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[] }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -182,7 +192,14 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
 // parsing (arrays / generics / unions) is a later milestone.
-pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string }
+// fn_param_dyn: for a `fn`-typed param whose OWN parameter list contains
+// `dyn Trait` positions (`f: (dyn Speak) => i32`), a comma-separated list of the
+// dyn parameter indices ("0", "0,2"), else "". The flat "fn" type tag discards
+// the fn's per-parameter types, so this sidecar preserves which of a fn-value's
+// arguments must be dyn-boxed at an indirect call `f(7)` — without it a primitive
+// literal there is passed unboxed and op_dyn_dispatch reads it as a shape pointer
+// (SIGSEGV, #5276). Populated by peek_fn_param_dyn in parse_param.
+pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string }
 // Receiver fields capture `function (recv: RecvType) name(…)`
 // — the self-host source uses them heavily for struct methods
 // like `function (p: Par) advance(): Par`. Both fields are
@@ -223,7 +240,12 @@ pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string }
 // types substituted, so primitive/string payloads resolve their methods.
 // must_consume records a `@must_consume` attribute on the struct decl
 // (docs/MUST-CONSUME.md): the checker's E067 obligation walk consults it.
-pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean }
+// derives records the trait names of an `@derive(…)` attribute on the
+// decl (an enum's derives are stamped on each variant record): the
+// synthesis itself happens at parse time (synth_derives), but the
+// checker's E021 derive-field conformance pre-check (#5392) needs to
+// know which traits were derived.
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean }
 
 // Top-level union type alias: `type Name = V1 | V2 | V3;`.
 // Variants are captured as bare type-name strings — they
@@ -340,7 +362,7 @@ function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { retu
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
 function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements, line: 0, col: 0 }; }
 function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
-function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
+function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index, unchecked: false }; }
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
 }
@@ -372,6 +394,42 @@ function s_var(name: string, type_name: string, init: Expr): Stmt {
 // at the `var` keyword).
 function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i32): Stmt {
     return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false };
+}
+
+// parse_struct_destructure consumes `{ x, y: b, .. } = E;` with the cursor
+// on the opening `{` (the struct-type name already consumed as `struct_name`).
+// It encodes the whole binding as ONE StmtVar the way tuple destructure does:
+// `name` carries the comma-joined BINDING names ("x,b"), and `type_name`
+// carries the marker "@sd:<StructName>:<comma-joined FIELD names>". irlower's
+// lower_struct_destructure decodes it into per-field `var bind = tmp.field;`
+// binds. A trailing `..` marks intentionally-omitted fields (partial bind).
+function parse_struct_destructure(p: Par, struct_name: string, line: i32, col: i32): (Stmt, Par) {
+    p = p.advance(); // consume `{`
+    var bindings: string = "";
+    var fields: string = "";
+    var first: boolean = true;
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        if (p.peek_punct() == "..") { p = p.advance(); break; }
+        var fld: string = p.peek_ident();
+        if (fld.len() > 0) { p = p.advance(); }
+        var bind: string = fld;
+        if (p.peek_punct() == ":") {
+            p = p.advance();
+            var bn: string = p.peek_ident();
+            if (bn.len() > 0) { p = p.advance(); bind = bn; }
+        }
+        if (!first) { bindings = bindings + ","; fields = fields + ","; }
+        bindings = bindings + bind;
+        fields = fields + fld;
+        first = false;
+        if (p.peek_punct() == ",") { p = p.advance(); }
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    if (p.peek_punct() == "=") { p = p.advance(); }
+    var (init_expr, ip) = parse_expr(p);
+    p = ip;
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return (s_var_at(bindings, "@sd:" + struct_name + ":" + fields, init_expr, line, col), p);
 }
 function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
 // s_return_at carries the `return` keyword position so E002 / E012 point at it.
@@ -624,7 +682,8 @@ function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, 
 }
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
-    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra };
+    var no_nested: Pattern[] = [];
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested };
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
@@ -1430,9 +1489,12 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             // `expr?` try operator. Desugar to the unary op `try_`
             // (operand = base); the emitter unwraps a Some/Ok payload
             // or early-returns the None/Err box from the enclosing
-            // (Option/Result-returning) function.
+            // (Option/Result-returning) function. Stamp the `?` token's
+            // position so the E042 diagnostics anchor where native does.
+            var qline: i32 = p.peek_line();
+            var qcol: i32 = p.peek_col();
             p = p.advance();
-            base = e_unary("try_", base);
+            base = e_unary_at("try_", base, qline, qcol);
         } else {
             break;
         }
@@ -1826,7 +1888,59 @@ function if_expr_rt(e: Expr): string {
 // match-arm parsers (parse_match_stmt / parse_match_expr) collect these
 // only when the first arm is a literal, then hand them to
 // build_literal_match instead of emitting a StmtMatch.
-struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+// `has_range` marks a range pattern `lo..hi` / `lo..=hi`: `lit` is the low
+// bound, `range_hi` the high, and `range_inclusive` picks `..=` (inclusive)
+// over `..` (exclusive). build_literal_match lowers it to a bound test
+// `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
+struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean }
+
+// parse_lit_or_range parses a scalar-pattern low bound and, when a `..` /
+// `..=` follows, the high bound of a range pattern. Returns (low, high,
+// has_range, inclusive, par); high is a dummy when has_range is false.
+//
+// Bounds parse with parse_binary(p, 4) — min-precedence 4 (just above `|`,
+// precedence 3), so a bare `|` is left for the or-pattern splitter
+// (parse_lit_alts) rather than being consumed as bitwise-or. A plain literal
+// is a primary, so this is byte-identical to the previous min-prec 1 for
+// every scalar pattern that doesn't top-level a `|` / `&&` / `||` (none do).
+function parse_lit_or_range(p: Par): (Expr, Expr, boolean, boolean, Par) {
+    var (lo_expr, lo_p) = parse_binary(p, 4);
+    p = lo_p;
+    var pk: string = p.peek_punct();
+    if (pk == ".." || pk == "..=") {
+        p = p.advance();
+        var (hi_expr, hi_p) = parse_binary(p, 4);
+        p = hi_p;
+        return (lo_expr, hi_expr, true, pk == "..=", p);
+    }
+    return (lo_expr, e_bool(true), false, false, p);
+}
+
+// parse_lit_alts parses one-or-more `|`-separated scalar patterns
+// (`1 | 2 | 3`, or ranges) sharing a guard + body. Each alternative becomes
+// its own LitArm; the parallel arrays run in alternative order.
+function parse_lit_alts(p: Par): (Expr[], Expr[], boolean[], boolean[], Par) {
+    var lits: Expr[] = [];
+    var his: Expr[] = [];
+    var hrs: boolean[] = [];
+    var incs: boolean[] = [];
+    var (l0, h0, hr0, inc0, p0) = parse_lit_or_range(p);
+    p = p0;
+    lits = lits.append(l0);
+    his = his.append(h0);
+    hrs = hrs.append(hr0);
+    incs = incs.append(inc0);
+    while (p.peek_punct() == "|") {
+        p = p.advance();
+        var (ln, hn, hrn, incn, pn) = parse_lit_or_range(p);
+        p = pn;
+        lits = lits.append(ln);
+        his = his.append(hn);
+        hrs = hrs.append(hrn);
+        incs = incs.append(incn);
+    }
+    return (lits, his, hrs, incs, p);
+}
 
 // build_literal_match lowers a match on a non-enum scrutinee to a nested
 // if/else-if chain — the same shape the native compiler's emitLiteralMatch
@@ -1882,6 +1996,15 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
             }
         } else {
             var cond: Expr = e_binary("==", scrut, a.lit);
+            if (a.has_range) {
+                // `lo..hi` / `lo..=hi` → `scrut >= lo && scrut <op> hi`.
+                // Built at parse time, so the self-host checker settles the
+                // comparison widths — no manual stamping needed (unlike the
+                // native IR path).
+                var hi_op: string = "<";
+                if (a.range_inclusive) { hi_op = "<="; }
+                cond = e_binary("&&", e_binary(">=", scrut, a.lit), e_binary(hi_op, scrut, a.range_hi));
+            }
             if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
             else_body = [s_if(cond, a.body, else_body)];
         }
@@ -2032,6 +2155,149 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
         ai = ai + 1;
     }
     return s_if(e_bool(true), outer, []);
+}
+
+// ---- Struct-pattern match (`match (p) { Point { x, y } => … }`) ----
+//
+// The self-host has no named-field ENUM variant patterns, so an
+// `Ident {` at an arm position is unambiguously a STRUCT pattern. A struct
+// has one shape, so a struct-pattern arm is irrefutable — it binds the named
+// fields and (with a guard) the first arm whose guard passes runs. It
+// desugars at parse time, like build_tuple_match, into the `done`-flag chain
+// with per-field `var bind = tmp.field;` binds — no checker/irlower changes:
+// the field reads + ifs lower through the ordinary paths.
+struct StructArm { is_wild: boolean, binds: string[], fields: string[], guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+
+// parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields; a trailing
+// `..` marks omitted fields), the cursor on the struct-name ident. Returns the
+// parallel binding + field name lists (equal, shorthand). The struct name is
+// not retained — the scrutinee's type drives field resolution at lowering.
+function parse_struct_arm_pattern(p: Par): (string[], string[], Par) {
+    var binds: string[] = [];
+    var fields: string[] = [];
+    if (p.peek_ident().len() > 0) { p = p.advance(); } // struct name
+    if (p.peek_punct() == "{") { p = p.advance(); }
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        if (p.peek_punct() == "..") { p = p.advance(); break; }
+        var fld: string = p.peek_ident();
+        if (fld.len() > 0) { p = p.advance(); }
+        binds = binds.append(fld);
+        fields = fields.append(fld);
+        if (p.peek_punct() == ",") { p = p.advance(); }
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return (binds, fields, p);
+}
+
+function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: i32): Stmt {
+    if (arms.len() == 0) { return s_unknown("empty struct match"); }
+    var base: string = "__sm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
+    var tmp: string = base + "_v";
+    var done: string = base + "_d";
+    var outer: Stmt[] = [];
+    outer = outer.append(s_var(tmp, "", scrut));
+    outer = outer.append(s_var(done, "", e_bool(false)));
+    var ai: i32 = 0;
+    while (ai < arms.len()) {
+        var a: StructArm = arms[ai];
+        var cond: Expr = e_unary("!", e_ident(done));
+        var inner: Stmt[] = [];
+        if (a.is_wild) {
+            if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
+            inner = inner.append(s_assign(done, e_bool(true)));
+            var wb: i32 = 0;
+            while (wb < a.body.len()) { inner = inner.append(a.body[wb]); wb = wb + 1; }
+            outer = outer.append(s_if(cond, inner, []));
+            ai = ai + 1;
+            continue;
+        }
+        var binds: Stmt[] = [];
+        var bk: i32 = 0;
+        while (bk < a.binds.len()) {
+            binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
+            bk = bk + 1;
+        }
+        if (a.has_guard) {
+            var guarded: Stmt[] = [];
+            guarded = guarded.append(s_assign(done, e_bool(true)));
+            var gb: i32 = 0;
+            while (gb < a.body.len()) { guarded = guarded.append(a.body[gb]); gb = gb + 1; }
+            var bi: i32 = 0;
+            while (bi < binds.len()) { inner = inner.append(binds[bi]); bi = bi + 1; }
+            inner = inner.append(s_if(a.guard, guarded, []));
+        } else {
+            inner = inner.append(s_assign(done, e_bool(true)));
+            var bi2: i32 = 0;
+            while (bi2 < binds.len()) { inner = inner.append(binds[bi2]); bi2 = bi2 + 1; }
+            var ab: i32 = 0;
+            while (ab < a.body.len()) { inner = inner.append(a.body[ab]); ab = ab + 1; }
+        }
+        outer = outer.append(s_if(cond, inner, []));
+        ai = ai + 1;
+    }
+    return s_if(e_bool(true), outer, []);
+}
+
+// parse_struct_match_arms parses the arm list of a struct match (cursor just
+// past the opening `{`), returning the arms + the first arm's return-type tag.
+// Shared by the statement and expression forms: expr_form=true parses each arm
+// body as a value branch (`parse_branch_body` / a bare tail expr, so the IIFE
+// wrapper yields it); expr_form=false parses a statement block (`parse_block`).
+function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], string, Par) {
+    var arms: StructArm[] = [];
+    var rt: string = "i32";
+    var first: boolean = true;
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var sline: i32 = p.peek_line();
+        var scol: i32 = p.peek_col();
+        var s_wild: boolean = false;
+        var s_binds: string[] = [];
+        var s_fields: string[] = [];
+        if (p.peek_ident() == "_" && p.peek2_punct() != "{") {
+            p = p.advance();
+            s_wild = true;
+        } else {
+            var (spb, spf, spp) = parse_struct_arm_pattern(p);
+            p = spp;
+            s_binds = spb;
+            s_fields = spf;
+        }
+        var s_guard: Expr = e_bool(true);
+        var s_has_guard: boolean = false;
+        if (p.peek_keyword() == "when") {
+            p = p.advance();
+            var (sgr_expr, sgr_p) = parse_expr(p);
+            p = sgr_p;
+            s_guard = sgr_expr;
+            s_has_guard = true;
+        }
+        if (p.peek_punct() == "=>") { p = p.advance(); }
+        var sbody: Stmt[] = [];
+        var sbrt: string = "i32";
+        if (expr_form) {
+            if (p.peek_punct() == "{") {
+                var (sbb_body, sbb_rt, sbb_p) = parse_branch_body(p);
+                p = sbb_p;
+                sbody = sbb_body;
+                sbrt = sbb_rt;
+            } else {
+                var (ser_expr, ser_p) = parse_expr(p);
+                p = ser_p;
+                sbody = [s_return(ser_expr)];
+                sbrt = if_expr_rt(ser_expr);
+            }
+        } else {
+            var (sblk_body, sblk_p) = parse_block(p);
+            p = sblk_p;
+            sbody = sblk_body;
+        }
+        if (first) { rt = sbrt; first = false; }
+        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
+        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return (arms, rt, p);
 }
 
 // parse_branch_body yields a parsed if/match value-branch body: the
@@ -2245,6 +2511,14 @@ function parse_match_expr(p: Par): IfChain {
         if (p.peek_punct() == "}") { p = p.advance(); }
         return IfChain { par: p, stmt: build_tuple_match(sr_expr, etarms, mkline, mkcol), rt: rt };
     }
+    // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (the
+    // self-host has no named-field enum patterns, so it's unambiguous):
+    // desugar to the field-bind flag chain (build_struct_match).
+    if (p.peek_ident().len() > 0 && p.peek2_punct() == "{") {
+        var (smarms, smrt, smp) = parse_struct_match_arms(p, true);
+        p = smp;
+        return IfChain { par: p, stmt: build_struct_match(sr_expr, smarms, mkline, mkcol), rt: smrt };
+    }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
     // `_` and desugar to an if/else-if chain (build_literal_match). The
@@ -2256,12 +2530,18 @@ function parse_match_expr(p: Par): IfChain {
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
             var lacol: i32 = p.peek_col();
-            var llit: Expr = e_bool(true);
             var lwild: boolean = false;
+            var lalt_lits: Expr[] = [];
+            var lalt_his: Expr[] = [];
+            var lalt_hrs: boolean[] = [];
+            var lalt_incs: boolean[] = [];
             if (p.peek_is_literal()) {
-                var (lle_expr, lle_p) = parse_expr(p);
-                p = lle_p;
-                llit = lle_expr;
+                var (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
+                p = la_p;
+                lalt_lits = la_lits;
+                lalt_his = la_his;
+                lalt_hrs = la_hrs;
+                lalt_incs = la_incs;
             } else {
                 var (lpr_pattern, lpr_p) = parse_pattern(p);
                 p = lpr_p;
@@ -2294,7 +2574,16 @@ function parse_match_expr(p: Par): IfChain {
                 lrt = if_expr_rt(ler_expr);
             }
             if (lfirst) { rt = lrt; lfirst = false; }
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol });
+            if (lwild) {
+                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false });
+            } else {
+                // One LitArm per `|` alternative, sharing the guard + body.
+                var lai: i32 = 0;
+                while (lai < lalt_lits.len()) {
+                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai] });
+                    lai = lai + 1;
+                }
+            }
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -2354,6 +2643,7 @@ function parse_match_expr(p: Par): IfChain {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    arms = desugar_nested_arms(arms, 0);
     return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt };
 }
 
@@ -2508,7 +2798,7 @@ function parse_block_body(p: Par): (Stmt[], Par) {
             // `use` chains).
             var (rest_body, rest_p) = parse_block_body(p);
             p = rest_p;
-            var cbparam: ParamDecl = ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
+            var cbparam: ParamDecl = ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" };
             var cbparams: ParamDecl[] = [cbparam];
             // use_infer marks the synthesised callback when the user wrote
             // no `: TYPE` — the checker's E032 rule verifies the binding
@@ -2612,27 +2902,173 @@ function parse_pattern(p: Par): (Pattern, Par) {
     }
     var binding: string = "";
     var extra_bindings: string[] = [];
+    var nested: Pattern[] = [];
     if (p.peek_punct() == "(") {
         p = p.advance();
         // Parse comma-separated payload bindings: `Variant(a, b, …)`. The
         // first is `binding`; the rest go to `extra_bindings` so the checker
         // can flag a payload-arity mismatch (E015). Single-payload variants
         // (all the self-host supports) use only `binding`.
+        //
+        // A single-payload slot that itself begins a variant pattern
+        // (`Some(Ok(n))` — an ident followed by `(` / `{` / `.`) is a NESTED
+        // sub-pattern: recurse and record it in `nested`; desugar_nested_arms
+        // later rewrites the arm to a flat outer arm + inner match. A bare
+        // ident stays a plain binder, so `Some(x)` is unchanged.
         var bn: i32 = 0;
         while (p.peek_punct() != ")" && !p.at_end()) {
-            var inner: string = p.peek_ident();
-            if (inner.len() > 0) {
-                if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.append(inner); }
+            if (bn == 0 && p.peek_ident().len() > 0
+                && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
+                var (sub_pat, sub_p) = parse_pattern(p);
+                p = sub_p;
+                nested = nested.append(sub_pat);
                 bn = bn + 1;
-                p = p.advance();
             } else {
-                p = p.advance();
+                var inner: string = p.peek_ident();
+                if (inner.len() > 0) {
+                    if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.append(inner); }
+                    bn = bn + 1;
+                    p = p.advance();
+                } else {
+                    p = p.advance();
+                }
             }
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings }, p);
+    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested }, p);
+}
+
+// prepend_stmt returns a fresh statement list with `s` in front of `body`.
+// Isolating the concat in a helper (rather than an inline `var xs: Stmt[] =
+// []` + appends of field-derived elements) keeps the element type canonical
+// through the parameter, so the imported-module type mangling stays
+// consistent.
+function prepend_stmt(s: Stmt, body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    out = out.append(s);
+    var i: i32 = 0;
+    while (i < body.len()) {
+        out = out.append(body[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// pv_name returns a pattern's variant type-name, or "" for a wildcard.
+function pv_name(pat: Pattern): string {
+    match (pat) {
+        PatVariant(v) => { return v.type_name; },
+        PatWildcard(w) => { return ""; }
+    }
+    return "";
+}
+
+// arm_is_nested reports whether an arm's pattern carries a nested sub-pattern.
+function arm_is_nested(arm: MatchArm): boolean {
+    match (arm.pattern) {
+        PatVariant(v) => { return v.nested.len() > 0; },
+        PatWildcard(w) => { return false; }
+    }
+    return false;
+}
+
+// desugar_nested_arms rewrites arms carrying nested sub-patterns
+// (`Some(Ok(n))`) into flat arms whose body re-matches the payload on an
+// inner match, grouping contiguous same-variant arms into one merged arm
+// `V(__nest…) => match __nest… { … }`. A no-op returning the arms unchanged
+// when no arm nests — so every existing match (the whole self-host source
+// among them) parses byte-identically. `depth` keeps the synthesised payload
+// temp unique across nesting levels. Recurses so `Some(Ok(Some(x)))` desugars
+// at every depth.
+function desugar_nested_arms(arms: MatchArm[], depth: i32): MatchArm[] {
+    // Any-nested short-circuit: leaves the common (flat) case allocation-free
+    // and, more importantly, byte-identical to the pre-feature output.
+    var seen_nested: boolean = false;
+    var s: i32 = 0;
+    while (s < arms.len()) {
+        if (arm_is_nested(arms[s])) { seen_nested = true; }
+        s = s + 1;
+    }
+    if (!seen_nested) { return arms; }
+    // An unguarded trailing `_` is the outer fallthrough: copied into each
+    // merged inner match so a payload matching no inner pattern runs it.
+    var fall: Stmt[] = [];
+    var has_fall: boolean = false;
+    if (arms.len() > 0) {
+        var last: MatchArm = arms[arms.len() - 1];
+        if (pv_name(last.pattern) == "" && !last.has_guard) {
+            fall = last.body;
+            has_fall = true;
+        }
+    }
+    var out: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        var vn: string = pv_name(arms[i].pattern);
+        if (vn == "") {
+            out = out.append(arms[i]);
+            i = i + 1;
+        } else {
+            var j: i32 = i;
+            while (j < arms.len() && pv_name(arms[j].pattern) == vn) { j = j + 1; }
+            var any_nested: boolean = false;
+            var k: i32 = i;
+            while (k < j) { if (arm_is_nested(arms[k])) { any_nested = true; } k = k + 1; }
+            if (!any_nested) {
+                var c: i32 = i;
+                while (c < j) { out = out.append(arms[c]); c = c + 1; }
+            } else {
+                out = out.append(build_merged_arm(vn, arms, i, j, fall, has_fall, depth));
+            }
+            i = j;
+        }
+    }
+    return out;
+}
+
+// build_merged_arm collapses one contiguous run of same-variant arms
+// (arms[lo..hi], at least one nested) into a single flat arm
+// `V(__nest) => match __nest { <inner arms> }`. A flat sibling arm rebinds
+// the whole payload to its binder; a trailing outer `_` becomes the inner
+// wildcard so unmatched payloads fall through.
+function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: Stmt[], has_fall: boolean, depth: i32): MatchArm {
+    var gp_line: i32 = arms[lo].line;
+    var gp_col: i32 = arms[lo].col;
+    var tmp: string = "__nest_" + util.i32_to_string(gp_line) + "_" + util.i32_to_string(gp_col) + "_" + util.i32_to_string(depth);
+    var inner: MatchArm[] = [];
+    var has_inner_wild: boolean = false;
+    var k: i32 = lo;
+    while (k < hi) {
+        var g: MatchArm = arms[k];
+        var inner_pat: Pattern = p_wildcard();
+        var inner_body: Stmt[] = g.body;
+        match (g.pattern) {
+            PatVariant(gv) => {
+                if (gv.nested.len() > 0) {
+                    inner_pat = gv.nested[0];
+                } else if (gv.binding.len() > 0 && gv.binding != "_") {
+                    // A flat sibling (`Some(x)`): rebind the whole payload.
+                    inner_body = prepend_stmt(s_var(gv.binding, "", e_ident(tmp)), g.body);
+                }
+            },
+            PatWildcard(w) => {}
+        }
+        if (pv_name(inner_pat) == "" && !g.has_guard) { has_inner_wild = true; }
+        inner = inner.append(MatchArm { pattern: inner_pat, body: inner_body, line: g.line, col: g.col, guard: g.guard, has_guard: g.has_guard });
+        k = k + 1;
+    }
+    if (!has_inner_wild && has_fall) {
+        inner = inner.append(MatchArm { pattern: p_wildcard(), body: fall, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false });
+    }
+    var inner_desugared: MatchArm[] = desugar_nested_arms(inner, depth + 1);
+    var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
+    var no_extra: string[] = [];
+    var no_nested: Pattern[] = [];
+    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested };
+    var body: Stmt[] = [inner_match];
+    return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
 }
 
 // parse_match_stmt consumes `match (scrutinee) { arm, arm, … }`
@@ -2704,6 +3140,13 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
         return (build_tuple_match(sr_expr, tarms, mkline, mkcol), p);
     }
+    // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
+    // parse_match_expr) — desugar to the field-bind flag chain.
+    if (p.peek_ident().len() > 0 && p.peek2_punct() == "{") {
+        var (smarms, smrt, smp) = parse_struct_match_arms(p, false);
+        p = smp;
+        return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
+    }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
     // `_` and desugar to an if/else-if chain (build_literal_match). The
@@ -2714,12 +3157,18 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
             var lacol: i32 = p.peek_col();
-            var llit: Expr = e_bool(true);
             var lwild: boolean = false;
+            var lalt_lits: Expr[] = [];
+            var lalt_his: Expr[] = [];
+            var lalt_hrs: boolean[] = [];
+            var lalt_incs: boolean[] = [];
             if (p.peek_is_literal()) {
-                var (lle_expr, lle_p) = parse_expr(p);
-                p = lle_p;
-                llit = lle_expr;
+                var (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
+                p = la_p;
+                lalt_lits = la_lits;
+                lalt_his = la_his;
+                lalt_hrs = la_hrs;
+                lalt_incs = la_incs;
             } else {
                 var (lpr_pattern, lpr_p) = parse_pattern(p);
                 p = lpr_p;
@@ -2737,7 +3186,16 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             if (p.peek_punct() == "=>") { p = p.advance(); }
             var (lbb_body, lbb_p) = parse_block(p);
             p = lbb_p;
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol });
+            if (lwild) {
+                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false });
+            } else {
+                // One LitArm per `|` alternative, sharing the guard + body.
+                var lai: i32 = 0;
+                while (lai < lalt_lits.len()) {
+                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai] });
+                    lai = lai + 1;
+                }
+            }
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -2792,6 +3250,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    arms = desugar_nested_arms(arms, 0);
     return (s_match_at(sr_expr, arms, mkline, mkcol), p);
 }
 
@@ -3317,6 +3776,11 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_unknown("missing var name"), p);
         }
         p = p.advance();
+        // Struct destructure `var Point { x, y } = E;` / `let Point { … } = E;`
+        // — `name` is the struct type, the `{` opens the field pattern.
+        if (p.peek_punct() == "{") {
+            return parse_struct_destructure(p, name, vline, vcol);
+        }
         // let-else payload bindings: `let Variant(b1, b2, …) = E else { … }`.
         // The first binding is `le_binding`; any further ones go to
         // `le_extra` (matching parse_pattern's PatVariant shape, so the
@@ -3394,7 +3858,8 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 p = rr_p;
                 rest = rest.append(rr_stmt);
             }
-            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra };
+            var le_no_nested: Pattern[] = [];
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
@@ -3678,6 +4143,84 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
     return (name, false, "", p);
 }
 
+// coarsen_type_seg coarsens ONE tuple-element spelling: a segment
+// containing a `=>` is a function type — "fn", or "fn[]" for a
+// parenthesized fn-array element ("((i32)=>i32)[]") — unless the
+// segment is itself a nested TUPLE (a parenthesized list with a comma
+// at its own depth 1), which recurses through coarsen_fn_elems. A
+// segment with no arrow passes through unchanged.
+function coarsen_type_seg(seg: string): string {
+    var has_arrow: boolean = false;
+    var k: i32 = 0;
+    while (k + 1 < seg.len()) {
+        if (seg[k] == 61 && seg[k + 1] == 62) { has_arrow = true; }   // "=>"
+        k = k + 1;
+    }
+    if (!has_arrow) { return seg; }
+    if (seg.len() >= 2 && seg[0] == 40) {   // 40 = '('
+        // Find the close paren matching seg[0], and whether a depth-1
+        // comma appears inside it (a nested tuple's element separator).
+        var d: i32 = 0;
+        var close: i32 = 0 - 1;
+        var comma1: boolean = false;
+        var j: i32 = 0;
+        while (j < seg.len()) {
+            if (seg[j] == 40 || seg[j] == 91) { d = d + 1; }        // '(' '['
+            else if (seg[j] == 41 || seg[j] == 93) {                 // ')' ']'
+                d = d - 1;
+                if (d == 0 && seg[j] == 41 && close < 0) { close = j; }
+            }
+            else if (seg[j] == 44 && d == 1 && close < 0) { comma1 = true; }   // ','
+            j = j + 1;
+        }
+        // `(params) => R` — the parens are a PARAM LIST (arrow follows
+        // the close, possibly with a depth-1 comma between the params):
+        // the whole segment is one fn type.
+        if (close >= 0 && close + 2 < seg.len() && seg[close + 1] == 61 && seg[close + 2] == 62) {
+            return "fn";
+        }
+        // Nested tuple (`((i32)=>i32, i32)`), possibly with an array
+        // suffix: recurse on the parenthesized part, keep the suffix.
+        if (comma1 && close >= 0) {
+            return coarsen_fn_elems(seg[0 : close + 1] + "") + seg[close + 1 : seg.len()];
+        }
+        // Parenthesized whole-fn element (`((i32)=>i32)` / with "[]").
+        if (close >= 0 && close + 1 < seg.len()) { return "fn" + seg[close + 1 : seg.len()]; }
+        return "fn";
+    }
+    return "fn";
+}
+
+// coarsen_fn_elems rewrites a reconstructed TUPLE type spelling whose
+// elements include function types — "((i32)=>i32, i32)" — so each
+// fn-typed depth-1 segment collapses to the coarse "fn" tag all
+// consumers expect ("(fn, i32)"), mirroring how a standalone fn type
+// coarsens to "fn". Elements with no arrow pass through untouched, so
+// the precise spellings tuple-destructure relies on survive.
+function coarsen_fn_elems(spelling: string): string {
+    if (spelling.len() < 2 || spelling[0] != 40) { return spelling; }   // 40 = '('
+    var inner: str = spelling[1 : spelling.len() - 1];
+    var out: string = "(";
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var first: boolean = true;
+    var i: i32 = 0;
+    while (i <= inner.len()) {
+        if (i == inner.len() || (inner[i] == 44 && depth == 0)) {   // 44 = ','
+            var seg: string = inner[start : i] + "";
+            while (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()] + ""; }
+            while (seg.len() > 0 && seg[seg.len() - 1] == 32) { seg = seg[0 : seg.len() - 1] + ""; }
+            if (!first) { out = out + ", "; }
+            out = out + coarsen_type_seg(seg);
+            first = false;
+            start = i + 1;
+        } else if (inner[i] == 91 || inner[i] == 40) { depth = depth + 1; }   // '[' '('
+        else if (inner[i] == 93 || inner[i] == 41) { depth = depth - 1; }   // ']' ')'
+        i = i + 1;
+    }
+    return out + ")";
+}
+
 function parse_type_name(p: Par): (string, boolean, string, Par) {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
@@ -3741,22 +4284,56 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // loop spins (OOM). std/string's split_at / split_once use
         // `(string, string)` and `Option[(string, string)]`.
         if (p.peek_punct() == "(") {
+            // A parenthesized SINGLE trait-object type — `(dyn T)`,
+            // `(dyn A + B)`, optionally arrayed `(dyn T)[]`. The parens are
+            // redundant grouping (source needs them so a trailing `[]` binds to
+            // the whole `dyn T`, not to a trait generic-arg). Unwrap to the
+            // paren-free `dyn T` / `dyn T[]` spelling the `dyn` branch above
+            // produces — otherwise the tuple char-collect loop below mashes
+            // `dyn Shape` into `(dynShape)` (space dropped, parens kept) and
+            // every `type_name[0:4] == "dyn "` consumer misses, so a
+            // `(dyn Trait)[]` PARAM's element dispatch declines the IR path
+            // (#5203). A genuine tuple whose first element is `dyn`
+            // (`(dyn A, i32)`) is NOT a single-type wrap: the `)`-follows check
+            // fails and the untouched cursor runs the unchanged tuple path.
+            var dpa: Par = p.advance();   // peek past `(`
+            if (dpa.peek_keyword() == "dyn") {
+                var (dpw_name, dpw_ret_arr, dpw_fn_ret, dpw_p) = parse_type_name(dpa);
+                if (dpw_p.peek_punct() == ")") {
+                    // `(dyn T) => R` is a FUNCTION type whose PARAMETER is a
+                    // trait object, not a grouped trait-object array — the arrow
+                    // follows the parens. Leave it to the char-collect + `=> R`
+                    // path below (which coarsens it to "fn"); only unwrap a
+                    // genuine `(dyn T)` / `(dyn T)[]`. Without this guard the
+                    // arrow + return type are dropped and `(dyn T) => R` params
+                    // fail to parse (#5267 regressed this shape).
+                    var dpw_after: Par = dpw_p.advance();   // past `)`
+                    if (dpw_after.peek_punct() != "=>") {
+                        return consume_array_suffix(dpw_after, dpw_name);
+                    }
+                }
+            }
             var tbuf: string = "";
             var td: i32 = 0;
             var is_fn: boolean = false;
+            var top_comma: boolean = false;
             while (!p.at_end()) {
                 var tpk: string = p.peek_punct();
                 if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); continue; }
                 if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); if (td == 0) { break; } continue; }
-                if (tpk == ",") { tbuf = tbuf + ", "; p = p.advance(); continue; }
+                if (tpk == ",") { if (td == 1) { top_comma = true; } tbuf = tbuf + ", "; p = p.advance(); continue; }
                 if (tpk == "[") { tbuf = tbuf + "["; p = p.advance(); continue; }
                 if (tpk == "]") { tbuf = tbuf + "]"; p = p.advance(); continue; }
                 if (tpk == ".") { tbuf = tbuf + "."; p = p.advance(); continue; }
-                // A `=>` *inside* the parens means the parens wrap a whole
-                // function type (`(() => i32)`), not a tuple — coarse it to
-                // "fn" (a closure box). (The `(T,…) => R` form, with `=>`
-                // *after* the parens, is handled below.)
-                if (tpk == "=>") { is_fn = true; p = p.advance(); continue; }
+                // A `=>` *inside* the parens with NO depth-1 comma means the
+                // parens wrap a whole function type (`(() => i32)`), not a
+                // tuple — coarse it to "fn" (a closure box). With a depth-1
+                // comma the parens are a TUPLE whose elements include fn
+                // types (`((i32) => i32, i32)`); keep the arrow in the
+                // reconstructed spelling so coarsen_fn_elems below can
+                // collapse just the fn-typed SEGMENTS. (The `(T,…) => R`
+                // form, with `=>` *after* the parens, is handled below.)
+                if (tpk == "=>") { is_fn = true; tbuf = tbuf + "=>"; p = p.advance(); continue; }
                 var tseg: string = p.peek_ident();
                 if (tseg.len() == 0) { tseg = p.peek_keyword(); }
                 if (tseg.len() == 0) { p = p.advance(); continue; }
@@ -3764,8 +4341,11 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 p = p.advance();
             }
             // Parenthesized function type `(… => …)` → coarse "fn", plus any
-            // trailing `[]` (an array of closures).
-            if (is_fn) {
+            // trailing `[]` (an array of closures). Only when there is no
+            // depth-1 comma: with one, the parens are a tuple and the arrow
+            // belongs to an ELEMENT (unless a `=> R` follows the parens —
+            // the fn-taking-a-tuple-param form the next branch handles).
+            if (is_fn && !top_comma) {
                 return consume_array_suffix(p, "fn");
             }
             // Function type `(T1, …) => R`. After the balanced param
@@ -3802,6 +4382,13 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 var fn_ret_ty: string = "";
                 if (!r_is_arr && is_struct_ret_name(rr_name)) { fn_ret_ty = rr_name; }
                 else if (!r_is_arr && is_nominal_ret_name(rr_name)) { fn_ret_ty = rr_name; }
+                // Also preserve a plain `string` return (`(i32) => string`): the
+                // StructFieldDecl.fn_ret consumer needs it so a chained string
+                // op on an fn-FIELD call result (`h.f(1).len()`) dispatches as
+                // a string (#5306 gap 2). The struct_ret_fns param consumer
+                // filters "string" out (a string is not a struct), so this adds
+                // no spurious struct-return entry.
+                else if (!r_is_arr && rr_name == "string") { fn_ret_ty = "string"; }
                 return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
             }
             // Tuple type — return the reconstructed precise spelling
@@ -3809,7 +4396,13 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             // bindings can recover each element's type. ret_tag_of
             // still maps the whole "(…)" to "unknown", so this is a
             // strict superset of the old coarse "tuple" placeholder. A
-            // trailing `[]` makes it an array of tuples.
+            // trailing `[]` makes it an array of tuples. An fn-typed
+            // element's spelling collapses to the coarse "fn" tag
+            // (`((i32) => i32, i32)` → "(fn, i32)") — before this,
+            // ANY arrow inside the parens coarsened the WHOLE type to
+            // "fn", so a tuple containing a function wasn't even a
+            // tuple type to the self-host compiler.
+            if (is_fn) { tbuf = coarsen_fn_elems(tbuf); }
             return consume_array_suffix(p, tbuf);
         }
         // Prefix-bracket type `[T]` (e.g. `var ab: [u8] = ...`).
@@ -3935,7 +4528,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
 function parse_tuple_param(p: Par): (ParamDecl, string, i32, i32, Par) {
     var tline: i32 = p.peek_line();
     var tcol: i32 = p.peek_col();
-    var bad: ParamDecl = ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" };
+    var bad: ParamDecl = ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" };
     p = p.advance(); // consume `(`
     var names: string = "";
     var count: i32 = 0;
@@ -3966,7 +4559,7 @@ function parse_tuple_param(p: Par): (ParamDecl, string, i32, i32, Par) {
         return (bad, "", tline, tcol, p);
     }
     var synth: string = "__ptuple_" + util.i32_to_string(tline) + "_" + util.i32_to_string(tcol);
-    return (ParamDecl { name: synth, type_name: tr_name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr_ret_arr, fn_ret: tr_fn_ret }, names, tline, tcol, p);
+    return (ParamDecl { name: synth, type_name: tr_name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr_ret_arr, fn_ret: tr_fn_ret, fn_param_dyn: "" }, names, tline, tcol, p);
 }
 
 // prepend_param_destrs splices the desugared `var (a, b) = <synth>;`
@@ -3989,10 +4582,65 @@ function prepend_param_destrs(body: Stmt[], destrs: string[], synths: string[], 
     return out;
 }
 
+// peek_fn_param_dyn is a NON-consuming lookahead at a type position. If the type
+// is a function type `(P0, …, Pn) => R`, it returns the comma-separated indices
+// of the parameters whose type head is `dyn …` (a trait object) — "0", "0,2", …
+// — else "". parse_param records this on the `fn`-typed param so an indirect call
+// `f(7)` knows to dyn-box the arg (the flat "fn" tag drops per-param types, #5276).
+// Scans a local copy of the parser; the caller's cursor is untouched.
+function peek_fn_param_dyn(p0: Par): string {
+    var p: Par = p0;
+    if (p.peek_punct() != "(") { return ""; }
+    p = p.advance();   // consume '('
+    var positions: string = "";
+    var idx: i32 = 0;
+    var depth: i32 = 1;
+    var param_is_dyn: boolean = false;
+    var seen_token: boolean = false;
+    var type_head: boolean = true;   // the next depth-1 token leads a type (param start / after ':')
+    while (!p.at_end() && depth > 0) {
+        var pk: string = p.peek_punct();
+        if (pk == "(") { depth = depth + 1; seen_token = true; type_head = false; p = p.advance(); continue; }
+        if (pk == ")") {
+            depth = depth - 1;
+            if (depth == 0) {
+                if (seen_token && param_is_dyn) {
+                    if (positions.len() > 0) { positions = positions + ","; }
+                    positions = positions + util.i32_to_string(idx);
+                }
+                p = p.advance();
+                break;
+            }
+            p = p.advance(); continue;
+        }
+        if (depth == 1 && pk == ",") {
+            if (seen_token && param_is_dyn) {
+                if (positions.len() > 0) { positions = positions + ","; }
+                positions = positions + util.i32_to_string(idx);
+            }
+            idx = idx + 1;
+            param_is_dyn = false;
+            seen_token = false;
+            type_head = true;
+            p = p.advance(); continue;
+        }
+        if (depth == 1 && pk == ":") { type_head = true; seen_token = true; p = p.advance(); continue; }
+        // A word token (ident or keyword). `dyn` at a type head marks the param.
+        var kw: string = p.peek_keyword();
+        if (kw.len() == 0) { kw = p.peek_ident(); }
+        if (depth == 1 && type_head && kw == "dyn") { param_is_dyn = true; }
+        if (kw.len() > 0) { seen_token = true; type_head = false; }
+        p = p.advance();
+    }
+    // Only a genuine fn type if a `=>` (return arrow) follows the params.
+    if (p.peek_punct() != "=>") { return ""; }
+    return positions;
+}
+
 function parse_param(p: Par): (ParamDecl, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return (ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }, p);
+        return (ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }, p);
     }
     // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
     // the checker's E050/E051). `own` is a plain ident to the lexer, so it
@@ -4010,11 +4658,15 @@ function parse_param(p: Par): (ParamDecl, Par) {
     }
     p = p.advance();
     if (p.peek_punct() != ":") {
-        return (ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }, p);
+        return (ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }, p);
     }
     p = p.advance();
+    // Capture the fn-type's per-parameter dyn positions BEFORE parse_type_name
+    // coarsens the spelling to the flat "fn" tag (#5276).
+    var tr_fn_pdyn: string = peek_fn_param_dyn(p);
     var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
     p = tr_p;
+    if (tr_name != "fn") { tr_fn_pdyn = ""; }
     // Optional default value: `function f(a: i32, b: i32 = 128)`.
     // fill_default_args_module fills it at call sites that omit the argument.
     var has_def: boolean = false;
@@ -4026,7 +4678,7 @@ function parse_param(p: Par): (ParamDecl, Par) {
         has_def = true;
         def_val = de_expr;
     }
-    return (ParamDecl { name: name, type_name: tr_name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr_ret_arr, fn_ret: tr_fn_ret }, p);
+    return (ParamDecl { name: name, type_name: tr_name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr_ret_arr, fn_ret: tr_fn_ret, fn_param_dyn: tr_fn_pdyn }, p);
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -4075,6 +4727,23 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     if (p.peek_punct() == "(") {
         p = p.advance();
         receiver_name = p.peek_ident();
+        // `function (own s: T) name(…)` — the affine-ownership receiver
+        // modifier (mirrors parse_param's `own NAME: TYPE` probe: `own`
+        // only counts as the modifier when another ident follows, so a
+        // receiver literally named `own` still parses). The flag itself is
+        // NOT yet recorded on FuncDecl: the self-host backends lower every
+        // param — receiver included — as a borrow (leak-safe), so parsing
+        // past the keyword is all compilation needs. Threading a
+        // receiver_own flag through FuncDecl (for checker.fern's ow_
+        // method-call guard, mirroring the native checker's hoisted
+        // flags[0]) is the follow-up checker-parity slice.
+        if (receiver_name == "own") {
+            var rprobe: Par = p.advance();
+            if (rprobe.peek_ident().len() > 0) {
+                p = rprobe;
+                receiver_name = p.peek_ident();
+            }
+        }
         if (receiver_name.len() > 0) {
             p = p.advance();
             if (p.peek_punct() == ":") {
@@ -4238,7 +4907,18 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
             if (token_at_paren_depth0(params[pj].type_name, un) || token_in_tuple_param(params[pj].type_name, un)) { bindable = true; }
             pj = pj + 1;
         }
-        if (feeds && bindable) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
+        // (b′) return-bindable: a param reachable only through the RETURN's
+        // user-parametric / Map position (`mk[T](): Box[T]`, `set_new[T]():
+        // Set[T]`) is bindable from the call-site ANNOTATION via infer_inst_ret's
+        // return-type-directed instantiation (mono_var_init) — the annotated-var
+        // context a no-argument generic CONSTRUCTOR is always used in. Without
+        // promotion its erased body's generic struct literal (`Box { xs: [] }`)
+        // can't lower and drags the module to the AST emitter (std/set's set_new
+        // → segfault). Builtin returns (Option[T] / Result[T,E]) are erased-safe
+        // and stay unpromoted: feeds_user_parametric excludes their bases, so a
+        // `find[T,I](): Option[T]` — bindable from NO call site — is untouched.
+        var ret_bindable: boolean = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
+        if (feeds && (bindable || ret_bindable)) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }
     // A body-less function (`function f(): T;`) is an extern import
@@ -4279,7 +4959,7 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
     }
     p = p.advance();
     var (sftr_name, sftr_ret_arr, sftr_fn_ret, sftr_p) = parse_type_name(p);
-    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: "" }, sftr_p);
+    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: sftr_fn_ret }, sftr_p);
 }
 
 // parse_struct_decl consumes `struct Name { field, field, … }`
@@ -4297,7 +4977,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -4321,7 +5001,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -4341,7 +5021,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -4447,7 +5127,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0, enum_owner: name, must_consume: false });
+        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -4564,7 +5244,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     if (payload_type.len() > 0) {
         fields = fields.append(StructFieldDecl { name: "__ev", type_name: payload_type, fn_ret: "" });
     }
-    return acc.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false });
+    return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false });
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
@@ -4594,7 +5274,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var otf: StructFieldDecl[] = [];
         otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string", fn_ret: "" });
         otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false });
+        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false });
     }
     // FileStat: the builtin struct returned by stat(path). Injected so
     // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
@@ -4606,7 +5286,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "" });
         fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -4619,7 +5299,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "" });
         prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "" });
         prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -4635,7 +5315,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "" });
         hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
@@ -4643,14 +5323,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "" });
         hrf = hrf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "" });
         hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/time's seven date/time types are compiler built-ins (registered in
     // the Go checker, not `struct`-declared in std/time), so the self-host's
@@ -4669,7 +5349,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "" });
         df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "" });
         df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "Time")) {
         var tf: StructFieldDecl[] = [];
@@ -4677,7 +5357,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "" });
         tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "" });
         tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "Span")) {
         var spf: StructFieldDecl[] = [];
@@ -4689,7 +5369,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "" });
         spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "" });
         spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/io_buffered + std/stream + std/mock_platform built-ins (registered
     // in the Go checker, not `struct`-declared in source) — same injection
@@ -4707,12 +5387,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     if (!struct_declared(structs, "BytesWriter")) {
         var bwf: StructFieldDecl[] = [];
         bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     if (!struct_declared(structs, "MockPlatform")) {
         var mpf: StructFieldDecl[] = [];
         mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     // std/url's Url is a compiler built-in (registered in the Go checker, not
     // `struct`-declared in std/url), so the IR path needs its layout to lower
@@ -4728,7 +5408,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "" });
         urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "" });
         urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
     return structs;
 }
@@ -4740,7 +5420,7 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
     var fields: StructFieldDecl[] = [];
     fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "" });
     fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "" });
-    return structs.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+    return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
 }
 
 // module_with_builtins returns `mod` with the auto-injected builtin
@@ -4785,7 +5465,17 @@ function (e: MEnv) elook(n: string): string {
 
 // Insts accumulates the unique (bounded-generic name, concrete type)
 // instantiations discovered while rewriting call sites.
-struct Insts { inames: string[], itypes: string[] }
+// Insts records generic instantiations as three parallel arrays: the base
+// name, the mangled `__`-key (used to build clone symbol names), and `iargs`
+// — the ORIGINAL single-type-arg spelling for a single-param enum. iargs
+// exists because a composite (fn) arg mangles LOSSILY (`(i32) => i32` →
+// sanitized `_i32_____i32`), so phase-2 field substitution can't recover the
+// real field type from the key alone; it reads iargs instead. For a nominal /
+// nested-enum key, iargs carries the original spelling too, but `me_rewrite_ty`
+// re-derives the identical mangled field type either way (`Opt[i32]` → `Opt__i32`
+// == the key), so those stay byte-identical. Non-enum callers use the default
+// `iadd` (iargs = the key), which phase-2 enum cloning never reads.
+struct Insts { inames: string[], itypes: string[], iargs: string[] }
 function (a: Insts) ihas(n: string, t: string): boolean {
     var i: i32 = 0;
     while (i < a.inames.len()) {
@@ -4796,7 +5486,14 @@ function (a: Insts) ihas(n: string, t: string): boolean {
 }
 function (a: Insts) iadd(n: string, t: string): Insts {
     if (a.ihas(n, t)) { return a; }
-    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t) };
+    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t), iargs: a.iargs.append(t) };
+}
+// iadd_arg records an instantiation together with the original single-arg
+// spelling `arg` (phase-2 field substitution reads it for a fn-keyed clone).
+// Enum-collection sites use this; the default `iadd` sets iargs = key.
+function (a: Insts) iadd_arg(n: string, t: string, arg: string): Insts {
+    if (a.ihas(n, t)) { return a; }
+    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t), iargs: a.iargs.append(arg) };
 }
 // ihas_other reports whether `n` is already recorded at a DIFFERENT
 // concrete type than `t`. The array-method path uses this to keep a
@@ -4890,8 +5587,16 @@ function first_bracket(s: string): i32 {
 }
 
 // split_top_commas splits a generic-arg inner string (e.g. `K, V` or
-// `string, Map[a, b]`) on top-level `, `, tracking `[]`/`()` depth so a
-// comma nested inside `Map[...]` or a tuple doesn't split early.
+// `string, Map[a, b]`) on top-level commas, tracking `[]`/`()` depth so a
+// comma nested inside `Map[...]` or a tuple doesn't split early. A comma's
+// single following space (the canonical `, ` spelling) is consumed when
+// present, but a BARE `,` splits too: irlower's compact tuple element tags
+// (`(clo,i32)`, elem_type_tag's nested-tuple arm) join without the space,
+// and requiring it made parse_type_ref read `(clo,i32)` as a ONE-element
+// tuple — so tuple_type_elem_tag returned "clo,i32", the `t.K.N(args)` /
+// `arr[i].N(args)` closure-element dispatch missed its "clo" tag, and the
+// call fell through to bogus method dispatch (`i32.0`), bailing the module
+// to the legacy AST path (which miscompiles those shapes).
 function split_top_commas(s: string): string[] {
     var out: string[] = [];
     var depth: i32 = 0;
@@ -4901,9 +5606,10 @@ function split_top_commas(s: string): string[] {
         var c: str = s[i : i + 1];
         if (c == "[" || c == "(") { depth = depth + 1; }
         if (c == "]" || c == ")") { depth = depth - 1; }
-        if (depth == 0 && c == "," && i + 1 < s.len() && s[i + 1 : i + 2] == " ") {
+        if (depth == 0 && c == ",") {
             out = out.append(s[start : i]);
-            i = i + 2;
+            i = i + 1;
+            if (i < s.len() && s[i : i + 1] == " ") { i = i + 1; }
             start = i;
             continue;
         }
@@ -5145,14 +5851,53 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     return binds;
 }
 
+// lambda_ret_of returns the concrete return type of a lambda ARGUMENT —
+// what lets a type parameter that appears ONLY in a fn-param's return
+// position (`key: (T) => K`) be bound from the closure passed for it.
+// The coarse "fn" tag on the param carries no args, so bind_unify over
+// the param's type_name never sees `K`; the return spelling is recovered
+// here instead. Prefers the lambda's explicit `: R` annotation; for an
+// arrow / `use_infer` lambda with no annotation, infers R from the first
+// `return` in the body, typed under an env extended with the lambda's
+// own (declared) params. "" for a non-lambda arg or an unknown body type
+// — the call then stays generic exactly as before.
+function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+    match (e) {
+        ExprLambda(lm) => {
+            if (lm.ret_type.len() > 0) { return lm.ret_type; }
+            var lenv: MEnv = env;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                lenv = lenv.ebind(lm.params[pi].name, lm.params[pi].type_name);
+                pi = pi + 1;
+            }
+            var si: i32 = 0;
+            while (si < lm.body.len()) {
+                match (lm.body[si]) {
+                    StmtReturn(r) => { return mono_infer(r.value, lenv, funcs); },
+                    _ => {},
+                }
+                si = si + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // infer_inst infers the concrete instantiation of `fd`'s type
 // parameters from a call's arguments and returns them joined by `__` in
 // declaration order (e.g. `i32`, or `i32__string` for `Map[K, V]`).
 // Every argument contributes its bindings via bind_unify (so
 // `assert_eq(x.to_upper(), "Y")` still resolves via the literal second
 // argument when the first is opaque, and `Map[K, V]` recovers both K
-// and V from a single map argument). Returns "" if any type parameter
-// is left unbound — the call then stays generic.
+// and V from a single map argument). A type parameter that surfaces only
+// as a fn-param's RETURN (`sort_key[T, K: Ord](xs, key: (T) => K)`) is
+// bound from that argument's `lambda_ret_of` — otherwise `K` stays
+// unbound, the key is "", and the whole template is dropped (an
+// undefined-reference link error). Returns "" if any type parameter is
+// left unbound — the call then stays generic.
 function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): string {
     if (fd.type_params.len() == 0) { return ""; }
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
@@ -5163,13 +5908,29 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
             if (ct.len() > 0) {
                 binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
             }
+            // A type param appearing ONLY in a fn-param's return position
+            // (`key: (T) => K`) is invisible to the type_name unify above —
+            // the coarse "fn" tag carries no args. Recover it from the
+            // closure argument's own return type (kept in fd.params[i].fn_ret).
+            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, fd.type_params) >= 0) {
+                var lr: string = lambda_ret_of(args[i], env, funcs);
+                if (lr.len() > 0) {
+                    binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
+                }
+            }
         }
         i = i + 1;
     }
+    return binds_to_key(fd.type_params, binds);
+}
+
+// binds_to_key joins a resolved binding env into the ';'-separated
+// instantiation key infer_inst returns, or "" if any type param is unbound.
+function binds_to_key(tparams: string[], binds: MEnv): string {
     var key: string = "";
     var j: i32 = 0;
-    while (j < fd.type_params.len()) {
-        var b: string = binds.elook(fd.type_params[j]);
+    while (j < tparams.len()) {
+        var b: string = binds.elook(tparams[j]);
         if (b.len() == 0) { return ""; }
         // Join multi-param instantiation keys with ';' (a char that never
         // appears in a type name) rather than '__': a per-param value can
@@ -5183,6 +5944,40 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
         j = j + 1;
     }
     return key;
+}
+
+// infer_inst_ret is infer_inst PLUS return-type-directed instantiation: it
+// also binds any type param left unbound by the arguments from `expected_ret`
+// unified against `fd.ret_type`. This is what instantiates a no-argument
+// generic constructor from its call-site annotation — `var b: Box[i32] =
+// mk()` binds mk[T]()'s `T` (which appears ONLY in the `Box[T]` return) from
+// the `Box[i32]` annotation. Without it such a call stays the un-monomorphised
+// template (T unbound), whose `Box { xs: [] }` can't lower and drags the
+// module to the AST emitter (std/set's `set_new` → segfault). Returns "" when
+// still incomplete (the call then stays generic, as before).
+function infer_inst_ret(fd: FuncDecl, args: Expr[], expected_ret: string, env: MEnv, funcs: FuncDecl[]): string {
+    if (fd.type_params.len() == 0) { return ""; }
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (i < args.len()) {
+            var ct: string = mono_infer(args[i], env, funcs);
+            if (ct.len() > 0) {
+                binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
+            }
+            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, fd.type_params) >= 0) {
+                var lr: string = lambda_ret_of(args[i], env, funcs);
+                if (lr.len() > 0) {
+                    binds = bind_unify(fd.params[i].fn_ret, lr, fd.type_params, binds);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if (expected_ret.len() > 0) {
+        binds = bind_unify(fd.ret_type, expected_ret, fd.type_params, binds);
+    }
+    return binds_to_key(fd.type_params, binds);
 }
 
 // split_inst_key splits a multi-param instantiation key (joined by infer_inst
@@ -5206,11 +6001,86 @@ function split_inst_key(s: string): string[] {
     return out;
 }
 
+// tv_word_char reports whether `c` continues a type-name token (a letter,
+// digit or `_`) — the token boundary type_str_vars scans on.
+function tv_word_char(c: i32): boolean {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
+}
+
+// type_str_vars collects the single-uppercase-letter type variables (T /
+// K / V …) appearing in a coarse type spelling, appended to `acc`
+// (deduped). A maximal `[A-Za-z0-9_]` run that is exactly one uppercase
+// letter is a var — the per-token form of looks_type_var, so it finds
+// `T` in `T[]`, both `K` and `V` in `Map[K, V]`, etc., while multi-char
+// names (Map / JsonValue) and lowercase primitives never match.
+function type_str_vars(ty: string, acc: string[]): string[] {
+    var out: string[] = acc;
+    var i: i32 = 0;
+    var n: i32 = ty.len();
+    while (i < n) {
+        if (tv_word_char(ty[i])) {
+            var start: i32 = i;
+            while (i < n && tv_word_char(ty[i])) { i = i + 1; }
+            var tok: string = ty[start : i] + "";
+            if (tok.len() == 1 && tok[0] >= 65 && tok[0] <= 90 && !util.has_str(out, tok)) {
+                out = out.append(tok);
+            }
+        } else {
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// full_ret_binds unifies EVERY param of `fd` against its argument to bind
+// the type vars in `vars` — bounded AND unbounded alike. call_ret_type
+// uses it to recover an unbounded element param that survives the
+// bounded-only substitution (the `T` in `sort_key[T, K: Ord](xs, key):
+// T[]`, erased from fd.type_params). A fn-param's own return var is
+// bound from the lambda argument's return type (mirroring infer_inst).
+function full_ret_binds(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[], vars: string[]): MEnv {
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (i < args.len()) {
+            var ct: string = mono_infer(args[i], env, funcs);
+            if (ct.len() > 0) {
+                binds = bind_unify(fd.params[i].type_name, ct, vars, binds);
+            }
+            if (fd.params[i].type_name == "fn" && tp_index(fd.params[i].fn_ret, vars) >= 0) {
+                var lr: string = lambda_ret_of(args[i], env, funcs);
+                if (lr.len() > 0) {
+                    binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return binds;
+}
+
 // func_ret_of returns the return type of a plain function by name.
 function func_ret_of(funcs: FuncDecl[], name: string): string {
     var i: i32 = 0;
     while (i < funcs.len()) {
         if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// func_param_type_at returns the declared type spelling of parameter `idx`
+// of the receiver-less function named `name`, or "" (name not found, or idx
+// out of range). The generic-enum monomorphiser uses it to pin a bare
+// unit-variant call argument (`get(Non)`) from the callee's parameter type —
+// the call-site analogue of the `var o: Opt[i32] = Non` annotation.
+function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
+            if (idx >= 0 && idx < funcs[i].params.len()) { return funcs[i].params[idx].type_name; }
+            return "";
+        }
         i = i + 1;
     }
     return "";
@@ -5230,7 +6100,27 @@ function call_ret_type(funcs: FuncDecl[], name: string, args: Expr[], env: MEnv)
     if (key.len() == 0) { return ""; }
     var cts: string[] = [key];
     if (fd.type_params.len() != 1) { cts = split_inst_key(key); }
-    return subst_ty(fd.ret_type, fd.type_params, cts);
+    var rt: string = subst_ty(fd.ret_type, fd.type_params, cts);
+    // The bounded-only substitution above can leave an UNBOUNDED type
+    // param in the return type — `sort_key[T, K: Ord](xs, key): T[]`
+    // erases T from fd.type_params, so `T[]` survives with T unresolved,
+    // and a caller (`var out = sort_key(strs, key)`) then can't recover
+    // the element type for dispatch. Bind any residual var from the full
+    // param unification and substitute.
+    var rvars: string[] = type_str_vars(rt, []);
+    if (rvars.len() > 0) {
+        var fb: MEnv = full_ret_binds(fd, args, env, funcs, rvars);
+        var rcts: string[] = [];
+        var vi: i32 = 0;
+        while (vi < rvars.len()) {
+            var bv: string = fb.elook(rvars[vi]);
+            if (bv.len() == 0) { bv = rvars[vi]; }
+            rcts = rcts.append(bv);
+            vi = vi + 1;
+        }
+        rt = subst_ty(rt, rvars, rcts);
+    }
+    return rt;
 }
 
 // assoc_ret_of returns the return type of the associated function (or method)
@@ -5529,7 +6419,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         ExprIndex(ix) => {
             var ar: RExpr = mono_expr(ix.array, env, funcs, ins);
             var idx: RExpr = mono_expr(ix.index, env, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr }, rins: idx.rins };
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false }, rins: idx.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = mono_expr(sl.array, env, funcs, ins);
@@ -5555,7 +6445,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
         },
         ExprLambda(lm) => {
-            var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins);
+            var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
             return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts, use_infer: lm.use_infer }, rins: bodyr.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
@@ -5565,16 +6455,64 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
 
 // mono_stmt rebuilds a statement, threading the inference env (only
 // StmtVar extends it) and the instantiation accumulator.
-function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne {
+// mono_call_expected rewrites an expression in a position with a known EXPECTED
+// type (`expected`), applying return-type-directed instantiation when it is a
+// bounded-generic call: `var b: Box[i32] = mk()` / `function two(): Box[i32] {
+// return mk(); }` bind mk's type params from the `Box[i32]` expected type (via
+// infer_inst_ret) so a no-argument constructor monomorphises instead of staying
+// a template. (A return-only type param is now promoted, so the template is
+// DROPPED — an unresolved call site would be an undefined reference, not just an
+// AST fallback, which is why every expected-type position must resolve it.)
+// Falls through to plain mono_expr when there is no expected type, the callee
+// isn't a bounded generic, or the instantiation still can't be resolved — a
+// strict superset of mono_expr for this position.
+function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
+    if (expected.len() > 0) {
+        match (e) {
+            ExprCall(c) => {
+                match (c.callee) {
+                    ExprIdent(cid) => {
+                        var bi: i32 = bg_index(funcs, cid.name);
+                        if (bi >= 0) {
+                            var key: string = infer_inst_ret(funcs[bi], c.args, expected, env, funcs);
+                            if (key.len() > 0) {
+                                var nargs: Expr[] = [];
+                                var cur: Insts = ins;
+                                var i: i32 = 0;
+                                while (i < c.args.len()) {
+                                    var ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
+                                    cur = ra.rins;
+                                    nargs = nargs.append(ra.rexpr);
+                                    i = i + 1;
+                                }
+                                var mang: string = cid.name + "__" + sanitize_key(key);
+                                cur = cur.iadd(cid.name, key);
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+    }
+    return mono_expr(e, env, funcs, ins);
+}
+
+function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
-            var iv: RExpr = mono_expr(v.init, env, funcs, ins);
+            var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str }, renv: env.ebind(v.name, ty), rins2: iv.rins };
         },
         StmtReturn(r) => {
-            var rv: RExpr = mono_expr(r.value, env, funcs, ins);
+            // A `return mk()` binds a bounded-generic constructor's type params
+            // from the enclosing function's declared return type — the return-
+            // position sibling of the StmtVar annotation above.
+            var rv: RExpr = mono_call_expected(r.value, ret_ty, env, funcs, ins);
             return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         StmtExpr(x) => {
@@ -5587,19 +6525,19 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
         },
         StmtIf(f) => {
             var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
-            var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins);
-            var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3);
+            var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
+            var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
             return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
-            var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins);
+            var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins, ret_ty);
             return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
-            var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins);
+            var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
             return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
@@ -5608,7 +6546,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             var cur: Insts = sv.rins;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur);
+                var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur, ret_ty);
                 cur = ab.rins3;
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
@@ -5620,14 +6558,16 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
     return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
-// mono_stmts walks a statement list, threading the (block-local) env.
-function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts): RStmts {
+// mono_stmts walks a statement list, threading the (block-local) env. `ret_ty`
+// is the enclosing function's declared return type, used by StmtReturn to bind
+// a `return <generic constructor>()` from it; "" at top-level / in a lambda.
+function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var rs: RStmtOne = mono_stmt(stmts[i], e2, funcs, cur);
+        var rs: RStmtOne = mono_stmt(stmts[i], e2, funcs, cur, ret_ty);
         out = out.append(rs.rstmt);
         e2 = rs.renv;
         cur = rs.rins2;
@@ -5754,7 +6694,7 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
         },
         ExprBinary(b) => { return ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: subst_expr(u.operand, tparams, cts), line: u.line, col: u.col }; },
-        ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts) }; },
+        ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts), unchecked: ix.unchecked }; },
         _ => { return e; }
     }
     return e;
@@ -5834,7 +6774,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
         },
         ExprBinary(b) => { return ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col }; },
-        ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang) }; },
+        ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked }; },
         ExprSlice(sl2) => { return ExprSlice { array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) }; },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col }; },
         _ => { return e; }
@@ -5889,7 +6829,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: fd.params[i].fn_ret });
+        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn });
         i = i + 1;
     }
     var notp: string[] = [];
@@ -5994,7 +6934,7 @@ pub function register_array_method_generics(mod: Module): Module {
             var tps: string[] = [elem];
             // Fold the receiver into a leading param named after the
             // receiver, so the body's references to it resolve normally.
-            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
             var j: i32 = 0;
             while (j < fd.params.len()) {
                 nparams = nparams.append(fd.params[j]);
@@ -6108,7 +7048,7 @@ pub function register_map_method_generics(mod: Module): Module {
         var fd: FuncDecl = mod.funcs[i];
         if (is_generic_map_method(fd)) {
             var tps: string[] = map_receiver_typevars(fd.receiver_type);
-            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
             var j: i32 = 0;
             while (j < fd.params.len()) {
                 nparams = nparams.append(fd.params[j]);
@@ -6157,7 +7097,7 @@ pub function monomorphize_module(mod: Module): Module {
     }
     if (!any_bg) { return mod; }
 
-    var ins: Insts = Insts { inames: [], itypes: [] };
+    var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
     // Rewrite call sites in every NON-bounded function body. Bounded
     // generics themselves are dropped (replaced by clones), so their
     // bodies are rewritten later, per clone.
@@ -6169,7 +7109,7 @@ pub function monomorphize_module(mod: Module): Module {
             // skip — will be cloned
         } else {
             var env: MEnv = env_from_params(fd.params);
-            var rb: RStmts = mono_stmts(fd.body, env, funcs, ins);
+            var rb: RStmts = mono_stmts(fd.body, env, funcs, ins, fd.ret_type);
             ins = rb.rins3;
             rewritten = rewritten.append(FuncDecl {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
@@ -6181,12 +7121,12 @@ pub function monomorphize_module(mod: Module): Module {
     }
     // Rewrite top-level stmts too.
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, funcs, ins);
+    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, funcs, ins, "");
     ins = tr.rins3;
 
     // Worklist: generate clones; a clone's own body may call bounded
     // generics, adding new instantiations.
-    var done: Insts = Insts { inames: [], itypes: [] };
+    var done: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var wi: i32 = 0;
     while (wi < ins.inames.len()) {
         var nm: string = ins.inames[wi];
@@ -6199,7 +7139,7 @@ pub function monomorphize_module(mod: Module): Module {
             // Rewrite the clone's body so any bounded-generic calls it
             // makes resolve too (and enqueue their instantiations).
             var cenv: MEnv = env_from_params(cl.params);
-            var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins);
+            var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins, cl.ret_type);
             ins = crb.rins3;
             rewritten = rewritten.append(FuncDecl {
                 name: cl.name, receiver_name: "", receiver_type: "",
@@ -6335,7 +7275,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
 // (`Box[i32]`, from a parametric `impl[T]`) goes through mg_ty.
 function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[]): string {
     if (ty == base) { return mang; }
-    var fresh: Insts = Insts { inames: [], itypes: [] };
+    var fresh: Insts = Insts { inames: [], itypes: [], iargs: [] };
     return mg_ty(ty, gstructs, fresh).ty;
 }
 
@@ -6427,7 +7367,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
         ExprIndex(ix) => {
             var ar: RExpr = ms_expr(ix.array, env, gstructs, funcs, ins);
             var idx: RExpr = ms_expr(ix.index, env, gstructs, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr }, rins: idx.rins };
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false }, rins: idx.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = ms_expr(sl.array, env, gstructs, funcs, ins);
@@ -6463,7 +7403,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             return RExpr { rexpr: ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
         },
         ExprLambda(lm) => {
-            var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins);
+            var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins, "");
             var rt: TyIns = mg_ty(lm.ret_type, gstructs, bodyr.rins3);
             var nparams: ParamDecl[] = [];
             var pcur: Insts = rt.mins;
@@ -6471,7 +7411,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (pi < lm.params.len()) {
                 var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
                 pcur = pt.mins;
-                nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own, has_default: lm.params[pi].has_default, default_value: lm.params[pi].default_value, ret_arr: lm.params[pi].ret_arr, fn_ret: lm.params[pi].fn_ret });
+                nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own, has_default: lm.params[pi].has_default, default_value: lm.params[pi].default_value, ret_arr: lm.params[pi].ret_arr, fn_ret: lm.params[pi].fn_ret, fn_param_dyn: lm.params[pi].fn_param_dyn });
                 pi = pi + 1;
             }
             return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
@@ -6543,7 +7483,7 @@ function retype_struct_lit(init: Expr, concrete: string, gstructs: StructDecl[])
 
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
-function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
+function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
             var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
@@ -6556,7 +7496,14 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
-            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+            // A `return Box { xs: [] }` whose instantiation can't be inferred
+            // from the field values (an empty-array field yields no element
+            // type) takes it from the FUNCTION's concrete return type — the
+            // return-position sibling of the StmtVar annotation retype above.
+            // Without this a monomorphised no-arg constructor's generic struct
+            // literal stays "Box" and can't lower (std/set's set_new).
+            var nret: Expr = retype_struct_lit(rv.rexpr, ret_ty, gstructs);
+            return RStmtOne { rstmt: StmtReturn { value: nret, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         StmtExpr(x) => {
             var xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
@@ -6568,19 +7515,19 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtIf(f) => {
             var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
-            var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins);
-            var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3);
+            var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
+            var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
             return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
-            var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins);
+            var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins, ret_ty);
             return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
-            var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins);
+            var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins, ret_ty);
             return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
@@ -6589,7 +7536,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             var cur: Insts = sv.rins;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur);
+                var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur, ret_ty);
                 cur = ab.rins3;
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
@@ -6601,14 +7548,17 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
     return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
-// ms_stmts walks a statement list, threading the (block-local) env.
-function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmts {
+// ms_stmts walks a statement list, threading the (block-local) env. `ret_ty`
+// is the enclosing function's concrete (mangled) return type, used to retype a
+// `return <generic struct literal>` whose instantiation the field values can't
+// supply; "" at top-level / for non-struct returns (a no-op there).
+function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var rs: RStmtOne = ms_stmt(stmts[i], e2, gstructs, funcs, cur);
+        var rs: RStmtOne = ms_stmt(stmts[i], e2, gstructs, funcs, cur, ret_ty);
         out = out.append(rs.rstmt);
         e2 = rs.renv;
         cur = rs.rins2;
@@ -6626,14 +7576,14 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
     while (i < fn.params.len()) {
         var pt: TyIns = mg_ty(fn.params[i].type_name, gstructs, cur);
         cur = pt.mins;
-        nparams = nparams.append(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own, has_default: fn.params[i].has_default, default_value: fn.params[i].default_value, ret_arr: fn.params[i].ret_arr, fn_ret: fn.params[i].fn_ret });
+        nparams = nparams.append(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own, has_default: fn.params[i].has_default, default_value: fn.params[i].default_value, ret_arr: fn.params[i].ret_arr, fn_ret: fn.params[i].fn_ret, fn_param_dyn: fn.params[i].fn_param_dyn });
         i = i + 1;
     }
     var rt: TyIns = mg_ty(fn.ret_type, gstructs, cur);
     cur = rt.mins;
     var rcv: TyIns = mg_ty(fn.receiver_type, gstructs, cur);
     cur = rcv.mins;
-    var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur);
+    var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur, rt.ty);
     cur = br.rins3;
     return FRes {
         ffn: FuncDecl {
@@ -6681,7 +7631,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     while (i < m.params.len()) {
         var psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
         var pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
-        nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret });
+        nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn });
         i = i + 1;
     }
     var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
@@ -6708,7 +7658,7 @@ pub function monomorphize_structs(mod: Module): Module {
     }
     if (gstructs.len() == 0) { return mod; }
 
-    var ins: Insts = Insts { inames: [], itypes: [] };
+    var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
 
     // Phase 1: rewrite all references; drop the generic decls.
     var nstructs: StructDecl[] = [];
@@ -6724,7 +7674,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: sd.fields[fj].fn_ret });
                 fj = fj + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
         }
         si = si + 1;
     }
@@ -6746,12 +7696,12 @@ pub function monomorphize_structs(mod: Module): Module {
     }
 
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, mod.funcs, ins);
+    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, mod.funcs, ins, "");
     ins = tr.rins3;
 
     // Phase 2: generate clones; a worklist covers clones whose own field
     // types / method bodies reference further instantiations.
-    var done: Insts = Insts { inames: [], itypes: [] };
+    var done: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var wi: i32 = 0;
     while (wi < ins.inames.len()) {
         var base: string = ins.inames[wi];
@@ -6777,13 +7727,13 @@ pub function monomorphize_structs(mod: Module): Module {
                 cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts) });
                 cfi = cfi + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume });
+            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume });
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
-                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins);
+                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins, clm.ret_type);
                     ins = br2.rins3;
                     nfuncs = nfuncs.append(FuncDecl {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
@@ -6958,14 +7908,84 @@ function ge_inst_of(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): GEInst {
     return GEInst { ok: true, base: base + "", key: key, mang: base + "__" + key };
 }
 
+// fn_key_sanitize maps a fn type spelling into a token safe to embed in a `__`
+// symbol name — every char outside [A-Za-z0-9_] becomes '_'. Mirrors native's
+// `sanitize` (internal/monomorph/monomorph.go) so a fn type argument
+// (`(i32) => i32`) keys to `_i32_____i32` instead of dragging its parens /
+// spaces / `=>` into an unassemblable symbol. (The sibling `sanitize_key`
+// above handles only bracket/comma keys and is shared with fn/struct mangling,
+// so a fn-only transform stays out of its blast radius.)
+function fn_key_sanitize(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        var alnum: boolean = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
+        if (alnum) { out = out + s[i : i + 1]; } else { out = out + "_"; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// pk_is_fn_spelling reports whether `t` is a single-parameter-list function
+// type spelling — `(...) => R` with no depth-1 comma (a top-level comma is a
+// tuple, not a param list). The self-host sibling of irlower's
+// is_fn_payload_spelling; lets ge_targ_mangle admit a fn type arg as a
+// (sanitised) monomorphisation key.
+function pk_is_fn_spelling(t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 5) { return false; }
+    if (t[0] != 40) { return false; }
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var close: i32 = 0 - 1;
+    while (i < n) {
+        var ch: i32 = t[i];
+        if (ch == 40 || ch == 91) { depth = depth + 1; }
+        else if (ch == 41 || ch == 93) { depth = depth - 1; if (depth == 0 && ch == 41) { close = i; i = n; } }
+        else if (ch == 44 && depth == 1) { return false; }
+        i = i + 1;
+    }
+    if (close < 0) { return false; }
+    var j: i32 = close + 1;
+    while (j < n && t[j] == 32) { j = j + 1; }
+    if (j + 1 >= n) { return false; }
+    return t[j] == 61 && t[j + 1] == 62;
+}
+
+// fn_spelling_ret returns the result-type spelling of a fn type
+// (`(i32) => Opt[i32]` → `Opt[i32]`), or "" when `t` is not a fn spelling. The
+// coarsening below stores it on a variant fn field's fn_ret, matching how the
+// parser records a source-written fn field (type_name "fn" + fn_ret).
+function fn_spelling_ret(t: string): string {
+    if (!pk_is_fn_spelling(t)) { return ""; }
+    var n: i32 = t.len();
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var close: i32 = 0 - 1;
+    while (i < n) {
+        var ch: i32 = t[i];
+        if (ch == 40 || ch == 91) { depth = depth + 1; }
+        else if (ch == 41 || ch == 93) { depth = depth - 1; if (depth == 0 && ch == 41) { close = i; i = n; } }
+        i = i + 1;
+    }
+    var j: i32 = close + 1;
+    while (j < n && t[j] == 32) { j = j + 1; }
+    j = j + 2;                                   // skip "=>"
+    while (j < n && t[j] == 32) { j = j + 1; }
+    return t[j : n] + "";
+}
+
 // ge_targ_mangle mangles ONE generic-enum type argument to its `__` symbol
 // form: a simple nominal (`i32`, `string`, a bare struct `P`) passes through;
 // a NESTED monomorphisable generic-enum arg (`Opt[i32]`) recurses to its
-// mangled clone name (`Opt__i32`). Returns "" for an arg this pass can't key
-// (an array, tuple, generic struct, or a method-bearing / non-generic enum),
-// so the enclosing instantiation bails to AST cleanly (over-admission-safe).
+// mangled clone name (`Opt__i32`); a fn type (`(i32) => i32`) sanitises to a
+// symbol-safe token (native parity). Returns "" for an arg this pass still
+// can't key (an array, tuple, generic struct, or a method-bearing /
+// non-generic enum), so the enclosing instantiation bails to AST cleanly.
 function ge_targ_mangle(arg: string, enums: EnumDecl[], funcs: FuncDecl[]): string {
     if (arg.len() == 0) { return ""; }
+    if (pk_is_fn_spelling(arg)) { return fn_key_sanitize(arg); }
     var lb: i32 = first_bracket(arg);
     if (lb < 0) {
         if (util.contains(arg, " ")) { return ""; }
@@ -6998,7 +8018,7 @@ function me_collect_anno(ty: string, enums: EnumDecl[], funcs: FuncDecl[], ins: 
     if (type_ends_arr(t)) { t = t[0 : t.len() - 2] + ""; }
     var gi: GEInst = ge_inst_of(t, enums, funcs);
     if (!gi.ok) { return ins; }
-    var cur: Insts = ins.iadd(gi.base, gi.key);
+    var cur: Insts = ins.iadd_arg(gi.base, gi.key, genum_single_arg(t));
     var lb: i32 = first_bracket(t);
     if (lb > 0 && t[t.len() - 1 : t.len()] == "]") {
         var parts: string[] = split_top_commas(t[lb + 1 : t.len() - 1]);
@@ -7049,6 +8069,13 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: Expr[], expecte
         key = key + b;
         j = j + 1;
     }
+    // A single-param fn instantiation (`Has(f)` with f: (i32) => i32, the
+    // binding carrying the full spelling): sanitise to the same symbol-safe
+    // token ge_targ_mangle produces for the annotated path, so the inferred
+    // and annotated spellings of one instantiation share a clone (#5298
+    // follow-up). The caller recovers the raw spelling for iargs by re-running
+    // mono_infer on the payload arg.
+    if (ed.type_params.len() == 1 && pk_is_fn_spelling(key)) { return fn_key_sanitize(key); }
     if (!is_simple_key(key)) { return ""; }
     return key;
 }
@@ -7059,7 +8086,14 @@ function me_env_from_params(params: ParamDecl[]): MEnv {
     var e: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
     while (i < params.len()) {
-        e = e.ebind(params[i].name, params[i].type_name);
+        var pt: string = params[i].type_name;
+        // A fn-typed param coarsens to "fn" with its return type held in
+        // fn_ret; encode it as "fn => <ret>" so me_scrutinee_type can recover a
+        // `match (f(x))` scrutinee's generic-enum return type and rewrite its
+        // arms (mirrors the me_bind_pat_vars fn-payload encoding). Otherwise the
+        // scrutinee typed "" and the arms stayed un-mangled → wrong variant.
+        if (pt == "fn" && params[i].fn_ret.len() > 0) { pt = "fn => " + params[i].fn_ret; }
+        e = e.ebind(params[i].name, pt);
         i = i + 1;
     }
     return e;
@@ -7113,11 +8147,23 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                     argexp = genum_single_arg(expected);
                 }
             }
+            // A plain function call `f(args)` — a callee ident that is NOT a
+            // generic-enum variant construction — pins each bare unit-variant
+            // argument from the callee's declared PARAMETER type (`get(Non)` with
+            // `get(o: Opt[i32])` flows `Opt[i32]` into `Non`). This is the
+            // call-site analogue of `var o: Opt[i32] = Non`; without it the bare
+            // `Non` stayed un-rewritten, then monomorphize_enums dropped the
+            // generic `Non` struct and the dangling reference dragged the module
+            // to the AST emitter (#5247).
+            var calleeFn: string = "";
+            if (vname.len() > 0 && genum_owner_of_variant(enums, funcs, vname) < 0) { calleeFn = vname; }
             var nargs: Expr[] = [];
             var cur: Insts = ins;
             var i: i32 = 0;
             while (i < c.args.len()) {
-                var ra: RExpr = me_expr(c.args[i], argexp, env, enums, structs, funcs, cur);
+                var ae: string = argexp;
+                if (ae.len() == 0 && calleeFn.len() > 0) { ae = func_param_type_at(funcs, calleeFn, i); }
+                var ra: RExpr = me_expr(c.args[i], ae, env, enums, structs, funcs, cur);
                 cur = ra.rins;
                 nargs = nargs.append(ra.rexpr);
                 i = i + 1;
@@ -7127,7 +8173,18 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                 if (owner >= 0) {
                     var key: string = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
                     if (key.len() > 0) {
-                        cur = cur.iadd(enums[owner].name, key);
+                        // The original single-arg spelling (for a fn-keyed clone's
+                        // field type). From the annotation when present; else for
+                        // an INFERRED fn key the payload arg's full spelling
+                        // (phase-2 coarsens it to the "fn" + fn_ret field shape);
+                        // else the key IS the arg spelling (a nominal key).
+                        var carg: string = genum_single_arg(expected);
+                        if (carg.len() == 0 && enums[owner].type_params.len() == 1 && c.args.len() > 0) {
+                            var raw0: string = mono_infer(c.args[0], env, funcs);
+                            if (pk_is_fn_spelling(raw0)) { carg = raw0; }
+                        }
+                        if (carg.len() == 0) { carg = key; }
+                        cur = cur.iadd_arg(enums[owner].name, key, carg);
                         var mv: string = vname + "__" + key;
                         return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
                     }
@@ -7143,7 +8200,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             if (owner >= 0) {
                 var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
                 if (key.len() > 0) {
-                    var nins: Insts = ins.iadd(enums[owner].name, key);
+                    var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
                     return RExpr { rexpr: ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col }, rins: nins };
                 }
             }
@@ -7182,7 +8239,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         ExprIndex(ix) => {
             var ar: RExpr = me_expr(ix.array, "", env, enums, structs, funcs, ins);
             var ir: RExpr = me_expr(ix.index, "", env, enums, structs, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr }, rins: ir.rins };
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr, unchecked: false }, rins: ir.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = me_expr(sl.array, "", env, enums, structs, funcs, ins);
@@ -7209,6 +8266,30 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: nvals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
         },
         ExprFieldAccess(fa) => {
+            // A QUALIFIED unit-variant value `Enum.Variant` (no call) flowing
+            // into a generic-enum type: pin its instantiation from `expected`
+            // and rewrite to the mangled bare form, mirroring the bare-ident
+            // arm — so `get(Opt.Non)` with `get(o: Opt[i32])` instantiates from
+            // the callee's parameter type (flowed in as `expected`) instead of
+            // staying generic and dangling once monomorphize_enums drops the
+            // generic variant struct (#5247 follow-up; the bare `get(Non)` form
+            // is pinned in the ExprIdent arm). The payloaded `Enum.Variant(args)`
+            // form is a call, handled in the ExprCall arm above.
+            match (fa.obj) {
+                ExprIdent(oid) => {
+                    if (genum_index(enums, oid.name) >= 0) {
+                        var owner: i32 = genum_owner_of_variant(enums, funcs, fa.field);
+                        if (owner >= 0) {
+                            var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
+                            if (key.len() > 0) {
+                                var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
+                                return RExpr { rexpr: ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col }, rins: nins };
+                            }
+                        }
+                    }
+                },
+                _ => { }
+            }
             var ob: RExpr = me_expr(fa.obj, "", env, enums, structs, funcs, ins);
             return RExpr { rexpr: ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: ob.rins };
         },
@@ -7238,7 +8319,7 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
             var j: i32 = 0;
             while (j < vn.len()) {
                 if (vn[j] == simple) {
-                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings };
+                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested };
                 }
                 j = j + 1;
             }
@@ -7290,13 +8371,72 @@ function me_fn_ret_spelling(t: string): string {
 // literal via its type name, and a field access `s.o` via the field's declared
 // type (so `match (s.o)` over a generic-enum-typed field rewrites its arms).
 // "" when it can't be determined (the arms then stay un-rewritten).
-function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: FuncDecl[]): string {
+// me_tuple_elem_type returns the element type spelling at position `field` (a
+// numeric tuple index like "0" / "1") of a tuple type `ty` ("(T0, T1, …)"), or
+// "" if `ty` isn't a tuple, `field` isn't numeric, or the index is out of
+// range. The split is bracket/paren-depth aware so a nested generic / tuple
+// element (`(Opt[i32], Map[i32, i32])`) isn't split at its inner commas. Lets
+// me_scrutinee_type type a match scrutinee that is a tuple element
+// (`match (t.0)`) over a generic-enum element so its arms rewrite.
+function me_tuple_elem_type(ty: string, field: string): string {
+    if (ty.len() < 2 || ty[0] != 40) { return ""; }
+    if (field.len() == 0) { return ""; }
+    var idx: i32 = 0;
+    var fi: i32 = 0;
+    while (fi < field.len()) {
+        if (field[fi] < 48 || field[fi] > 57) { return ""; }
+        idx = idx * 10 + (field[fi] - 48);
+        fi = fi + 1;
+    }
+    var inner: string = ty[1 : ty.len() - 1] + "";
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var cur: i32 = 0;
+    var i: i32 = 0;
+    while (i <= inner.len()) {
+        if (i == inner.len() || (inner[i] == 44 && depth == 0)) {
+            if (cur == idx) {
+                var seg: string = inner[start : i] + "";
+                var s2: i32 = 0;
+                while (s2 < seg.len() && seg[s2] == 32) { s2 = s2 + 1; }
+                return seg[s2 : seg.len()] + "";
+            }
+            cur = cur + 1;
+            start = i + 1;
+        } else {
+            if (inner[i] == 91 || inner[i] == 40) { depth = depth + 1; }
+            if (inner[i] == 93 || inner[i] == 41) { depth = depth - 1; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[]): string {
     match (e) {
         ExprIdent(id) => { return env.elook(id.name); },
         ExprStructLit(s) => { return s.type_name; },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
+                    // An INLINE variant construction as the scrutinee
+                    // (`match (Has(f))`): infer its instantiation from the
+                    // payload args and return the original-spelling type
+                    // (`Opt[(i32) => i32]`), so ge_inst_of derives the same
+                    // mangled key the construction rewrite used and the arms
+                    // rewrite to the mangled variants (#5298 follow-up).
+                    var vgo: i32 = genum_owner_of_variant(enums, funcs, cid.name);
+                    if (vgo >= 0) {
+                        var vgk: string = me_infer_variant_key(enums[vgo], cid.name, c.args, "", env, enums, structs, funcs);
+                        if (vgk.len() > 0) {
+                            var vga: string = vgk;
+                            if (enums[vgo].type_params.len() == 1 && c.args.len() > 0) {
+                                var vgr: string = mono_infer(c.args[0], env, funcs);
+                                if (pk_is_fn_spelling(vgr)) { vga = vgr; }
+                            }
+                            return enums[vgo].name + "[" + vga + "]";
+                        }
+                    }
                     // A match-bound fn payload (`cont`, bound by me_bind_pat_vars
                     // to `fn => Fut[i32]`): calling it yields that return type, so
                     // a nested `match (cont(tok))` over a recursive generic enum
@@ -7306,18 +8446,46 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
                     if (fr.len() > 0) { return fr; }
                     return func_ret_of(funcs, cid.name);
                 },
+                ExprFieldAccess(cfa) => {
+                    // A METHOD call `recv.method(args)` as the scrutinee: resolve
+                    // the receiver's type and return the method's declared return
+                    // type, so `match (s.find(k))` over a generic-enum-returning
+                    // method recovers its instantiation and rewrites its arms.
+                    // Without this the method scrutinee resolved "" (only a free
+                    // function's return was recovered), so the arms stayed
+                    // un-mangled against the concrete enum and the match read the
+                    // wrong variant.
+                    var rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs);
+                    if (rt.len() > 0) {
+                        var rbase: string = strip_struct_base(rt);
+                        var mi: i32 = 0;
+                        while (mi < funcs.len()) {
+                            if (funcs[mi].name == cfa.field && funcs[mi].receiver_type.len() > 0
+                                && strip_struct_base(funcs[mi].receiver_type) == rbase) {
+                                return funcs[mi].ret_type;
+                            }
+                            mi = mi + 1;
+                        }
+                    }
+                    return "";
+                },
                 _ => { return ""; }
             }
             return "";
         },
         ExprIndex(ix) => {
-            var at: string = me_scrutinee_type(ix.array, env, structs, funcs);
+            var at: string = me_scrutinee_type(ix.array, env, enums, structs, funcs);
             if (type_ends_arr(at)) { return at[0 : at.len() - 2] + ""; }
             return "";
         },
         ExprFieldAccess(fa) => {
-            var ot: string = me_scrutinee_type(fa.obj, env, structs, funcs);
+            var ot: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
             if (ot.len() == 0) { return ""; }
+            // A tuple-element access `t.N`: the element's type, so `match (t.0)`
+            // over a generic-enum element recovers its instantiation. Falls
+            // through to the struct-field lookup for a named field.
+            var te: string = me_tuple_elem_type(ot, fa.field);
+            if (te.len() > 0) { return te; }
             return me_field_type_of(structs, ot, fa.field);
         },
         _ => { return ""; }
@@ -7388,7 +8556,38 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // present, else the init's recovered type (a call result, so
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
             var vty: string = v.type_name;
-            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, structs, funcs); }
+            // A fn-typed local coarsens to "fn" (its return type is dropped
+            // from the annotation); recover the FULL spelling from the init
+            // lambda's declared params + return type ("(i32) => i32"), so
+            // `match (f(x))` recovers a generic-enum return (me_fn_ret_spelling
+            // splits on the LAST " => ", so the full spelling parses the same
+            // as the old "fn => <ret>" encoding) AND a variant construction
+            // `Has(f)` can infer + sanitise an fn instantiation key (#5298
+            // follow-up — the coarse encoding was rejected by is_simple_key,
+            // so the inline construct-and-match shape stayed generic and
+            // SIGSEGV'd). Falls back to the old encoding when a param type is
+            // unrecoverable.
+            if (vty == "fn") {
+                match (v.init) {
+                    ExprLambda(lm) => {
+                        if (lm.ret_type.len() > 0) {
+                            var lfs: string = "";
+                            var lfok: boolean = true;
+                            var lfi: i32 = 0;
+                            while (lfi < lm.params.len()) {
+                                if (lm.params[lfi].type_name.len() == 0) { lfok = false; }
+                                if (lfi > 0) { lfs = lfs + ", "; }
+                                lfs = lfs + lm.params[lfi].type_name;
+                                lfi = lfi + 1;
+                            }
+                            if (lfok) { vty = "(" + lfs + ") => " + lm.ret_type; }
+                            else { vty = "fn => " + lm.ret_type; }
+                        }
+                    },
+                    _ => { }
+                }
+            }
+            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, enums, structs, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         StmtReturn(r) => {
@@ -7420,7 +8619,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // in the body recovers a generic-enum element's instantiation
             // (`for o in xs` over `Opt[i32][]` → o: `Opt[i32]`). Strip one `[]`
             // off the iterable's tracked type.
-            var itty: string = me_scrutinee_type(fr.iter, env, structs, funcs);
+            var itty: string = me_scrutinee_type(fr.iter, env, enums, structs, funcs);
             var elty: string = "";
             if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2] + ""; }
             var benv: MEnv = env.ebind(fr.var_name, elty);
@@ -7433,7 +8632,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // Recover the scrutinee's generic-enum instantiation: an annotated
             // ident / param / for-loop var, a call result (the callee's return
             // type), or an index into a generic-enum array.
-            var sty: string = me_scrutinee_type(m.scrutinee, env, structs, funcs);
+            var sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs);
             var gi: GEInst = ge_inst_of(sty, enums, funcs);
             var arms: MatchArm[] = [];
             var i: i32 = 0;
@@ -7449,7 +8648,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                     var gidx: i32 = genum_index(enums, gi.base);
                     if (gidx >= 0) {
                         npat = me_rewrite_arm_pattern(m.arms[i].pattern, enums[gidx], gi.key);
-                        cur = cur.iadd(gi.base, gi.key);
+                        cur = cur.iadd_arg(gi.base, gi.key, genum_single_arg(sty));
                         if (enums[gidx].type_params.len() == 1) {
                             var arg0: string = genum_single_arg(sty);
                             if (arg0.len() > 0) { armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], arg0, structs, env); }
@@ -7492,7 +8691,7 @@ function me_rewrite_params(params: ParamDecl[], enums: EnumDecl[], funcs: FuncDe
     var i: i32 = 0;
     while (i < params.len()) {
         var p: ParamDecl = params[i];
-        out = out.append(ParamDecl { name: p.name, type_name: me_rewrite_ty(p.type_name, enums, funcs), own: p.own, has_default: p.has_default, default_value: p.default_value, ret_arr: p.ret_arr, fn_ret: p.fn_ret });
+        out = out.append(ParamDecl { name: p.name, type_name: me_rewrite_ty(p.type_name, enums, funcs), own: p.own, has_default: p.has_default, default_value: p.default_value, ret_arr: p.ret_arr, fn_ret: p.fn_ret, fn_param_dyn: p.fn_param_dyn });
         i = i + 1;
     }
     return out;
@@ -7508,7 +8707,7 @@ pub function monomorphize_enums(mod: Module): Module {
     }
     if (!any) { return mod; }
 
-    var ins: Insts = Insts { inames: [], itypes: [] };
+    var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
@@ -7567,11 +8766,14 @@ pub function monomorphize_enums(mod: Module): Module {
         var gidx: i32 = genum_index(mod.enums, base);
         if (gidx >= 0) {
             var ed: EnumDecl = mod.enums[gidx];
-            // A single-type-param enum's key IS the one concrete arg verbatim
-            // (which may itself be a mangled nested clone like `Opt__i32`, so
-            // splitting on `__` would wrongly fracture it). A multi-param key
-            // is the `__`-join of simple nominals and splits unambiguously.
-            var cts: string[] = [key];
+            // A single-type-param enum substitutes T with the ORIGINAL arg
+            // spelling (`iargs`), not the mangled key: for a nominal / nested
+            // clone the two coincide (`i32`, `Opt[i32]` → me_rewrite_ty gives
+            // `Opt__i32` == the key), but a fn-keyed clone's key is LOSSILY
+            // sanitised (`_i32_____i32`), so only iargs recovers the real field
+            // type `(i32) => i32`. A multi-param key is the `__`-join of simple
+            // nominals and splits unambiguously (iargs is unused there).
+            var cts: string[] = [ins.iargs[wi]];
             if (ed.type_params.len() != 1) { cts = split_dunder(key); }
             var mname: string = base + "__" + key;
             var nvn: string[] = [];
@@ -7603,10 +8805,23 @@ pub function monomorphize_enums(mod: Module): Module {
                         // arms (#4722). Empty (non-fn) fn_ret stays empty.
                         var sub_ret: string = subst_ty(vs.fields[fj2].fn_ret, ed.type_params, cts);
                         ins = me_collect_anno(sub_ret, mod.enums, mod.funcs, ins);
-                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: me_rewrite_ty(subbed, mod.enums, mod.funcs), fn_ret: me_rewrite_ty(sub_ret, mod.enums, mod.funcs) });
+                        var f_ty: string = me_rewrite_ty(subbed, mod.enums, mod.funcs);
+                        var f_ret: string = me_rewrite_ty(sub_ret, mod.enums, mod.funcs);
+                        // A type-param substituted to a fn spelling (`T` → `(i32)
+                        // => i32`, #5298) must be COARSENED to the parser's fn
+                        // field shape — type_name "fn" with the result on fn_ret —
+                        // so the IR path recognises it as a fn payload (a raw
+                        // spelling in type_name trips the per-function IR
+                        // eligibility, bailing the whole function to AST).
+                        if (pk_is_fn_spelling(f_ty)) {
+                            f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), mod.enums, mod.funcs);
+                            ins = me_collect_anno(f_ret, mod.enums, mod.funcs, ins);
+                            f_ty = "fn";
+                        }
+                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: f_ty, fn_ret: f_ret });
                         fj2 = fj2 + 1;
                     }
-                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume });
+                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume });
                 }
                 vi2 = vi2 + 1;
             }
@@ -7640,7 +8855,7 @@ pub function monomorphize_enums(mod: Module): Module {
                 rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, mod.enums, mod.funcs), fn_ret: me_rewrite_ty(sd.fields[rfj].fn_ret, mod.enums, mod.funcs) });
                 rfj = rfj + 1;
             }
-            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
         }
         osi = osi + 1;
     }
@@ -8111,7 +9326,7 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): (S
                             var caps: string[] = hl_capture_list(lam, v.name, enclosing);
                             var new_params: ParamDecl[] = lam.params;
                             var ci: i32 = 0;
-                            while (ci < caps.len()) { new_params = new_params.append(ParamDecl { name: caps[ci], type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }); ci = ci + 1; }
+                            while (ci < caps.len()) { new_params = new_params.append(ParamDecl { name: caps[ci], type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }); ci = ci + 1; }
                             // Hoist nested recursive locals first; inside the
                             // lifted function the captures are in scope as params.
                             var inner_encl: string[] = hl_param_names(new_params);
@@ -8462,7 +9677,7 @@ pub function insert_resource_drops(mod: Module): Module {
         var rn: string = needed[k];
         var iface2: string = resource_binding_iface(mod.resources, rn);
         var wit2: string = resource_binding_wit(mod.resources, rn);
-        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
         out_funcs = out_funcs.append(FuncDecl {
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
             type_params: no_tp, params: hp, ret_type: "void", body: no_body,
@@ -9041,6 +10256,18 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
             return irt_guess(b.left, params, funcs);
         },
         ExprStructLit(s) => { return s.type_name; },
+        // A non-empty array literal infers `T[]` from its first element
+        // (#5326): without this an unannotated array-returning function never
+        // enters the `*_ret_fns_of` registries, so a `var a = f()` binding
+        // left the slot's element kind untracked and a[i] silently took the
+        // 4-byte default stride — a wrong-value miscompile for f64/string
+        // elements on the self-host IR path.
+        ExprArray(al) => {
+            if (al.elements.len() == 0) { return ""; }
+            var el: string = irt_guess(al.elements[0], params, funcs);
+            if (el == "") { return ""; }
+            return el + "[]";
+        },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
@@ -9319,7 +10546,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             while (i < t.elements.len()) { ne = ne.append(cf_rw_expr(t.elements[i], f, target)); i = i + 1; }
             return ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target) }; },
+        ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target), unchecked: ix.unchecked }; },
         ExprSlice(sl) => { return ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target) }; },
         ExprStructLit(sl) => {
             var nv: Expr[] = [];
@@ -9360,6 +10587,377 @@ function cf_rw_stmts(stmts: Stmt[], f: string, target: string): Stmt[] {
     var i: i32 = 0;
     while (i < stmts.len()) { out = out.append(cf_rw_stmt(stmts[i], f, target)); i = i + 1; }
     return out;
+}
+
+// ===================================================================
+// #4380 lever 3: syntactic bounds-check elision for len-bounded loops.
+//
+// A purely syntactic pass (mirroring internal/parser/bounds_elide.go) that
+// marks array-index READS `arr[i]` inside a `while (i < arr.len())` loop as
+// Unchecked, so irlower drops the per-iteration bounds check + the per-access
+// `len` reload (op_arr_get_nc). No type info is
+// consulted: the IR honours the flag ONLY on the true array path, so marking a
+// string / map index is a harmless no-op there.
+//
+// Self-host specifics vs the native pass:
+//   - There is no C-style-for AST node (parse_for_stmt desugars it to
+//     `while (true) { … if (!(cond)) break … }` at parse time), so only an
+//     EXPLICIT `while (i < arr.len())` guard is matched. The self-host code
+//     the pass targets uses that idiom near-universally.
+//   - Index WRITES desugar to `__set_index(arr, i, v)` calls, never ExprIndex,
+//     so every `arr[i]` ExprIndex is a read — no write target to mis-mark.
+//   - Closures capture by value and the checker forbids assigning a captured
+//     variable (E049), so a lambda body can never mutate the outer `i` / rebind
+//     `arr`. The safety walks below therefore recurse through statements only
+//     (assignments are always statements; the only expr carrying statements is
+//     a lambda, which cannot touch the outer bindings).
+//
+// An access is marked only when `0 <= i < len(arr)` is syntactically provable:
+//   - the guard is exactly `i < arr.len()` (strict `<`, both operands bare
+//     idents) — the upper bound `i < len`;
+//   - `i` starts at a non-negative integer literal in the statement immediately
+//     before the loop, and every assignment to `i` in the body is
+//     `i = i + <non-negative int literal>` — so `i` is monotonic non-decreasing
+//     and never drops below 0 (the check also guards NEGATIVE indices);
+//   - `arr` is never reassigned and neither `i` nor `arr` is rebound (shadowed)
+//     in the body — so `len(arr)` and the binding stay invariant;
+//   - the access precedes the first statement that assigns `i` (a read after an
+//     increment could reach `len`).
+// Accesses inside a lambda / defer body are never marked: that code runs later,
+// when `i` may have advanced past `len`.
+
+struct LenLoopMatch { ok: boolean, idx: string, arr: string }
+struct LenArrRef { ok: boolean, name: string }
+
+// elide_len_bounded_body is the pass entry: it rewrites a function body,
+// returning a copy with in-bounds `arr[i]` reads marked. Called at
+// irlower.lower_func entry — after every AST transform — so no later pass
+// clobbers the flag and the transform sites all default it to false.
+pub function elide_len_bounded_body(stmts: Stmt[]): Stmt[] {
+    // Recurse into nested statement lists first, so inner loops are handled in
+    // place; then elide while-loops at THIS level (each needs its preceding
+    // statement as the source of `i`'s start value).
+    var lowered: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { lowered = lowered.append(elb_recurse_stmt(stmts[i])); i = i + 1; }
+    var out: Stmt[] = [];
+    var p: i32 = 0;
+    while (p < lowered.len()) {
+        var st: Stmt = lowered[p];
+        match (st) {
+            StmtWhile(w) => { if (p > 0) { st = elb_try_while(w, lowered[p - 1]); } },
+            _ => { }
+        }
+        out = out.append(st);
+        p = p + 1;
+    }
+    return out;
+}
+
+// elb_recurse_stmt rebuilds one statement with elide_len_bounded_body applied to
+// each nested statement list (does NOT descend into lambda bodies — they are
+// lifted to their own FuncDecls before lower_func, each processed separately).
+function elb_recurse_stmt(st: Stmt): Stmt {
+    match (st) {
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var arm: MatchArm = m.arms[i];
+                arms = arms.append(MatchArm { pattern: arm.pattern, body: elide_len_bounded_body(arm.body), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                i = i + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtDefer(d) => { return StmtDefer { action: elb_recurse_stmt(d.action), on_error: d.on_error }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+// elb_try_while checks the invariants for one while-loop and, when they hold,
+// returns the loop with its qualifying body-prefix reads marked. `prev` is the
+// statement immediately before the loop (the source of `i`'s start value).
+function elb_try_while(w: StmtWhile, prev: Stmt): Stmt {
+    var m: LenLoopMatch = elb_loop_match(w.cond);
+    if (!m.ok) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (elb_assigns_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (!elb_idx_monotonic_stmts(w.body, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (!elb_starts_nonneg(prev, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    var nb: Stmt[] = [];
+    var i: i32 = 0;
+    var stop: boolean = false;
+    while (i < w.body.len()) {
+        var st: Stmt = w.body[i];
+        if (!stop && elb_assigns_stmt(st, m.idx)) { stop = true; }
+        if (!stop) { st = elb_mark_stmt(st, m.idx, m.arr); }
+        nb = nb.append(st);
+        i = i + 1;
+    }
+    return StmtWhile { cond: w.cond, body: nb, label: w.label };
+}
+
+// elb_loop_match matches `IDX < ARR.len()` (strict `<`, both operands bare
+// idents, IDX != ARR) and returns (IDX, ARR).
+function elb_loop_match(cond: Expr): LenLoopMatch {
+    match (cond) {
+        ExprBinary(b) => {
+            if (b.op == "<") {
+                match (b.left) {
+                    ExprIdent(li) => {
+                        var la: LenArrRef = elb_len_array(b.right);
+                        if (la.ok && la.name != li.name) { return LenLoopMatch { ok: true, idx: li.name, arr: la.name }; }
+                    },
+                    _ => { }
+                }
+            }
+        },
+        _ => { }
+    }
+    return LenLoopMatch { ok: false, idx: "", arr: "" };
+}
+
+// elb_len_array returns the array-ident of a `A.len()` length expression, where
+// A is a bare ident. Fern has no free `len(A)` function (that idiom is E001), so
+// only the method form is matched.
+function elb_len_array(e: Expr): LenArrRef {
+    match (e) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field == "len" && c.args.len() == 0) {
+                        match (fa.obj) { ExprIdent(id) => { return LenArrRef { ok: true, name: id.name }; }, _ => { } }
+                    }
+                },
+                _ => { }
+            }
+        },
+        _ => { }
+    }
+    return LenArrRef { ok: false, name: "" };
+}
+
+// elb_starts_nonneg proves `idx`'s entry value is a non-negative integer literal
+// from the immediately-preceding `var idx = v` / `idx = v` statement (nothing
+// runs between it and the guard).
+function elb_starts_nonneg(prev: Stmt, idx: string): boolean {
+    match (prev) {
+        StmtVar(v) => { if (v.name == idx) { return elb_is_nonneg_int(v.init); } },
+        StmtAssign(a) => { if (a.target == idx) { return elb_is_nonneg_int(a.value); } },
+        _ => { }
+    }
+    return false;
+}
+
+// elb_is_nonneg_int reports whether e is a non-negative integer literal. The
+// lexer tokenises `-1` as unary-minus over `1`, so a bare integer ExprNumber is
+// always non-negative; the leading-digit guard is belt-and-braces.
+function elb_is_nonneg_int(e: Expr): boolean {
+    match (e) {
+        ExprNumber(n) => {
+            if (n.is_float) { return false; }
+            if (n.text.len() == 0) { return false; }
+            var c0: i32 = n.text[0];
+            return c0 >= 48 && c0 <= 57;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// elb_assigns_stmts / elb_assigns_stmt report whether any `name = …` assignment
+// appears in the statement subtree. Assignments are always statements (the only
+// expr that carries statements is a lambda, which cannot assign the outer name),
+// so no expression walk is needed.
+function elb_assigns_stmts(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (elb_assigns_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function elb_assigns_stmt(st: Stmt, name: string): boolean {
+    match (st) {
+        StmtAssign(a) => { return a.target == name; },
+        StmtIf(f) => { return elb_assigns_stmts(f.then_body, name) || elb_assigns_stmts(f.else_body, name); },
+        StmtWhile(w) => { return elb_assigns_stmts(w.body, name); },
+        StmtFor(fr) => { return elb_assigns_stmts(fr.body, name); },
+        StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) { if (elb_assigns_stmts(m.arms[i].body, name)) { return true; } i = i + 1; }
+            return false;
+        },
+        StmtDefer(d) => { return elb_assigns_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// elb_binds_stmts / elb_binds_stmt report whether the statement subtree rebinds
+// (declares / shadows / iterates) `name` via a `var`, a `for` loop variable, or
+// a match-arm pattern binding.
+function elb_binds_stmts(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (elb_binds_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function elb_binds_stmt(st: Stmt, name: string): boolean {
+    match (st) {
+        StmtVar(v) => { return v.name == name; },
+        StmtFor(fr) => { if (fr.var_name == name) { return true; } return elb_binds_stmts(fr.body, name); },
+        StmtIf(f) => { return elb_binds_stmts(f.then_body, name) || elb_binds_stmts(f.else_body, name); },
+        StmtWhile(w) => { return elb_binds_stmts(w.body, name); },
+        StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (elb_pat_binds(m.arms[i].pattern, name)) { return true; }
+                if (elb_binds_stmts(m.arms[i].body, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        StmtDefer(d) => { return elb_binds_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+function elb_pat_binds(p: Pattern, name: string): boolean {
+    match (p) {
+        PatVariant(pv) => {
+            if (pv.binding == name) { return true; }
+            var i: i32 = 0;
+            while (i < pv.extra_bindings.len()) { if (pv.extra_bindings[i] == name) { return true; } i = i + 1; }
+            var j: i32 = 0;
+            while (j < pv.nested.len()) { if (elb_pat_binds(pv.nested[j], name)) { return true; } j = j + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// elb_idx_monotonic_stmts / _stmt report whether EVERY assignment to `idx` in
+// the subtree is `idx = idx + <non-negative int literal>` (keeps idx monotonic
+// non-decreasing). Any other shape fails.
+function elb_idx_monotonic_stmts(stmts: Stmt[], idx: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (!elb_idx_monotonic_stmt(stmts[i], idx)) { return false; } i = i + 1; }
+    return true;
+}
+function elb_idx_monotonic_stmt(st: Stmt, idx: string): boolean {
+    match (st) {
+        StmtAssign(a) => { if (a.target == idx) { return elb_is_monotonic_incr(a.value, idx); } return true; },
+        StmtIf(f) => { return elb_idx_monotonic_stmts(f.then_body, idx) && elb_idx_monotonic_stmts(f.else_body, idx); },
+        StmtWhile(w) => { return elb_idx_monotonic_stmts(w.body, idx); },
+        StmtFor(fr) => { return elb_idx_monotonic_stmts(fr.body, idx); },
+        StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) { if (!elb_idx_monotonic_stmts(m.arms[i].body, idx)) { return false; } i = i + 1; }
+            return true;
+        },
+        StmtDefer(d) => { return elb_idx_monotonic_stmt(d.action, idx); },
+        _ => { return true; }
+    }
+    return true;
+}
+function elb_is_monotonic_incr(v: Expr, idx: string): boolean {
+    match (v) {
+        ExprBinary(b) => {
+            if (b.op == "+") {
+                match (b.left) {
+                    ExprIdent(li) => { if (li.name == idx) { return elb_is_nonneg_int(b.right); } },
+                    _ => { }
+                }
+            }
+        },
+        _ => { }
+    }
+    return false;
+}
+
+// elb_mark_stmt / elb_mark_stmts / elb_mark_expr rebuild the subtree, setting
+// `unchecked` on every `arr[idx]` read (both operands the exact idents). They do
+// NOT descend into lambda bodies or defer actions — that code runs later, when
+// idx may have advanced past len.
+function elb_mark_stmts(stmts: Stmt[], idx: string, arr: string): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(elb_mark_stmt(stmts[i], idx, arr)); i = i + 1; }
+    return out;
+}
+function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
+    match (st) {
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str }; },
+        StmtReturn(r) => { return StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col }; },
+        StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr) }; },
+        StmtAssign(a) => { return StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
+        StmtIf(f) => { return StmtIf { cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) }; },
+        StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var arm: MatchArm = m.arms[i];
+                arms = arms.append(MatchArm { pattern: arm.pattern, body: elb_mark_stmts(arm.body, idx, arr), line: arm.line, col: arm.col, guard: elb_mark_expr(arm.guard, idx, arr), has_guard: arm.has_guard });
+                i = i + 1;
+            }
+            return StmtMatch { scrutinee: elb_mark_expr(m.scrutinee, idx, arr), arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+function elb_mark_expr(e: Expr, idx: string, arr: string): Expr {
+    match (e) {
+        ExprIndex(ix) => {
+            var mark: boolean = ix.unchecked;
+            match (ix.array) {
+                ExprIdent(aid) => {
+                    match (ix.index) {
+                        ExprIdent(iid) => { if (aid.name == arr && iid.name == idx) { mark = true; } },
+                        _ => { }
+                    }
+                },
+                _ => { }
+            }
+            return ExprIndex { array: elb_mark_expr(ix.array, idx, arr), index: elb_mark_expr(ix.index, idx, arr), unchecked: mark };
+        },
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: elb_mark_expr(b.left, idx, arr), right: elb_mark_expr(b.right, idx, arr), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: elb_mark_expr(u.operand, idx, arr), line: u.line, col: u.col }; },
+        ExprCall(c) => {
+            var na: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { na = na.append(elb_mark_expr(c.args[i], idx, arr)); i = i + 1; }
+            return ExprCall { callee: elb_mark_expr(c.callee, idx, arr), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprArray(a) => {
+            var ne: Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { ne = ne.append(elb_mark_expr(a.elements[i], idx, arr)); i = i + 1; }
+            return ExprArray { elements: ne };
+        },
+        ExprTuple(t) => {
+            var ne: Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { ne = ne.append(elb_mark_expr(t.elements[i], idx, arr)); i = i + 1; }
+            return ExprTuple { elements: ne, line: t.line, col: t.col };
+        },
+        ExprSlice(sl) => { return ExprSlice { array: elb_mark_expr(sl.array, idx, arr), start: elb_mark_expr(sl.start, idx, arr), end: elb_mark_expr(sl.end, idx, arr) }; },
+        ExprStructLit(sl) => {
+            var nv: Expr[] = [];
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { nv = nv.append(elb_mark_expr(sl.field_values[i], idx, arr)); i = i + 1; }
+            var nbase: Expr = sl.base;
+            if (sl.has_base) { nbase = elb_mark_expr(sl.base, idx, arr); }
+            return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: elb_mark_expr(fa.obj, idx, arr), field: fa.field, line: fa.line, col: fa.col }; },
+        _ => { return e; }
+    }
+    return e;
 }
 
 // cf_inline_fn_body inlines every call-only 0-arg fn-value binding in a
@@ -9772,7 +11370,7 @@ function str_list_contains(xs: string[], want: string): boolean {
 
 // derive_simple_name returns a (possibly qualified) trait name's simple
 // name (after the last `.`): `cmp.Display` → "Display".
-function derive_simple_name(name: string): string {
+pub function derive_simple_name(name: string): string {
     var last_dot: i32 = 0 - 1;
     var i: i32 = 0;
     while (i < name.len()) {
@@ -9884,7 +11482,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
     }
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
@@ -9905,7 +11503,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     }
     stmts = stmts.append(s_return(e_number("0", "", false)));
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
@@ -9946,6 +11544,81 @@ function synth_struct_json(sd: StructDecl): FuncDecl {
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
     return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
+}
+
+// fromjson_accessor returns the `json.json_get_*` accessor for a field
+// type, or "" when the type has none — the gate `from_json_derivable`
+// uses to decide whether the deserialise companion can be synthesised.
+// Mirrors the native synthFromJson switch: 64-bit ints go through the
+// i64 accessor, narrower ints through i32, plus bool / string. Any other
+// field type (nested struct, array, Option, f64) has no flat accessor —
+// serialise still works, deserialise is a documented follow-up (#2695).
+function fromjson_accessor(tn: string): string {
+    if (tn == "i64" || tn == "u64") { return "json_get_i64"; }
+    if (tn == "i32" || tn == "u32") { return "json_get_i32"; }
+    if (tn == "boolean") { return "json_get_bool"; }
+    if (tn == "string") { return "json_get_string"; }
+    return "";
+}
+
+// from_json_derivable reports whether every field of `sd` has a flat
+// `json.json_get_*` accessor — the precondition for synth_from_json. A
+// struct with a single unsupported field gets `to_json` only.
+function from_json_derivable(sd: StructDecl): boolean {
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        if (fromjson_accessor(sd.fields[i].type_name).len() == 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// synth_from_json builds the deserialise companion to synth_struct_json:
+// a receiver-less associated `from_json(s: string): Result[Self, string]`
+// that parses the JSON text and extracts each field by name, returning
+// `Err(...)` on invalid JSON or a missing field. The body nests one
+// `match` per field over its `json.json_get_*` accessor `Option`, so a
+// missing field short-circuits to `Err("missing field: <name>")` without
+// a `?` operator; the innermost arm returns `Ok(Self { … })`. The
+// `json.*` calls resolve through the `@derive(json.Json)` site's own
+// `import "std/json"` (basename alias `json`) — modload rewrites them to
+// the flat `json__*`. Mirrors the native synthFromJson (#2695). Only
+// called when from_json_derivable(sd) holds, so every field's accessor
+// is non-empty.
+function synth_from_json(sd: StructDecl): FuncDecl {
+    // Innermost: return Ok(Self { f: __fj_f, … }).
+    var fnames: string[] = [];
+    var fvals: Expr[] = [];
+    var k: i32 = 0;
+    while (k < sd.fields.len()) {
+        fnames = fnames.append(sd.fields[k].name);
+        fvals = fvals.append(e_ident("__fj_" + sd.fields[k].name));
+        k = k + 1;
+    }
+    var lit: Expr = e_struct_lit(sd.name, fnames, fvals, 0, 0);
+    var body: Stmt[] = [s_return(e_call(e_ident("Ok"), [lit]))];
+    // Wrap each field's accessor match, inner-to-outer.
+    var fi: i32 = sd.fields.len() - 1;
+    while (fi >= 0) {
+        var fname: string = sd.fields[fi].name;
+        var acc: string = fromjson_accessor(sd.fields[fi].type_name);
+        var accessor_call: Expr = e_call(e_field_access(e_ident("json"), acc), [e_ident("__fj_jv"), e_string(fname)]);
+        var missing: Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("missing field: " + fname)]))];
+        var arms: MatchArm[] = [];
+        arms = arms.append(MatchArm { pattern: p_variant("Some", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant("None", ""), body: missing, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        body = [s_match(accessor_call, arms)];
+        fi = fi - 1;
+    }
+    // Outermost: parse the string, then run the field chain.
+    var parse_fail: Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("invalid JSON")]))];
+    var oarms: MatchArm[] = [];
+    oarms = oarms.append(MatchArm { pattern: p_variant("Some", "__fj_jv"), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+    oarms = oarms.append(MatchArm { pattern: p_variant("None", ""), body: parse_fail, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+    var obody: Stmt[] = [s_match(e_call(e_field_access(e_ident("json"), "json_parse"), [e_ident("s")]), oarms)];
+    var params: ParamDecl[] = [ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
+    var notp: string[] = [];
+    return FuncDecl { name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: obody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
@@ -10022,7 +11695,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
@@ -10068,7 +11741,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
 }
 
@@ -10372,7 +12045,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
 // names are ignored (the Go checker is the strict gate). `Default` is the
 // only associated (receiver-less) one — and only synthesised when every
 // field is itself default-derivable.
-function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): FuncDecl[] {
+function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[], has_json_import: boolean): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
@@ -10381,11 +12054,35 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
         if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
-        if (kind == "Json") { funcs = funcs.append(synth_struct_json(sd)); }
+        if (kind == "Json") {
+            funcs = funcs.append(synth_struct_json(sd));
+            // The deserialise companion `from_json` calls `json.json_parse` /
+            // `json.json_get_*`, so it is ONLY synthesised when the real
+            // std/json is imported (mirrors native's `json__json_parse in
+            // prog.Funcs` gate). A module deriving a user's OWN inline `trait
+            // Json` — or one that never imports std/json — gets serialise-only,
+            // so those `json.*` calls are never emitted into an unresolved
+            // module.
+            if (has_json_import && from_json_derivable(sd)) { funcs = funcs.append(synth_from_json(sd)); }
+        }
         if (kind == "Default") { if (struct_default_derivable(sd)) { funcs = funcs.append(synth_struct_default(sd)); } }
         di = di + 1;
     }
     return funcs;
+}
+
+// imports_have_std_json reports whether the module's parsed imports include
+// std/json — the precondition for synthesising a `@derive(Json)` struct's
+// `from_json` (whose body calls std/json's json_parse / json_get_*). Imports
+// are conventionally at the top of a module, so they are already accumulated
+// by the time a `@derive` struct decl is reached in parse_module.
+function imports_have_std_json(imports: Import[]): boolean {
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        if (imports[i].path == "std/json") { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // parse_derive_attr consumes `@derive(Trait, mod.Trait, …)` (the `@` is
@@ -10800,7 +12497,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
         while (ai < m.params.len()) {
             var apt: string = m.params[ai].type_name;
             apt = subst_self(apt, impl_type);
-            aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret });
+            aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret, fn_param_dyn: m.params[ai].fn_param_dyn });
             ai = ai + 1;
         }
         return FuncDecl {
@@ -10825,7 +12522,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
         } else {
             var pt: string = m.params[i].type_name;
             pt = subst_self(pt, impl_type);
-            newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret });
+            newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn });
         }
         i = i + 1;
     }
@@ -10995,6 +12692,16 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 }
                 continue;
             }
+            if (probe.peek_ident() == "inline" || probe.peek_ident() == "noinline") {
+                // `@inline` / `@noinline` markers (#4412 Rec §14) are
+                // consulted by the NATIVE inliner only — the self-host
+                // IR path runs no inline pass, so the marker is
+                // parse-tolerated and dropped (the must_consume
+                // precedent below). The following function decl parses
+                // normally on the next loop iteration.
+                p = probe.advance();
+                continue;
+            }
             if (probe.peek_ident() == "must_consume") {
                 // `@must_consume` marker (docs/MUST-CONSUME.md): stamp
                 // the following struct/enum decl so the checker's E067
@@ -11034,8 +12741,8 @@ pub function parse_module(toks: lexer.Token[]): Module {
             if (dk == "struct") {
                 var (dsr_decl, dsr_p) = parse_struct_decl(p);
                 p = dsr_p;
-                structs = structs.append(dsr_decl);
-                funcs = synth_derives(dsr_decl, dr_derives, funcs);
+                structs = structs.append(StructDecl { ...dsr_decl, derives: dr_derives });
+                funcs = synth_derives(dsr_decl, dr_derives, funcs, imports_have_std_json(imports));
                 continue;
             }
             if (dk == "enum") {
@@ -11046,7 +12753,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false });
                 var dei: i32 = 0;
                 while (dei < denr_variants.len()) {
-                    structs = structs.append(denr_variants[dei]);
+                    structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });
                     dei = dei + 1;
                 }
                 // Synthesise variant-wise Display / Eq methods on the
@@ -11300,7 +13007,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;

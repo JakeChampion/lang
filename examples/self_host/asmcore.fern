@@ -327,6 +327,171 @@ pub function rt_src_chr(): string {
     return "function __fern_chr(b: i32): string { var p: i32 = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }";
 }
 
+// rt_src_random_bytes backs `random_bytes(n)` (#2649) — the first syscall-leaf
+// helper written in Fern, over the syscall sub-floor (docs/RUNTIME-INTRINSICS.md
+// step 5). Allocate n bytes, fill them from getrandom(buf, n, 0) (x86-64
+// syscall 318), box the buffer back into a string. The `__syscall3` result (the
+// byte count) is discarded — the audited leaf trusts a blocking getrandom of a
+// small n. Only dep is `heap` (mark_random_bytes pulls it). x86-64-only: the
+// getrandom syscall number is arch-specific (arm64 = 278) and wasm has no
+// generic syscall, so those backends keep their hand-asm/WASI bundle for now.
+pub function rt_src_random_bytes(): string {
+    return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); __syscall3(318, p, n, 0); return __raw_string(p, n); }";
+}
+
+// rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
+// (#2649) — the single definition of the mapping native's __fern_io_error + the
+// arm64 hand-asm carry, so stat / read_file / remove_file / write_file stop
+// INLINING the five-way branch and just call it. `path` is consumed (moved into
+// the path-carrying variant, or dropped by RC on the payload-less Interrupted
+// branch), so callers hand it a FRESH string. Emitted once and bundled with the
+// fs helpers that call it (asm_ir's fs-helper bundle), so the standard
+// inter-procedural RC analysis threads the call-graph edge — this IS the #2649
+// "dependencies are the call graph" end-state, in miniature. x86-64 IR only; the
+// arm64 / AST backends keep the hand-asm __fern_io_error.
+pub function rt_src_io_error(): string {
+    return "function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; } return Other(path, \"\"); }";
+}
+
+// rt_src_remove_file backs `remove_file(path)` (#2649, syscall-leaf) →
+// Option[IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0) (syscall
+// 263, 3-arg so __syscall3 suffices), return None on success / on failure the
+// errno classified by the shared __fern_io_error (bundled with this helper) —
+// handed a FRESH path string, so the borrowed `path` param is never stored.
+pub function rt_src_remove_file(): string {
+    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return None; }";
+}
+
+// rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
+// Option[IoError]. NUL-terminate the path, openat(AT_FDCWD, path,
+// O_WRONLY|O_CREAT|O_TRUNC=577, mode=420=0644) — the mode arg is meaningful, so
+// this is the first __syscall4 user. Copy the contents bytes into a buffer and
+// write them in ONE write (single write, no offset-loop, like read_file's single
+// read — regular-file writes complete in one call), close. None on success; on
+// openat failure the errno classified by the shared __fern_io_error (bundled with
+// this helper), handed a FRESH path string. x86-64-only (arch-specific syscalls).
+pub function rt_src_write_file(): string {
+    return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { return Some(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
+}
+
+// rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
+// array (via __raw_environ, the saved __fern_envp) for a "name=value" entry, then
+// COPIES the value into a fresh heap string. Unlike the hand-asm (which boxed the
+// kernel-immortal bytes in place), it copies because the entry pointer is a high
+// stack address the i32 raw-pointer floor can't offset 64-bit-safely as a Fern
+// value — but __raw_load8(entry, off) offsets in the emitter, so per-byte reads
+// are safe. x86-64-only.
+pub function rt_src_env(): string {
+    return "function __fern_env(name: string): Option[string] { var nlen: i32 = name.len(); var envp: i32 = __raw_environ(); var idx: i32 = 0; var done: i32 = 0; while (done == 0) { var entry: i32 = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { var m: i32 = 1; var k: i32 = 0; while (k < nlen) { if (__raw_load8(entry, k) != name[k]) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { var vs: i32 = nlen + 1; var vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } var vbuf: i32 = __raw_alloc(vlen + 1); var c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
+}
+
+// rt_src_temp_dir backs `temp_dir(prefix)` (#2649, syscall-leaf) → Result[string,
+// IoError]. Builds a uniquely-named /tmp/<prefix>-<monotonic_ns> path with the
+// raw-memory intrinsics (inline i64→digits, like the hand-asm — avoids pulling in
+// str_concat / i64_to_string helper deps; monotonic_ns is a builtin callee, marked
+// by the op handler), mkdirat(AT_FDCWD, path, 0700=448) via __syscall3, returns
+// Ok(path) — the built buffer becomes the string — or, on failure, the errno
+// classified by the shared __fern_io_error (bundled with this helper), handed a
+// FRESH copy of the built path. x86-64-only (arch-specific syscall number).
+pub function rt_src_temp_dir(): string {
+    return "function __fern_temp_dir(prefix: string): Result[string, IoError] { var t: i64 = monotonic_ns(); var plen: i32 = prefix.len(); var ndig: i32 = 1; var tt: i64 = t; while (tt >= (10 as i64)) { ndig = ndig + 1; tt = tt / (10 as i64); } var total: i32 = 5 + plen + 1 + ndig; var buf: i32 = __raw_alloc(total + 1); __raw_store8(buf, 0, 47); __raw_store8(buf, 1, 116); __raw_store8(buf, 2, 109); __raw_store8(buf, 3, 112); __raw_store8(buf, 4, 47); var i: i32 = 0; while (i < plen) { __raw_store8(buf, 5 + i, prefix[i]); i = i + 1; } __raw_store8(buf, 5 + plen, 45); var pos: i32 = total - 1; var v: i64 = t; if (v == (0 as i64)) { __raw_store8(buf, pos, 48); } else { while (v > (0 as i64)) { __raw_store8(buf, pos, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); pos = pos - 1; } } __raw_store8(buf, total, 0); var rc: i32 = __syscall3(258, -100, buf, 448); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(buf, total))); } return Ok(__raw_string(buf, total)); }";
+}
+
+// rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
+// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
+// 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
+// (syscall 8), read the whole thing in ONE read into a sized buffer that BECOMES
+// the returned string (RC-managed, like random_bytes), close. On open/read
+// failure, the errno is classified by the shared __fern_io_error (bundled with
+// this helper), handed a FRESH path string, so the borrowed `path` param is never
+// stored. The success path is unchanged, so the compiler's own read_file stays
+// byte-for-byte. Single-read (no offset-into-buffer arithmetic, which the i32
+// raw-pointer floor can't do 64-bit-safely on a high heap buffer): correct for
+// regular files ≤ 2 GiB read without interruption, which covers the use (the
+// compiler reading source). x86-64-only (arch-specific syscall numbers).
+pub function rt_src_read_file(): string {
+    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { return Err(__fern_io_error(0 - got, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
+}
+
+// rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
+// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY=
+// 65536) (syscall 257; mode ignored without O_CREAT so __syscall3 suffices), then
+// DRAIN the directory with a loop of getdents64 (syscall 217) reads into a FRESH
+// 64 KiB buffer each iteration — appending each entry's base name (skipping "." /
+// "..") to a string[]. The fresh-buffer-per-read shape avoids the `buf + off`
+// pointer arithmetic the i32 raw-pointer floor can't do 64-bit-safely (getdents64
+// never splits a linux_dirent64 record across calls, so each buffer parses
+// independently); the record fields are read via __raw_load8(buf, pos+k), which
+// offsets in the emitter. Record layout: d_ino(8) d_off(8) d_reclen(u16 @16)
+// d_type(1) d_name(@19, NUL-terminated). On openat failure the errno is classified
+// by the shared __fern_io_error (bundled with this helper), handed a FRESH path
+// string. The result string[] is built with .append() (→ __fern_arr_push /
+// arr_push_owned for the sole-owner local, like str_split). x86-64-only (arch-
+// specific syscall numbers); arm64/AST keep their hand-asm.
+pub function rt_src_read_dir(): string {
+    return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + 19 + nlen) != 0) { nlen = nlen + 1; } var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + 19 + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); return Ok(names); }";
+}
+
+// rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs
+// syscall-leaf) → Option[IoError]: a best-effort recursive rm -rf. It classifies
+// the target with openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY=65536): ENOENT (2) →
+// None (already gone); ENOTDIR (20) → unlinkat the file, None; any other error →
+// Some(__fern_io_error(e, path)); success → it is a directory, so it DRAINS the
+// dir with a getdents64 loop over a fresh 64 KiB buffer per read (the read_dir
+// shape), building each child path (path + "/" + name) directly in a raw buffer
+// and recursing, then rmdirs via unlinkat(..., AT_REMOVEDIR=512).
+//
+// Everything is done with the raw-memory intrinsics — deliberately NOT via the
+// (Fern) read_dir builtin. read_dir returns an RC-managed string[]; holding that
+// array live while recursing (each recursion allocates heavily) corrupts it — a
+// self-host RC/arena bug where the held array's memory is reused by the
+// recursion's allocations (SIGSEGV on any dir with a subdirectory; see #2649).
+// The raw getdents buffer + child-path buffers are __raw_alloc'd (bump-only, never
+// freed → never reclaimed → never reused by the recursion), so they stay valid
+// across the recursive call; the only RC value crossing the recursion is the
+// returned Option[IoError], which is safe. The fd is held open across the
+// recursion (best-effort; realistic tree depth only). Bundled with io_error in the
+// fs module so its error-path call threads as an ordinary call-graph edge, and
+// recurses by its own name (→ __fn___fern_remove_dir_all). x86-64-only (arch-
+// specific syscall numbers); arm64/AST keep their hand-asm.
+pub function rt_src_remove_dir_all(): string {
+    return "function __fern_remove_dir_all(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return None; } if (e == 20) { __syscall3(263, -100, pathz, 0); return None; } return Some(__fern_io_error(e, __raw_string(pathz, plen))); } var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + 19 + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + 19 + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Some(_) => {}, None => {} } } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); __syscall3(263, -100, pathz, 512); return None; }";
+}
+
+// rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
+// selects monotonic_ns / now_ns / now_unix_ms. Each reads a `timespec { i64
+// tv_sec; i64 tv_nsec }` from clock_gettime (x86-64 syscall 228) into the fixed
+// static scratch buffer (no per-call leak — the buffer is reused), then does i64
+// math. CLOCK_MONOTONIC = 1, CLOCK_REALTIME = 0. Allocation-free (scratch is
+// static, not heap), so these emit independently of the heap runtime. One
+// compiler function for the three helpers keeps the merged-bundle self-compile
+// under its function budget (#3425). x86-64-only: the clock_gettime syscall
+// number is arch-specific (arm64 = 113), so arm64/AST keep their hand-asm; wasm
+// has no generic syscall.
+pub function rt_src_clock(which: string): string {
+    if (which == "monotonic_ns") {
+        return "function __fern_monotonic_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 1, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
+    }
+    if (which == "now_unix_ms") {
+        return "function __fern_now_unix_ms(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000 as i64) + nsec / (1000000 as i64); }";
+    }
+    return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
+}
+
+// rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf returning a
+// user-typed Result[FileStat, IoError]. NUL-terminate the path, stat(2) (syscall
+// 4, follows symlinks — 2-arg, so __syscall3 suffices) into the fixed static
+// scratch buffer, read st_mode (offset 24, 4 bytes) + st_size (offset 48, 8
+// bytes) via __load_i32/__load_i64, classify by S_IFMT, and build
+// Ok(FileStat{...}) — or, on failure, the errno classified by the shared
+// __fern_io_error (bundled with this helper), handed a FRESH path string so the
+// borrowed `path` param is never stored. The FileStat struct + Result construction
+// lower through the normal IR path (emit_ir_runtime_fern_fn receives all_structs).
+// x86-64-only (arch-specific syscall number); arm64/AST keep their hand-asm.
+pub function rt_src_stat(): string {
+    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+}
+
 pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }
@@ -1759,6 +1924,20 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 // pre-IR check gate (#4327) rejected valid Option returns.
                 return ty_from_name(ct);
             }
+            // `expr?` (parsed as unary `try_`) HAS the operand's Ok/Some payload
+            // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
+            // the `?` result fell through to i32 below, so `var o: Option[i32] =
+            // f()?` (f: Result[Option[i32], i32]) was rejected E003 "initializer
+            // has type i32". Only bit the Option/struct payload case — a string /
+            // array / scalar payload slipped through the lenient assignable check.
+            if (u.op == "try_") {
+                var ot: Ty = infer_expr_type(u.operand, s);
+                match (ot) {
+                    TyResult(_) => { return result_inner(ot); },
+                    TyOption(_) => { return option_inner(ot); },
+                    _ => { return ty_i32(); }
+                }
+            }
             return ty_i32();
         },
         parser.ExprCall(c) => {
@@ -1857,6 +2036,17 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "__raw_store_ptr") { return ty_i32(); }
                     if (id.name == "__raw_load_ptr") { return ty_i32(); }
                     if (id.name == "__raw_string") { return ty_string(); }
+                    // Syscall sub-floor (#2649): the raw-memory floor's I/O
+                    // sibling. Returns the syscall result as i32.
+                    if (id.name == "__syscall3") { return ty_i32(); }
+                    if (id.name == "__syscall4") { return ty_i32(); }
+                    if (id.name == "__raw_environ") { return ty_i32(); }
+                    // Fixed static scratch buffer for syscall leaves (timespec /
+                    // stat) — reused, never freed. Returns the buffer ptr as i32.
+                    if (id.name == "__raw_scratch") { return ty_i32(); }
+                    // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
+                    if (id.name == "__load_i64") { return ty_i64(); }
+                    if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }
                     if (id.name == "arg_at") { return ty_string(); }
@@ -2307,6 +2497,20 @@ pub function runtime_need_deps(name: string): string[] {
         // pulls str_split, so close_needs reaches these transitively.)
         var d8: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d8;
+    }
+    if (name == "read_dir") {
+        // __fern_read_dir (#2649) builds the result string[] with .append() — same
+        // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
+        // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
+        var d9: string[] = ["heap", "arr_push", "arr_push_owned"];
+        return d9;
+    }
+    if (name == "remove_dir_all") {
+        // __fern_remove_dir_all (#2649) is pure raw-memory (inline getdents64 + raw
+        // child-path buffers, no read_dir array — see rt_src_remove_dir_all). Its only
+        // dep is heap (__raw_alloc); its io_error call is emitted in the fs bundle.
+        var d10: string[] = ["heap"];
+        return d10;
     }
     var none: string[] = [];
     return none;
@@ -2781,6 +2985,157 @@ pub function check_module(mod: parser.Module, s: EmitState): string {
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         errs = errs + check_func(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
+    // Bare-map_new chain gate (native E038/E003 parity): without it the
+    // emitters MISCOMPILE the chain instead of rejecting (see
+    // check_map_new_chain).
+    errs = errs + check_map_new_chain(mod);
+    return errs;
+}
+
+// ==== bare-map_new chain key-kind gate (the native-E038 miscompile class) ====
+//
+// `map_new(8).insert(1, 10)` is NATIVE-INVALID (map_new's K/V are generic and
+// only a `var m: Map[K, V] = map_new(n)` annotation pins them — native
+// rejects the chain with E038 per argument + E003 at the binding). The
+// self-host inference instead KEY-KINDS a bare ctor result by its NAME
+// (map_new = string-keyed, map_new_i32 = i32-keyed), so a chain whose key
+// arguments DISAGREE with the ctor's key kind sailed through check and the
+// emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
+// map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
+// arg-taking map method (insert / get / get_or / has / without) whose chain
+// ROOT is a bare map_new [map_new_i32] call and whose KEY argument is a
+// number [string] literal. A KIND-CONSISTENT chain is deliberately admitted
+// (narrower than native): the parser's own `Map { … }` literal desugar IS
+// such a chain (ctor picked from the first key's form), and consistent
+// chains lower correctly here. Non-literal keys are unjudgeable cheaply and
+// stay admitted (a wrong-typed ident key still miscompiles — closing that
+// needs the full checker's key-type unification).
+//
+// map_chain_root_ctor descends through chained arg-taking map-method calls
+// to the root callee; "" when the root is not a bare map ctor call.
+function map_chain_root_ctor(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "map_new" || cid.name == "map_new_i32") { return cid.name; }
+                    return "";
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
+                            || fa.field == "has" || fa.field == "without") {
+                        return map_chain_root_ctor(fa.obj);
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+function map_chain_check_expr(e: parser.Expr, fname: string, errs: string): string {
+    var out: string = errs;
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if ((fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
+                            || fa.field == "has" || fa.field == "without") && c.args.len() > 0) {
+                        var mroot: string = map_chain_root_ctor(fa.obj);
+                        if (mroot.len() > 0) {
+                            var mism: boolean = false;
+                            match (c.args[0]) {
+                                parser.ExprNumber(_) => { if (mroot == "map_new") { mism = true; } },
+                                parser.ExprString(_) => { if (mroot == "map_new_i32") { mism = true; } },
+                                _ => {}
+                            }
+                            if (mism) {
+                                out = out + "error[E038]: in fn '" + fname
+                                    + "': '" + fa.field + "' key does not match the key kind of the"
+                                    + " unannotated " + mroot + "() chain it is called on — the"
+                                    + " ctor's key/value types are not inferable through a method"
+                                    + " chain; bind it first (var m: Map[K, V] = " + mroot + "(n))\n";
+                            }
+                        }
+                    }
+                    out = map_chain_check_expr(fa.obj, fname, out);
+                },
+                _ => { out = map_chain_check_expr(c.callee, fname, out); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = map_chain_check_expr(c.args[i], fname, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprBinary(b) => { return map_chain_check_expr(b.right, fname, map_chain_check_expr(b.left, fname, out)); },
+        parser.ExprUnary(u) => { return map_chain_check_expr(u.operand, fname, out); },
+        parser.ExprIndex(ix) => { return map_chain_check_expr(ix.index, fname, map_chain_check_expr(ix.array, fname, out)); },
+        parser.ExprSlice(sl) => { return map_chain_check_expr(sl.end, fname, map_chain_check_expr(sl.start, fname, map_chain_check_expr(sl.array, fname, out))); },
+        parser.ExprFieldAccess(fa2) => { return map_chain_check_expr(fa2.obj, fname, out); },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base) { out = map_chain_check_expr(sl2.base, fname, out); }
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { out = map_chain_check_expr(sl2.field_values[i], fname, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = map_chain_check_expr(a.elements[i], fname, out); i = i + 1; }
+            return out;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = map_chain_check_expr(t.elements[i], fname, out); i = i + 1; }
+            return out;
+        },
+        _ => { return out; }
+    }
+}
+function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: string): string {
+    var out: string = errs;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = map_chain_check_expr(v.init, fname, out); },
+            parser.StmtAssign(a) => { out = map_chain_check_expr(a.value, fname, out); },
+            parser.StmtExpr(ex) => { out = map_chain_check_expr(ex.value, fname, out); },
+            parser.StmtReturn(r) => { out = map_chain_check_expr(r.value, fname, out); },
+            parser.StmtIf(iff) => {
+                out = map_chain_check_expr(iff.cond, fname, out);
+                out = map_chain_check_stmts(iff.then_body, fname, out);
+                out = map_chain_check_stmts(iff.else_body, fname, out);
+            },
+            parser.StmtWhile(w) => {
+                out = map_chain_check_expr(w.cond, fname, out);
+                out = map_chain_check_stmts(w.body, fname, out);
+            },
+            parser.StmtFor(fo) => {
+                out = map_chain_check_expr(fo.iter, fname, out);
+                out = map_chain_check_stmts(fo.body, fname, out);
+            },
+            parser.StmtMatch(m) => {
+                out = map_chain_check_expr(m.scrutinee, fname, out);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { out = map_chain_check_expr(m.arms[ai].guard, fname, out); }
+                    out = map_chain_check_stmts(m.arms[ai].body, fname, out);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { out = map_chain_check_stmts([d.action], fname, out); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+pub function check_map_new_chain(mod: parser.Module): string {
+    var errs: string = "";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        errs = map_chain_check_stmts(mod.funcs[fi].body, mod.funcs[fi].name, errs);
         fi = fi + 1;
     }
     return errs;

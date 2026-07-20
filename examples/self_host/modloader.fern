@@ -104,12 +104,11 @@ pub function resolve_module_src(dir: string, path: string, name: string): Option
         Some(s) => { return Some(s); },
         None => { },
     }
-    // Manifest fallback (mirrors native's resolveImport for the DISK-
-    // resolvable dependency forms): path / workspace / versioned(lock-path)
-    // deps, plus vendored mode. Dormant when no fern.toml is present, so a
+    // Manifest fallback (mirrors native's resolveImport): path / workspace /
+    // versioned(lock) deps, vendored mode, and — since #4949 — url+hash
+    // deps resolved from the per-machine content-addressed store via the
+    // `env` runtime builtin. Dormant when no fern.toml is present, so a
     // manifest-less build (every current compiler source) is unchanged.
-    // url deps and versioned-via-url stay native-only (the store needs a
-    // getenv/cache-dir builtin the self-host runtime lacks).
     return try_manifest(dir, name);
 }
 
@@ -122,7 +121,7 @@ function try_manifest(dir: string, name: string): Option[string] {
         Ok(src) => {
             var m: fern_toml.Manifest = fern_toml.parse(src);
             var kind: string = fern_toml.dep_kind(m, name);
-            if (kind.len() == 0) { return None; }   // undeclared, or url (native-only)
+            if (kind.len() == 0) { return None; }   // undeclared / unrecognised form
 
             // Vendored mode: a declared dep resolves from <vendor-root>/
             // vendor/<name>/ when that tree exists — offline, form-agnostic,
@@ -143,6 +142,17 @@ function try_manifest(dir: string, name: string): Option[string] {
             }
             if (kind == "version") {
                 return load_locked(dir, name);
+            }
+            // url+hash dep (#4949): resolve from the content-addressed
+            // store by the manifest's declared hash. Read-only — the
+            // store is populated (and sha256-verified) by native
+            // `fern -fetch`; the loader trusts it exactly like the
+            // native loader does at build time.
+            if (kind == "url") {
+                match (fern_toml.dep_hash(m, name)) {
+                    Some(h) => { return load_from_store(h); },
+                    None => { return None; },
+                }
             }
             return None;
         },
@@ -241,10 +251,49 @@ function load_locked(dir: string, name: string): Option[string] {
             var entries: fern_toml.LockEntry[] = fern_toml.parse_lock(src);
             match (fern_toml.lock_path_of(entries, name)) {
                 Some(p) => { return load_lib(p + "/"); },
+                None => { },
+            }
+            // url-sourced lock entry (#4949): the pinned source lives in
+            // the content-addressed store, keyed by the lock's hash.
+            match (fern_toml.lock_hash_of(entries, name)) {
+                Some(h) => { return load_from_store(h); },
                 None => { return None; },
             }
         },
         Err(e) => { return None; },
+    }
+    return None;
+}
+
+// load_from_store resolves a url/hash dependency from the per-machine
+// content-addressed store (internal/pkgcache layout: <root>/<hex>/, with
+// root = $FERN_CACHE_DIR/pkgs when set, else <user-cache-dir>/fern/pkgs).
+// Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is
+// NOT fallen through on a miss; otherwise the user cache dir is
+// $XDG_CACHE_HOME, else $HOME/.cache (Linux) — with $HOME/Library/Caches
+// tried as the darwin sibling, safe because this path only READS. The
+// store is populated + sha256-verified by native `fern -fetch`; the
+// loader trusts an already-populated store, exactly like the native
+// loader does at build time (#4949 — no build-time network).
+function load_from_store(hash: string): Option[string] {
+    if (hash.len() < 8 || hash[0:7] != "sha256:") { return None; }
+    var hex: string = hash[7:hash.len()] + "";
+    match (env("FERN_CACHE_DIR")) {
+        Some(d) => { return load_lib(d + "/pkgs/" + hex + "/"); },
+        None => { },
+    }
+    match (env("XDG_CACHE_HOME")) {
+        Some(x) => { return load_lib(x + "/fern/pkgs/" + hex + "/"); },
+        None => { },
+    }
+    match (env("HOME")) {
+        Some(h) => {
+            match (load_lib(h + "/.cache/fern/pkgs/" + hex + "/")) {
+                Some(s) => { return Some(s); },
+                None => { return load_lib(h + "/Library/Caches/fern/pkgs/" + hex + "/"); },
+            }
+        },
+        None => { return None; },
     }
     return None;
 }

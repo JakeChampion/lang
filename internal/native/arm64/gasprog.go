@@ -43,6 +43,29 @@ func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err e
 	return a.BytesProgramWX(textVAddr)
 }
 
+// AssembleProgramWXEntry is AssembleProgramWX that also resolves the byte
+// offset of an entry symbol within .text (for
+// elf.StaticExecutableDataWXEntry's e_entry). The Go arm64 backend emits
+// `_start` as the first instruction, so the entry-0 default suffices
+// there — but the SELF-HOST arm64 emitter declares `.globl _start` up
+// top while defining the label after other functions, so its binaries
+// need the real offset or they start executing mid-function.
+func AssembleProgramWXEntry(src string, textVAddr uint64, entry string) (text, rodata []byte, entryOff uint64, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	text, rodata, err = a.BytesProgramWX(textVAddr)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	v, ok := a.TextLabelVAddr(entry, textVAddr)
+	if !ok {
+		return nil, nil, 0, fmt.Errorf("entry symbol %q is not a defined .text label", entry)
+	}
+	return text, rodata, v - textVAddr, nil
+}
+
 // AssembleProgramPIE is AssembleProgram for a static position-independent
 // executable (elf.StaticPieExecutable): the W^X layout laid out from a
 // load base of 0, returning the R_AARCH64_RELATIVE relocations for the

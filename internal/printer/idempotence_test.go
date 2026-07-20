@@ -84,6 +84,20 @@ function main(): i32 {
 	var x: i32 = 0; // trailing
 	return x;
 }`,
+
+	// Unsigned literals whose magnitude exceeds i64::MAX are stored by
+	// the parser as a negative int64 bit pattern (via ParseUint). The
+	// formatter used to render them with `-%d` and `-x.Value`, which
+	// overflowed for math.MinInt64 (== 2^63) and emitted a spurious `--`
+	// that grew a leading `-` on every pass. 2^63 and (2^32-1)^2 both live
+	// in that (i64::MAX, u64::MAX] window.
+	"unsigned_large_literals": `
+function main(): i32 {
+	var a: u64 = 9223372036854775808 as u64;
+	var b: u64 = 18446744065119617025 as u64;
+	var c: u64 = 18446744073709551615 as u64;
+	return 0;
+}`,
 }
 
 // TestFormatIdempotent asserts every program in the matrix is a

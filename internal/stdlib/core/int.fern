@@ -12,9 +12,6 @@
 // extend the same shape to bases 2..36 (digits 0-9 then a-z,
 // ignoring case). Used by the `to_binary` / `to_oct` / `to_hex`
 // / `parse_hex_int` / etc. method-style sugar in std/i32.
-//
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
 
 // `int_to_string(n)` — signed-i32 → ASCII decimal. The
 // negation `n = 0 - n` is unsigned-safe for INT_MIN because

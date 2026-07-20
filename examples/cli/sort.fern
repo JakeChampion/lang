@@ -10,12 +10,13 @@
 //   banana
 //   cherry
 //
-// Showcases: the std/sort helpers (`sort_strings_asc`,
-// `sort_i32_asc`, `string_cmp`), and post-sort dedupe.
+// Showcases: core/cmp's generic `sort`, std/sort's case-insensitive
+// `sort_strings_asc_ci`, and post-sort dedupe.
 import "std/string";
 import "std/i32";
 import "std/io";
 import "std/sort";
+import "core/cmp";
 import "std/array";
 
 struct Opts { reverse: boolean, numeric: boolean, uniq: boolean, fold: boolean }
@@ -110,7 +111,7 @@ function main(): i32 {
   } else if (o.fold) {
     sorted = sort.sort_strings_asc_ci(lines);
   } else {
-    sorted = sort.sort_strings_asc(lines);
+    sorted = cmp.sort(lines);
   }
 
   if (o.reverse) {

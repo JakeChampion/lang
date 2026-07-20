@@ -1,0 +1,77 @@
+import "std/test";
+import "std/float" as float;
+// examples/tests/float_hypot_test.fern — pure-Fern coverage of std/float's
+// hypot (Euclidean length via the overflow-safe scaled form), fract (signed
+// fractional part x - trunc(x)), and tan (sin/cos). f64 and f32 receivers.
+// Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
+// budget; uses assert_eq_f64_near (tolerance-banded) so it needs no scalar
+// assert_eq[i32]. The Go-side TestFloatHypotFractTan pins these across all four
+// backends; this is the migration-shaped (pure-Fern, std/test-driven) companion.
+
+function test_hypot_345(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.0).hypot(4.0), 5.0, 0.0001);
+}
+
+function test_hypot_51213(): test.TestOutcome {
+    return test.assert_eq_f64_near((5.0).hypot(12.0), 13.0, 0.0001);
+}
+
+function test_hypot_zero(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0).hypot(0.0), 0.0, 0.0);
+}
+
+function test_hypot_negative(): test.TestOutcome {
+    // Magnitude only — sign of the inputs doesn't matter.
+    return test.assert_eq_f64_near((0.0 - 3.0).hypot(4.0), 5.0, 0.0001);
+}
+
+function test_hypot_one_axis(): test.TestOutcome {
+    return test.assert_eq_f64_near((8.0).hypot(0.0), 8.0, 0.0001);
+}
+
+function test_fract_positive(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.75).fract(), 0.75, 0.0001);
+}
+
+function test_fract_negative(): test.TestOutcome {
+    // Keeps the sign of x.
+    return test.assert_eq_f64_near((0.0 - 3.75).fract(), 0.0 - 0.75, 0.0001);
+}
+
+function test_fract_integer(): test.TestOutcome {
+    return test.assert_eq_f64_near((5.0).fract(), 0.0, 0.0);
+}
+
+function test_tan_zero(): test.TestOutcome {
+    return test.assert_eq_f64_near((0.0).tan(), 0.0, 0.0001);
+}
+
+function test_tan_quarter_pi(): test.TestOutcome {
+    // tan(pi/4) == 1.
+    return test.assert_eq_f64_near((0.7853981633974483).tan(), 1.0, 0.0001);
+}
+
+function test_f32_hypot(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.0 as f32).hypot(4.0 as f32) as f64, 5.0, 0.001);
+}
+
+function test_f32_fract(): test.TestOutcome {
+    return test.assert_eq_f64_near((3.5 as f32).fract() as f64, 0.5, 0.001);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/float hypot");
+    r = r.it("hypot 3,4,5",       test_hypot_345());
+    r = r.it("hypot 5,12,13",     test_hypot_51213());
+    r = r.it("hypot 0,0",         test_hypot_zero());
+    r = r.it("hypot negative",    test_hypot_negative());
+    r = r.it("hypot one axis",    test_hypot_one_axis());
+    r = r.it("fract positive",    test_fract_positive());
+    r = r.it("fract negative",    test_fract_negative());
+    r = r.it("fract integer",     test_fract_integer());
+    r = r.it("tan zero",          test_tan_zero());
+    r = r.it("tan pi/4",          test_tan_quarter_pi());
+    r = r.it("f32 hypot",         test_f32_hypot());
+    r = r.it("f32 fract",         test_f32_fract());
+    return r.finish();
+}

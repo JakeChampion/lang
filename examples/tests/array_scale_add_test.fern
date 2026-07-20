@@ -1,0 +1,63 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_scale_add_test.fern — pure-Fern coverage of std/array's
+// scale_f64 (scalar multiply) and add_f64 (element-wise sum, to the shorter
+// length on a mismatch) — the element-wise companions to the vector reductions.
+// Both return an f64[] (scalar payload), so this rides all four native backends
+// and both self-host gates. The Go-side TestArrayScaleAdd pins the native
+// backends; this is the migration-shaped companion.
+
+function near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function test_scale(): test.TestOutcome {
+    var s: f64[] = array.scale_f64([1.0, 2.0, 3.0], 2.5);
+    if (!near(s[0], 2.5)) { return test.fail("first"); }
+    return test.assert_eq_f64_near(s[2], 7.5, 0.0001);
+}
+
+function test_scale_zero_negate(): test.TestOutcome {
+    var xs: f64[] = [1.0, 2.0, 3.0];
+    if (!near(array.scale_f64(xs, 0.0)[1], 0.0)) { return test.fail("scale 0"); }
+    return test.assert_eq_f64_near(array.scale_f64(xs, 0.0 - 1.0)[2], 0.0 - 3.0, 0.0001);
+}
+
+function test_add(): test.TestOutcome {
+    var sum: f64[] = array.add_f64([1.0, 2.0, 3.0], [10.0, 20.0, 30.0]);
+    if (!near(sum[0], 11.0)) { return test.fail("first"); }
+    return test.assert_eq_f64_near(sum[2], 33.0, 0.0001);
+}
+
+function test_add_mismatch(): test.TestOutcome {
+    var r: f64[] = array.add_f64([1.0, 2.0, 3.0], [100.0]);
+    if (r.len() != 1) { return test.fail("length"); }
+    return test.assert_eq_f64_near(r[0], 101.0, 0.0001);
+}
+
+function test_saxpy(): test.TestOutcome {
+    // 2*xs + b, the classic scale-then-add.
+    var xs: f64[] = [1.0, 2.0, 3.0];
+    var b: f64[] = [10.0, 20.0, 30.0];
+    var saxpy: f64[] = array.add_f64(array.scale_f64(xs, 2.0), b);
+    if (!near(saxpy[0], 12.0)) { return test.fail("saxpy 0"); }
+    return test.assert_eq_f64_near(saxpy[2], 36.0, 0.0001);
+}
+
+function test_empty(): test.TestOutcome {
+    if (array.scale_f64([], 5.0).len() != 0) { return test.fail("scale empty"); }
+    return test.assert_true(array.add_f64([], []).len() == 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array f64 scale/add");
+    r = r.it("scale",           test_scale());
+    r = r.it("scale zero/neg",  test_scale_zero_negate());
+    r = r.it("add",             test_add());
+    r = r.it("add mismatch",    test_add_mismatch());
+    r = r.it("saxpy",           test_saxpy());
+    r = r.it("empty",           test_empty());
+    return r.finish();
+}

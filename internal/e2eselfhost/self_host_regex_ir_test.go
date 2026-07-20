@@ -56,6 +56,15 @@ function main(): i32 {
     if (regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1") == "b@a d@c") { return 42; }
     return 0;
 }`},
+	// Named groups (?<name>…): RGroupData.name payload + the __rx_names walk
+	// + ${name} template through the self-host IR path.
+	{"named-groups", `import "std/regex";
+function main(): i32 {
+    var m: regex.RCaps = regex.regex_captures("(?<y>\\d+)-(?<m>\\d+)", "12-34");
+    var t: string = regex.regex_replace_groups("(?<w>\\w+)", "hi", "[${w}]");
+    if (m.group_named("y") == "12" && m.group_index("m") == 2 && t == "[hi]") { return 42; }
+    return 0;
+}`},
 }
 
 func TestSelfHostRegexModuleIR(t *testing.T) {

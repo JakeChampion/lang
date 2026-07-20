@@ -738,7 +738,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		// Str/Str2; pack both into the SSA op's single Str field (the backend
 		// splits on '/' for the .rodata label), mirroring the native emitter.
 		result := l.out.AddOp(l.cur, OpConstVtable)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str + "/" + op.Str2
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str + "/" + op.Str2()
 		l.stack = append(l.stack, result)
 	case ir.OpBoxDyn:
 		// [data, vtable] (vtable on top) → cell pointer. Args = [data, vtable].
@@ -751,15 +751,15 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		result := l.out.AddOp(l.cur, OpBoxDyn, data, vtable)
 		l.stack = append(l.stack, result)
 	case ir.OpCallDyn:
-		// [data, args..., vtable] (vtable on top) → result | (). op.Sig is the
+		// [data, args..., vtable] (vtable on top) → result | (). op.Sig() is the
 		// receiver-first method signature (Params[0] = receiver/data), so the
 		// number of call-arg values is len(Sig.Params); the vtable sits above
 		// them. Args = [data, args..., vtable]; Imm = the method slot; Width =
 		// the result width. Pushes a result iff the method is non-void.
-		if op.Sig == nil {
+		if op.Sig() == nil {
 			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] missing Sig", i)
 		}
-		argc := len(op.Sig.Params)
+		argc := len(op.Sig().Params)
 		if len(l.stack) < argc+1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] needs %d args + vtable, stack has %d", i, argc, len(l.stack))
 		}
@@ -770,8 +770,8 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		result := l.out.AddOp(l.cur, OpCallDyn, all...)
 		o := l.cur.Ops[len(l.cur.Ops)-1]
 		o.Imm = int64(op.I32) // method slot
-		if op.Sig.Result != nil {
-			o.Width = widthOfAstType(op.Sig.Result)
+		if op.Sig().Result != nil {
+			o.Width = widthOfAstType(op.Sig().Result)
 			l.stack = append(l.stack, result)
 		}
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
@@ -847,7 +847,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-capc]
 		result := l.out.AddOp(l.cur, OpMakeClosure, caps...)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
-		l.cur.Ops[len(l.cur.Ops)-1].CaptureSlots = op.CaptureSlots
+		l.cur.Ops[len(l.cur.Ops)-1].CaptureSlots = op.CaptureSlots()
 		l.stack = append(l.stack, result)
 	case ir.OpMakeEnv:
 		// (cap_0 ... cap_{n-1}) → i32 env ptr.
@@ -859,7 +859,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		caps := append([]Value(nil), l.stack[len(l.stack)-capc:]...)
 		l.stack = l.stack[:len(l.stack)-capc]
 		result := l.out.AddOp(l.cur, OpMakeEnv, caps...)
-		l.cur.Ops[len(l.cur.Ops)-1].CaptureSlots = op.CaptureSlots
+		l.cur.Ops[len(l.cur.Ops)-1].CaptureSlots = op.CaptureSlots()
 		l.stack = append(l.stack, result)
 	case ir.OpIf:
 		switch op.I32 {

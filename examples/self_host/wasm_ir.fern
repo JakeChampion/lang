@@ -68,19 +68,19 @@ pub function heap_base(): i32 { return 40 + 65536 * 4; }
 // fixpoint the emit path threads through emit_function_ir).
 pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var arf: string[] = asm_ir.array_ret_fns(mod);
-    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(mod.funcs), mod.trait_reqs, "string[]");
     var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var bp: string[] = irlower.borrowable_params_of(mod.funcs);
     var fnames: string[] = irlower.fn_names_of(mod.funcs);
@@ -93,7 +93,7 @@ pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
         fi = fi + 1;
     }
     return out;
@@ -139,13 +139,18 @@ pub function str_offset(vals: string[], idx: i32): i32 {
 }
 
 // offset_of_value returns the data-section offset of literal value `v`.
+// A miss means the literal escaped the collection pre-pass — a compiler
+// bug; returning the scratch base (24) silently pointed the emitted code
+// at the iovec scratch area (SH-008's wasm-IR sibling), so fail loudly.
 function offset_of_value(vals: string[], v: string): i32 {
     var i: i32 = 0;
     while (i < vals.len()) {
         if (vals[i] == v) { return str_offset(vals, i); }
         i = i + 1;
     }
-    return 24;
+    eprint("wasm-ir: string literal not interned: " + v);
+    exit(1);
+    return 0 - 1;
 }
 
 // fl_base_for / heap_base_for recompute the freelist + heap bases including the
@@ -561,6 +566,30 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
     return false;
 }
 
+// module_has_wide_map_val_cached reports whether any function emits a map_set
+// (125), map_get_or (129), or map_values (132) op carrying an 8-byte
+// i64/u64/f64 VALUE column (i64_imm == 1, set by irlower's valwide flag). The
+// wasm $__fern_map_set / $__fern_map_get / $__fern_map_values runtime is
+// i32-celled, so an i64/f64 on wasm's typed value stack (or an 8-byte
+// arr_get on a values() column) would fail validation — such a map must stay
+// on the AST backend, unlike the register backends whose 8-byte stores
+// handle it. The map_values leg also catches f64-valued maps, whose inserts
+// are NOT valwide-flagged (f64 rides its own lowering path). #5253.
+pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var o: ir.Op = r.ops[i];
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132) && o.i64_imm != 0) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // module_uses_str_predicate reports whether any function emits a scalar string
 // search predicate op (starts_with / ends_with / index_of, the latter also
 // backing `contains`), so wasm.str_predicate_helpers is emitted for the IR path.
@@ -625,6 +654,26 @@ pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_i32_to_string") { return true; }  // call_direct
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_calls_arr_str_join reports whether any function emits the xs.join(sep)
+// runtime call (a call_direct to __fern_arr_str_join). The register backends
+// lower it (#5328); on wasm it stays deferred to the AST path, which has its own
+// $__fern_str_join runtime (a distinct symbol from the register helper), so a
+// join module keeps the AST wasm backend. (module_emits_op keys on op.kind, not
+// the call_direct symbol, so this needs its own scan.)
+pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_arr_str_join") { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
@@ -842,8 +891,35 @@ pub function wasm_eligible(mod: parser.Module): boolean {
 // ONCE — after the cheap eligible_core AST gate passes — and reuse it for both
 // this deferral gate AND emit, instead of re-lowering the whole module ~10× via
 // the mod-taking module_emits_op. Byte-identical to the old inline chain (#4652).
+// module_erased_wide: any lowered function passes a 64-bit / f64 value
+// through a bare-typevar (erased-generic) param (LowerResult.erased_wide).
+// The wasm backend types erased param locals i32, so such a module must stay
+// on the AST path — previously an f64-through-erased call emitted
+// type-invalid WAT the wasmtime loader rejects, and (post the register-side
+// widening) an i64 would truncate.
+function module_erased_wide(cache: irlower.LowerResult[]): boolean {
+    var i: i32 = 0;
+    while (i < cache.len()) {
+        if (cache[i].erased_wide) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
     return true
+        && !module_erased_wide(cache)
+        // xs.join(sep) lowers on the register IR backends (#5328) but not wasm:
+        // the register helper (__fern_arr_str_join) has no wasm runtime — wasm's
+        // AST path uses a different symbol ($__fern_str_join) — so a join module
+        // stays on the wasm AST path (where join already works). Same deferral
+        // shape as the socket/poll set below.
+        && !module_calls_arr_str_join(cache)
+        // An i64/u64-VALUE map stays on the wasm AST path: the wasm map runtime
+        // takes an i32 value, so the 8-byte value irlower now threads (valwide)
+        // would fail wasm validation. The register backends store it 8-byte and
+        // handle it via the IR; wasm is the deferred "then wasm" slice. #5253.
+        && !module_has_wide_map_val_cached(cache)
         // poll has no wasm IR runtime: real readiness on wasm needs the
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
@@ -1045,12 +1121,32 @@ pub function fn_support_section(cache: irlower.LowerResult[]): string {
     return out;
 }
 
+// wasm_arr_bounds_check emits the array index bounds check shared by arr_get /
+// arr_set (docs/ARRAY-BOUNDS.md). Precondition: the index has already been
+// popped into idx_local and the base pointer is on top of the wasm stack.
+// It compares idx against the length prefix (len @ base+0) with a single
+// unsigned compare — `len <= idx` catches both a negative index (which reads
+// as a huge unsigned) and `idx >= len` — and traps (`unreachable`, which
+// wasmtime surfaces as exit 134) when out of range. On the in-range path it
+// leaves `base, idx` back on the stack for the caller's load/store sequence.
+function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
+    var s: string = "";
+    s = s + "    local.tee " + util.i32_to_string(base_local) + "\n";
+    s = s + "    i32.load\n";
+    s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
+    s = s + "    i32.le_u\n";
+    s = s + "    if\n      unreachable\n    end\n";
+    s = s + "    local.get " + util.i32_to_string(base_local) + "\n";
+    s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
+    return s;
+}
+
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
 function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[], consume_safe_params: string[]): string {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs), irlower.str_fresh_ret_fns_of(funcs), irlower.opt_fresh_ret_fns_of(funcs, structs), irlower.strfld_reclaim_ok_types_of(funcs, structs), irlower.tuple_fresh_ret_fns_of(funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.closurearr_ret_fns_of(funcs, structs), irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs), irlower.str_fresh_ret_fns_of(funcs), irlower.opt_fresh_ret_fns_of(funcs, structs), irlower.strfld_reclaim_ok_types_of(funcs, structs), irlower.tuple_fresh_ret_fns_of(funcs));
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -1061,6 +1157,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     // elements (i64[] arr_make / arr_set) through the typed wasm stack — the i32
     // eltmp can't hold an i64, and f64tmp is float-typed.
     var i64tmp: i32 = r.n_locals + 3;
+    // bctmp: an i32 scratch holding the index across the arr_get / arr_set bounds
+    // check (arrtmp holds the base). Needed as a fifth scratch because arr_set's
+    // i32 path already parks the value in eltmp, so the index needs its own home.
+    var bctmp: i32 = r.n_locals + 4;
     // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
     // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
     // allow `.`. r.n_params already counts the receiver as the first param.
@@ -1081,11 +1181,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
     else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + " (result f64)\n"; }
     else { out = out + " (result i32)\n"; }
-    // body locals + 4 scratch locals. A body local in r.i64_slots is declared
+    // body locals + 5 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
-    // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp).
+    // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp), one i32
+    // (bctmp, the bounds-check index holder).
     var nbody: i32 = r.n_locals - r.n_params;
-    var nloc: i32 = nbody + 4;
+    var nloc: i32 = nbody + 5;
     out = out + "    (local";
     var l: i32 = 0;
     while (l < nloc) {
@@ -1402,7 +1503,20 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 88) {  // arr_get
             // stack: base, idx -> load(base + 8 + idx*esz). 8-byte elements (width
             // 64) use an 8-byte stride: i64.load for an i64[] (unsigned flag),
-            // f64.load for an f64[]; i32 elements the 4-byte path.
+            // f64.load for an f64[]; i32 elements the 4-byte path. The index is
+            // bounds-checked (len @ base+0) before the address is formed — an
+            // out-of-range read traps (exit 134) instead of reading past the end.
+            out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+            // Elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc — the foreach
+            // counted reads) skips the len-load / compare / trap. The base is
+            // still on the stack after the local.set; `local.get bctmp` re-pushes
+            // the index, leaving `base, idx` for the address compute below — the
+            // same shape wasm_arr_bounds_check leaves on its in-range path.
+            if (o.i32_imm == 1) {
+                out = out + "    local.get " + util.i32_to_string(bctmp) + "\n";
+            } else {
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+            }
             if (o.width == 64 && o.unsigned) {
                 out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n";
             } else if (o.width == 64) {
@@ -1413,13 +1527,25 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 89) {  // arr_set
             // stack: base, idx, val -> store val at base+8+idx*esz. 8-byte elements
             // stash through the matching scratch (i64tmp for i64[], f64tmp for
-            // f64[]) and i64.store / f64.store at 8-byte stride.
+            // f64[]) and i64.store / f64.store at 8-byte stride. The value is
+            // parked first, then the index is bounds-checked (len @ base+0) before
+            // the address is formed — an out-of-range write traps (exit 134)
+            // instead of clobbering memory past the end.
             if (o.width == 64 && o.unsigned) {
-                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
             } else if (o.width == 64) {
-                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
             } else {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+                out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             }
         } else if (o.kind_tag == 90) {  // arr_len
             // stack: base -> i32.load(base)  (len @ a+0)
@@ -1862,6 +1988,24 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
             else if (o.width == 64) { out = out + "    f64.load\n"; }
             else { out = out + "    i32.load\n"; }
+        } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_inc") {  // call_direct
+            // #4873/#5325 grow-bracket: retain the survivor across a may-grow
+            // call. Wasm-IR arrays ARE rc-headered ($__fern_arr_box block
+            // [rc@0][bsz@4][len@8][cap@12], data = base+8 → rc@[a-8] — the
+            // same [data-8] convention as the register backends), so the
+            // bracket maps to the exact pair the register backends alias:
+            // inc = the plain retain, dec = the freeing $__fern_arr_dec
+            // (frees at rc==1, defensively gated on null/low/tagged/immortal
+            // — matching __fn___fern_arr_dec on x86/arm64). The gated
+            // $__fern_arr_push (arr_push_helper) reads the raised rc and
+            // copies instead of mutating the shared buffer in place. Both
+            // helpers live in heap_alloc_helpers, gated on module_allocates —
+            // co-resident with $__fern_arr_box wherever an append (and hence
+            // a bracket) can appear. The op sequence is load → call → drop;
+            // the helpers return the pointer, so the stack stays balanced.
+            out = out + "    call $__fern_rc_inc\n";
+        } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {  // call_direct
+            out = out + "    call $__fern_arr_dec\n";
         } else if (o.kind_tag == 149 && asm_ir.is_fern_helper(o.str)) {  // call_direct
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.
@@ -2048,19 +2192,19 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
     // x86 IR path in asm_ir.emit_module_ir).
     mod = parser.infer_ret_types_module(mod);
     var str_vals: string[] = str_values(cache);
-    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(mod.funcs), mod.trait_reqs, "string[]");
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
     var ft: string[] = fn_value_table(cache);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
     var arf: string[] = asm_ir.array_ret_fns(mod);
     var out: string = "";
     // Inter-procedural borrowability computed ONCE per module (not per function —

@@ -218,6 +218,29 @@ function x86_shl_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
     return buf;
 }
 
+// x86_shr_r64_imm8: `shrq $imm8, <reg>` (REX.W + 0xC1 /5 ib) — the 64-bit
+// sibling of x86_shr_r32_imm8. asm.fern's freelist size-class computation
+// (`shrq $3, %rcx`) needs the full-width logical shift.
+function x86_shr_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(193); // 0xC1
+    buf = buf.append(x86_modrm(3, 5, reg));
+    buf = buf.append(imm & 255);
+    return buf;
+}
+
+// x86_bt_r64_imm8: `btq $imm8, <reg>` (REX.W 0F BA /4 ib) — copies the
+// selected bit into CF. asm.fern emits it (with a following jc) for the RC
+// sentinel-bit test in the array-push fast path.
+function x86_bt_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(186); // 0xBA
+    buf = buf.append(x86_modrm(3, 4, reg));
+    buf = buf.append(imm & 255);
+    return buf;
+}
+
 // ---- memory operands (slice 2e) ----
 //
 // A memory operand `[base + disp]` is encoded by the ModR/M byte's mod/rm
@@ -296,6 +319,30 @@ function x86_mov_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i
     buf = buf.append(199); // 0xC7 /0
     buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
     return x86_le32(buf, imm);
+}
+
+// x86_movl_store_imm32: `movl $imm32, disp(%base)` (C7 /0 m32 id, no
+// REX.W) — the 32-bit sibling of x86_mov_store_imm32. asm.fern emits it
+// to zero a freed box's 32-bit refcount field (`movl $0, -8(%rax)`).
+function x86_movl_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_rex_opt(buf, 0, ix, base);
+    buf = buf.append(199); // 0xC7 /0
+    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+    return x86_le32(buf, imm);
+}
+
+// x86_alu_store_r64: `<alu>q %src, disp(%base)` — the store-form ALU
+// (add 0x01 / sub 0x29 / cmp 0x39) with a memory destination, the mirror
+// of x86_alu_load_r64. asm.fern emits the cmp form for the array-push
+// capacity check (`cmpq %rcx, -16(%rax)`).
+function x86_alu_store_r64(buf: i32[], opcode: i32, src: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, src, ix, base));
+    buf = buf.append(opcode);
+    return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
 }
 
 // ---- SIB index addressing (slice 2j) ----
@@ -749,6 +796,34 @@ function x86_alu_load_rip_label(a: X86Asm, opcode: i32, dst: i32, name: string):
     return a;
 }
 
+// x86_movl_load_rip_label: `movl sym(%rip), <dst32>` (8B /r, no REX.W,
+// ModR/M mod=00 rm=101) with a deferred rip-relative fixup — the 32-bit
+// sibling of x86_mov_load_rip_label. asm.fern reads the
+// __fern_rc_underflow counter this way.
+function x86_movl_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: x86_rex_opt(a.code, dst, 0, 0) };
+    a = X86Asm { ...a, code: a.code.append(139) }; // 0x8B
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_incl_rip_label: `incl sym(%rip)` (FF /0 m32, ModR/M mod=00 rm=101)
+// with a deferred rip-relative fixup — asm.fern bumps the 32-bit
+// __fern_rc_underflow diagnostic counter this way in the RC dec glue.
+function x86_incl_rip_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // RIP-relative, /0
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
 // x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup.
 function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
@@ -1035,11 +1110,17 @@ struct X86Asm {
     lab_offs: i32[],
     fix_offs: i32[],
     fix_names: string[],
+    // Mnemonics (or mnemonic+operand shapes) the GAS front-end did not
+    // recognise. A non-empty list means the byte stream is INCOMPLETE —
+    // instructions were dropped — so drivers must fail instead of writing
+    // the corrupt executable (SH-005; the arm64 assembler's `p.unknown`
+    // is the model — see fern.fern's -target arm64 check).
+    unknown: string[],
 }
 
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], bss_size: 0, lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [] };
+    return X86Asm { code: [], rodata: [], bss_size: 0, lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [], unknown: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata

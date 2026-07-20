@@ -32,6 +32,11 @@ pub struct VInt { v: i32 }
 // laid out and dropped cleanly. The full i64 is reconstructed into a local
 // only for arithmetic (local i64s are fine); it never lives in the union.
 pub struct VInt64 { hi: i32, lo: i32 }
+// VUint carries a u32 as its 32-bit pattern in an i32 field. Unsigned
+// semantics (div / rem / compares / logical `>>`, docs/INTEGER-SEMANTICS.md)
+// live in eval_binary's unsigned dispatch; `+ - * & | ^ <<` are
+// bit-identical to signed i32 and compute on the pattern directly.
+pub struct VUint { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
 // VFloat carries a 64-bit IEEE 754 float. Literals tagged
@@ -40,6 +45,11 @@ pub struct VString { v: string }
 // Mixed i32/f64 isn't supported — explicit cast at the source
 // level would route through a future numeric coercion pass.
 pub struct VFloat { v: f64 }
+// VFloat32 carries an f32-precision value as the ALREADY-ROUNDED f64
+// (the native pipelines' f32 model, #4366): arithmetic computes at f64,
+// then the result rounds to single precision via f32_round, and the
+// f32 tag stays sticky through operator chains.
+pub struct VFloat32 { v: f64 }
 pub struct VArr { elements: Value[] }
 // VTuple holds an immutable fixed-arity sequence of values.
 // Each slot's runtime type stays whatever the source emitted;
@@ -68,7 +78,7 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VInt64 | VBool | VString | VFloat | VArr | VTuple | VFunc | VMap | VStruct | VErr;
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 // v_int64 packs an i64 into a VInt64's two i32 halves; unpack_i64 rebuilds
@@ -83,6 +93,14 @@ function unpack_i64(x: VInt64): i64 {
     // corrupts e.g. an i64 divide). A `var` forces a full 64-bit load.
     var lo_mask: i64 = 4294967295;
     return ((x.hi as i64) << 32) | ((x.lo as i64) & lo_mask);
+}
+function v_uint(n: i32): Value { return VUint { v: n }; }
+// uint_zext zero-extends a u32 bit pattern to i64 — the value plane for
+// unsigned div / rem / compares / logical shift. The mask lives in a local
+// for the same native-backend immediate reason as unpack_i64's.
+function uint_zext(n: i32): i64 {
+    var lo_mask: i64 = 4294967295;
+    return (n as i64) & lo_mask;
 }
 // box_i64 narrows an i64 result back to a compact VInt when it fits i32,
 // so values that fall back into range don't stay wide (and downstream i32
@@ -104,22 +122,68 @@ function coerce_int_width(val: Value, type_name: string): Value {
             _ => { return val; }
         }
     }
+    // A declared u32 tags the 32-bit pattern unsigned (a wide VInt64
+    // initializer contributes its low word); a declared f32 rounds the
+    // value to single precision and tags it sticky.
+    if (type_name == "u32") {
+        match (val) {
+            VInt(i) => { return v_uint(i.v); },
+            VInt64(i) => { return v_uint(i.lo); },
+            _ => { return val; }
+        }
+    }
+    if (type_name == "f32") {
+        match (val) {
+            VFloat(f) => { return v_float32(f.v); },
+            VInt(i) => { return v_float32(i.v as f64); },
+            VInt64(i) => { return v_float32(unpack_i64(i) as f64); },
+            _ => { return val; }
+        }
+    }
     return val;
 }
-// is_int_like / is_vint64 / vint_as_i64 bridge the two integer variants so
-// integer arithmetic can widen to 64 bits when either operand is a VInt64.
+// is_int_like / is_vint64 / vint_as_i64 bridge the integer variants so
+// integer arithmetic can widen to 64 bits when either operand is a VInt64
+// (a VUint contributes its ZERO-extended value in that context).
 function is_int_like(v: Value): boolean {
-    match (v) { VInt(_) => { return true; }, VInt64(_) => { return true; }, _ => { return false; } }
+    match (v) { VInt(_) => { return true; }, VInt64(_) => { return true; }, VUint(_) => { return true; }, _ => { return false; } }
 }
 function is_vint64(v: Value): boolean {
     match (v) { VInt64(_) => { return true; }, _ => { return false; } }
 }
 function vint_as_i64(v: Value): i64 {
-    match (v) { VInt(i) => { return i.v as i64; }, VInt64(i) => { return unpack_i64(i); }, _ => { return 0; } }
+    match (v) { VInt(i) => { return i.v as i64; }, VInt64(i) => { return unpack_i64(i); }, VUint(u) => { return uint_zext(u.v); }, _ => { return 0; } }
+}
+// is_vuint / vint_bits mirror the pair above for the 32-bit unsigned
+// dispatch: vint_bits reads the raw 32-bit pattern of a compact carrier
+// (VInt or VUint) for the sign-agnostic ops.
+function is_vuint(v: Value): boolean {
+    match (v) { VUint(_) => { return true; }, _ => { return false; } }
+}
+function vint_bits(v: Value): i32 {
+    match (v) { VInt(i) => { return i.v; }, VUint(u) => { return u.v; }, _ => { return 0; } }
+}
+// is_float_like / is_vfloat32 / vfloat_as_f64 are the float-side bridges:
+// a VFloat32's payload is already rounded, so reading it as f64 is exact.
+function is_float_like(v: Value): boolean {
+    match (v) { VFloat(_) => { return true; }, VFloat32(_) => { return true; }, _ => { return false; } }
+}
+function is_vfloat32(v: Value): boolean {
+    match (v) { VFloat32(_) => { return true; }, _ => { return false; } }
+}
+function vfloat_as_f64(v: Value): f64 {
+    match (v) { VFloat(f) => { return f.v; }, VFloat32(f) => { return f.v; }, _ => { return 0.0; } }
 }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
+// f32_round rounds an f64 to single precision. The demote rides the
+// f32_bits / f32_from_bits builtin pair (not a bare `as f32` round-trip):
+// every pipeline that runs this interpreter special-cases the pair with a
+// real cvtsd2ss/cvtss2sd narrowing, whereas the legacy self-host AST
+// backend treats float→f32 `as` casts as no-ops.
+function f32_round(x: f64): f64 { return (f32_from_bits(f32_bits(x as f32))) as f64; }
+function v_float32(x: f64): Value { return VFloat32 { v: f32_round(x) }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
 function v_map(keys: Value[], values: Value[]): Value { return VMap { keys: keys, values: values }; }
@@ -340,6 +404,68 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         if (op == "<<") { return v_int64(a << b); }
         if (op == ">>") { return v_int64(a >> b); }
     }
+    // Unsigned 32-bit dispatch (docs/INTEGER-SEMANTICS.md): when either
+    // compact operand is a VUint, div / rem / compares / `>>` run UNSIGNED
+    // via zero-extension to i64 (shift counts masked &31, total division
+    // x/0 == 0 and x%0 == x), and `+ - * & | ^ <<` — bit-identical to
+    // signed — compute on the 32-bit patterns. Arithmetic results stay
+    // VUint (sticky); a VUint mixed with a VInt64 zero-extends through the
+    // 64-bit block above instead.
+    if (is_int_like(lv) && is_int_like(rv) && (is_vuint(lv) || is_vuint(rv))) {
+        var la: i32 = vint_bits(lv);
+        var rb: i32 = vint_bits(rv);
+        if (op == "+") { return v_uint(la + rb); }
+        if (op == "-") { return v_uint(la - rb); }
+        if (op == "*") { return v_uint(la * rb); }
+        if (op == "&") { return v_uint(la & rb); }
+        if (op == "|") { return v_uint(la | rb); }
+        if (op == "^") { return v_uint(la ^ rb); }
+        if (op == "<<") { return v_uint(la << (rb & 31)); }
+        var ua: i64 = uint_zext(la);
+        var ub: i64 = uint_zext(rb);
+        if (op == ">>") {
+            var sc: i64 = (rb & 31) as i64;
+            var shifted: i64 = ua >> sc;
+            return v_uint(shifted as i32);
+        }
+        if (op == "/") {
+            if (ub == 0) { return v_uint(0); }
+            var uq: i64 = ua / ub;
+            return v_uint(uq as i32);
+        }
+        if (op == "%") {
+            if (ub == 0) { return v_uint(la); }
+            var ur: i64 = ua % ub;
+            return v_uint(ur as i32);
+        }
+        if (op == "<") { return v_bool(ua < ub); }
+        if (op == "<=") { return v_bool(ua <= ub); }
+        if (op == ">") { return v_bool(ua > ub); }
+        if (op == ">=") { return v_bool(ua >= ub); }
+        if (op == "==") { return v_bool(la == rb); }
+        if (op == "!=") { return v_bool(la != rb); }
+    }
+    // f32 dispatch (#4366 model): when either operand is a VFloat32 and
+    // the other is numeric, compute at f64 and round the RESULT to single
+    // precision, staying sticky as VFloat32. Comparisons compare the
+    // (already rounded) f64 payloads and yield VBool.
+    if ((is_vfloat32(lv) || is_vfloat32(rv)) && (is_float_like(lv) || is_int_like(lv)) && (is_float_like(rv) || is_int_like(rv))) {
+        var fa: f64 = vfloat_as_f64(lv);
+        if (is_int_like(lv)) { fa = vint_as_i64(lv) as f64; }
+        var fb: f64 = vfloat_as_f64(rv);
+        if (is_int_like(rv)) { fb = vint_as_i64(rv) as f64; }
+        if (op == "+") { return v_float32(fa + fb); }
+        if (op == "-") { return v_float32(fa - fb); }
+        if (op == "*") { return v_float32(fa * fb); }
+        if (op == "/") { return v_float32(fa / fb); }
+        if (op == "%") { return v_err("`%` on f32 is unsupported"); }
+        if (op == "<") { return v_bool(fa < fb); }
+        if (op == "<=") { return v_bool(fa <= fb); }
+        if (op == ">") { return v_bool(fa > fb); }
+        if (op == ">=") { return v_bool(fa >= fb); }
+        if (op == "==") { return v_bool(fa == fb); }
+        if (op == "!=") { return v_bool(fa != fb); }
+    }
     // `+` overloads i32 (arithmetic) and string (concat).
     if (op == "+") {
         match (lv) {
@@ -485,7 +611,9 @@ function eval_unary(op: string, ov: Value): Value {
         match (ov) {
             VInt(i) => { return v_int(0 - i.v); },
             VInt64(i) => { return v_int64(0 - unpack_i64(i)); },
+            VUint(u) => { return v_uint(0 - u.v); },
             VFloat(f) => { return v_float(0.0 - f.v); },
+            VFloat32(f) => { return v_float32(0.0 - f.v); },
             _ => { return v_err("unary `-` operand not i32 or f64"); }
         }
     }
@@ -511,38 +639,71 @@ function eval_unary(op: string, ov: Value): Value {
         match (ov) {
             VInt(i) => { return v_int(i.v & 255); },
             VInt64(i) => { return v_int((unpack_i64(i) & 255) as i32); },
+            VUint(u) => { return v_int(u.v & 255); },
             VFloat(f) => { return v_int((f.v as i32) & 255); },
+            VFloat32(f) => { return v_int((f.v as i32) & 255); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
-    // `as i32` / `as u32` narrow a wider integer to 32 bits (a VInt64
+    // `as i32` narrows a wider integer to 32 bits, SIGNED (a VInt64
     // truncates to its low 32 bits — this is what brings an i64 value back
-    // into i32 range, e.g. `(5000000000 as i32)`). The low half already IS
-    // that value.
-    if (op == "as_i32" || op == "as_u32") {
+    // into i32 range, e.g. `(5000000000 as i32)`; a VUint keeps its bit
+    // pattern and drops the unsigned tag).
+    if (op == "as_i32") {
         match (ov) {
             VInt(i) => { return v_int(i.v); },
             VInt64(i) => { return v_int(i.lo); },
+            VUint(u) => { return v_int(u.v); },
             VFloat(f) => { return v_int(f.v as i32); },
+            VFloat32(f) => { return v_int(f.v as i32); },
+            _ => { return v_err("`as` integer cast operand not numeric"); }
+        }
+    }
+    // `as u32` is the same 32-bit narrowing but tags the pattern unsigned
+    // (a float truncates through i64 first so a value above i32.max keeps
+    // its low 32 bits, matching native's cvttsd2si + 32-bit mask).
+    if (op == "as_u32") {
+        match (ov) {
+            VInt(i) => { return v_uint(i.v); },
+            VInt64(i) => { return v_uint(i.lo); },
+            VUint(u) => { return ov; },
+            VFloat(f) => { return v_uint((f.v as i64) as i32); },
+            VFloat32(f) => { return v_uint((f.v as i64) as i32); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
     // `as i64` / `as u64` keep 64-bit width: a VInt64 passes through, a
     // small VInt stays a VInt (an in-range value round-trips identically),
-    // and a float widens to i64.
+    // a VUint widens zero-extended, and a float widens to i64.
     if (op == "as_i64" || op == "as_u64") {
         match (ov) {
             VInt(i) => { return v_int(i.v); },
             VInt64(i) => { return ov; },
+            VUint(u) => { return box_i64(uint_zext(u.v)); },
             VFloat(f) => { return v_int64(f.v as i64); },
+            VFloat32(f) => { return v_int64(f.v as i64); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
-    if (op == "as_f64" || op == "as_f32") {
+    if (op == "as_f64") {
         match (ov) {
             VInt(i) => { return v_float(i.v as f64); },
             VInt64(i) => { return v_float(unpack_i64(i) as f64); },
+            VUint(u) => { return v_float(uint_zext(u.v) as f64); },
             VFloat(f) => { return v_float(f.v); },
+            VFloat32(f) => { return v_float(f.v); },
+            _ => { return v_err("`as` float cast operand not numeric"); }
+        }
+    }
+    // `as f32` rounds to single precision and tags the result sticky (an
+    // already-f32 value passes through — its payload is already rounded).
+    if (op == "as_f32") {
+        match (ov) {
+            VInt(i) => { return v_float32(i.v as f64); },
+            VInt64(i) => { return v_float32(unpack_i64(i) as f64); },
+            VUint(u) => { return v_float32(uint_zext(u.v) as f64); },
+            VFloat(f) => { return v_float32(f.v); },
+            VFloat32(f) => { return ov; },
             _ => { return v_err("`as` float cast operand not numeric"); }
         }
     }
@@ -1050,7 +1211,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
         j = j + 1;
     }
     var step: StepResult = eval_block(fv.body, env);
-    if (is_noreturn(step.ret)) {
+    if (step.sig != 1) {
         return v_err("closure reached end without `return`");
     }
     return step.ret;
@@ -1166,8 +1327,10 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         VStruct(sv) => { recv_type = sv.type_name; },
         VString(_) => { recv_type = "string"; },
         VInt(_) => { recv_type = "i32"; },
+        VUint(_) => { recv_type = "u32"; },
         VBool(_) => { recv_type = "bool"; },
         VFloat(_) => { recv_type = "f64"; },
+        VFloat32(_) => { recv_type = "f32"; },
         _ => { return v_err("method dispatch: receiver not a typed value"); }
     }
     var i: i32 = 0;
@@ -1197,7 +1360,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
-            if (is_noreturn(step.ret)) {
+            if (step.sig != 1) {
                 return v_err("method `" + name + "` reached end without `return`");
             }
             return step.ret;
@@ -1242,7 +1405,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
-            if (is_noreturn(step.ret)) {
+            if (step.sig != 1) {
                 return v_err("function `" + name + "` reached end without `return`");
             }
             return step.ret;
@@ -1263,6 +1426,7 @@ function value_eq(a: Value, b: Value): boolean {
             match (b) {
                 VInt(bi) => { return ai.v == bi.v; },
                 VInt64(bi) => { return (ai.v as i64) == unpack_i64(bi); },
+                VUint(bu) => { return ai.v == bu.v; },
                 _ => { return false; }
             }
         },
@@ -1270,6 +1434,18 @@ function value_eq(a: Value, b: Value): boolean {
             match (b) {
                 VInt(bi) => { return unpack_i64(ai) == (bi.v as i64); },
                 VInt64(bi) => { return ai.hi == bi.hi && ai.lo == bi.lo; },
+                VUint(bu) => { return unpack_i64(ai) == uint_zext(bu.v); },
+                _ => { return false; }
+            }
+        },
+        VUint(au) => {
+            // Same-width compact int compares by bit pattern (a VInt on the
+            // other side is the untagged same pattern); a wide VInt64
+            // compares against the zero-extended value.
+            match (b) {
+                VUint(bu) => { return au.v == bu.v; },
+                VInt(bi) => { return au.v == bi.v; },
+                VInt64(bi) => { return uint_zext(au.v) == unpack_i64(bi); },
                 _ => { return false; }
             }
         },
@@ -1287,6 +1463,16 @@ function value_eq(a: Value, b: Value): boolean {
         },
         VFloat(af) => {
             match (b) {
+                VFloat(bf) => { return af.v == bf.v; },
+                VFloat32(bf) => { return af.v == bf.v; },
+                _ => { return false; }
+            }
+        },
+        VFloat32(af) => {
+            // The payload is already rounded, so f64-plane comparison is
+            // exact for both same-width and mixed-width operands.
+            match (b) {
+                VFloat32(bf) => { return af.v == bf.v; },
                 VFloat(bf) => { return af.v == bf.v; },
                 _ => { return false; }
             }
@@ -1350,13 +1536,21 @@ function value_eq(a: Value, b: Value): boolean {
     return false;
 }
 
-// eval_stmt returns the (new env, optional return value). The
-// returned env carries `var x = …;` bindings forward; the value
-// is non-VErr only for StmtReturn — every other shape leaves it
-// VErr("__noreturn__") which the driver loop reads as "keep
-// going". Using VErr for the sentinel keeps everything in the
-// same union type without growing it for a one-off Option.
-pub struct StepResult { env: Env, ret: Value }
+// eval_stmt returns (new env, control signal, optional value). The
+// returned env carries `var x = …;` bindings forward. Control flow
+// rides the DEDICATED `sig` channel (SH-002) — never the Value union,
+// so a user value like Err("__break__") can no longer be mistaken for
+// a loop signal (the old encoding keyed break/continue/return off
+// magic VErr message strings). `ret` is meaningful only for SIG 1:
+// a `return`'s value, or a runtime error propagating outward (both
+// stop execution identically, exactly as before).
+//   sig 0 = none (keep going; ret is a placeholder, never read)
+//   sig 1 = stop (return value or runtime error in ret)
+//   sig 2 = break     sig 3 = continue
+pub struct StepResult { env: Env, ret: Value, sig: i32 }
+
+function step_none(env: Env): StepResult { return StepResult { env: env, ret: VErr { msg: "" }, sig: 0 }; }
+function step_stop(env: Env, v: Value): StepResult { return StepResult { env: env, ret: v, sig: 1 }; }
 
 function eval_stmt(st: parser.Stmt, env: Env): StepResult {
     match (st) {
@@ -1367,27 +1561,37 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             var val: Value = eval_expr(v.init, env);
             // A runtime error in the initializer aborts the function rather
             // than being bound and silently swallowed (#4348 item 4). eval_expr
-            // never yields the __noreturn__ sentinel (that's statement-level),
-            // so any VErr here is a real error to propagate.
-            if (is_err(val)) { return StepResult { env: env, ret: val }; }
+            // only ever yields VALUES (control signals are statement-level,
+            // on the sig channel), so any VErr here is a real error to propagate.
+            if (is_err(val)) { return step_stop(env, val); }
             var env2: Env = env.bind(v.name, coerce_int_width(val, v.type_name));
-            return StepResult { env: env2, ret: v_err("__noreturn__") };
+            return step_none(env2);
         },
         parser.StmtReturn(r) => {
             var val: Value = eval_expr(r.value, env);
-            return StepResult { env: env, ret: val };
+            return step_stop(env, val);
         },
         parser.StmtExpr(x) => {
             var val: Value = eval_expr(x.value, env);
             // A runtime error in an expression-statement aborts rather than
             // being dropped and swallowed (#4348 item 4). Otherwise the value
             // is discarded (expression-statements are side-effect only here).
-            if (is_err(val)) { return StepResult { env: env, ret: val }; }
-            return StepResult { env: env, ret: v_err("__noreturn__") };
+            if (is_err(val)) { return step_stop(env, val); }
+            return step_none(env);
         },
         parser.StmtIf(ifs) => {
             var cv: Value = eval_expr(ifs.cond, env);
-            if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
+            if (is_err(cv)) { return step_stop(env, cv); }
+            // lower_defers_module's synthesized cleanup guards
+            // (`if (__dfa0) { … }`) condition on i32 FLAGS, not bools —
+            // normalise a VInt cond to its non-zero truth here (#4348
+            // item 1). Checker-validated user programs can only reach
+            // this arm with a bool, so user-facing semantics are
+            // unchanged.
+            match (cv) {
+                VInt(civ) => { cv = VBool { v: civ.v != 0 }; },
+                _ => {}
+            }
             match (cv) {
                 VBool(b) => {
                     var body: parser.Stmt[] = ifs.else_body;
@@ -1399,11 +1603,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     // slots in place).
                     var base: i32 = env.names.len();
                     var step: StepResult = eval_block(body, env);
-                    return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
                 },
-                _ => { return StepResult { env: env, ret: v_err("if cond not bool") }; }
+                _ => { return step_stop(env, v_err("if cond not bool")); }
             }
-            return StepResult { env: env, ret: v_err("unreachable if-arm") };
+            return step_stop(env, v_err("unreachable if-arm"));
         },
         parser.StmtWhile(w) => {
             // Loop until cond is false or the body returns.
@@ -1427,37 +1631,43 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             var base: i32 = env.names.len();
             while (true) {
                 var cv: Value = eval_expr(w.cond, cur);
-                if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
+                if (is_err(cv)) { return step_stop(env, cv); }
                 match (cv) {
                     VBool(b) => {
-                        if (!b.v) { return StepResult { env: cur, ret: v_err("__noreturn__") }; }
+                        if (!b.v) { return step_none(cur); }
                     },
-                    _ => { return StepResult { env: env, ret: v_err("while cond not bool") }; }
+                    _ => { return step_stop(env, v_err("while cond not bool")); }
                 }
                 var step: StepResult = eval_block(w.body, cur);
                 // break inside the loop exits immediately —
                 // discard the body's env, return noreturn so
                 // the surrounding stmt list continues.
-                if (is_break(step.ret)) {
-                    return StepResult { env: trim_env(step.env, base), ret: v_err("__noreturn__") };
+                if (step.sig == 2) {
+                    return step_none(trim_env(step.env, base));
                 }
                 // continue trims body-local bindings and loops.
-                if (is_continue(step.ret)) {
+                if (step.sig == 3) {
                     cur = trim_env(step.env, base);
                     continue;
                 }
-                if (!is_noreturn(step.ret)) {
-                    // A return inside the loop short-circuits all
-                    // remaining iterations.
+                if (step.sig == 1) {
+                    // A return (or error) inside the loop short-circuits
+                    // all remaining iterations.
                     return step;
+                }
+                // A deeper labeled break/continue (#4348 item 2): this loop
+                // is one of the levels being unwound — peel one level and
+                // re-propagate to the enclosing loop.
+                if (step.sig > 3) {
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
                 }
                 cur = trim_env(step.env, base);
             }
-            return StepResult { env: cur, ret: v_err("__noreturn__") };
+            return step_none(cur);
         },
         parser.StmtAssign(a) => {
             var av: Value = eval_expr(a.value, env);
-            if (is_err(av)) { return StepResult { env: env, ret: av }; }
+            if (is_err(av)) { return step_stop(env, av); }
             // update silently no-ops on undefined names; surface
             // the error explicitly so a mistake is observable in
             // tests.
@@ -1468,15 +1678,15 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                 i = i - 1;
             }
             if (!found) {
-                return StepResult { env: env, ret: v_err("assign to undefined `" + a.target + "`") };
+                return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
             }
-            return StepResult { env: env.update(a.target, av), ret: v_err("__noreturn__") };
+            return step_none(env.update(a.target, av));
         },
         parser.StmtMatch(m) => {
             // Evaluate the scrutinee. An error in the scrutinee
             // propagates without running any arm.
             var sv: Value = eval_expr(m.scrutinee, env);
-            if (is_err(sv)) { return StepResult { env: env, ret: sv }; }
+            if (is_err(sv)) { return step_stop(env, sv); }
             // Walk arms top-to-bottom and run the first that
             // matches. Variant patterns require a VStruct
             // scrutinee whose type_name matches the pattern's
@@ -1568,7 +1778,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     var pass: boolean = true;
                     if (arm.has_guard) {
                         var gv: Value = eval_expr(arm.guard, bodyEnv);
-                        if (is_err(gv)) { return StepResult { env: trim_env(bodyEnv, base), ret: gv }; }
+                        if (is_err(gv)) { return step_stop(trim_env(bodyEnv, base), gv); }
                         match (gv) {
                             VBool(gb) => { pass = gb.v; },
                             _ => { pass = false; }
@@ -1576,23 +1786,30 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     }
                     if (pass) {
                         var step: StepResult = eval_block(arm.body, bodyEnv);
-                        return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                        return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
                     }
                 }
                 i = i + 1;
             }
-            return StepResult { env: env, ret: v_err("non-exhaustive match") };
+            return step_stop(env, v_err("non-exhaustive match"));
         },
-        parser.StmtBreak(_) => { return StepResult { env: env, ret: v_err("__break__") }; },
-        parser.StmtContinue(_) => { return StepResult { env: env, ret: v_err("__continue__") }; },
+        // A labeled break/continue carries its resolve_labels_module-baked
+        // relative loop depth (tag 0 = innermost) in the sig encoding
+        // (#4348 item 2): sig 2+2d = break out of d+1 loops, 3+2d =
+        // continue the d-th enclosing loop. Each loop arm consumes sig
+        // 2/3 and peels one level off anything deeper (sig - 2), so a
+        // 2-level `break outer` unwinds both loops instead of silently
+        // degrading to the innermost (which hung `outer: while(true)`).
+        parser.StmtBreak(b) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 + b.tag * 2 }; },
+        parser.StmtContinue(c) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 }; },
         parser.StmtFor(f) => {
             // Evaluate the iter expression — must be a VArr.
             var iv: Value = eval_expr(f.iter, env);
-            if (is_err(iv)) { return StepResult { env: env, ret: iv }; }
+            if (is_err(iv)) { return step_stop(env, iv); }
             var elems: Value[] = [];
             match (iv) {
                 VArr(a) => { elems = a.elements; },
-                _ => { return StepResult { env: env, ret: v_err("for-in iter not an array") }; }
+                _ => { return step_stop(env, v_err("for-in iter not an array")); }
             }
             // Each iteration binds f.var_name to the current
             // element, walks the body, then trims back to the
@@ -1604,23 +1821,28 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             while (i < elems.len()) {
                 var iter_env: Env = cur.bind(f.var_name, elems[i]);
                 var step: StepResult = eval_block(f.body, iter_env);
-                if (is_break(step.ret)) {
-                    return StepResult { env: trim_env(step.env, base), ret: v_err("__noreturn__") };
+                if (step.sig == 2) {
+                    return step_none(trim_env(step.env, base));
                 }
-                if (is_continue(step.ret)) {
+                if (step.sig == 3) {
                     cur = trim_env(step.env, base);
                     i = i + 1;
                     continue;
                 }
-                if (!is_noreturn(step.ret)) { return step; }
+                if (step.sig == 1) { return step; }
+                // A deeper labeled break/continue (#4348 item 2): peel one
+                // level and re-propagate to the enclosing loop.
+                if (step.sig > 3) {
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
+                }
                 cur = trim_env(step.env, base);
                 i = i + 1;
             }
-            return StepResult { env: cur, ret: v_err("__noreturn__") };
+            return step_none(cur);
         },
-        parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
+        parser.StmtUnknown(u) => { return step_stop(env, v_err("parser-side unknown stmt: " + u.kind)); }
     }
-    return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
+    return step_stop(env, v_err("unhandled Stmt variant"));
 }
 
 // trim_env drops bindings past index `base`. Used by the while
@@ -1647,43 +1869,19 @@ function trim_env(e: Env, base: i32): Env {
 // same trim per iteration but keeps it. Both rely on the fact
 // that update() rewrites slots in place, so reassignments to
 // outer-scoped names sit at index < base and survive the trim.
-// First non-__noreturn ret short-circuits the walk.
+// The first non-zero sig short-circuits the walk.
 function eval_block(body: parser.Stmt[], env: Env): StepResult {
     var cur: Env = env;
     var i: i32 = 0;
     while (i < body.len()) {
         var r: StepResult = eval_stmt(body[i], cur);
         cur = r.env;
-        if (!is_noreturn(r.ret)) {
-            return StepResult { env: cur, ret: r.ret };
+        if (r.sig != 0) {
+            return StepResult { env: cur, ret: r.ret, sig: r.sig };
         }
         i = i + 1;
     }
-    return StepResult { env: cur, ret: v_err("__noreturn__") };
-}
-
-function is_noreturn(v: Value): boolean {
-    match (v) {
-        VErr(e) => { return e.msg == "__noreturn__"; },
-        _ => { return false; }
-    }
-    return false;
-}
-
-function is_break(v: Value): boolean {
-    match (v) {
-        VErr(e) => { return e.msg == "__break__"; },
-        _ => { return false; }
-    }
-    return false;
-}
-
-function is_continue(v: Value): boolean {
-    match (v) {
-        VErr(e) => { return e.msg == "__continue__"; },
-        _ => { return false; }
-    }
-    return false;
+    return step_none(cur);
 }
 
 // eval_program drives the stmt list. Stops at the first return
@@ -1695,7 +1893,7 @@ function eval_program(prog: parser.Stmt[]): Value {
     while (i < prog.len()) {
         var r: StepResult = eval_stmt(prog[i], env);
         env = r.env;
-        if (!is_noreturn(r.ret)) { return r.ret; }
+        if (r.sig != 0) { return r.ret; }
         i = i + 1;
     }
     return v_err("program reached end without `return`");
@@ -1710,7 +1908,13 @@ pub function eval_module(raw_mod: parser.Module): Value {
     // call) to counting while-loops up front — the interpreter's StmtFor only
     // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
     // (The IR path keeps the `__range` shape for irlower.lower_range_for.)
-    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(raw_mod));
+    // Lower `defer` to its scope-exit position HERE (#4348 item 1) rather
+    // than relying on each caller: the stdin drivers (interp_run) fed the
+    // raw module straight in, so StmtDefer's recurse-arm executed deferred
+    // actions eagerly at their source position (native 2 / eager 101 on the
+    // timing-sensitive repro). lower_defers_module is idempotent on a
+    // defer-free module, so callers that already lowered stay correct.
+    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(raw_mod)));
     // Fold each enum into the alias table as a synthetic union so a method
     // declared on the enum type dispatches on its variant values.
     var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);
@@ -1727,7 +1931,7 @@ pub function eval_module(raw_mod: parser.Module): Value {
     while (j < mod.top_stmts.len()) {
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
         env = r.env;
-        if (!is_noreturn(r.ret)) { return r.ret; }
+        if (r.sig != 0) { return r.ret; }
         j = j + 1;
     }
     return v_err("module has no `main` and no top-level `return`");
@@ -2467,6 +2671,31 @@ function main(): i32 {
     match (r88) {
         VInt(i) => { if (i.v != 42) { return 880; } },
         _ => { return 881; }
+    }
+
+    // u32 unsigned semantics (#4348 final slice): logical `>>` on a
+    // high-bit pattern (arithmetic shift would smear the sign) and
+    // unsigned div/compare (signed would see -6).
+    var src89: string = "function main(): i32 { var x: u32 = 4294967288 as u32; var y = x >> 2; if (y == (1073741822 as u32)) { return 1; } return 0; }";
+    var r89: Value = run_module(src89);
+    match (r89) {
+        VInt(i) => { if (i.v != 1) { return 890; } },
+        _ => { return 891; }
+    }
+    var src90: string = "function main(): i32 { var x: u32 = 4294967290 as u32; var y: u32 = 5 as u32; if (x / y > (100 as u32) && x > y) { return 1; } return 0; }";
+    var r90: Value = run_module(src90);
+    match (r90) {
+        VInt(i) => { if (i.v != 1) { return 900; } },
+        _ => { return 901; }
+    }
+
+    // f32 single-precision rounding: 2^24 + 1 is not representable at
+    // f32, so the sum rounds back to 2^24 (at f64 it would stay 2^24+1).
+    var src91: string = "function main(): i32 { var a: f32 = 16777216.0 as f32; var b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 1; } return 0; }";
+    var r91: Value = run_module(src91);
+    match (r91) {
+        VInt(i) => { if (i.v != 1) { return 910; } },
+        _ => { return 911; }
     }
 
     return 0;

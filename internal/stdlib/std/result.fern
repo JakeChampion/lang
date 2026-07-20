@@ -120,3 +120,20 @@ pub function (r: Result[T, E]) map_or_else[U](default_fn: (E) => U, f: (T) => U)
 pub function (r: Result[Result[T, E], E]) flatten(): Result[T, E] {
     match (r) { Ok(inner) => { return inner; }, Err(e) => { return Err(e); } }
 }
+
+// transpose swaps a `Result` of an `Option` into an `Option` of a
+// `Result`: `Ok(None)` -> `None`, `Ok(Some(v))` -> `Some(Ok(v))`,
+// `Err(e)` -> `Some(Err(e))`. The exact inverse of `Option.transpose`.
+// Callback-free (a nested `match`), so it lowers on every backend
+// without touching the indirect-call seam.
+pub function (r: Result[Option[T], E]) transpose[T, E](): Option[Result[T, E]] {
+    match (r) {
+        Ok(inner) => {
+            match (inner) {
+                Some(x) => { return Some(Ok(x)); },
+                None => { return None; }
+            }
+        },
+        Err(e) => { return Some(Err(e)); }
+    }
+}

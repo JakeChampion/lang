@@ -261,6 +261,43 @@ var interpProgs = []struct {
 	{"i64-compare", "function main(): i32 { var x: i64 = 5000000000; if (x > 4000000000) { return 1; } return 0; }", 1},
 	// i32 arithmetic is unchanged — overflow still wraps via the 32-bit path.
 	{"i32-overflow-unchanged", "function main(): i32 { var x: i32 = 100000; return x * 100000; }", 0},
+	// Typed u32 / f32 carriers (#4348 final slice). VUint tags a u32 bit
+	// pattern so div / rem / compares / `>>` run UNSIGNED (logical shift,
+	// count masked &31 — docs/INTEGER-SEMANTICS.md); previously u32 ops ran
+	// signed through VInt. VFloat32 tags an f32-precision value (stored as
+	// the already-rounded f64, the #4366 model): arithmetic computes at f64
+	// then rounds the result to single precision, sticky through chains —
+	// previously f32 arithmetic ran at full f64. Each src pinned natively.
+	{"u32-shr-logical", "function main(): i32 { var x: u32 = 4294967288 as u32; var y = x >> 2; if (y == (1073741822 as u32)) { return 42; } return 7; }", 42},
+	{"u32-div-unsigned", "function main(): i32 { var x: u32 = 4294967290 as u32; var y: u32 = 5 as u32; if (x / y > (100 as u32)) { return 42; } return 7; }", 42},
+	{"u32-cmp-unsigned", "function main(): i32 { var x: u32 = 4294967290 as u32; if (x > (5 as u32)) { return 42; } return 7; }", 42},
+	{"f32-round-2p24", "function main(): i32 { var a: f32 = 16777216.0 as f32; var b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 42; } return 7; }", 42},
+	// Sticky chain: 2^24 + 1.5 rounds up to 2^24+2 at f32; +1 more lands
+	// midway and ties-to-even up to 2^24+4 — only true single-precision
+	// rounding at EVERY step (incl. the mixed f32 + f64-literal add)
+	// produces 16777220.
+	{"f32-sticky-chain", "function main(): i32 { var a: f32 = 16777216.0; var b = a + 1.5; var c = b + (1.0 as f32); if ((c as f64) == 16777220.0) { return 42; } return 7; }", 42},
+	// defer runs at SCOPE EXIT, not at its source position (#4348 item 1):
+	// eval_module now runs lower_defers_module itself, so the stdin driver —
+	// which feeds the raw module straight in — no longer executes the deferred
+	// action eagerly. Eager execution sets r=101 BEFORE the if, so the
+	// timing-sensitive shape returns 101 instead of native's 2.
+	{"defer-scope-exit", "function main(): i32 { var r = 2; defer { r = 101; } if (r == 2) { return 2; } return r; }", 2},
+	// The lowering's synthesized cleanup guards (`if (__dfa0) …`) condition on
+	// i32 flags; the interp normalises an int cond to its non-zero truth. A
+	// mid-body read after the defer still sees the pre-defer value.
+	{"defer-not-eager-mid-body", "function main(): i32 { var r = 1; defer { r = 100; } var x = r + 1; if (x == 2) { return 2; } return 3; }", 2},
+	// Labeled break unwinds MULTIPLE loop levels (#4348 item 2): the
+	// resolve_labels-baked depth now rides the sig encoding (2+2d) and each
+	// loop arm peels one level. Pre-fix the depth was ignored, `break outer`
+	// broke only the inner loop, and `outer: while (true)` hung forever.
+	{"labeled-break-two-level", "function main(): i32 { var s = 0; outer: while (true) { var i = 0; while (i < 10) { s = s + 1; if (s >= 11) { break outer; } i = i + 1; } } return s; }", 11},
+	// Labeled continue re-enters the OUTER loop (depth 3+2d), skipping the
+	// inner loop's remaining iterations: 3 outer iterations * 2 inner steps.
+	{"labeled-continue-two-level", "function main(): i32 { var s = 0; outer: for i in [1, 2, 3] { var j = 0; while (j < 5) { s = s + 1; if (j == 1) { continue outer; } j = j + 1; } } return s; }", 6},
+	// Unlabeled break/continue still bind to the innermost loop (depth 0 —
+	// the encoding's base case, unchanged).
+	{"unlabeled-break-innermost", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var j = 0; while (j < 10) { if (j == 2) { break; } s = s + 1; j = j + 1; } i = i + 1; } return s; }", 6},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

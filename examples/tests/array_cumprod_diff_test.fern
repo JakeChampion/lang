@@ -1,0 +1,58 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_cumprod_diff_test.fern — pure-Fern coverage of
+// std/array's cumprod_f64 (running product) and diff_f64 (successive
+// differences, one shorter than the input; the discrete derivative and
+// left-inverse of cumsum). Both are scan-style ops that need sequential context
+// and return an f64[] (scalar payload), so this rides all four native backends
+// and both self-host gates. The Go-side TestArrayCumprodDiff pins the native
+// backends; this is the migration-shaped companion.
+
+function near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function test_cumprod(): test.TestOutcome {
+    // 1, 1*2, 1*2*3, 1*2*3*4 = 1, 2, 6, 24
+    var cp: f64[] = array.cumprod_f64([1.0, 2.0, 3.0, 4.0]);
+    if (!near(cp[0], 1.0)) { return test.fail("first"); }
+    if (!near(cp[2], 6.0)) { return test.fail("third"); }
+    return test.assert_eq_f64_near(cp[3], 24.0, 0.0001);
+}
+
+function test_diff(): test.TestOutcome {
+    var df: f64[] = array.diff_f64([1.0, 3.0, 6.0, 10.0]);
+    if (df.len() != 3) { return test.fail("length one shorter"); }
+    if (!near(df[0], 2.0)) { return test.fail("first diff"); }
+    return test.assert_eq_f64_near(df[2], 4.0, 0.0001);
+}
+
+function test_diff_negatives(): test.TestOutcome {
+    return test.assert_eq_f64_near(array.diff_f64([10.0, 4.0])[0], 0.0 - 6.0, 0.0001);
+}
+
+function test_diff_inverts_cumsum(): test.TestOutcome {
+    // diff(cumsum(xs)) recovers xs (minus its first element).
+    var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
+    var d2: f64[] = array.diff_f64(array.cumsum_f64(xs));
+    if (!near(d2[0], 2.0)) { return test.fail("recover 2"); }
+    return test.assert_eq_f64_near(d2[2], 4.0, 0.0001);
+}
+
+function test_edge_cases(): test.TestOutcome {
+    if (array.diff_f64([5.0]).len() != 0) { return test.fail("single diff"); }
+    if (array.diff_f64([]).len() != 0) { return test.fail("empty diff"); }
+    return test.assert_true(array.cumprod_f64([]).len() == 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array f64 cumprod/diff");
+    r = r.it("cumprod",           test_cumprod());
+    r = r.it("diff",              test_diff());
+    r = r.it("diff negatives",    test_diff_negatives());
+    r = r.it("diff inverts cumsum", test_diff_inverts_cumsum());
+    r = r.it("edge cases",        test_edge_cases());
+    return r.finish();
+}

@@ -91,6 +91,50 @@ func TestCBZWidth(t *testing.T) {
 	}
 }
 
+// TestSelfHostDialectEncodings pins the instruction forms the SELF-HOST
+// arm64 emitter uses that the Go backend does not — the gap set found by
+// assembling the stage-2 self-compile output (asm_arm64.fern's dialect):
+// negative/unaligned load-store offsets (routed to the unscaled
+// LDUR/STUR encodings), the uxtb/uxth zero-extends, the flag-setting
+// adds/subs, `fcmp Dn, #0.0`, and the VFP-imm8 `fmov Dd, #imm`. Every
+// expected word is what aarch64-linux-gnu-as + objdump produce for the
+// same line.
+func TestSelfHostDialectEncodings(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tstr x0, [x29, #-8]\n", 0xf81f83a0},  // stur
+		{"\tldr x1, [x29, #-16]\n", 0xf85f03a1}, // ldur
+		{"\tstr w2, [x29, #-20]\n", 0xb81ec3a2},
+		{"\tldr w3, [x29, #-4]\n", 0xb85fc3a3},
+		{"\tstrb w4, [x29, #-1]\n", 0x381ff3a4},
+		{"\tldrb w5, [x29, #-3]\n", 0x385fd3a5},
+		{"\tstrh w6, [x29, #-2]\n", 0x781fe3a6},
+		{"\tldrh w7, [x29, #-6]\n", 0x785fa3a7},
+		{"\tuxtb w0, w0\n", 0x53001c00},
+		{"\tuxth w1, w2\n", 0x53003c41},
+		{"\tsubs x2, x2, #1\n", 0xf1000442},
+		{"\tadds x3, x4, #7\n", 0xb1001c83},
+		{"\tsubs x5, x6, x7\n", 0xeb0700c5},
+		{"\tsubs w8, w9, #1\n", 0x71000528},
+		{"\tfcmp d0, #0.0\n", 0x1e602008},
+		{"\tfmov d1, #2.0\n", 0x1e601001},
+		{"\tfmov d0, #1.0\n", 0x1e6e1000},
+		{"\tfmov d2, #-4.5\n", 0x1e725002},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}
+
 // TestAssembleBasic checks Assemble without external tools: a tiny
 // exit(42) snippet must produce the known movz/movz/svc bytes, and
 // labels + a comment must be handled.

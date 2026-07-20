@@ -1,0 +1,60 @@
+import "std/test";
+import "std/i64";
+// examples/tests/i64_to_string_radix_test.fern — pure-Fern coverage of
+// std/i64.to_string_radix(base): render an i64 in an arbitrary base (2..36,
+// digits 0-9a-z, signed), the wider counterpart to std/i32's. The magnitude is
+// a u64 (unsigned negation), so it renders i64::MIN cleanly and exercises
+// unsigned u64 div/rem. Covers several bases, sign, zero, values past the i32
+// range, i64::MAX/MIN, and out-of-range bases. Kept as its own suite so the
+// self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
+// The Go-side TestI64ToStringRadix pins these across all four backends.
+
+function test_hex(): test.TestOutcome {
+    return test.assert_true((255 as i64).to_string_radix(16) == "ff");
+}
+
+function test_binary(): test.TestOutcome {
+    return test.assert_true((5 as i64).to_string_radix(2) == "101");
+}
+
+function test_zero(): test.TestOutcome {
+    return test.assert_true((0 as i64).to_string_radix(10) == "0");
+}
+
+function test_negative(): test.TestOutcome {
+    return test.assert_true(((0 as i64) - 26).to_string_radix(16) == "-1a");
+}
+
+function test_base36(): test.TestOutcome {
+    return test.assert_true((35 as i64).to_string_radix(36) == "z");
+}
+
+function test_wide(): test.TestOutcome {
+    // 2^32, past the i32 range.
+    return test.assert_true((4294967296 as i64).to_string_radix(16) == "100000000");
+}
+
+function test_extremes(): test.TestOutcome {
+    // i64::MAX and i64::MIN in hex (the u64-magnitude path renders MIN cleanly).
+    if ((9223372036854775807 as i64).to_string_radix(16) != "7fffffffffffffff") { return test.fail("max"); }
+    var mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    return test.assert_true(mn.to_string_radix(16) == "-8000000000000000");
+}
+
+function test_bad_base(): test.TestOutcome {
+    if ((5 as i64).to_string_radix(1) != "") { return test.fail("base 1"); }
+    return test.assert_true((5 as i64).to_string_radix(37) == "");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i64 to_string_radix");
+    r = r.it("hex",       test_hex());
+    r = r.it("binary",    test_binary());
+    r = r.it("zero",      test_zero());
+    r = r.it("negative",  test_negative());
+    r = r.it("base36",    test_base36());
+    r = r.it("wide",      test_wide());
+    r = r.it("extremes",  test_extremes());
+    r = r.it("bad base",  test_bad_base());
+    return r.finish();
+}

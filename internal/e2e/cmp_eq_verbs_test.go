@@ -97,11 +97,11 @@ impl cmp.Eq for P { function eq(self: Self, other: Self): boolean { return self.
 function main(): i32 {
     var xs = [10, 20, 30, 20];
     var a = 0; if (cmp.contains(xs, 30)) { a = 1; }       // 1
-    var b = cmp.index_of(xs, 20);                          // 1 (first)
+    var b = 0; match (cmp.index_of(xs, 20)) { Some(v) => { b = v; }, None => { b = 0 - 1; } } // 1 (first)
     var d = cmp.distinct(xs);                              // [10,20,30] len 3
     var ss = ["a", "b", "a"];
     var sc = 0; if (cmp.contains(ss, "b")) { sc = 1; }     // 1
-    var si = cmp.index_of(ss, "a");                        // 0
+    var si = 0; match (cmp.index_of(ss, "a")) { Some(v) => { si = v; }, None => { si = 0 - 1; } } // 0
     var sd = cmp.distinct(ss).len();                       // 2
     var pc = 0; if (cmp.contains([P { v: 5 }, P { v: 6 }], P { v: 6 })) { pc = 1; }  // 1
     return a + b + d.len() + sc + si + sd + pc;            // 1+1+3+1+0+2+1 = 9

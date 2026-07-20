@@ -1694,6 +1694,25 @@ func wasmSlotIdx(fn *ir.Func, irIdx int32) uint32 {
 	return uint32(wasm)
 }
 
+// bodySlotIdx maps an IR slot to its wasm local index INSIDE a
+// function body, accounting for the closure-target env_ptr param the
+// type-section append inserts between the declared params and the
+// body locals (emitFuncSection). Without the shift, a no-capture
+// named function used as a closure VALUE (OpConstFunc — closureconv
+// never adds its `__env` IR param because there is nothing to
+// capture) reads/writes its body locals one slot low: local 0..P-1
+// are the params, wasm slot P is the appended env, and the first body
+// local lives at P+1 — but the unshifted mapping pointed it at P.
+// Latent until such a function had body locals at all (tiny adapter
+// fns don't); first hit by core/map's default hash adapters (#5042).
+func bodySlotIdx(ctx *emitCtx, fn *ir.Func, irIdx int32) uint32 {
+	idx := wasmSlotIdx(fn, irIdx)
+	if irIdx >= int32(len(fn.Params)) && ctx.closureTargets[fn.Name] && !hasEnvParam(fn.Params) {
+		idx++
+	}
+	return idx
+}
+
 // emitBody walks fn.Ops and returns the function's body bytes plus
 // its locals-preamble bytes (the latter pre-wrapped by
 // inst.PutLocalsOneGroup-equivalent encoding for the declared local
@@ -1854,7 +1873,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return body, nil
 
 	case ir.OpLoadLocal:
-		idx := wasmSlotIdx(ctx.fn, op.I32)
+		idx := bodySlotIdx(ctx, ctx.fn, op.I32)
 		if isTwoWordType(slotType(ctx.fn, op.I32)) {
 			// Two-word ABI: push (data, len) in low-to-high
 			// order so the stack mirrors a fresh OpConstStr.
@@ -1864,7 +1883,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return inst.InstLocalGet(body, idx), nil
 	case ir.OpStoreLocal:
-		idx := wasmSlotIdx(ctx.fn, op.I32)
+		idx := bodySlotIdx(ctx, ctx.fn, op.I32)
 		if isTwoWordType(slotType(ctx.fn, op.I32)) {
 			// Stack: [..., data, len]. Pop len first (top of
 			// stack), then data, into adjacent locals.
@@ -1874,7 +1893,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return inst.InstLocalSet(body, idx), nil
 	case ir.OpTeeLocal:
-		idx := wasmSlotIdx(ctx.fn, op.I32)
+		idx := bodySlotIdx(ctx, ctx.fn, op.I32)
 		if isTwoWordType(slotType(ctx.fn, op.I32)) {
 			// Same as store-then-load: pop len, tee data
 			// (leaves data on stack), push len back.
@@ -2277,13 +2296,13 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return inst.InstCall(body, idx), nil
 	case ir.OpCallIndirect:
-		if op.Sig == nil {
-			return nil, fmt.Errorf("OpCallIndirect: missing op.Sig")
+		if op.Sig() == nil {
+			return nil, fmt.Errorf("OpCallIndirect: missing op.Sig()")
 		}
 		// Closure-target ABI: callee signature has env_ptr (i32)
 		// appended. The typeidx we dispatch through must match —
-		// derive it from op.Sig + env_ptr.
-		tIdx, err := ctx.addClosureSigType(op.Sig)
+		// derive it from op.Sig() + env_ptr.
+		tIdx, err := ctx.addClosureSigType(op.Sig())
 		if err != nil {
 			return nil, fmt.Errorf("OpCallIndirect: resolving signature: %w", err)
 		}
@@ -2304,18 +2323,18 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	case ir.OpConstVtable:
 		// Push the static address of the (trait, concrete) vtable —
 		// an array of i32 function-table indices in the data segment.
-		off, err := ctx.internVtable(op.Str, op.Str2)
+		off, err := ctx.internVtable(op.Str, op.Str2())
 		if err != nil {
 			return nil, err
 		}
 		return inst.InstI32Const(body, int32(off)), nil
 	case ir.OpCallDyn:
-		if op.Sig == nil {
-			return nil, fmt.Errorf("OpCallDyn: missing op.Sig")
+		if op.Sig() == nil {
+			return nil, fmt.Errorf("OpCallDyn: missing op.Sig()")
 		}
 		// The dyn receiver ABI is a plain i32 pointer (no env append),
 		// so dispatch through the no-env signature.
-		tIdx, err := ctx.addSigType(op.Sig)
+		tIdx, err := ctx.addSigType(op.Sig())
 		if err != nil {
 			return nil, fmt.Errorf("OpCallDyn: resolving signature: %w", err)
 		}

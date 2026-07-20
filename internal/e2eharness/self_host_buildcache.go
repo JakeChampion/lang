@@ -166,11 +166,13 @@ func HashSelfHostSources(t *testing.T, dir, fernName string) string {
 // — the ~50 s tail the heavy-split was chasing). Caching just the binary keeps
 // each warmed driver ~4x smaller, so the restores fit and the emit is skipped.
 //
-// The binary is a static -nostdlib -no-pie ELF, independent of which gcc
-// produced it, so the source-hash key is sound across runners (matching the
-// rationale on CachedLink's disk key). The emit is held in memory and the
-// scratch `.s` lives only in the process-local link dir until the link
-// completes, then is removed — it never reaches the disk cache.
+// The binary is a static freestanding ELF, independent of which toolchain
+// produced it — the in-process native assembler (the default), lld, or bfd
+// gcc all yield interchangeable binaries from the same asm — so the
+// source-hash key is sound across runners (matching the rationale on
+// CachedLink's disk key). The emit is held in memory and handed straight
+// to the in-process assembler; a scratch `.s` is written (then removed)
+// only on the gcc fallback path and never reaches the disk cache.
 // CopySelfHostFiles copies the named examples/self_host sources into dir —
 // the staging step before BuildSelfHostBin for tests that hand-pick a driver's
 // import closure instead of copySelfHostTree'ing the whole directory.
@@ -221,24 +223,48 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 			}
 		}
 		// Cold: emit (held in memory — no disk `.s`), link, publish the binary.
-		asmPath := binPath + ".s" // scratch in the process-local link dir only
-		if err := emitDriverAsm(dir, fernName, asmPath); err != nil {
+		// The emit is the only multi-GB step, so reserve its estimated peak
+		// against the process-wide RAM budget: two cold driver builds hitting
+		// their peaks at once used to cross a 16 GB host's RAM and OOM-kill the
+		// run ("signal: killed" / exit 137). The reservation serialises the
+		// heavy builds on a RAM-limited host (and parallelises up to the budget
+		// on a big one) — see buildMemLimiter. The whole cold build also runs
+		// under the soft heap cap (withEmitMemLimit), which keeps the emit's
+		// GC overshoot from doubling its RSS. Disk-cache hits above return
+		// before this and never reserve.
+		if err := withBuildMemory(heavyBuildWeightMB(), func() error {
+			return withEmitMemLimit(func() error {
+				asm, err := emitDriverAsm(dir, fernName)
+				if err != nil {
+					return err
+				}
+				// The emit's working set (front-end AST + IR + checker tables)
+				// is unreachable once emitDriverAsm returns — only the asm
+				// string survives. Hand the spans back to the OS before
+				// assembling so the emit residue and the assembler's peak
+				// never stack within this one build.
+				debug.FreeOSMemory()
+				// Assemble + link entirely in-process (the cmd/fern default
+				// pipeline for -target x86-64): no GNU `as` subprocess
+				// (~4.7 GB RSS / ~36 s on a driver `.s`), no external linker,
+				// and the ~470 MB `.s` never touches disk. Any assembler
+				// error (e.g. an instruction outside its covered surface)
+				// falls back to the external gcc toolchain below.
+				nerr := nativeLinkX86(asm, binPath)
+				if nerr == nil {
+					debug.FreeOSMemory() // release assemble buffers before releasing the reservation
+					return nil
+				}
+				// Fallback: write the `.s` scratch and let gcc assemble+link
+				// it (lld when present — see driverLinkArgs).
+				if gerr := gccLinkDriverAsm(gcc, asm, binPath); gerr != nil {
+					return fmt.Errorf("%s: native link failed (%v); gcc fallback failed: %w", fernName, nerr, gerr)
+				}
+				return nil
+			})
+		}); err != nil {
 			return "", err
 		}
-		// The emit's working set (the front-end AST + checker tables + the
-		// ~680 MB asm string) is unreachable once emitDriverAsm returns, but
-		// the Go runtime keeps the spans resident. gcc's `as` pass on the
-		// driver `.s` alone spikes to ~8 GB; overlapping that with the ~7 GB
-		// emit residue crossed the 16 GB CI runners' RAM and the OOM killed
-		// the runner agent mid-link ("The runner has received a shutdown
-		// signal" / exit 143 on the x86_64 wasm + warm-driver jobs). Hand the
-		// dead spans back to the OS before spawning the assembler so the two
-		// peaks never stack.
-		debug.FreeOSMemory()
-		if out, lerr := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); lerr != nil {
-			return "", fmt.Errorf("gcc %s: %w\n%s", fernName, lerr, out)
-		}
-		_ = os.Remove(asmPath) // never keep the ~680 MB .s around
 		// Publish the linked binary to the disk cache (atomic), so a warm job
 		// seeds it for the test shards.
 		if d := diskCacheWriteDir(); d != "" {
@@ -259,28 +285,59 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 	return path
 }
 
-// emitDriverAsm compiles dir/fernName with the Go x86-64 backend and writes
-// the emitted asm to asmPath. It exists as a separate function so the emit's
-// multi-GB working set (AST, checker info, the asm string) goes out of scope
-// on return — CachedDriverBin frees it (debug.FreeOSMemory) before spawning
-// the memory-heavy assembler on the `.s`.
-func emitDriverAsm(dir, fernName, asmPath string) error {
+// emitDriverAsm compiles dir/fernName with the Go x86-64 backend and returns
+// the emitted asm text. It exists as a separate function so the emit's
+// multi-GB working set (AST, IR, checker info) goes out of scope on return —
+// only the asm string survives, and CachedDriverBin frees the residue
+// (debug.FreeOSMemory) before assembling.
+func emitDriverAsm(dir, fernName string) (string, error) {
 	prog, _, err := modload.Load(filepath.Join(dir, fernName))
 	if err != nil {
-		return fmt.Errorf("modload %s: %w", fernName, err)
+		return "", fmt.Errorf("modload %s: %w", fernName, err)
 	}
 	if err := constfold.Fold(prog); err != nil {
-		return fmt.Errorf("constfold %s: %w", fernName, err)
+		return "", fmt.Errorf("constfold %s: %w", fernName, err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		return fmt.Errorf("check %s: %w", fernName, err)
+		return "", fmt.Errorf("check %s: %w", fernName, err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
-		return fmt.Errorf("emit %s: %w", fernName, err)
+		return "", fmt.Errorf("emit %s: %w", fernName, err)
 	}
-	return os.WriteFile(asmPath, []byte(asm), 0o644)
+	return asm, nil
+}
+
+// gccLinkDriverAsm is the external-toolchain fallback for a driver build:
+// write asm to a scratch `.s` next to binPath and let gcc assemble+link it
+// (lld when present — see driverLinkArgs). Taking the string by value keeps
+// the caller free to drop its own reference; the scratch `.s` is removed
+// on return. The write streams the string (io.WriteString) rather than
+// os.WriteFile([]byte(asm)) — the conversion would allocate a second
+// ~half-GB copy right at the memory peak.
+func gccLinkDriverAsm(gcc, asm, binPath string) error {
+	asmPath := binPath + ".s" // scratch in the process-local link dir only
+	f, err := os.Create(asmPath)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", asmPath, err)
+	}
+	if _, err := io.WriteString(f, asm); err != nil {
+		f.Close()
+		return fmt.Errorf("write %s: %w", asmPath, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", asmPath, err)
+	}
+	defer os.Remove(asmPath) // never keep the big .s around
+	// The asm string is dead after the write (both here and at the call
+	// site); return it to the OS so it doesn't stack with the assembler's
+	// own multi-GB peak.
+	debug.FreeOSMemory()
+	if out, lerr := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); lerr != nil {
+		return fmt.Errorf("gcc: %w\n%s", lerr, out)
+	}
+	return nil
 }
 
 var fastLinkOnce sync.Once
@@ -370,17 +427,8 @@ func CachedLink(t *testing.T, gcc, asm string) string {
 		if d := diskCacheWriteDir(); d != "" {
 			diskBin = filepath.Join(d, diskKey+".bin")
 		}
-		asmPath := filepath.Join(base, key+".s")
-		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		if err := linkSelfHostAsm(gcc, base, key, asm, binPath); err != nil {
 			return "", err
-		}
-		// bfd (NOT driverLinkArgs/lld): CachedLink links SELF-HOST-emitted programs
-		// (via BuildBin). These are small, so bfd is fast; lld's win is only on the
-		// ~680 MB native-Go driver. Self-host output is lld-correct since #4081
-		// (TestSelfHostLinkerAgnosticIRX86_64 gates it); bfd here is just the
-		// no-payoff default, not a correctness requirement.
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("gcc: %w\n%s", err, out)
 		}
 		if diskBin != "" {
 			_ = os.MkdirAll(filepath.Dir(diskBin), 0o755)
@@ -397,6 +445,62 @@ func CachedLink(t *testing.T, gcc, asm string) string {
 		t.Fatalf("cached link: %v", err)
 	}
 	return path
+}
+
+// linkSelfHostAsm turns SELF-HOST-emitted asm into a static binary at
+// binPath.
+//
+// Small links (the overwhelming majority — a few-KB `.s` per e2e program)
+// go to gcc/bfd exactly as before: milliseconds, and they keep the
+// external-toolchain path exercised across the suite. bfd (NOT
+// driverLinkArgs/lld) is deliberate there: lld's win only ever showed on
+// huge inputs. Self-host output is lld-correct since #4081
+// (TestSelfHostLinkerAgnosticIRX86_64 gates it); bfd is just the
+// no-payoff default, not a correctness requirement.
+//
+// HUGE links — the stage-2 self-compile of the whole compiler, ~450 MB of
+// asm — first try the in-process native assembler (nativeLinkX86) under a
+// build-memory reservation sized to its measured footprint. NOTE: the
+// self-host x86-64 emitter currently writes AT&T-syntax asm, which the
+// Intel-only native assembler rejects immediately — so today the stage-2
+// link always takes the gcc fallback below; the native attempt costs
+// microseconds and starts winning the moment the emitted dialect becomes
+// parseable. Either way the big-link gcc path now runs under a
+// reservation too: it ran GNU `as` at ~4.7 GB RSS with NO reservation at
+// all (CachedLink predates the budget), which could stack with a
+// concurrent driver build's peak and OOM a 16 GB host.
+func linkSelfHostAsm(gcc, base, key, asm, binPath string) error {
+	if len(asm) >= nativeLinkMinAsmBytes {
+		if err := withBuildMemory(nativeLinkWeightMB(len(asm)), func() error {
+			// The soft heap cap bounds the assembler's own GC overshoot
+			// the same way it bounds the driver emit's.
+			return withEmitMemLimit(func() error {
+				return nativeLinkX86(asm, binPath)
+			})
+		}); err == nil {
+			return nil
+		}
+	}
+	asmPath := filepath.Join(base, key+".s")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		return err
+	}
+	gccLink := func() error {
+		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+			return fmt.Errorf("gcc: %w\n%s", err, out)
+		}
+		return nil
+	}
+	// Big-asm gcc links (today: every stage-2 self-compile — the self-host
+	// x86-64 emitter writes AT&T syntax, which the Intel-only native
+	// assembler rejects, so the native attempt above always falls through
+	// for them) run GNU `as` at multi-GB RSS. Reserve the estimated peak so
+	// the link can't stack with a concurrent driver build's peak — this
+	// link had NO reservation historically. Small links stay unreserved.
+	if len(asm) >= nativeLinkMinAsmBytes {
+		return withBuildMemory(gccBigLinkWeightMB(len(asm)), gccLink)
+	}
+	return gccLink()
 }
 
 // copyExecutable links (preferably) or copies src to dst with 0755 perms.

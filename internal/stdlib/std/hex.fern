@@ -7,8 +7,9 @@
 // raising — partial inputs round-trip cleanly. Companion
 // to base64 with no `=` padding.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/hex";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 function __hex_lower_char(d: i32): i32 {
     if (d < 10) { return d + 48; }      // '0' + d

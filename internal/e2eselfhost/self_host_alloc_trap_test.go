@@ -7,25 +7,30 @@ import (
 	"testing"
 )
 
-// allocTrapSrc allocates without bound: each iteration grows `s` by concat and
-// STORES the grown string into the array `a`, so every intermediate stays live
-// (cumulative allocation grows quadratically and blows past the bump heap).
-// The self-host's __fern_alloc bounds check must trap with a clean,
+// allocTrapSrc drives the bump cursor past the arena end with raw `__alloc`
+// calls. The self-host's __fern_alloc bounds check must trap with a clean,
 // recognisable exit code (137) rather than silently running past the heap into
 // adjacent .bss (the strbuf output accumulator) and corrupting it.
 //
-// The `a.append(s)` is essential: it makes `s` ESCAPE, so `s` is NOT a
-// reclaimable string-builder accumulator (#2649) — without it, the consume-rebind
-// reclaim frees each superseded box and the program stays flat (~1.2 GiB) and
-// COMPLETES (return the count → exit code count%256) instead of trapping.
-// Storing every intermediate keeps them all live, so the heap genuinely
-// overflows.
+// Why raw `__alloc` and not cumulative string growth: `__alloc(n)` returns a
+// fresh n-byte block and NEVER writes it (no zero-init, and its `usize` result
+// is a scalar — no rc, so no reclaim ever recycles it). Each call advances the
+// bump CURSOR by ~2 GiB (pow2-rounded) while touching ZERO physical pages, so
+// residency stays flat at a few MB no matter how far the cursor races. ~8 calls
+// overrun the 16 GiB arena and the ~9th trips the bounds check → exit(137) in
+// ~1 ms.
 //
-// 150000 iterations is ~10.5 GiB cumulative string bytes (n²/2), robustly past
-// the x86 8 GiB arena (and the smaller arm64 3.5 GiB / wasm32 heaps) so it
-// traps mid-loop on every backend. (100000 sufficed while the x86 arena was
-// 3.875 GiB; the 8 GiB bump would have let that count COMPLETE at ~4.66 GiB.)
-const allocTrapSrc = "function main(): i32 { var a: string[] = []; var s: string = \"\"; var i: i32 = 0; while (i < 150000) { s = s + \"x\"; a.append(s); i = i + 1; } return a.len(); }"
+// This replaced the old approach (grow `s` by concat, `a.append(s)` to keep
+// every intermediate live so ~10.5 GiB of string bytes overflowed the arena):
+// once the arena reached 16 GiB (#5218) that no longer worked on a 16 GB CI
+// runner. Touching ~16 GiB to reach the arena wall host-OOMs FIRST — a SIGKILL,
+// which Go reports as ExitCode -1, not the clean 137 this asserts — and any
+// count small enough to fit RAM stays UNDER the 16 GiB arena and COMPLETES
+// (exit 0). Decoupling cursor advance from residency removes that dependency on
+// arena-size ≈ runner-RAM entirely, and the loop bound (100000 × ~2 GiB, far
+// past any arena) also makes the trap immune to future arena bumps — it still
+// fires after ~8 iterations, the rest are unreached.
+const allocTrapSrc = "function main(): i32 { var i: i32 = 0; var last: usize = 0; while (i < 100000) { last = __alloc(2000000000); i = i + 1; } if (last == 0) { return 99; } return i; }"
 
 // TestSelfHostAllocTrapX86_64 — heap-overflow trap, self-hosted x86-64.
 func TestSelfHostAllocTrapX86_64(t *testing.T) {

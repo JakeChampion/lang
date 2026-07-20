@@ -8,7 +8,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
@@ -34,29 +33,15 @@ import (
 func TestSelfHostAsmX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "asm.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	// Build through the shared cached path (buildSelfHostBin), NOT a
+	// hand-rolled modload+emit+gcc: the cached path releases the emit's
+	// dead spans (debug.FreeOSMemory) before spawning the assembler and
+	// caches the linked binary, where the inline build held the multi-GB
+	// emit residue in the test process while `as` spiked on asm.fern's .s
+	// — past the 16 GB CI runners' RAM, OOM-killing the runner agent
+	// ("The runner has received a shutdown signal", twice in a row on
+	// #5046's shard1). Same conversion as TestSelfHostCrossValidation.
+	binPath := buildSelfHostBin(t, gcc, dir, "asm.fern", "prog")
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(binPath)

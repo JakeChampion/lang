@@ -91,6 +91,15 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
+        // #4873 grow-bracket share helpers: the backend-selectable rc touch
+        // around a surviving ident arg at a may-grow param position. Register
+        // backends alias them to the plain rc inc / rc-guarded arr dec (their
+        // arrays carry an rc header at base-4, and __fern_arr_push's
+        // uniqueness gate reads it); wasm_ir intercepts BOTH as no-ops — wasm
+        // arrays have no rc header ([len@0, cap@4, elems@8]), so an rc touch
+        // at base-4 would corrupt the neighbouring allocation.
+        || name == "__fern_arr_share_inc"
+        || name == "__fern_arr_share_dec"
         // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
         // data buffer + 16-byte box. Default ir_helper_symbol maps it to
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
@@ -150,6 +159,13 @@ pub function is_fern_helper(name: string): boolean {
         // chr(n)'s 1-char-string-box helper (stack-arg body under
         // __fn___fern_chr; allocates, so it needs the heap runtime).
         || name == "__fern_chr"
+        // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
+        // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
+        // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
+        // emitted in emit_ir_runtime (x86) / asm_arm64.emit_runtime (arm64). Only
+        // irlower's lower_arr_str_join emits the call. wasm defers to its AST path
+        // ($__fern_str_join) — see wasm_ir_deferrals_ok.
+        || name == "__fern_arr_str_join"
         // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
         // superseded old box (rc-guarded shallow free) unless it is `new` or the
         // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
@@ -230,6 +246,12 @@ pub function c_call_arity(name: string): i32 {
 pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
+    // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
+    // pair on the register backends (zero new runtime); the distinct NAMES
+    // exist so wasm_ir can intercept them as no-ops (wasm arrays carry no rc
+    // header).
+    if (name == "__fern_arr_share_inc") { return "__fn___fern_rc_inc"; }
+    if (name == "__fern_arr_share_dec") { return "__fn___fern_arr_dec"; }
     if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
     if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
     // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
@@ -314,71 +336,12 @@ function emit_ir_random_i32(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_monotonic_ns / emit_ir_now_unix_ms append the clock-reading helpers,
-// transcribed verbatim from asm.fern's emit_runtime so the IR path is a
-// byte-compatible drop-in for the AST path's clock builtins. Kept OUT of
-// emit_ir_runtime (heap-gated) — a pure-scalar program that only times
-// something allocates nothing, so its helper must still emit. clock_gettime is
-// x86-64 syscall 228; the kernel writes a `struct timespec { i64 tv_sec; i64
-// tv_nsec }`. Errno is ignored (fixed clock id + stack buffer we control).
-function emit_ir_monotonic_ns(s: asmcore.EmitState): asmcore.EmitState {
-    // monotonic_ns: CLOCK_MONOTONIC=1 → tv_sec*1e9 + tv_nsec.
-    s = s.write("__fern_monotonic_ns:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // timespec
-    s = s.write("    movq $1, %rdi\n");           // CLOCK_MONOTONIC
-    s = s.write("    movq %rsp, %rsi\n");         // &timespec
-    s = s.write("    movq $228, %rax\n");         // clock_gettime
-    s = s.write("    syscall\n");
-    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
-    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
-    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
-function emit_ir_now_unix_ms(s: asmcore.EmitState): asmcore.EmitState {
-    // now_unix_ms: CLOCK_REALTIME=0 → tv_sec*1000 + tv_nsec/1e6.
-    s = s.write("__fern_now_unix_ms:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // timespec
-    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
-    s = s.write("    movq %rsp, %rsi\n");         // &timespec
-    s = s.write("    movq $228, %rax\n");         // clock_gettime
-    s = s.write("    syscall\n");
-    s = s.write("    movq (%rsp), %r10\n");       // tv_sec
-    s = s.write("    imulq $1000, %r10, %r10\n"); // sec * 1000
-    s = s.write("    movq 8(%rsp), %rax\n");      // tv_nsec
-    s = s.write("    movq $0, %rdx\n");
-    s = s.write("    movq $1000000, %rcx\n");
-    s = s.write("    divq %rcx\n");               // rax = nsec / 1e6
-    s = s.write("    addq %r10, %rax\n");
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
-
-// emit_ir_now_ns appends the __fern_now_ns() helper — wall-clock nanoseconds via
-// clock_gettime(CLOCK_REALTIME) → tv_sec*1e9 + tv_nsec (the nanosecond twin of
-// now_unix_ms). Allocation-free, gated on the now_ns need like the siblings.
-function emit_ir_now_ns(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_now_ns:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // timespec
-    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
-    s = s.write("    movq %rsp, %rsi\n");         // &timespec
-    s = s.write("    movq $228, %rax\n");         // clock_gettime
-    s = s.write("    syscall\n");
-    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
-    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
-    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// The clock helpers (__fern_monotonic_ns / _now_unix_ms / _now_ns) are now Fern
+// runtime functions (#2649): asmcore.rt_src_monotonic_ns / _now_unix_ms / _now_ns,
+// lowered through the IR pipeline via emit_ir_runtime_fern_fn in the entry block
+// (need-gated). They read clock_gettime (syscall 228) into the fixed static
+// __fern_scratch buffer via the __syscall3 / __raw_scratch / __load_i64 floor,
+// then do i64 math — no heap, no per-call leak. arm64/AST keep their hand-asm.
 
 // emit_ir_poll appends __fern_poll(%rdi = i32[] box ptr, %rsi = timeout_ms) ->
 // i32 index of the first POLLIN-ready fd, or -1. Mirrors the native poll(2)
@@ -931,9 +894,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r10\n");
     s = s.write("    pushq %r11\n");
     s = s.write("    movl $0x10000000, %edi\n");          // addr hint
-    s = s.write("    movabs $8589934592, %rsi\n");        // length = 0x200000000, 8 GiB (64-bit imm; lockstep with asm.fern + native x86-64 — see heap_size there)
+    s = s.write("    movabs $17179869184, %rsi\n");        // length = 0x400000000, 16 GiB (64-bit imm; lockstep with asm.fern + native x86-64 — see heap_size there)
     s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
-    s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+    s = s.write("    movl $0x4022, %r10d\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; lockstep with asm.fern + the native x86-64 backend)
     s = s.write("    movq $-1, %r8\n");                   // fd
     s = s.write("    xorl %r9d, %r9d\n");                 // offset
     s = s.write("    movl $9, %eax\n");                   // __NR_mmap
@@ -942,7 +905,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jl .Lalloc_oom\n");
     s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
     s = s.write("    movq %rax, __fern_heap_base(%rip)\n"); // record arena base (freeable-range lower bound)
-    s = s.write("    movabs $8589934592, %rcx\n");        // heap_size (64-bit imm)
+    s = s.write("    movabs $17179869184, %rcx\n");        // heap_size (64-bit imm)
     s = s.write("    addq %rax, %rcx\n");                 // %rcx = base + heap_size (END)
     s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
     s = s.write("    popq %r11\n");
@@ -964,6 +927,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lalloc_oom:\n");
     s = s.write("    movq $60, %rax\n");
     s = s.write("    movq $137, %rdi\n");
+    s = s.write("    syscall\n");
+    // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set.
+    // Aborts with exit 134, matching the native backends + docs/ARRAY-BOUNDS.md
+    // ("an out-of-bounds index aborts before producing a value; never returns a
+    // garbage value"). A single shared routine keeps the per-access check to a
+    // compare + a jae to here, with no per-site label churn.
+    s = s.write("__fern_oob_abort:\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    movq $134, %rdi\n");
     s = s.write("    syscall\n");
     // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
     // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
@@ -1876,609 +1848,37 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    jmp .Lioe_withpath\n" + ".Lioe_intr:\n" + "    movq $8, %rdi\n" + "    call __fern_alloc\n" + "    leaq " + sh_in.label + "(%rip), %rcx\n" + "    movq %rcx, (%rax)\n" + "    jmp .Lioe_done\n" + ".Lioe_withpath:\n" + "    movq $16, %rdi\n" + "    call __fern_alloc\n" + "    movq %rbx, (%rax)\n" + "    movq %r12, 8(%rax)\n" + ".Lioe_done:\n" + "    popq %r12\n" + "    popq %rbx\n" + "    popq %rbp\n" + "    ret\n" + "    .section .rodata\n");
         s = s.write(".Lioe_empty:\n" + "    .byte 0\n" + "    .text\n");
     }
-    // __fern_read_file: %rdi = path string box → Result[string, IoError] box
-    // [tag@0, payload@8] (tag=0 Ok(contents) / tag=1 Err(_)). NUL-terminates the
-    // path, openat(AT_FDCWD, path, O_RDONLY=0)=257, lseek-sizes the file (=8),
-    // reads to EOF (sys_read=0, up to 1 MiB per read), closes (=3), boxes the
-    // contents string and wraps it in Ok. Transcribed verbatim from asm.fern's
-    // emit_runtime (the per-module entry exports the symbol via
-    // emit_runtime_globls). Gated on the read_file need; calls __fern_alloc.
-    if (s.has_need("read_file")) {
-        s = s.write("__fern_read_file:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r15\n");
-        s = s.write("    leaq 1(%r15), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrdf_copy:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Lrdf_copydone\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrdf_copy\n");
-        s = s.write(".Lrdf_copydone:\n");
-        s = s.write("    movb $0, (%r13,%r15,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write("    movq $257, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lrdf_err\n");
-        s = s.write("    movq %rax, %r12\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $0, %rsi\n");
-        s = s.write("    movq $2, %rdx\n");
-        s = s.write("    movq $8, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq %rax, %r14\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $0, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $8, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq %rax, %rbx\n");
-        s = s.write("    movq $0, %r14\n");
-        s = s.write(".Lrdf_rdloop:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $1048576, %rdx\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jle .Lrdf_rddone\n");
-        s = s.write("    addq %rax, %r14\n");
-        s = s.write("    addq %rax, %rbx\n");
-        s = s.write("    jmp .Lrdf_rdloop\n");
-        s = s.write(".Lrdf_rddone:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $3, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r13, (%rax)\n");
-        s = s.write("    movq %r14, 8(%rax)\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq %r13, 8(%rax)\n");
-        s = s.write("    jmp .Lrdf_ret\n");
-        s = s.write(".Lrdf_err:\n");
-        // %rax = -errno from openat; %r13 = NUL-terminated path data copy,
-        // %r15 = path length (both still live — the error branch is taken
-        // before they're repurposed). Box the path, map errno → IoError via
-        // __fern_io_error, and wrap it as the Err payload — the old path
-        // stored a NULL payload here, so matching the error value segfaulted
-        // (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r15, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $1, (%rax)\n    movq %r13, 8(%rax)\n.Lrdf_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
-    // __fern_write_file: %rdi = path box, %rsi = content box -> Option[IoError] box
-    // [tag@0, payload@8] (tag=1 None on success / tag=0 Some(_) on error).
-    // NUL-terminates the path, openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577,
-    // 0644)=257, writes the content (write=1), closes (=3). Transcribed verbatim
-    // from asm.fern's emit_runtime (exported via emit_runtime_globls). Gated on the
-    // write_file need; calls __fern_alloc.
-    if (s.has_need("write_file")) {
-        s = s.write("__fern_write_file:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        // A 16-byte slot holding the ORIGINAL path box: the error paths need
-        // it as the IoError payload, and every register it starts in is
-        // repurposed by the write loop (#4370). Popped at .Lwf_ret.
-        s = s.write("    subq $16, %rsp\n");
-        s = s.write("    movq %rdi, (%rsp)\n");
-        s = s.write("    movq (%rsi), %r12\n");
-        s = s.write("    movq 8(%rsi), %r14\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r15\n");
-        s = s.write("    leaq 1(%r15), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lwf_copy:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Lwf_copydone\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lwf_copy\n");
-        s = s.write(".Lwf_copydone:\n");
-        s = s.write("    movb $0, (%r13,%r15,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq $577, %rdx\n");
-        s = s.write("    movq $420, %r10\n");
-        s = s.write("    movq $257, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lwf_err\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %r15\n");
-        s = s.write(".Lwf_loop:\n");
-        s = s.write("    cmpq %r14, %r15\n");
-        s = s.write("    jge .Lwf_done\n");
-        s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    leaq (%r12,%r15,1), %rsi\n");
-        s = s.write("    movq %r14, %rdx\n");
-        s = s.write("    subq %r15, %rdx\n");
-        s = s.write("    movq $1, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lwf_err_close\n");
-        s = s.write("    addq %rax, %r15\n");
-        s = s.write("    jmp .Lwf_loop\n");
-        s = s.write(".Lwf_done:\n");
-        s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    movq $3, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    jmp .Lwf_ret\n");
-        s = s.write(".Lwf_err_close:\n");
-        // Write failed: preserve -errno across the close (whose return
-        // clobbers %rax), then build the real IoError payload (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %r14\n    movq %r13, %rdi\n    movq $3, %rax\n    syscall\n    jmp .Lwf_mkerr\n.Lwf_err:\n    negq %rax\n    movq %rax, %r14\n.Lwf_mkerr:\n    movq %r14, %rdi\n    movq (%rsp), %rsi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $0, (%rax)\n    movq %r13, 8(%rax)\n.Lwf_ret:\n    addq $16, %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
-    // __fern_remove_dir_all: %rdi = path box -> Option[IoError] box. Recursive
-    // rm -rf: openat the path as a directory; ENOENT -> None (already gone),
-    // ENOTDIR -> unlink the file, success -> recurse into each child (path + "/"
-    // + name) then rmdir. Best-effort. Transcribed verbatim from asm.fern's
-    // emit_runtime (the same body the AST path calls); gated on the
-    // remove_dir_all need; calls __fern_alloc + recurses into itself.
-    if (s.has_need("remove_dir_all")) {
-        s = s.write("__fern_remove_dir_all:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %r12\n");
-        s = s.write("    movq 8(%rdi), %r13\n");
-        s = s.write("    leaq 1(%r13), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %rbx\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrda_copy:\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jge .Lrda_cpd\n");
-        s = s.write("    movb (%r12,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%rbx,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrda_copy\n");
-        s = s.write(".Lrda_cpd:\n");
-        s = s.write("    movb $0, (%rbx,%r13,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $65536, %rdx\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write("    movq $257, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    jns .Lrda_dir\n");
-        s = s.write("    cmpq $-2, %rax\n");
-        s = s.write("    je .Lrda_none\n");
-        s = s.write("    cmpq $-20, %rax\n");
-        s = s.write("    jne .Lrda_some\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $263, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    jmp .Lrda_none\n");
-        s = s.write(".Lrda_dir:\n");
-        s = s.write("    movq %rax, %r12\n");
-        s = s.write("    movq $65536, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %r14\n");
-        s = s.write(".Lrda_g:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    leaq (%r13,%r14,1), %rsi\n");
-        s = s.write("    movq $65536, %rdx\n");
-        s = s.write("    subq %r14, %rdx\n");
-        s = s.write("    movq $217, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jle .Lrda_gd\n");
-        s = s.write("    addq %rax, %r14\n");
-        s = s.write("    jmp .Lrda_g\n");
-        s = s.write(".Lrda_gd:\n");
-        s = s.write("    movq $0, %r15\n");
-        s = s.write(".Lrda_it:\n");
-        s = s.write("    cmpq %r14, %r15\n");
-        s = s.write("    jge .Lrda_itd\n");
-        s = s.write("    leaq 19(%r13,%r15,1), %rax\n");
-        s = s.write("    movb (%rax), %cl\n");
-        s = s.write("    cmpb $46, %cl\n");
-        s = s.write("    jne .Lrda_ch\n");
-        s = s.write("    movb 1(%rax), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrda_adv\n");
-        s = s.write("    cmpb $46, %cl\n");
-        s = s.write("    jne .Lrda_ch\n");
-        s = s.write("    movb 2(%rax), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrda_adv\n");
-        s = s.write(".Lrda_ch:\n");
-        s = s.write("    movq %rax, %r8\n");
-        s = s.write("    movq $0, %r9\n");
-        s = s.write(".Lrda_pl:\n");
-        s = s.write("    movb (%rbx,%r9,1), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrda_pld\n");
-        s = s.write("    incq %r9\n");
-        s = s.write("    jmp .Lrda_pl\n");
-        s = s.write(".Lrda_pld:\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write(".Lrda_nl:\n");
-        s = s.write("    movb (%r8,%r10,1), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrda_nld\n");
-        s = s.write("    incq %r10\n");
-        s = s.write("    jmp .Lrda_nl\n");
-        s = s.write(".Lrda_nld:\n");
-        s = s.write("    pushq %r8\n");
-        s = s.write("    pushq %r9\n");
-        s = s.write("    pushq %r10\n");
-        s = s.write("    leaq 1(%r9,%r10,1), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    popq %r10\n");
-        s = s.write("    popq %r9\n");
-        s = s.write("    popq %r8\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrda_cc1:\n");
-        s = s.write("    cmpq %r9, %rcx\n");
-        s = s.write("    jge .Lrda_cc1d\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%rsi,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrda_cc1\n");
-        s = s.write(".Lrda_cc1d:\n");
-        s = s.write("    movb $47, (%rsi,%r9,1)\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrda_cc2:\n");
-        s = s.write("    cmpq %r10, %rcx\n");
-        s = s.write("    jge .Lrda_cc2d\n");
-        s = s.write("    movb (%r8,%rcx,1), %dl\n");
-        s = s.write("    leaq 1(%r9,%rcx,1), %rax\n");
-        s = s.write("    movb %dl, (%rsi,%rax,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrda_cc2\n");
-        s = s.write(".Lrda_cc2d:\n");
-        s = s.write("    leaq 1(%r9,%r10,1), %r11\n");
-        s = s.write("    pushq %rsi\n");
-        s = s.write("    pushq %r11\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    popq %r11\n");
-        s = s.write("    popq %rsi\n");
-        s = s.write("    movq %rsi, (%rax)\n");
-        s = s.write("    movq %r11, 8(%rax)\n");
-        s = s.write("    movq %rax, %rdi\n");
-        s = s.write("    call __fern_remove_dir_all\n");
-        s = s.write(".Lrda_adv:\n");
-        s = s.write("    movzwq 16(%r13,%r15,1), %rax\n");
-        s = s.write("    addq %rax, %r15\n");
-        s = s.write("    jmp .Lrda_it\n");
-        s = s.write(".Lrda_itd:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $3, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $512, %rdx\n");
-        s = s.write("    movq $263, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write(".Lrda_none:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
-        s = s.write("    jmp .Lrda_ret\n");
-        s = s.write(".Lrda_some:\n");
-        // %rax = -errno from the initial openat (the only route here);
-        // %rbx/%r13 = NUL-terminated path copy + length (both live). Box the
-        // path and build the real Some(IoError) payload — this used to be
-        // NULL (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %r12\n    movq $16, %rdi\n    call __fern_alloc\n    movq %rbx, (%rax)\n    movq %r13, 8(%rax)\n    movq %rax, %rsi\n    movq %r12, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $0, (%rax)\n    movq %r13, 8(%rax)\n.Lrda_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
-    // __fern_remove_file: %rdi = path box -> Option[IoError] box. NUL-terminates
-    // the path, unlinkat(AT_FDCWD, pathz, 0). Transcribed verbatim from asm.fern's
-    // emit_runtime (the same body the AST path calls); gated on the remove_file
-    // need; calls __fern_alloc.
-    if (s.has_need("remove_file")) {
-        s = s.write("__fern_remove_file:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r12\n");
-        s = s.write("    leaq 1(%r12), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrf_copy:\n");
-        s = s.write("    cmpq %r12, %rcx\n");
-        s = s.write("    jge .Lrf_cpd\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrf_copy\n");
-        s = s.write(".Lrf_cpd:\n");
-        s = s.write("    movb $0, (%r13,%r12,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $263, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lrf_err\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
-        s = s.write("    jmp .Lrf_ret\n");
-        s = s.write(".Lrf_err:\n");
-        // %rax = -errno from unlinkat; %r13/%r12 = NUL-terminated path copy +
-        // length (both live). Box the path and build the real Some(IoError)
-        // payload — this used to be NULL (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r12, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $0, (%rax)\n    movq %r13, 8(%rax)\n.Lrf_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
-    // __fern_temp_dir: %rdi = prefix box -> Result[string, IoError] box. Makes a
-    // uniquely-named /tmp/<prefix>-<monotonic_ns> directory (mkdirat). Transcribed
-    // verbatim from asm.fern's emit_runtime (the same body the AST path calls);
-    // gated on the temp_dir need; calls __fern_monotonic_ns + __fern_alloc.
-    if (s.has_need("temp_dir")) {
-        s = s.write("__fern_temp_dir:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    call __fern_monotonic_ns\n");
-        s = s.write("    movq %rax, %r15\n");
-        s = s.write("    movq 8(%rbx), %r12\n");
-        s = s.write("    leaq 27(%r12), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movb $47, 0(%r13)\n");
-        s = s.write("    movb $116, 1(%r13)\n");
-        s = s.write("    movb $109, 2(%r13)\n");
-        s = s.write("    movb $112, 3(%r13)\n");
-        s = s.write("    movb $47, 4(%r13)\n");
-        s = s.write("    movq $5, %r14\n");
-        s = s.write("    movq (%rbx), %rcx\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write(".Ltd_pcopy:\n");
-        s = s.write("    cmpq %r12, %rdx\n");
-        s = s.write("    jge .Ltd_pdone\n");
-        s = s.write("    movb (%rcx,%rdx,1), %al\n");
-        s = s.write("    movb %al, (%r13,%r14,1)\n");
-        s = s.write("    incq %r14\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    jmp .Ltd_pcopy\n");
-        s = s.write(".Ltd_pdone:\n");
-        s = s.write("    movb $45, (%r13,%r14,1)\n");
-        s = s.write("    incq %r14\n");
-        s = s.write("    movq %r15, %rax\n");
-        s = s.write("    movq $0, %r8\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jne .Ltd_cnt\n");
-        s = s.write("    movq $1, %r8\n");
-        s = s.write("    jmp .Ltd_cntdone\n");
-        s = s.write(".Ltd_cnt:\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    je .Ltd_cntdone\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $10, %rcx\n");
-        s = s.write("    divq %rcx\n");
-        s = s.write("    incq %r8\n");
-        s = s.write("    jmp .Ltd_cnt\n");
-        s = s.write(".Ltd_cntdone:\n");
-        s = s.write("    leaq -1(%r14,%r8,1), %r9\n");
-        s = s.write("    movq %r15, %rax\n");
-        s = s.write(".Ltd_wr:\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $10, %rcx\n");
-        s = s.write("    divq %rcx\n");
-        s = s.write("    addq $48, %rdx\n");
-        s = s.write("    movb %dl, (%r13,%r9,1)\n");
-        s = s.write("    decq %r9\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jne .Ltd_wr\n");
-        s = s.write("    addq %r8, %r14\n");
-        s = s.write("    movb $0, (%r13,%r14,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq $448, %rdx\n");
-        s = s.write("    movq $258, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    jnz .Ltd_err\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r13, (%rax)\n");
-        s = s.write("    movq %r14, 8(%rax)\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq %r13, 8(%rax)\n");
-        s = s.write("    jmp .Ltd_ret\n");
-        s = s.write(".Ltd_err:\n");
-        // %rax = -errno from mkdirat; %r13/%r14 = the generated
-        // NUL-terminated path + length (both live). Box the path and build
-        // the real Err(IoError) payload — this used to be NULL (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r14, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $1, (%rax)\n    movq %r13, 8(%rax)\n.Ltd_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
-    // __fern_read_dir: %rdi = path box -> Result[string[], IoError] box. Lists the
-    // directory's base-name children (openat+getdents64, skipping . / ..), boxing
-    // a string[] via __fern_arr_box. Transcribed verbatim from asm.fern's
-    // emit_runtime (the same body the AST path calls); gated on the read_dir need;
-    // calls __fern_alloc + __fern_arr_box (the heap runtime, already present).
-    if (s.has_need("read_dir")) {
-        s = s.write("__fern_read_dir:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r15\n");
-        s = s.write("    leaq 1(%r15), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r12\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lrd_copy:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Lrd_cpd\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r12,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrd_copy\n");
-        s = s.write(".Lrd_cpd:\n");
-        s = s.write("    movb $0, (%r12,%r15,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r12, %rsi\n");
-        s = s.write("    movq $65536, %rdx\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write("    movq $257, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lrd_err\n");
-        s = s.write("    movq %rax, %r12\n");
-        s = s.write("    movq $1048576, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %r14\n");
-        s = s.write(".Lrd_g:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    leaq (%r13,%r14,1), %rsi\n");
-        s = s.write("    movq $1048576, %rdx\n");
-        s = s.write("    subq %r14, %rdx\n");
-        s = s.write("    movq $217, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jle .Lrd_gd\n");
-        s = s.write("    addq %rax, %r14\n");
-        s = s.write("    jmp .Lrd_g\n");
-        s = s.write(".Lrd_gd:\n");
-        s = s.write("    movq %r12, %rdi\n");
-        s = s.write("    movq $3, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    movq $0, %r15\n");
-        s = s.write("    movq $0, %rbx\n");
-        s = s.write(".Lrd_c1:\n");
-        s = s.write("    cmpq %r14, %rbx\n");
-        s = s.write("    jge .Lrd_c1d\n");
-        s = s.write("    leaq 19(%r13,%rbx,1), %rax\n");
-        s = s.write("    movb (%rax), %cl\n");
-        s = s.write("    cmpb $46, %cl\n");
-        s = s.write("    jne .Lrd_c1n\n");
-        s = s.write("    movb 1(%rax), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrd_c1s\n");
-        s = s.write("    cmpb $46, %cl\n");
-        s = s.write("    jne .Lrd_c1n\n");
-        s = s.write("    movb 2(%rax), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrd_c1s\n");
-        s = s.write(".Lrd_c1n:\n");
-        s = s.write("    incq %r15\n");
-        s = s.write(".Lrd_c1s:\n");
-        s = s.write("    movzwq 16(%r13,%rbx,1), %rax\n");
-        s = s.write("    addq %rax, %rbx\n");
-        s = s.write("    jmp .Lrd_c1\n");
-        s = s.write(".Lrd_c1d:\n");
-        s = s.write("    movq %r15, %rdi\n");
-        s = s.write("    call __fern_arr_box\n");
-        s = s.write("    movq %rax, %r12\n");
-        s = s.write("    movq $0, %rbx\n");
-        s = s.write("    movq $0, %r15\n");
-        s = s.write(".Lrd_p2:\n");
-        s = s.write("    cmpq %r14, %rbx\n");
-        s = s.write("    jge .Lrd_p2d\n");
-        s = s.write("    leaq 19(%r13,%rbx,1), %rax\n");
-        s = s.write("    movb (%rax), %cl\n");
-        s = s.write("    cmpb $46, %cl\n");
-        s = s.write("    jne .Lrd_p2t\n");
-        s = s.write("    movb 1(%rax), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrd_p2a\n");
-        s = s.write("    cmpb $46, %cl\n");
-        s = s.write("    jne .Lrd_p2t\n");
-        s = s.write("    movb 2(%rax), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrd_p2a\n");
-        s = s.write(".Lrd_p2t:\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write(".Lrd_p2sl:\n");
-        s = s.write("    movb (%rax,%rdx,1), %cl\n");
-        s = s.write("    cmpb $0, %cl\n");
-        s = s.write("    je .Lrd_p2sd\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    jmp .Lrd_p2sl\n");
-        s = s.write(".Lrd_p2sd:\n");
-        s = s.write("    pushq %rax\n");
-        s = s.write("    pushq %rdx\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    popq %rdx\n");
-        s = s.write("    popq %rcx\n");
-        s = s.write("    movq %rcx, (%rax)\n");
-        s = s.write("    movq %rdx, 8(%rax)\n");
-        s = s.write("    movq %r15, %rcx\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    movq %rax, (%r12,%rcx,8)\n");
-        s = s.write("    incq %r15\n");
-        s = s.write(".Lrd_p2a:\n");
-        s = s.write("    movzwq 16(%r13,%rbx,1), %rax\n");
-        s = s.write("    addq %rax, %rbx\n");
-        s = s.write("    jmp .Lrd_p2\n");
-        s = s.write(".Lrd_p2d:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq %r12, 8(%rax)\n");
-        s = s.write("    jmp .Lrd_ret\n");
-        s = s.write(".Lrd_err:\n");
-        // %rax = -errno from openat (the only route here); %r12/%r15 =
-        // NUL-terminated path copy + length (both live). Box the path and
-        // build the real Err(IoError) payload — this used to be NULL (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r12, (%rax)\n    movq %r15, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $1, (%rax)\n    movq %r13, 8(%rax)\n.Lrd_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
+    // __fern_read_file is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on read_file) —
+    // returns Result[string, IoError]. openat/lseek/read/close via __syscall3;
+    // the sized read buffer becomes the Ok(string). The op_read_file handler
+    // calls the stack-ABI __fn___fern_read_file symbol.
+    // __fern_write_file is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on write_file) —
+    // openat(O_CREAT) via __syscall4 + write/close via __syscall3, returns
+    // Option[IoError]. The op_write_file handler calls the stack-ABI
+    // __fn___fern_write_file symbol.
+    // __fern_remove_dir_all is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the fs bundle (need-gated on remove_dir_all) — a
+    // best-effort recursive rm -rf that classifies the target with a probe openat
+    // (ENOENT → None, ENOTDIR → unlink, else Some(io_error)), delegates directory
+    // enumeration to the (Fern) read_dir, recurses into each child, then rmdirs.
+    // The op-172 handler calls the stack-ABI __fn___fern_remove_dir_all symbol;
+    // arm64/AST keep the register-ABI hand-asm.
+    // __fern_remove_file is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on remove_file) —
+    // unlinkat via __syscall3, returns Option[IoError]. The op_remove_file handler
+    // calls the stack-ABI __fn___fern_remove_file symbol.
+    // __fern_temp_dir is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on temp_dir) — builds
+    // /tmp/<prefix>-<monotonic_ns> with the raw intrinsics, mkdirat via __syscall3,
+    // returns Result[string, IoError]. Calls the (Fern) monotonic_ns helper. The
+    // op_temp_dir handler calls the stack-ABI __fn___fern_temp_dir symbol.
+    // __fern_read_dir is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the fs bundle (need-gated on read_dir) — drains the
+    // directory with a getdents64 loop over a fresh 64 KiB buffer per read, building
+    // a string[] with .append(). The op-171 handler calls the stack-ABI
+    // __fn___fern_read_dir symbol; arm64/AST keep the register-ABI hand-asm.
     // __fern_env: %rdi = name string box -> Option[string] box. Walks __fern_envp
     // (saved by the entry's _start, gated on the same env need) for an entry whose
     // key matches name + '=', and boxes the value (kernel-immortal bytes, no copy).
@@ -2492,146 +1892,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("__fern_envp: .quad 0\n");
         s = s.write(".section .text\n");
     }
-    if (s.has_need("env")) {
-        s = s.write("__fern_env:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq (%rdi), %r12\n");
-        s = s.write("    movq 8(%rdi), %r13\n");
-        s = s.write("    movq __fern_envp(%rip), %rbx\n");
-        s = s.write(".Lenv_loop:\n");
-        s = s.write("    movq (%rbx), %rdi\n");
-        s = s.write("    testq %rdi, %rdi\n");
-        s = s.write("    jz .Lenv_none\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lenv_cmp:\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jge .Lenv_cmpdone\n");
-        s = s.write("    movb (%rdi,%rcx,1), %al\n");
-        s = s.write("    movb (%r12,%rcx,1), %dl\n");
-        s = s.write("    cmpb %dl, %al\n");
-        s = s.write("    jne .Lenv_next\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lenv_cmp\n");
-        s = s.write(".Lenv_cmpdone:\n");
-        s = s.write("    movb (%rdi,%r13,1), %al\n");
-        s = s.write("    cmpb $61, %al\n");
-        s = s.write("    jne .Lenv_next\n");
-        s = s.write("    leaq 1(%rdi,%r13,1), %r14\n");
-        s = s.write("    movq $0, %r15\n");
-        s = s.write(".Lenv_strlen:\n");
-        s = s.write("    movb (%r14,%r15,1), %al\n");
-        s = s.write("    testb %al, %al\n");
-        s = s.write("    jz .Lenv_strlen_done\n");
-        s = s.write("    incq %r15\n");
-        s = s.write("    jmp .Lenv_strlen\n");
-        s = s.write(".Lenv_strlen_done:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r14, (%rax)\n");
-        s = s.write("    movq %r15, 8(%rax)\n");
-        s = s.write("    movq %rax, %r14\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq %r14, 8(%rax)\n");
-        s = s.write("    jmp .Lenv_ret\n");
-        s = s.write(".Lenv_next:\n");
-        s = s.write("    addq $8, %rbx\n");
-        s = s.write("    jmp .Lenv_loop\n");
-        s = s.write(".Lenv_none:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $1, (%rax)\n");
-        s = s.write("    movq $0, 8(%rax)\n");
-        s = s.write(".Lenv_ret:\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_stat: %rdi = path box -> Result[FileStat, IoError] box. newfstatat
-    // (262) into a stack buffer; reads st_mode (offset 24) + st_size (offset 48),
-    // builds a FileStat struct [shape, is_file@8, is_dir@16, size@24] whose shape
-    // pointer is the interned "FileStat" name (shape_ref — the FileStat shape is
-    // pre-interned before the literal pool below so the label resolves), and wraps
-    // it Ok / Err. Transcribed verbatim from asm.fern's emit_runtime (the same body
-    // the AST path calls); gated on the stat need; calls __fern_alloc (heap, present).
-    if (s.has_need("stat")) {
-        var fsLit: ShapeRefOut = shape_ref(s, "FileStat");
-        s = fsLit.state;
-        s = s.write("__fern_stat:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    subq $160, %rsp\n");
-        s = s.write("    movq (%rdi), %rbx\n");
-        s = s.write("    movq 8(%rdi), %r15\n");
-        s = s.write("    leaq 1(%r15), %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Lstat_copy:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Lstat_cpd\n");
-        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lstat_copy\n");
-        s = s.write(".Lstat_cpd:\n");
-        s = s.write("    movb $0, (%r13,%r15,1)\n");
-        s = s.write("    movq $-100, %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    movq %rsp, %rdx\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write("    movq $262, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    js .Lstat_err\n");
-        s = s.write("    movl 24(%rsp), %eax\n");
-        s = s.write("    andl $61440, %eax\n");
-        s = s.write("    movq $0, %r12\n");
-        s = s.write("    cmpl $32768, %eax\n");
-        s = s.write("    jne .Lstat_nf\n");
-        s = s.write("    movq $1, %r12\n");
-        s = s.write(".Lstat_nf:\n");
-        s = s.write("    movq $0, %r14\n");
-        s = s.write("    cmpl $16384, %eax\n");
-        s = s.write("    jne .Lstat_nd\n");
-        s = s.write("    movq $1, %r14\n");
-        s = s.write(".Lstat_nd:\n");
-        s = s.write("    movq 48(%rsp), %rbx\n");
-        s = s.write("    movq $32, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    leaq " + fsLit.label + "(%rip), %rcx\n");
-        s = s.write("    movq %rcx, (%rax)\n");
-        s = s.write("    movq %r12, 8(%rax)\n");
-        s = s.write("    movq %r14, 16(%rax)\n");
-        s = s.write("    movq %rbx, 24(%rax)\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq $0, (%rax)\n");
-        s = s.write("    movq %r13, 8(%rax)\n");
-        s = s.write("    jmp .Lstat_ret\n");
-        s = s.write(".Lstat_err:\n");
-        // %rax = -errno from statx; %r13/%r15 = NUL-terminated path copy +
-        // length (both live). Box the path and build the real Err(IoError)
-        // payload — this used to be NULL (#4370).
-        s = s.write("    negq %rax\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r15, 8(%rax)\n    movq %rax, %rsi\n    movq %rbx, %rdi\n    call __fern_io_error\n    movq %rax, %r13\n    movq $16, %rdi\n    call __fern_alloc\n    movq $1, (%rax)\n    movq %r13, 8(%rax)\n.Lstat_ret:\n    addq $160, %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
+    // __fern_env is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on env) — walks the
+    // envp array (via __raw_environ, reading the __fern_envp global declared
+    // above) and copies the matched value. The op_env handler calls the stack-ABI
+    // __fn___fern_env symbol.
+    // __fern_stat is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the entry block (need-gated on stat) — the
+    // first syscall leaf returning a user-typed Result[FileStat, IoError]. It
+    // stat(2)s into __fern_scratch via __syscall3, reads st_mode/st_size, and
+    // builds Ok(FileStat{...}) / Err(NotFound(path)). The op_stat handler calls
+    // the stack-ABI __fn___fern_stat symbol.
     // __fern_subprocess: %rdi = cmd box, %rsi = args box (string[]), %rdx = stdin
     // box -> ProcessResult struct {shape, stdout@8, stderr@16, exit_code@24}. 3 pipes
     // + fork + execve(cmd, [cmd, args.., NULL], envp); parent writes stdin, reads
@@ -2840,9 +2111,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
     // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
     // emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
-    // __fern_arr_slice (transcribed verbatim from asm.fern): %rdi = src arr,
+    // __fern_arr_slice: %rdi = src arr,
     // %rsi = start, %rdx = end → a fresh array holding src[start:end] (copies the
     // 8-byte element payloads via __fern_arr_box). Drives array `a[start:end]`.
+    // Construction-time bounds check (#5419): two unsigned compares trap unless
+    // 0 <= start <= end <= src len — without them an oversized `end` walked the
+    // copy loop past the source buffer.
     if (s.has_need("arr_slice")) {
         s = s.write("__fern_arr_slice:\n");
         s = s.write("    pushq %rbp\n");
@@ -2854,6 +2128,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdi, %r12\n");
         s = s.write("    movq %rsi, %r13\n");
         s = s.write("    movq %rdx, %r14\n");
+        s = s.write("    cmpq (%r12), %r14\n");    // end > src len (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
+        s = s.write("    cmpq %r14, %r13\n");      // start > end (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
         s = s.write("    movq %r14, %r15\n");
         s = s.write("    subq %r13, %r15\n");
         s = s.write("    movq %r15, %rdi\n");
@@ -2879,32 +2157,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_random_bytes(%rdi = n) → string box of n CSPRNG bytes via
-    // getrandom (syscall 318). Transcribed from asm.fern: alloc the n-byte
-    // data buffer, fill it, then wrap in a 16-byte string box [data@0, len@8].
-    if (s.has_need("random_bytes")) {
-        s = s.write("__fern_random_bytes:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");           // n
-        s = s.write("    pushq %r12\n");           // buf
-        s = s.write("    movq %rdi, %rbx\n");       // n
-        s = s.write("    call __fern_alloc\n");     // alloc n bytes (rdi = n)
-        s = s.write("    movq %rax, %r12\n");       // buf
-        s = s.write("    movq %r12, %rdi\n");       // getrandom(buf, n, 0)
-        s = s.write("    movq %rbx, %rsi\n");
-        s = s.write("    movq $0, %rdx\n");
-        s = s.write("    movq $318, %rax\n");       // sys_getrandom
-        s = s.write("    syscall\n");
-        s = s.write("    movq $16, %rdi\n");        // string box
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r12, (%rax)\n");      // data@0
-        s = s.write("    movq %rbx, 8(%rax)\n");     // len@8
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_random_bytes is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
+    // random_bytes) — it allocs n bytes, fills them from getrandom via the
+    // __syscall3 sub-floor, and boxes them with __raw_string. The op_random_bytes
+    // handler calls the stack-arg __fn___fern_random_bytes symbol.
     // __fern_str_bytes was hand-written here through #2649; it is now a Fern
     // runtime function (asmcore.rt_src_str_bytes) lowered through the IR pipeline
     // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it builds
@@ -2954,6 +2211,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, %r13\n");        // value
     s = s.write("    movq (%r12), %r14\n");      // len
     s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
+    // #4873 containment gate: an rc >= 2 receiver is SHARED (the caller-side
+    // grow bracket inc'd it, or a counted alias exists) — never mutate it in
+    // place even when capacity fits; take the grow path's fresh-box copy,
+    // which leaves the old buffer untouched (and, per the load-bearing-leak
+    // note below, never freed). rc == 1 (sole owner) and the bit-31
+    // static/immortal sentinel keep today's in-place fast path.
+    s = s.write("    movq -8(%r12), %rcx\n");    // rc word
+    s = s.write("    cmpq $1, %rcx\n");
+    s = s.write("    je .Larr_push_rc_ok\n");
+    s = s.write("    btq $31, %rcx\n");
+    s = s.write("    jc .Larr_push_rc_ok\n");
+    s = s.write("    jmp .Larr_push_grow\n");    // shared → copy (#4873)
+    s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmpq %r15, %r14\n");
     s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
     s = s.write("    movq %r14, %rcx\n");
@@ -2979,6 +2249,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (`a = a.append(v)`) reassign-dec — the reuse-analysis slice of goal #2.
     s = s.write(".Larr_push_grow:\n");
     s = s.write("    movq %r15, %rcx\n");
+    // #4873: a SHARED receiver with spare capacity (len < cap) lands here for
+    // an UN-SHARE copy, not a growth — keep the same cap instead of doubling,
+    // halving the copy's arena footprint (the leak-mode self-compile is
+    // arena-bound, #3425). True growth (len >= cap) still doubles.
+    s = s.write("    cmpq %r15, %r14\n");
+    s = s.write("    jl .Larr_push_cap\n");
     s = s.write("    cmpq $0, %rcx\n");
     s = s.write("    jne .Larr_push_dbl\n");
     s = s.write("    movq $4, %rcx\n");
@@ -3718,8 +2994,8 @@ pub function eligible_core_known_main(mod: parser.Module, known: string[], requi
     var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -3773,8 +3049,8 @@ pub function eligible_core_known_main_view(mod: parser.Module, known: string[], 
     var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -3816,7 +3092,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     // PROGRAM struct union for a per-module unit (so a function touching an
     // imported struct's layout lowers in the gate exactly as it does in
     // emit_module_funcs, which already lowers against all_structs).
-    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fn_names, [], [], [], [], [], [], []);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, bparams, fn_names, [], [], [], [], [], [], []);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -4219,6 +3495,11 @@ pub function shape_ref(s: asmcore.EmitState, name: string): ShapeRefOut {
 pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
     var names: string[] = [
         "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_str_box", "__fern_arr_push",
+        // array bounds trap (#5410): every unit's arr_get/arr_set emits a
+        // `jae __fern_oob_abort`; the entry owns the single definition
+        // (emit_ir_runtime's heap block), so export it like the other
+        // shared helpers or every library unit dangles at the per-module link.
+        "__fern_oob_abort",
         "__fern_arr_push_owned",
         "__fern_arr_slice", "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
@@ -4227,13 +3508,24 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
         "__fn___fern_str_ends_with", "__fn___fern_str_index_of", "__fern_print_str",
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
-        "__fern_read_int", "__fern_read_line", "__fern_read_file",
-        "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
-        "__fern_remove_dir_all", "__fern_temp_dir", "__fern_read_dir", "__fern_remove_file",
-        "__fern_env", "__fern_stat", "__fern_subprocess",
+        "__fern_read_int", "__fern_read_line", "__fern_read_file", "__fn___fern_read_file",
+        "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file", "__fn___fern_write_file",
+        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fern_temp_dir", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fern_remove_file", "__fn___fern_remove_file",
+        "__fern_env", "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
-        "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
+        // __fern_random_bytes: register-ABI symbol kept for the arm64 / AST
+        // backends (still hand-asm); the x86-64 IR path defines the Fern-compiled
+        // __fn___fern_random_bytes (#2649). Both listed during the transition —
+        // a .globl of an undefined symbol is a harmless no-op per backend.
+        "__fern_random_bytes", "__fn___fern_random_bytes",
+        // clocks (#2649): register-ABI symbols kept for arm64/AST (hand-asm); the
+        // x86-64 IR path defines the Fern-compiled __fn___fern_*_ns. Both listed
+        // during the transition (a .globl of an undefined symbol is a no-op).
+        // (__fern_now_unix_ms is already listed below.)
+        "__fern_monotonic_ns", "__fern_now_ns",
+        "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
+        "__fern_poll",
         "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
@@ -4273,12 +3565,12 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 97) {  // str_len
         // pop string box; length is at box+8.
-        return s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+        s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n"); return s;
     }
     if (o.kind_tag == 101) {  // str_index
         // pop index (top), string box; box = [data@0, len@8], so the byte is
         // at [data + i]; zero-extend to an i32.
-        return s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n");
+        s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
     }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, but now
@@ -4292,15 +3584,22 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // string field that happens to be a slice/trim VIEW (e.g. the struct
         // string-field alias-inc) is a safe no-op instead of clobbering the previous
         // heap block. r12/r13/r14 (callee-saved) hold end/start/src across alloc.
+        // Construction-time bounds check (#5419): trap unless
+        // 0 <= start <= end <= src len (two unsigned compares) — an oversized
+        // `end` otherwise built a view whose bytes extend past the source.
         s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n");
         s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n");
         s = s.write("    movq %r8, %r12\n    movq %rcx, %r13\n    movq %rdx, %r14\n");
+        s = s.write("    cmpq 8(%r14), %r12\n");   // end > src len (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
+        s = s.write("    cmpq %r12, %r13\n");      // start > end (unsigned) → abort
+        s = s.write("    ja __fern_oob_abort\n");
         s = s.write("    movq $24, %rdi\n    call __fern_alloc\n");
         s = s.write("    movq $-1, (%rax)\n");
         s = s.write("    movq (%r14), %rcx\n    addq %r13, %rcx\n    movq %rcx, 8(%rax)\n");
         s = s.write("    movq %r12, %rcx\n    subq %r13, %rcx\n    movq %rcx, 16(%rax)\n");
         s = s.write("    addq $8, %rax\n");
-        return s.write("    popq %r14\n    popq %r13\n    popq %r12\n    pushq %rax\n");
+        s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    pushq %rax\n"); return s;
     }
     if (o.kind_tag == 104) {  // str_bytes
         // operand stack [str box]; __fern_str_bytes is a Fern runtime function now
@@ -4308,7 +3607,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // directly, pop the arg, push the result i32[]. mark_str_bytes pulls in
         // arr_push + heap.
         s = s.write("    call __fn___fern_str_bytes\n    addq $8, %rsp\n    pushq %rax\n");
-        return s.mark_str_bytes();
+        s = s.mark_str_bytes(); return s;
     }
     if (o.kind_tag == 105) {  // str_split
         // operand stack [haystack box, sep box] (sep on top). Call the
@@ -4316,7 +3615,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // on top (+16), param[1]=sep (+24). -> fresh string[] in %rax.
         s = s.write("    popq %rsi\n    popq %rdi\n");
         s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_split\n    addq $16, %rsp\n    pushq %rax\n");
-        return s.mark_str_split();
+        s = s.mark_str_split(); return s;
     }
     if (o.kind_tag == 106 || o.kind_tag == 107) {  // str_to_upper, str_to_lower
         // operand stack [s box]; __fern_str_to_upper/_lower are Fern runtime
@@ -4325,7 +3624,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         var cfn: string = "__fn___fern_str_to_upper";
         if (o.kind_tag == 107) { cfn = "__fn___fern_str_to_lower"; }  // str_to_lower
         s = s.write("    call " + cfn + "\n    addq $8, %rsp\n    pushq %rax\n");
-        return s.mark_str_case();
+        s = s.mark_str_case(); return s;
     }
     if (o.kind_tag == 108) {  // str_repeat
         // operand stack [s box, n] (n on top). Call the Fern-compiled
@@ -4333,21 +3632,21 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // param[1]=n below (+24). -> fresh string box in %rax.
         s = s.write("    popq %rsi\n    popq %rdi\n");
         s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_repeat\n    addq $16, %rsp\n    pushq %rax\n");
-        return s.mark_str_repeat();
+        s = s.mark_str_repeat(); return s;
     }
     if (o.kind_tag == 109) {  // str_trim
         // operand stack [s box]; __fern_str_trim is a Fern runtime function now
         // (#2649): the s box already on the operand stack IS param[0] (at +16
         // after the call), so call directly, pop the arg, push the result.
         s = s.write("    call __fn___fern_str_trim\n    addq $8, %rsp\n    pushq %rax\n");
-        return s.mark_str_trim();
+        s = s.mark_str_trim(); return s;
     }
     if (o.kind_tag == 110) {  // str_reverse
         // operand stack [s box] — the arg IS param[0] (+16). Call the
         // Fern-compiled __fn___fern_str_reverse via the stack ABI -> fresh
         // reversed string box in %rax.
         s = s.write("    call __fn___fern_str_reverse\n    addq $8, %rsp\n    pushq %rax\n");
-        return s.mark_str_reverse();
+        s = s.mark_str_reverse(); return s;
     }
     if (o.kind_tag == 111) {  // str_replace
         // operand stack [haystack, old, new] (new on top). Call the Fern-compiled
@@ -4355,7 +3654,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // (+16), param[1]=old (+24), param[2]=new (+32). -> fresh string box in %rax.
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
         s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_replace\n    addq $24, %rsp\n    pushq %rax\n");
-        return s.mark_str_replace();
+        s = s.mark_str_replace(); return s;
     }
     if (o.kind_tag == 112) {  // str_chars
         // operand stack [s box]; __fern_str_chars is a Fern runtime function now
@@ -4363,7 +3662,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // directly, pop the arg, push the result string[]. mark_str_chars pulls in
         // arr_push + heap.
         s = s.write("    call __fn___fern_str_chars\n    addq $8, %rsp\n    pushq %rax\n");
-        return s.mark_str_chars();
+        s = s.mark_str_chars(); return s;
     }
     if (o.kind_tag == 113) {  // str_lines
         // operand stack [s box]; __fern_str_lines is a Fern runtime function now
@@ -4371,7 +3670,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // call), so call directly, pop the arg, push the result string[].
         // mark_str_lines pulls in its str_split + arr_slice + heap deps.
         s = s.write("    call __fn___fern_str_lines\n    addq $8, %rsp\n    pushq %rax\n");
-        return s.mark_str_lines();
+        s = s.mark_str_lines(); return s;
     }
     if (o.kind_tag == 114 || o.kind_tag == 115 || o.kind_tag == 116) {  // str_starts_with, str_ends_with, str_index_of
         // operand stack [s box, p box] (p on top); the str_search predicates are
@@ -4381,34 +3680,34 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         if (o.kind_tag == 115) { pfn = "__fn___fern_str_ends_with"; }  // str_ends_with
         if (o.kind_tag == 116) { pfn = "__fn___fern_str_index_of"; }  // str_index_of
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call " + pfn + "\n    addq $16, %rsp\n    pushq %rax\n");
-        return s.mark_str_search();
+        s = s.mark_str_search(); return s;
     }
     if (o.kind_tag == 98) {  // str_concat
         // operand stack: [box A, box B] (B on top). __fern_str_concat is a Fern
         // runtime function now (#2649): __fn_ stack convention — re-push so A is
         // param[0] at +16 and B is param[1] at +24.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_concat\n    addq $16, %rsp\n    pushq %rax\n");
-        return s.mark_str_concat();
+        s = s.mark_str_concat(); return s;
     }
     if (o.kind_tag == 99) {  // str_eq
         // operand stack: [box A, box B] (B on top); __fern_str_eq is now a Fern
         // runtime function (#2649) called via the __fn_ stack convention —
         // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n    pushq %rax\n");
-        return s.mark_str_eq();
+        s = s.mark_str_eq(); return s;
     }
     // str_cmp: operand stack [box A, box B] (B on top); __fern_str_cmp is now a
     // Fern runtime function (#2649) called via the __fn_ stack convention —
     // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_cmp\n    addq $16, %rsp\n    pushq %rax\n");
-    return s.mark_str_cmp();
+    s = s.mark_str_cmp(); return s;
 }
 
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[]): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types, tuple_fresh_ret_fns);
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, closurearr_ret_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types, tuple_fresh_ret_fns);
     return emit_function_via_ir_pre(r, fd, s);
 }
 
@@ -4541,11 +3840,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // Sole-owner self-append (irlower's !aliased `a = a.append(v)`):
             // __fern_arr_push_owned reclaims the old buffer on a grow-realloc.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push_owned\n    pushq %rax\n");
-            s = s.mark_arr_push().need("arr_push_owned");
+            s = s.mark_arr_push(); s = s.need("arr_push_owned");
         } else if (o.kind_tag == 77) {  // alloc_u8
             // [n] -> fresh n-element array. __fern_alloc_u8(%rdi=n).
             s = s.write("    popq %rdi\n    call __fern_alloc_u8\n    pushq %rax\n");
-            s = s.need("heap").need("alloc_u8");
+            s = s.need("heap"); s = s.need("alloc_u8");
         } else if (o.kind_tag == 76) {  // alloc
             // [n] -> bump-alloc n raw bytes, push the usize pointer (core/map's
             // __alloc). __fern_alloc(%rdi=n) is the bare-pointer allocator.
@@ -4559,7 +3858,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // param[0] (+16); call the Fern-compiled __fn___fern_string_from_bytes
             // via the stack ABI.
             s = s.write("    call __fn___fern_string_from_bytes\n    addq $8, %rsp\n    pushq %rax\n");
-            s = s.need("heap").need("str_from_bytes");
+            s = s.need("heap"); s = s.need("str_from_bytes");
         } else if (o.kind_tag == 74) {  // memcpy
             // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
             // n is on top, then src, then dst (the lowering order). Mirrors the
@@ -4629,11 +3928,29 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             }
             s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 88) {  // arr_get
-            // pop idx (top), base; element at data+(idx+1)*8.
-            s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            // pop idx (top), base; element at data+(idx+1)*8. Bounds check first
+            // (docs/ARRAY-BOUNDS.md): idx vs the length prefix at data[0]. The
+            // UNSIGNED compare catches both idx >= len and a negative idx (which
+            // reads as a huge unsigned) with one branch to the shared abort —
+            // which lives in the heap runtime block, so mark the need (a module
+            // whose only array touch is a read must still pull the block in).
+            // Bounds-check elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc,
+            // the foreach counted reads) drops the cmp + jae — the `idx < arr_len`
+            // guard ran immediately before, so the read is provably in bounds. The
+            // existing checked path already relies on i32 indices being upper-bits
+            // clean (its cmpq compares the full %rcx), so the elided form is
+            // equally safe without a separate zero-extend.
+            s = s.need("heap");
+            if (o.i32_imm == 1) {
+                s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            } else {
+                s = s.write("    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+            }
         } else if (o.kind_tag == 89) {  // arr_set
-            // pop val (top), idx, base; store at data+(idx+1)*8.
-            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
+            // pop val (top), idx, base; store at data+(idx+1)*8. Same bounds
+            // check as arr_get: an out-of-range write aborts, never corrupts.
+            s = s.need("heap");
+            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
         } else if (o.kind_tag == 90) {  // arr_len
             // pop base; length header at data+0.
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
@@ -4662,6 +3979,22 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // (#2649 Option A). len -> %rsi, data -> %rdi, call, push the box.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box\n    pushq %rax\n");
             s = s.mark_heap();
+        } else if (o.kind_tag == 204) {  // syscall3
+            // Syscall sub-floor (#2649): operand stack [nr, a1, a2, a3] (a3 on
+            // top). System V syscall convention — nr→%rax, a1→%rdi, a2→%rsi,
+            // a3→%rdx, `syscall`, result in %rax. No runtime symbol.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    popq %rax\n    syscall\n    pushq %rax\n");
+        } else if (o.kind_tag == 206) {  // syscall4
+            // 4-arg syscall (#2649): operand stack [nr, a1, a2, a3, a4] (a4 on
+            // top). a4→%r10 (the syscall 4th-arg register), else like syscall3.
+            s = s.write("    popq %r10\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    popq %rax\n    syscall\n    pushq %rax\n");
+        } else if (o.kind_tag == 207) {  // raw_environ
+            // env sub-floor (#2649): push the saved process envp pointer. No args.
+            s = s.write("    movq __fern_envp(%rip), %rax\n    pushq %rax\n");
+        } else if (o.kind_tag == 205) {  // raw_scratch
+            // [n] → the fixed static scratch buffer's address (#2649). n is a
+            // hint; discard it and push &__fern_scratch (reused, never freed).
+            s = s.write("    popq %rax\n    leaq __fern_scratch(%rip), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern the bytes in .rodata, build an rc-headered box
             // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
@@ -4685,30 +4018,32 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_arr_slice\n    pushq %rax\n");
             s = s.mark_arr_slice();
         } else if (o.kind_tag == 185) {  // random_bytes
-            // operand stack [n]; __fern_random_bytes(%rdi=n) -> string box in %rax.
-            s = s.write("    popq %rdi\n    call __fern_random_bytes\n    pushq %rax\n");
-            s = s.need("heap").need("random_bytes");
+            // [n] IS param[0] (+16); call the Fern-compiled __fn___fern_random_bytes
+            // (asmcore.rt_src_random_bytes, #2649) via the stack ABI. Mirrors the
+            // str_from_bytes / str_split handlers.
+            s = s.write("    call __fn___fern_random_bytes\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("random_bytes");
         } else if (o.kind_tag == 186) {  // random_i32
             // no operands; __fern_random_i32() -> i32 in %rax.
             s = s.write("    call __fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
         } else if (o.kind_tag == 182) {  // monotonic_ns
-            // no operands; __fern_monotonic_ns() -> i64 in %rax.
-            s = s.write("    call __fern_monotonic_ns\n    pushq %rax\n");
+            // no operands; Fern-compiled __fn___fern_monotonic_ns() -> i64 in %rax (#2649).
+            s = s.write("    call __fn___fern_monotonic_ns\n    pushq %rax\n");
             s = s.need("monotonic_ns");
         } else if (o.kind_tag == 184) {  // now_unix_ms
-            // no operands; __fern_now_unix_ms() -> i64 in %rax.
-            s = s.write("    call __fern_now_unix_ms\n    pushq %rax\n");
+            // no operands; Fern-compiled __fn___fern_now_unix_ms() -> i64 in %rax (#2649).
+            s = s.write("    call __fn___fern_now_unix_ms\n    pushq %rax\n");
             s = s.need("now_unix_ms");
         } else if (o.kind_tag == 183) {  // now_ns
-            // no operands; __fern_now_ns() -> i64 in %rax.
-            s = s.write("    call __fern_now_ns\n    pushq %rax\n");
+            // no operands; Fern-compiled __fn___fern_now_ns() -> i64 in %rax (#2649).
+            s = s.write("    call __fn___fern_now_ns\n    pushq %rax\n");
             s = s.need("now_ns");
         } else if (o.kind_tag == 187) {  // poll
             // operand stack [fds, timeout]; __fern_poll(%rdi=fds box ptr,
             // %rsi=timeout_ms) -> i32 ready index (or -1) in %rax.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_poll\n    pushq %rax\n");
-            s = s.need("heap").need("poll");
+            s = s.need("heap"); s = s.need("poll");
         } else if (o.kind_tag == 188) {  // timer_fd
             // [ms]; __fern_timer_fd(%rdi=ms) -> a CLOCK_MONOTONIC timerfd fd
             // (readable after ms), or -errno, in %rax.
@@ -4748,7 +4083,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [fd, max]; __fern_tcp_recv(%rdi=fd, %rsi=max) -> string box (data,
             // len) in %rax. Allocates the buffer + the box.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_recv\n    pushq %rax\n");
-            s = s.need("heap").need("tcp_recv");
+            s = s.need("heap"); s = s.need("tcp_recv");
         } else if (o.kind_tag == 196) {  // tcp_close
             // [fd]; __fern_tcp_close(%rdi=fd) -> 0 / -errno.
             s = s.write("    popq %rdi\n    call __fern_tcp_close\n    pushq %rax\n");
@@ -4774,7 +4109,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [path box]; __fern_open_fd(%rdi=path, %rsi=flags(imm), %rdx=0644) ->
             // fd / -errno. Allocates the NUL-term buffer, so heap + open_file needs.
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $420, %rdx\n    call __fern_open_fd\n    pushq %rax\n");
-            s = s.need("heap").need("open_file");
+            s = s.need("heap"); s = s.need("open_file");
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
             // The arena is mmap'd lazily; its base is recoverable from the
@@ -4783,7 +4118,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // that case to report 0 (matching native's __fern_heap_bump_bytes).
             s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");   // cursor (0 if uninit)
             s = s.write("    movq __fern_heap_end(%rip), %rcx\n");   // arena end = base + heap_size (0 if uninit)
-            s = s.write("    movabs $8589934592, %rdx\n");           // heap_size (0x200000000)
+            s = s.write("    movabs $17179869184, %rdx\n");           // heap_size (0x400000000, 16 GiB)
             s = s.write("    subq %rdx, %rcx\n");                    // %rcx = base = end − heap_size
             s = s.write("    movq %rax, %rdx\n");
             s = s.write("    subq %rcx, %rdx\n");                    // ptr − base
@@ -4861,82 +4196,78 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // no args -> read one line from stdin into a fresh string box (the AST
             // path's __fern_read_line, which allocates), push the box (a value op).
             s = s.write("    call __fern_read_line\n    pushq %rax\n");
-            s = s.need("heap").need("str_read_line");
+            s = s.need("heap"); s = s.need("str_read_line");
         } else if (o.kind_tag == 169) {  // read_file
-            // [pathbox] -> read the whole named file, push a fresh Result[string,
-            // IoError] box (the AST path's __fern_read_file, which allocates). The
-            // path string box is the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_read_file\n    pushq %rax\n");
-            s = s.need("heap").need("read_file");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_read_file
+            // (#2649) via the stack ABI — pushes a fresh Result[string, IoError].
+            s = s.write("    call __fn___fern_read_file\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("read_file");
         } else if (o.kind_tag == 170) {  // write_file
-            // [pathbox][contentbox] -> write content to the named file, push a
-            // fresh Option[IoError] box (the AST path's __fern_write_file, which
-            // allocates). content on TOS -> rsi, path below -> rdi.
-            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_write_file\n    pushq %rax\n");
-            s = s.need("heap").need("write_file");
+            // operand stack [pathbox, contentbox] (content on top). Call the
+            // Fern-compiled __fn___fern_write_file (#2649) via the stack ABI:
+            // param[0]=path on top (+16), param[1]=content (+24). -> Option[IoError].
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_write_file\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("write_file");
         } else if (o.kind_tag == 172) {  // remove_dir_all
-            // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
-            // Option[IoError] box (the AST path's __fern_remove_dir_all, which
-            // allocates + recurses). The path string box is the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_remove_dir_all\n    pushq %rax\n");
-            s = s.need("heap").need("remove_dir_all");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_remove_dir_all
+            // (#2649) via the stack ABI — pushes a fresh Option[IoError]. The helper is
+            // pure raw-memory (inline getdents64, no read_dir array — the RC array
+            // corrupts under recursion), so it only marks heap.
+            s = s.write("    call __fn___fern_remove_dir_all\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("remove_dir_all");
         } else if (o.kind_tag == 173) {  // remove_file
-            // [pathbox] -> unlink the named file, push a fresh Option[IoError] box
-            // (the AST path's __fern_remove_file, which allocates). The path string
-            // box is the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_remove_file\n    pushq %rax\n");
-            s = s.need("heap").need("remove_file");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_remove_file
+            // (#2649) via the stack ABI — pushes a fresh Option[IoError].
+            s = s.write("    call __fn___fern_remove_file\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("remove_file");
         } else if (o.kind_tag == 174) {  // temp_dir
-            // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
-            // Result[string, IoError] box (the AST path's __fern_temp_dir, which
-            // allocates + calls __fern_monotonic_ns). The prefix box is the
-            // popped %rdi arg; monotonic_ns need pulls in the clock helper.
-            s = s.write("    popq %rdi\n    call __fern_temp_dir\n    pushq %rax\n");
-            s = s.need("heap").need("monotonic_ns").need("temp_dir");
+            // [prefixbox] IS param[0] (+16); call the Fern-compiled __fn___fern_temp_dir
+            // (#2649) via the stack ABI — pushes a fresh Result[string, IoError].
+            // The monotonic_ns need pulls in the (Fern) clock helper temp_dir calls.
+            s = s.write("    call __fn___fern_temp_dir\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("monotonic_ns"); s = s.need("temp_dir");
         } else if (o.kind_tag == 171) {  // read_dir
-            // [pathbox] -> list a directory's base-name children, push a fresh
-            // Result[string[], IoError] box (the AST path's __fern_read_dir, which
-            // allocates + boxes a string[] via __fern_arr_box). The path box is the
-            // popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_read_dir\n    pushq %rax\n");
-            s = s.need("heap").need("read_dir");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_read_dir
+            // (#2649) via the stack ABI — pushes a fresh Result[string[], IoError].
+            // The helper builds the string[] with .append() → arr_push / (sole-owner
+            // local) arr_push_owned, so both are marked.
+            s = s.write("    call __fn___fern_read_dir\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("read_dir"); s = s.need("arr_push"); s = s.need("arr_push_owned");
         } else if (o.kind_tag == 176) {  // env
-            // [namebox] -> look up an environment variable, push a fresh
-            // Option[string] box (Some(value) / None) — the AST path's __fern_env,
-            // which allocates the value into a fresh string block. The name box is
-            // the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_env\n    pushq %rax\n");
-            s = s.need("heap").need("env");
+            // [namebox] IS param[0] (+16); call the Fern-compiled __fn___fern_env
+            // (#2649) via the stack ABI — pushes a fresh Option[string].
+            s = s.write("    call __fn___fern_env\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("env");
         } else if (o.kind_tag == 175) {  // stat
-            // [pathbox] -> stat the named file, push a fresh Result[FileStat,
-            // IoError] box (the AST path's __fern_stat, which allocates a FileStat
-            // struct + a Result wrapper). The path box is the popped %rdi arg.
-            s = s.write("    popq %rdi\n    call __fern_stat\n    pushq %rax\n");
-            s = s.need("heap").need("stat");
+            // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_stat
+            // (#2649) via the stack ABI — pushes a fresh Result[FileStat, IoError].
+            s = s.write("    call __fn___fern_stat\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("stat");
         } else if (o.kind_tag == 177) {  // subprocess
             // [cmdbox][argsbox][stdinbox] (stdin on TOS) -> spawn the child, push a
             // fresh ProcessResult struct box (the AST path's __fern_subprocess, which
             // allocates the struct + its stdout/stderr string blocks). Pop stdin into
             // %rdx, args into %rsi, cmd into %rdi (the asm.fern arg order).
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_subprocess\n    pushq %rax\n");
-            s = s.need("heap").need("subprocess");
+            s = s.need("heap"); s = s.need("subprocess");
         } else if (o.kind_tag == 178) {  // read_chunk
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
             // __fern_reader_read_chunk (which allocates). n on TOS, fd below.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_reader_read_chunk\n    pushq %rax\n");
-            s = s.need("heap").need("reader");
+            s = s.need("heap"); s = s.need("reader");
         } else if (o.kind_tag == 179) {  // reader_close
             // [fd] -> close the Reader fd, push a fresh Option[IoError] (None on
             // success). Reuses the AST path's __fern_reader_close (which allocates).
             s = s.write("    popq %rdi\n    call __fern_reader_close\n    pushq %rax\n");
-            s = s.need("heap").need("reader");
+            s = s.need("heap"); s = s.need("reader");
         } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments (the
             // AST path's __fern_args, which allocates). The args need also makes the
             // entry's _start save argc/argv from the initial stack.
             s = s.write("    call __fern_args\n    pushq %rax\n");
-            s = s.need("heap").need("args");
+            s = s.need("heap"); s = s.need("args");
         } else if (o.kind_tag == 164) {  // eprint_str
             // [strbox] -> write its bytes to stderr (the AST path's __fern_eprint_str).
             // Push the syscall return so the statement-level drop balances.
@@ -4965,7 +4296,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // no args -> snapshot the builder into a fresh string box and reset it
             // (a value op, allocates). The string runtime + heap back the helper.
             s = s.write("    call __fern_strbuf_take\n    pushq %rax\n");
-            s = s.need("heap").need("strbuf");
+            s = s.need("heap"); s = s.need("strbuf");
         } else if (o.kind_tag == 181) {  // sleep_ms
             // [ms] -> nanosleep(ms). Push the syscall return so the
             // statement-level drop balances (sleep_ms is void).
@@ -5011,12 +4342,24 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_delete\n    pushq %rax\n");
         } else if (o.kind_tag == 129) {  // map_get_or
             // [map, k, default] -> __fern_map_get, then Some payload or default.
+            // The Option box __fern_map_get allocates (a raw 16-byte
+            // __fern_alloc(16) {tag@0, payload@8}) is consumed RIGHT HERE —
+            // tag + payload extracted, nothing else ever sees it — so it goes
+            // straight back to the size-class-2 freelist (the same push
+            // __fern_map_free's tail does for the 16-byte mapbox). Without
+            // this every get_or leaked one box (#4357's dominant residual map
+            // leak on this path: ~16 B/call, unbounded in a loop). The
+            // payload was retained separately (__map_retain_val inside the
+            // helper's Fern twin; the asm helper hands out the raw value), so
+            // freeing the shell never touches the value.
             var golbl: string = lp + "go" + util.i32_to_string(i);
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    popq %rdx\n");
-            s = s.write("    movq (%rax), %rcx\n    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
-            s = s.write("    movq 8(%rax), %rax\n    jmp " + golbl + "_e\n");
+            s = s.write("    movq (%rax), %rcx\n    movq 8(%rax), %rsi\n");
+            s = s.write("    leaq __fern_freelist(%rip), %r8\n    movq 16(%r8), %r9\n    movq %r9, (%rax)\n    movq %rax, 16(%r8)\n");
+            s = s.write("    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
+            s = s.write("    movq %rsi, %rax\n    jmp " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
         } else if (o.kind_tag == 131) {  // map_keys
             // parallel-array map: keys[] pointer at box+0. Scalar column
@@ -5139,31 +4482,34 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // (underflow_count) in %rax.
             // __fern_i32_to_string allocates its result box, so it needs the
             // heap runtime + its own body (gated on this need in emit_ir_runtime).
-            if (o.str == "__fern_i32_to_string") { s = s.need("heap").need("i32_to_string"); }
+            if (o.str == "__fern_i32_to_string") { s = s.need("heap"); s = s.need("i32_to_string"); }
             // __fern_u32_to_string likewise allocates its result box (#2649).
-            if (o.str == "__fern_u32_to_string") { s = s.need("heap").need("u32_to_string"); }
+            if (o.str == "__fern_u32_to_string") { s = s.need("heap"); s = s.need("u32_to_string"); }
             // str_to_i32 is allocation-free (parses in registers), so it needs
             // only its own body — not the heap runtime.
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
             // chr allocates its 1-char box, so pull in the heap runtime too.
-            if (o.str == "__fern_chr") { s = s.need("heap").need("chr"); }
+            if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
+            // arr.join(sep) needs its own body + the heap + str_concat runtime it
+            // builds the result with (mark_arr_str_join sets all three). #5328.
+            if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
             // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
             // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
             // must not carry them, since the strarrarr body's inner
             // `call __fn___fern_str_arr_free` text would trip the negative
             // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
             // through the freelist, so they need the heap runtime.
-            if (o.str == "__fern_arrarr_free") { s = s.need("heap").need("arrarr_free"); }
-            if (o.str == "__fern_strarrarr_free") { s = s.need("heap").need("strarrarr_free"); }
-            if (o.str == "__fern_optarrarr_free") { s = s.need("heap").need("optarrarr_free"); }
+            if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
+            if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
+            if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
             // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
             // emits exactly the per-type bodies actually called; needs the heap
             // runtime (the freelist + __fn___fern_arr_dec it frees through).
-            if (is_field_reclaim_name(o.str)) { s = s.need("heap").need("field_reclaim:" + field_reclaim_type(o.str)); }
+            if (is_field_reclaim_name(o.str)) { s = s.need("heap"); s = s.need("field_reclaim:" + field_reclaim_type(o.str)); }
             // __struct_drop_<T> (#3457): record the type so emit_ir_struct_drops
             // emits exactly the per-type bodies actually called; needs the heap
             // runtime (the freelist + __fn___fern_arr_dec it frees through).
-            if (is_struct_drop_name(o.str)) { s = s.need("heap").need("struct_drop:" + struct_drop_type(o.str)); }
+            if (is_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("struct_drop:" + struct_drop_type(o.str)); }
             s = s.write("    call " + ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
@@ -5362,12 +4708,18 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (icargc > 0) { s = s.write("    addq $" + util.i32_to_string(icargc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 4) {  // const_f64
-            // Float literal: GAS assembles the source text to an IEEE double in
-            // .rodata; load its bits and push them (floats flow on the rt-stack
-            // as their 8-byte bit pattern, like i64). Mirrors asm.fern.
+            // Float literal: emit the EXACT IEEE-754 bits (round-to-nearest,
+            // ties-to-even) as two little-endian 32-bit halves in .rodata, then
+            // load them. Emitting bits — not a decimal `.double` — makes the
+            // rounding assembler-independent: GNU `as` rounds `.double` ties
+            // half-UP, mis-encoding tie literals (#5434). Floats flow on the
+            // rt-stack as their 8-byte bit pattern, like i64.
             var flb: asmcore.LabelOut = asmcore.fresh_label(s);
             s = flb.state;
-            s = s.write("    .section .rodata\n" + flb.name + ": .double " + o.str + "\n    .text\n");
+            var fbits: i64 = util.parse_f64_bits(o.str);
+            var flo: i32 = fbits as i32;
+            var fhi: i32 = (fbits >> 32) as i32;
+            s = s.write("    .section .rodata\n" + flb.name + ": .long " + util.i32_to_string(flo) + ", " + util.i32_to_string(fhi) + "\n    .text\n");
             s = s.write("    movsd " + flb.name + "(%rip), %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 11) {  // i32_to_f64
             // signed i32 -> f64 (cvtsi2sd); value rides the stack as bits.
@@ -5616,7 +4968,21 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // keeps the arrays-only body — those reads are uncounted aliases
         // the free would dangle (the per-module compiler self-run segfault).
         var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
-        if (fr_str || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced STRING[] field: released DEEP via the rc-aware
+        // __fern_str_arr_free (elements + buffer at rc==1; shared buffer just
+        // decs), under the same cow + snap guards. Gated on the strarrfld
+        // admission ("strfldok:arr:<T>" — element-fresh stores, .len()-only
+        // reads), the string[] sibling of fr_str's gate. The helper preserves
+        // r9/r10/r11 (it saves rbx/r12/r13; its per-element __fern_str_free
+        // clobbers only rax/rcx/rdx/rsi/r8), so the field loop's registers
+        // survive.
+        var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        // A replaced fn (closure) field: the superseded env box shallow-freed
+        // via arr_dec under the same cow + snap guards, gated on the clofld
+        // admission (fresh-lambda-only values — the box is solely the
+        // field's). Takes the generic arr_dec branch below.
+        var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
+        if (fr_str || fr_str_arr || fr_clo || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
@@ -5630,6 +4996,8 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    pushq %rsi\n");
             if (fr_str) {
                 s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)
+            } else if (fr_str_arr) {
+                s = s.write("    call __fn___fern_str_arr_free\n"); // deep string[] free (rc-guarded)
             } else {
                 s = s.write("    call __fn___fern_arr_dec\n");      // shallow dec/free the dead buffer
             }
@@ -5695,7 +5063,18 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
         var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
-        var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        // A registered PLAIN-fn-pointer array field (#5235): its elements are RAW
+        // code addresses, so the k_box element WALK (dec each element as a box)
+        // would corrupt the freelist / SIGSEGV. Route it to the buffer-only
+        // shallow dec (the k_scalar arm below) instead — the buffer IS a real
+        // rc-headered array box owned by the struct at rc=1, so decing it frees it
+        // once (balanced: construction stores it with no alias-inc, and the
+        // whole-array-alias read incs it, matched by that alias's exit sweep). The
+        // elements are never touched. Keyed on the whole-program fnptr registry
+        // ("FNPTR:<sty>.<field>") seeded as a `need` by emit_module_ir_unit.
+        var k_fnptr: boolean = !k_scalar && irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        var k_box: boolean = !k_scalar && !k_fnptr && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
         // A DIRECT nested-struct field (`inner: Inner`, not an array): the field
         // slot holds the inner struct's box pointer, freed SHALLOW via the same
         // __fern_arr_dec as a scalar-array buffer — one level, exactly like a
@@ -5712,9 +5091,21 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // (rc>1) one, skips an immortal slice/trim view or literal (rc<0). The
         // struct-lit alias-inc (irlower, gated on the per-lit ownership precompute)
         // retains non-fresh values so this dec is balanced; a fresh field is
-        // sole-owned (this drop only fires for a reclaimable, non-escaping struct
-        // local) → freed here, the #4297 A2 heap-leak win.
-        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
+        // sole-owned → freed here, the #4297 A2 heap-leak win.
+        //
+        // GATED on the whole-program read scan ("strfldok:<T>"), exactly like
+        // __field_reclaim_<T>'s string arm (#4768): the construction-side retain
+        // (slit_reclaim → struct_routes_field_reclaim) only fires for
+        // STRFLDOK-admitted types, so a NON-admitted type's string fields are
+        // uncounted aliases this free would dangle. The mismatch was fatal once
+        // the merged whole-compiler bundle routed through the IR path (#3425):
+        // ir.Op is string-fielded but not admitted (Op.str reads escape
+        // everywhere), yet the array-element walk (__struct_arr_elems_drop_ir__Op,
+        // reached via nested_field_deep_drop_ok's unconditional string credit)
+        // freed every dropped Op's shared .str — corrupting the freelist and
+        // crashing the IR-built compiler on its first lower_func. A non-admitted
+        // type keeps the sound leak here, mirroring the field-reclaim contract.
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
         // A DIRECT enum field (`e: MyEnum`, decl_is_enum, not an array): the slot
         // holds the enum's box pointer, freed SHALLOW via __fern_arr_dec (the same
         // rc-guarded generic box free the shallow k_struct / scalar-array arms use —
@@ -5725,6 +5116,24 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // (irlower ExprStructLit) so this dec is balanced; a fresh variant ctor is
         // sole-owned (rc 1) → freed here. #4297 A2.
         var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+        // A string[] field (`names: string[]`): freed DEEP via the rc-aware
+        // __fern_str_arr_free — at buffer rc==1 it __fern_str_free's every
+        // element box then frees the buffer; a shared buffer just decs; null /
+        // low-addr / immortal skipped inside the helper. GATED on
+        // "strfldok:arr:<T>" (the strarrfld half of strfld_reclaim_ok_types_of)
+        // exactly like k_str's strfldok gate: the admission proves every value
+        // stored into the field is an element-fresh array literal and every
+        // read a bare .len() borrow, so the element walk frees only boxes the
+        // field solely owns. A non-admitted type keeps the sound leak.
+        var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        // An fn-typed (closure) field: the slot holds an rc-headered
+        // `__mkclo$` env box (op_arr_make), shallow-freed via the same
+        // rc-guarded __fern_arr_dec as the k_struct / k_enum boxes — one
+        // level, captures leak. GATED on the clofld admission
+        // ("strfldok:clo:<T>"): fresh-lambda-only construction values (the
+        // box is solely the field's, rc=1 — no construction inc to balance),
+        // no base copies, call-only reads.
+        var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -5814,8 +5223,14 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_str_free\n");             // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    addq $8, %rsp\n");
-        } else if (k_scalar || k_struct || k_enum) {
-            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box / enum box (shallow)
+        } else if (k_str_arr) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k string[] buffer
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_str_arr_free\n");         // deep at rc==1 (elements + buffer); shared -> dec; null skipped
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    movq 8(%rsp), %r11\n");                    // reload box (helper may clobber r11)
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box / enum box / closure box / fn-ptr array buffer (shallow, no element walk)
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");
             s = s.write("    addq $8, %rsp\n");
@@ -5924,8 +5339,8 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var frf: string[] = irlower.f64_ret_fns_of(fns);
     var farf: string[] = irlower.f64arr_ret_fns_of(fns);
     var iarf: string[] = irlower.i64arr_ret_fns_of(fns);
-    var fps: string[] = irlower.fn_param_sigs_of(fns);
-    var cfs: string[] = irlower.closure_ret_fns_of(fns);
+    var fps: string[] = irlower.fn_param_sigs_of(fns, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(fns, all_structs);
     var cnf: string[] = irlower.const_fns_of(fns);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(fns, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
@@ -5943,7 +5358,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(fns, all_structs), cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -5987,19 +5402,19 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // recomputing them per function is O(n^2) and OOMs the bump heap on a large
     // module (parser, ~300 funcs). This mirrors bparams above and the wasm
     // backend's emit_module, which already hoists them.
-    var srf: string[] = irlower.str_ret_fns_of(all_funcs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(all_funcs), mod.trait_reqs, "string[]");
     var amf: string[] = irlower.arr_method_fns_of(all_funcs);
     var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(all_funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(all_funcs), mod.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
     var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
@@ -6023,7 +5438,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
         if (cache.len() == 0) {
-            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         } else {
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s);
         }
@@ -6141,19 +5556,19 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var arf: string[] = array_ret_fns_of(im.funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(im.funcs);
     var csparams: string[] = irlower.consume_safe_params_interproc(im.funcs, bparams);
-    var srf: string[] = irlower.str_ret_fns_of(im.funcs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(im.funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(im.funcs), im.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(im.funcs), im.trait_reqs, "string[]");
     var amf: string[] = irlower.arr_method_fns_of(im.funcs);
     var orf: string[] = irlower.opt_ret_fns_of(im.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(im.funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(im.funcs), im.trait_reqs);
     var trf: string[] = irlower.tuple_ret_fns_of(im.funcs);
     var srtf: string[] = irlower.struct_ret_fns_of(im.funcs, im.structs);
     var mrtf: string[] = irlower.map_ret_fns_of(im.funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(im.funcs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(im.funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(im.funcs), im.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(im.funcs), im.trait_reqs, "f64[]");
     var iarf: string[] = irlower.i64arr_ret_fns_of(im.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(im.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(im.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(im.funcs, im.structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(im.funcs, im.structs);
     var cnf: string[] = irlower.const_fns_of(im.funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(im.funcs, im.structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(im.funcs, im.structs);
@@ -6168,7 +5583,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var cache: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(im.funcs, im.structs), cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         if (!r.ok) { return ""; }
         var j: i32 = 0;
         while (j < r.ops.len()) {
@@ -6264,6 +5679,17 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     while (sfoi < sfok.len()) {
         s = s.need("strfldok:" + sfok[sfoi]);
         sfoi = sfoi + 1;
+    }
+    // #5235: seed the plain-fn-pointer-array field registry as needs
+    // ("FNPTR:<sty>.<field>") so emit_ir_struct_drop_one leaks-the-walk (buffer-
+    // only dec, no element walk) for those fields — their elements are raw code
+    // addresses. Same whole-program (all_funcs/all_structs) verdict everywhere so
+    // the weak-deduped __struct_drop bodies agree across units.
+    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
+    var fpi: i32 = 0;
+    while (fpi < fpk.len()) {
+        s = s.need(fpk[fpi]);
+        fpi = fpi + 1;
     }
     // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
     // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a
@@ -6477,6 +5903,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), all_structs, s);
     }
+    // random_bytes — now a Fern runtime function (#2649), lowered through the IR
+    // pipeline: alloc n bytes, fill from getrandom via the __syscall3 sub-floor,
+    // box with __raw_string. Heap-dependent (present above); x86-64-only (the
+    // getrandom syscall number is arch-specific — arm64/wasm keep their bundle).
+    if (s.has_need("random_bytes")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(), all_structs, s);
+    }
     // str_split — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: scan for `sep`, append each segment slice (.append() ->
     // arr_push_owned, present via its str_split need deps). Heap-dependent (above).
@@ -6522,6 +5956,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), all_structs, s);
     }
+    // arr.join(sep) — a Fern runtime function (#5328) lowered through the IR
+    // pipeline: `var r = ""` accumulator, concatenating each element with `sep`
+    // via `+` (str_concat, present above via the arr_str_join need's deps). Heap-
+    // dependent (present above). .text since the heap runtime left us in .bss.
+    if (s.has_need("arr_str_join")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), all_structs, s);
+    }
     // i32_to_string — backs (n).to_string(), Tier-2 via the intrinsics (#2649):
     // digit-buffer build. Heap-dependent (present above).
     if (s.has_need("i32_to_string")) {
@@ -6536,11 +5978,58 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
-    // Clock helpers: allocation-free, so emitted independently of the heap
-    // runtime (a clock-only program is heap-free), like random_i32.
-    if (s.has_need("monotonic_ns")) { s = emit_ir_monotonic_ns(s); }
-    if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
-    if (s.has_need("now_ns")) { s = emit_ir_now_ns(s); }
+    // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
+    // helpers hand the kernel to write structs into (timespec for the clocks,
+    // struct stat for `stat`), reused/never-freed so no per-call leak. Emitted once
+    // in .bss when ANY scratch user is needed (clocks or stat), then the helpers in
+    // .text. Allocation-free, so independent of the heap runtime.
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat")) {
+        s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
+    }
+    if (s.has_need("monotonic_ns")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns"), all_structs, s);
+    }
+    if (s.has_need("now_unix_ms")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms"), all_structs, s);
+    }
+    if (s.has_need("now_ns")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns"), all_structs, s);
+    }
+    // The fs-syscall leaves (stat / read_file / remove_file / write_file /
+    // temp_dir / read_dir / remove_dir_all) are now Fern runtime functions (#2649) that share ONE errno→IoError
+    // classifier, __fern_io_error, instead of each inlining the five-way branch.
+    // They are emitted as a SINGLE bundle module (io_error + only the needed
+    // helpers), so the standard inter-procedural RC analysis threads each helper's
+    // call to io_error as an ordinary call-graph edge (io_error consumes its fresh
+    // path arg; the helpers hand it a fresh copy, never their borrowed `path`).
+    // This is the #2649 "dependencies are the call graph" model in miniature.
+    // io_error is emitted once (bundled), gated on the union of the needs; the
+    // arm64 / AST backends keep the register-ABI hand-asm __fern_io_error. temp_dir
+    // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
+    // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
+    // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
+    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("remove_file") || s.has_need("write_file") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
+        s = s.write("    .text\n");
+        var fs_src: string = asmcore.rt_src_io_error();
+        if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(); }
+        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(); }
+        if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(); }
+        if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(); }
+        if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(); }
+        if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(); }
+        if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(); }
+        s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
+    }
+    // env — now a Fern runtime function (#2649): walks the envp array (via
+    // __raw_environ) and copies the matched value. Heap-dependent (present
+    // above); the __fern_envp global + _start save it (gated on env). x86-64-only.
+    if (s.has_need("env")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), all_structs, s);
+    }
     if (s.has_need("poll")) { s = emit_ir_poll(s); }
     if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }

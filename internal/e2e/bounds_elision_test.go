@@ -82,21 +82,29 @@ func TestWASMBoundsElisionCorrect(t *testing.T) {
 }
 
 // TestX86_64BoundsElisionEmitted pins the optimization itself: a `for x in xs`
-// loop must NOT emit the bounds-check trap (`mov edi, 134` — the emitArrBoundsCheck
-// exit code), while an otherwise-identical `while (i < xs.len()) { xs[i] }`
-// index loop MUST keep it. This guards against the desugar or the `_nc`
-// routing silently regressing to the checked helper.
+// loop and the len-bounded index idiom `while (i < xs.len()) { xs[i] }`
+// (elideLenBoundedChecks, #4380 lever 3) must NOT emit the bounds-check trap
+// (`mov edi, 134` — the emitArrBoundsCheck exit code), while a loop whose
+// guard routes the length through a variable — outside the pass's exact
+// syntactic form — MUST keep it. This guards both directions: the desugar /
+// `_nc` routing regressing to the checked helper, and the elision pass
+// over-firing on shapes it cannot prove.
 func TestX86_64BoundsElisionEmitted(t *testing.T) {
 	forSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; for x in xs { s = s + x; } return s; }`
 	whileSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
+	keptSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var n: i32 = xs.len(); var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 
 	forAsm := compileToX86Asm(t, forSrc)
 	if n := strings.Count(mainBody(forAsm), "mov edi, 134"); n != 0 {
 		t.Errorf("for-loop kept %d bounds-check trap(s); want 0 (elided)\n%s", n, mainBody(forAsm))
 	}
 	whileAsm := compileToX86Asm(t, whileSrc)
-	if n := strings.Count(mainBody(whileAsm), "mov edi, 134"); n == 0 {
-		t.Errorf("while-index loop dropped its bounds-check trap; want it kept (elision must not fire on a plain a[i])")
+	if n := strings.Count(mainBody(whileAsm), "mov edi, 134"); n != 0 {
+		t.Errorf("len-guarded while-index loop kept %d bounds-check trap(s); want 0 (elideLenBoundedChecks)\n%s", n, mainBody(whileAsm))
+	}
+	keptAsm := compileToX86Asm(t, keptSrc)
+	if n := strings.Count(mainBody(keptAsm), "mov edi, 134"); n == 0 {
+		t.Errorf("variable-bounded while-index loop dropped its bounds-check trap; want it kept (guard is not syntactically i < xs.len())")
 	}
 }
 

@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,43 @@ web-kit = { path = "libs/webkit" }
 	}
 	if d := m.Deps["web-kit"]; d.Path != filepath.FromSlash("libs/webkit") {
 		t.Errorf("web-kit dep: %+v", d)
+	}
+}
+
+func TestParseDepCapabilities(t *testing.T) {
+	m, err := Parse(`[package]
+name = "app"
+[dependencies]
+kv = { path = "../kv", capabilities = ["net", "fs", "net"] }
+json = { url = "https://example.com/json.tar.gz", hash = "sha256:` + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + `", capabilities = [] }
+member = { workspace = true, capabilities = ["env"] }
+plain = { path = "../plain" }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Deps["kv"].Capabilities; len(got) != 2 || got[0] != "fs" || got[1] != "net" {
+		t.Errorf("kv capabilities (want sorted+deduped [fs net]): %v", got)
+	}
+	if got := m.Deps["json"].Capabilities; got == nil || len(got) != 0 {
+		t.Errorf("json capabilities (want non-nil empty — governed, nothing granted): %#v", got)
+	}
+	if got := m.Deps["member"].Capabilities; len(got) != 1 || got[0] != "env" {
+		t.Errorf("member capabilities: %v", got)
+	}
+	if got := m.Deps["plain"].Capabilities; got != nil {
+		t.Errorf("plain capabilities (want nil — key absent): %#v", got)
+	}
+}
+
+func TestParseDepCapabilitiesUnknownName(t *testing.T) {
+	_, err := Parse("[package]\nname = \"app\"\n[dependencies]\nkv = { path = \"../kv\", capabilities = [\"network\"] }\n")
+	if err == nil {
+		t.Fatal("expected an unknown-capability error, got none")
+	}
+	want := `unknown capability "network" (valid capabilities: env, fs, net, random, subprocess, time)`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not name the vocabulary (want substring %q)", err, want)
 	}
 }
 
@@ -168,6 +206,29 @@ func TestParseWorkspaceDepForm(t *testing.T) {
 	}
 	if !m.Deps["b"].Workspace || m.Deps["b"].Path != "" {
 		t.Errorf("workspace dep parsed wrong: %+v", m.Deps["b"])
+	}
+}
+
+func TestParseExclude(t *testing.T) {
+	m, err := Parse("[package]\nname = \"app\"\n[dependencies]\nbar = \"1.0.0\"\n[exclude]\nbar = [\"1.9.0\", \"1.9.1\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Excludes["bar"]; len(got) != 2 || got[0] != "1.9.0" || got[1] != "1.9.1" {
+		t.Errorf("excludes = %v, want [1.9.0 1.9.1]", got)
+	}
+}
+
+func TestParseExcludeErrors(t *testing.T) {
+	cases := map[string]string{
+		"not an array":     "[package]\nname = \"a\"\n[exclude]\nbar = \"1.9.0\"\n",
+		"not a version":    "[package]\nname = \"a\"\n[exclude]\nbar = [\"1.9\"]\n",
+		"invalid pkg name": "[package]\nname = \"a\"\n[exclude]\n9bar = [\"1.9.0\"]\n",
+	}
+	for label, src := range cases {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected error", label)
+		}
 	}
 }
 

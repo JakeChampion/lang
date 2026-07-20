@@ -207,8 +207,95 @@ existing test scaffolding rather than gated off:
   `__struct_drop_<T>`). Cross-*type* reuse stays scalar/array-only
   (`structs_reuse_compatible`'s per-position check rejects struct fields). Covered
   by `loop-nested-struct-field-*` (cross) and `loop-funcupdate-nested-struct-*`
-  (self-overwrite): reuse fires (box 3 not 4), 5M-iter churn balanced. REMAINING:
-  enum / Map / closure / tuple pointer fields.
+  (self-overwrite): reuse fires (box 3 not 4), 5M-iter churn balanced.
+
+  **Correction (2026-07-17, code audit):** the "REMAINING: enum / Map / closure
+  / tuple pointer fields" claim this bullet used to end with was STALE — the
+  widened `struct_fields_reusable_cross` (enum + string + Map + leak-safe
+  tuple + leak-safe Option) already gates the **cross-statement**
+  (`cross_reuse_sites`), **self-overwrite local** (`self_overwrite_reuse_sites`,
+  with `donor_enum_fields_fresh` + per-kind override gates), and — as of the
+  cross-block widening — **cross-block** (`xblock_scan_body`, sharing the
+  `cross_recipient_fields_fresh` value gate) families. What GENUINELY remains
+  vs native (which admits every field kind except string via
+  `structReuseEligible`/`arrElemIsRcTracked`, uniformly across families):
+
+  - **Closure fields.** The EXIT-drop prerequisite is now closed on the
+    register backends: the clofld scan (the "clo:"-tagged half of
+    `strfld_reclaim_ok_types_of` — fresh-lambda-only field values, no base
+    copies, call-only reads) routes admitted fn-fielded types, and the
+    `k_clo` / `fr_clo` arms shallow-free the field's env box (captures leak,
+    the k_struct model); the `moves_fields` NODEEP walk exempts calls
+    through a local's own fn fields — with the local's type resolved by
+    the nesting-aware `fresh_struct_lit_type_deep`, so loop/if-nested
+    declarations get the exemption too and the loop-REINIT re-bind routes
+    through `__field_reclaim_<T>`'s `fr_clo` arm (the prior iteration's
+    env box is reclaimed, no longer a per-iteration leak). Pinned by
+    `TestSelfHostClofldDropIRX86_64` (the churn case asserts the reclaim
+    call). The **REUSE admission (native's FuncType kind) is now closed**
+    too: the coarse "fn" spelling reads as enum-like
+    (`is_enum_like_name("fn")` is deliberately true), so the freshness
+    walks test fn BEFORE their enum arm (`fn_field_value_is_fresh` — a
+    lambda literal or its lifted `__mkclo$` spelling, required by
+    `donor_enum_fields_fresh` / `cross_recipient_fields_fresh` / the
+    self-overwrite override walk) and the enum-like release arm's shallow
+    rc-guarded dec doubles as the k_clo env-box release. Cross /
+    self-overwrite / enum-donor families fire (pinned by the
+    `fn-field-*` reuse-differential cases + aliased-value exclusions); a
+    donor whose own closure field is CALLED stays conservatively excluded
+    by the general escape walk (method-shaped receiver use — same as
+    every field kind). The wasm k_clo / fr_clo drop arms landed too
+    (`emit_wasm_struct_drop_body`'s fn arm + the widened
+    `emit_wasm_field_reclaim_body` gate, clofld-admission-gated; pinned
+    by `TestSelfHostClofldDropWasmIR`) — and the old note claiming wasm
+    also lacked a k_str_arr arm was stale: string[] fields always rode
+    the generic array-kind arm's `$__fern_arr_dec_ptr`. No backend gap
+    remains for closure struct fields.
+  - **Rc-element arrays** (`string[]` / struct[] / enum[] fields): self-host
+    admits only the leak-safe scalar arrays; native admits all. The
+    **string[] EXIT-drop prerequisite is now closed**: the strarrfld scan
+    (the "arr:"-tagged half of `strfld_reclaim_ok_types_of` —
+    element-fresh stores, `.len()`-only reads) routes admitted types and
+    the `k_str_arr` / `fr_str_arr` arms in both register backends'
+    `__struct_drop` / `__field_reclaim` bodies deep-free the field via
+    `__fern_str_arr_free` (pinned by the `strarr-field-*` cases in the
+    string-field reclaim suites, x86 + arm64). The **string[] REUSE
+    admission is now closed** too: `struct_fields_reusable_cross` admits
+    string[] fields (the cross / cross-block / enum-donor / self-overwrite
+    families), gated on element-fresh array-literal values on BOTH sides
+    (`strarr_lit_all_elems_fresh` in `donor_enum_fields_fresh` — triggered
+    via the widened `struct_has_enum_field` — plus
+    `cross_recipient_fields_fresh` and the self-overwrite override walk);
+    the reuse arms deep-free the superseded field via `__fern_str_arr_free`
+    and the self-overwrite fresh arm rc-incs carried copies (pinned by the
+    `strarr-field-*` reuse-differential cases + the aliased-value exclusion
+    test). **struct[] / enum[] element arrays are now closed too**: admitted
+    with element-fresh array-literal values on both sides
+    (`boxarr_lit_all_elems_fresh` — fresh no-base element literals /
+    variant ctors) and released per-element via `__fern_arrarr_free`;
+    struct[] is restricted to scalar-field element types so the shallow
+    element free leaks nothing, an enum[] element's payload stays on the
+    k_enum shallow-leak model (pinned by the `boxarr-*` differential
+    cases + the aliased/rc-fielded-element exclusions). Only the
+    own-param family remains (no bind literal to prove element freshness
+    from).
+  - **Own-param families** (`own_param_reuse_sites` /
+    `own_param_self_overwrite_sites`): now on `struct_fields_reusable_param`
+    (narrow ∪ Map / leak-safe tuple / leak-safe Option — the leak-only kinds,
+    which need no release arm or freshness gate; pinned by the
+    `own-param-donor-{map,tuple,opt}-field*` differential cases). Enum /
+    string fields remain BLOCKED there — the alias-free release proof
+    (`donor_enum_fields_fresh`) reads the donor's bind literal, which a
+    parameter doesn't have. (The map-returning-CALL-as-field-value crash
+    once noted here is fixed — the shape now fires reuse and is pinned by the
+    `own-param-donor-map-field-call` differential case.)
+  - **Enum-donor recipient** (`enum_donor_reuse_sites`): now on
+    `struct_fields_reusable_cross` + the shared `cross_recipient_fields_fresh`
+    value gate (pinned by the `enum-donor-{enum,tuple}-field-recipient*`
+    differential cases). Sound because the donor's old slots are all scalars
+    (no release needed) and the reused box's exit drop uses the same per-kind
+    arms as a fresh construction (k_enum / k_struct; Map / tuple / Option
+    leak-only).
 
 These are marginal wins; whether to pursue the rest is a value call (see §7).
 Validation for either: the reuse it changes is **on by default** (matching the

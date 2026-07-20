@@ -60,6 +60,19 @@ var closureArrayIRCases = []struct {
 	{"append-after-literal", `function main(): i32 { var n = 4; var fns: (() => i32)[] = [() => n]; fns = fns.append(() => n + 1); return fns[1](); }`, 5},
 	// append three, then sum them via a `for` loop over the array: 1+2+3 = 6.
 	{"append-loop", `function main(): i32 { var a = 1; var b = 2; var c = 3; var fns: (() => i32)[] = []; fns = fns.append(() => a); fns = fns.append(() => b); fns = fns.append(() => c); var s = 0; for f in fns { s = s + f(); } return s; }`, 6},
+	// ESCAPING closure array: a factory builds the array by `.append(<lambda>)`
+	// and RETURNS it; the caller indexes and calls it. The append-built closure
+	// class must be recovered from the reassignment (not just the initial `[]`
+	// literal) so the factory is classified closurearr-returning — otherwise the
+	// caller dispatched `fns[i](x)` as a bare fn pointer and SIGSEGV'd on the env
+	// box. Capturing single: 5.
+	{"escape-append-capture", `function make(): (() => i32)[] { var fns: (() => i32)[] = []; var n = 5; fns = fns.append(() => n); return fns; } function main(): i32 { var fns = make(); return fns[0](); }`, 5},
+	// A NON-capturing lambda is still a closure box (distinct from a bare named
+	// fn), so the escaping array is still a closure array: 15.
+	{"escape-append-noncap", `function make(): ((i32) => i32)[] { var fns: ((i32) => i32)[] = []; fns = fns.append((x: i32) => x + 5); return fns; } function main(): i32 { var fns = make(); return fns[0](10); }`, 15},
+	// The loop form: a factory appends one capturing lambda per iteration and
+	// returns the array; the caller sums the calls. (10+0)+(10+1)+(10+2) = 33.
+	{"escape-loop-capture", `function adders(n: i32): ((i32) => i32)[] { var fs: ((i32) => i32)[] = []; var i = 0; while (i < n) { var k = i; fs = fs.append((x: i32) => x + k); i = i + 1; } return fs; } function main(): i32 { var fs = adders(3); var t = 0; for f in fs { t = t + f(10); } return t; }`, 33},
 	// #3574: a bare NAMED-fn value appended to an empty fn-pointer array (is_fnarr),
 	// then called — previously const-called f and segfaulted (exit -1).
 	{"namedfn-append-empty", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); return fns[0](); }`, 7},
@@ -70,6 +83,82 @@ var closureArrayIRCases = []struct {
 	{"namedfn-append-after-literal", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f]; fns = fns.append(g); return fns[1](); }`, 5},
 	// append three named fns, sum via a `for` loop: 1 + 2 + 4 = 7.
 	{"namedfn-append-loop", `function a(): i32 { return 1; } function b(): i32 { return 2; } function c(): i32 { return 4; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(a); fns = fns.append(b); fns = fns.append(c); var s = 0; for f in fns { s = s + f(); } return s; }`, 7},
+	// #5071: a MIXED closure array (capturing + non-capturing lambda in ONE
+	// literal). The capturing element makes the array env-first-dispatched, so
+	// the non-capturing element must be boxed into a `$wrap` env trampoline
+	// too — otherwise its bare fn pointer is deref'd as a box → SIGSEGV. Both
+	// element orderings, plus loop / append / fn-arg dispatch.
+	// capturing first, dispatch the non-capturing elem: (5)*(5) = 25.
+	{"mixed-cap-then-noncap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base, (x: i32) => x * x]; return fs[1](5); }`, 25},
+	// non-capturing first, dispatch the capturing elem: 5 + 2 = 7.
+	{"mixed-noncap-then-cap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x * x, (x: i32) => x + base]; return fs[1](5); }`, 7},
+	// mixed array summed over a variable-index loop: (5+2) + (5*5) = 32.
+	{"mixed-loop", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base, (x: i32) => x * x]; var s = 0; var i = 0; while (i < fs.len()) { s = s + fs[i](5); i = i + 1; } return s; }`, 32},
+	// append a non-capturing lambda onto a NON-empty capturing-lambda literal,
+	// then dispatch the appended element: 5 * 5 = 25.
+	{"mixed-append-noncap", `function main(): i32 { var base = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + base]; fs = fs.append((y: i32) => y * y); return fs[1](5); }`, 25},
+	// #5071 follow-up: a MIXED array of a NAMED function value and a capturing
+	// lambda. The capturing element env-first-dispatches the array, so the
+	// named-fn element must be boxed into a `$wrap` env trampoline too — else
+	// its bare fn pointer is deref'd as a box (or a box is called bare) →
+	// SIGSEGV. Both orderings + loop dispatch.
+	// named fn first, dispatch the capturing lambda: 5 + 3 = 8.
+	{"mixed-namedfn-then-cap", `function inc(x: i32): i32 { return x + 100; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [inc, (x: i32) => x + a]; return fs[1](5); }`, 8},
+	// capturing lambda first, dispatch the named fn: 5 + 100 = 105.
+	{"mixed-cap-then-namedfn", `function inc(x: i32): i32 { return x + 100; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [(x: i32) => x + a, inc]; return fs[1](5); }`, 105},
+	// named-fn + capturing lambda summed over a loop: (5+10) + (5+3) = 23.
+	{"mixed-namedfn-loop", `function inc(x: i32): i32 { return x + 10; } function main(): i32 { var a = 3; var fs: ((i32) => i32)[] = [inc, (x: i32) => x + a]; var s = 0; var i = 0; while (i < fs.len()) { s = s + fs[i](5); i = i + 1; } return s; }`, 23},
+	// #5109: a closure-array PARAM dispatched inside the callee is marked
+	// is_closurearr (→ env-first) only when a whole-program scan proves every
+	// call site passes a closure array. That scan must classify calls at EVERY
+	// expression position, not just statement-top-level ones — otherwise a call
+	// buried in a match scrutinee / if-condition / call-argument / binary
+	// operand is uncounted, the proof fails, the param stays unmarked, and
+	// `fs[i](args)` dispatches PLAIN → bare-calls the element box → SIGSEGV.
+	// callee called from an ENUM (Option) match scrutinee: fs[0](4)=14 → Some → 14.
+	{"param-enum-match-scrutinee", `function get(fs: ((i32) => i32)[], v: i32): Option[i32] { var f = fs[0]; return Some(f(v)); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; match (get(fs, 4)) { Some(v) => { return v; }, None => { return 0; } } }`, 14},
+	// callee called from a SCALAR/literal match scrutinee (desugars to an if
+	// on a binary compare — the call sits in the condition): 4+10=14 → arm 14.
+	{"param-scalar-match-scrutinee", `function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; match (get(fs, 4)) { 14 => { return 100; }, _ => { return 99; } } }`, 100},
+	// callee called in an IF-CONDITION: get(fs,4)==14 → true → 100.
+	{"param-if-condition", `function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; if (get(fs, 4) == 14) { return 100; } return 99; }`, 100},
+	// callee called as an ARGUMENT to another call: id(get(fs,4)) → 14.
+	{"param-call-argument", `function id(x: i32): i32 { return x; } function get(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var k = 10; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return id(get(fs, 4)); }`, 14},
+	// regression: a BARE-fn-pointer array param (named fns, is_fnarr) must STAY
+	// plain-dispatched even when the callee is called from a match scrutinee —
+	// the scan must NOT over-eagerly mark it is_closurearr. inc(5)=6 → arm 100.
+	{"param-namedfn-plain-in-match", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; match (apply(fs, 5)) { 6 => { return 100; }, _ => { return 99; } } }`, 100},
+	// #5119: a closure-array param FORWARDED to another function must keep the
+	// final callee env-first. The proof is a fixpoint: chain's param proves
+	// from main's closure-array local, then apply's proves from chain's
+	// forwarded (already-proven) param. Without it, apply's param stayed
+	// unmarked and fs[0](v) bare-called the element box → SIGSEGV.
+	// one hop: (x+2)(4) = 6.
+	{"param-forward-one-hop", `function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { return apply(fs, 4); } function main(): i32 { var k = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return chain(fs); }`, 6},
+	// two hops: outer → mid → apply, each forwarding its param.
+	{"param-forward-two-hops", `function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function mid(fs: ((i32) => i32)[]): i32 { return apply(fs, 4); } function outer(fs: ((i32) => i32)[]): i32 { return mid(fs); } function main(): i32 { var k = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return outer(fs); }`, 6},
+	// the forwarder ALSO dispatches an element itself: fs[0](1)=3, apply=6 → 9.
+	{"param-forward-and-dispatch", `function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { var a = fs[0](1); return a + apply(fs, 4); } function main(): i32 { var k = 2; var fs: ((i32) => i32)[] = [(x: i32) => x + k]; return chain(fs); }`, 9},
+	// regression: a BARE named-fn array forwarded through the same shape must
+	// STAY plain-dispatched (the fixpoint must not over-mark). inc(5) = 6.
+	{"param-forward-namedfn-plain", `function inc(x: i32): i32 { return x + 1; } function apply(fs: ((i32) => i32)[], v: i32): i32 { var f = fs[0]; return f(v); } function chain(fs: ((i32) => i32)[]): i32 { return apply(fs, 5); } function main(): i32 { var fs: ((i32) => i32)[] = [inc]; return chain(fs); }`, 6},
+	// #5405: a bare CLOSURE-LOCAL ident element in an array LITERAL
+	// (`var f = <lambda>; var fs = [f]`). The element is the env-box pointer,
+	// but the literal classifier only recognized lambda / `__mkclo$` /
+	// closure-call elements, so the slot stayed unclassified and `fs[0]()`
+	// bare-called the box pointer as code — SIGSEGV. The `.append(f)` site
+	// already classified closure locals (#3556); these pin its array-literal
+	// sibling. Scalar capture: 42.
+	{"local-elem-scalar-cap", `function main(): i32 { var n = 42; var f: () => i32 = function (): i32 { return n; }; var fs: (() => i32)[] = [f]; return fs[0](); }`, 42},
+	// ARRAY capture through the same shape (the capture is itself a pointer).
+	{"local-elem-array-cap", `function main(): i32 { var a: i32[] = [42, 1]; var f: () => i32 = function (): i32 { return a[0]; }; var fs: (() => i32)[] = [f]; return fs[0](); }`, 42},
+	// The shared env box called through BOTH names: 20 + 20 + 2 = 42.
+	{"local-elem-both-names", `function main(): i32 { var n = 20; var f: () => i32 = function (): i32 { return n; }; var fs: (() => i32)[] = [f]; var x = f(); return x + fs[0]() + 2; }`, 42},
+	// Two closure locals in one literal: 20 + 21 + 1 = 42.
+	{"local-elem-two", `function main(): i32 { var n = 20; var f: () => i32 = function (): i32 { return n; }; var g: () => i32 = function (): i32 { return n + 1; }; var fs: (() => i32)[] = [f, g]; return fs[0]() + fs[1]() + 1; }`, 42},
+	// regression: a bare NAMED-fn literal element stays on the #3574
+	// fn-pointer path (is_closure_local is false for it): 42.
+	{"local-elem-namedfn-plain", `function h(): i32 { return 42; } function main(): i32 { var fs: (() => i32)[] = [h]; return fs[0](); }`, 42},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted

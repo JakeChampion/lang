@@ -456,6 +456,38 @@ function main(): i32 {
     return 0;
 }`},
 
+		// Nested arrays whose FIRST element is a call / ident rather than a
+		// literal (#5326): the self-host IR path classified arr-of-arr by
+		// literal shape only, so these stride-miscompiled there; native must
+		// stay the type-driven oracle on every backend.
+		{"nested_arr_call_first_elem", `import "std/i32";
+function mkf(): f64[] { return [1.5, 2.5]; }
+function mks(): string[] { return ["ab", "cde"]; }
+function main(): i32 {
+    var mf = [mkf(), [0.25]];
+    print((((mf[0][0] + mf[0][1] + mf[1][0]) * 4.0) as i32).to_string());
+    var inner = mkf();
+    var mi = [inner, [0.5]];
+    print((((mi[0][0] + mi[1][0]) * 2.0) as i32).to_string());
+    var ms = [mks(), ["f"]];
+    print((ms[0][0].len() + ms[0][1].len() + ms[1][0].len()).to_string());
+    return 0;
+}`},
+		// Unannotated array-returning functions (#5326, second cluster): the
+		// self-host ret-type inferencer had no ExprArray arm, so these never
+		// entered the element-kind registries and a[i] took the 4-byte
+		// default stride there. Native must agree everywhere.
+		{"unannotated_arr_ret_fn", `import "std/i32";
+function mk2() { return [1.5, 2.5]; }
+function mk3() { return ["ab", "cde"]; }
+function main(): i32 {
+    var a = mk2();
+    print((((a[0] + a[1]) * 2.0) as i32).to_string());
+    var b = mk3();
+    print((b[0].len() + b[1].len()).to_string());
+    return 0;
+}`},
+
 		// ---- stdlib: json / hex / base64 / math / format ----
 		{"stdlib_json", `import "std/json";
 import "std/i32";
@@ -464,6 +496,23 @@ function main(): i32 {
         Some(v) => {
             match (json.json_get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("noa"); } }
             match (json.json_get_string(v, "b")) { Some(s) => { print(s); }, None => { print("nob"); } }
+        },
+        None => { print("parsefail"); }
+    }
+    return 0;
+}`},
+		// json_get_f64 routes through std/string's `s.parse_float()`
+		// receiver method — the cross-module method reference #5420
+		// tracked (std/json's private parser twin is deleted). Scaled
+		// i32 prints keep the comparison float-format independent.
+		{"stdlib_json_get_f64", `import "std/json";
+import "std/i32";
+function main(): i32 {
+    match (json.json_parse("{\"pi\":3.5,\"big\":2.5e1,\"neg\":-0.5}")) {
+        Some(v) => {
+            match (json.json_get_f64(v, "pi")) { Some(x) => { print(((x * 2.0) as i32).to_string()); }, None => { print("nopi"); } }
+            match (json.json_get_f64(v, "big")) { Some(x) => { print((x as i32).to_string()); }, None => { print("nobig"); } }
+            match (json.json_get_f64(v, "neg")) { Some(x) => { print(((x * 0.0 - x * 4.0) as i32).to_string()); }, None => { print("noneg"); } }
         },
         None => { print("parsefail"); }
     }

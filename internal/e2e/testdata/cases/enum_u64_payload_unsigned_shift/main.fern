@@ -1,0 +1,23 @@
+import "core/int";
+// Regression guard for #5187: an enum u64 payload bound in a match arm and
+// chained through an unsigned shift must use a LOGICAL (unsigned) shift on
+// every backend. 18000000000000000000 = 0xF9CCD8A1C5080000 has its top bit
+// set, so `>> 57` differs signed (arithmetic, sign-extends) vs unsigned
+// (logical): unsigned yields 124, signed does not. All four backends must
+// agree on the unsigned result — interp / x86-64 / arm64 / wasm.
+//
+// (#5187 was filed as a native-wasm miscompile but proved to be a repro
+// artifact: running the wasm *component* directly surfaces only 0/1 via
+// wasi:cli/run, so main's real return was squashed to 1. Under the harness's
+// PrintMainResult result-line path it is 5, matching the other backends. This
+// fixture locks that in so a genuine future signed/unsigned regression is
+// caught.)
+enum E { U(u64), N }
+function f(e: E): i32 {
+    match (e) {
+        U(x) => { if (x >> 57 == 124) { return 5; } return 1; },
+        N => { return 3; }
+    }
+    return 0;
+}
+function main(): i32 { return f(U(18000000000000000000)); }

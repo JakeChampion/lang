@@ -5,11 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // End-to-end proof of the self-host module-flattening pipeline
@@ -38,30 +33,16 @@ func TestSelfHostBundleDemoX86_64(t *testing.T) {
 		}
 	}
 
-	// Build the demo driver.
-	prog, _, err := modload.Load(filepath.Join(dir, "bundle_demo.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverAsm := filepath.Join(dir, "driver.s")
-	driverBin := filepath.Join(dir, "driver")
-	if err := os.WriteFile(driverAsm, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write driver asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", driverAsm, "-o", driverBin).CombinedOutput(); err != nil {
-		t.Fatalf("driver gcc: %v\n%s", err, out)
-	}
+	// Build the demo driver through the shared cached path
+	// (buildSelfHostBin), NOT a hand-rolled modload+emit+gcc: the cached
+	// path releases the emit's dead spans (debug.FreeOSMemory) before
+	// spawning the assembler and caches the linked binary. The old inline
+	// build held the multi-GB emit residue in the test process while `as`
+	// spiked on bundle_demo's .s (it pulls irlower + asm) — past the 16 GB
+	// CI runners' RAM, OOM-killing the runner agent ("The runner has
+	// received a shutdown signal", shard5 on #5040 and #5047). Same
+	// conversion as TestSelfHostCrossValidation / TestSelfHostAsmX86_64.
+	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_demo.fern", "driver")
 
 	// Run the driver to get the merged program's asm.
 	var dcmd *exec.Cmd

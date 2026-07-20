@@ -47,6 +47,31 @@ func TestFormatKeepsFunctionModifiers(t *testing.T) {
 	}
 }
 
+// An unsigned literal whose magnitude exceeds i64::MAX is stored by
+// the parser as a negative int64 bit pattern (via ParseUint). The
+// formatter must render it back as the unsigned decimal, not via
+// `-x.Value` (which overflowed for the 2^63 / math.MinInt64 pattern
+// and produced a spurious `--`). These are the boundary values: 2^63,
+// (2^32-1)^2, and u64::MAX.
+func TestFormatUnsignedLargeLiteral(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`function main(): i32 { var a: u64 = 9223372036854775808 as u64; return 0; }`,
+			"9223372036854775808 as u64"},
+		{`function main(): i32 { var a: u64 = 18446744065119617025 as u64; return 0; }`,
+			"18446744065119617025 as u64"},
+		{`function main(): i32 { var a: u64 = 18446744073709551615 as u64; return 0; }`,
+			"18446744073709551615 as u64"},
+	} {
+		got := formatSrc(t, tc.in)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("format(%q):\ngot  %q\nwant substring %q", tc.in, got, tc.want)
+		}
+		if strings.Contains(got, "--") || strings.Contains(got, "-9223372036854775808") {
+			t.Errorf("format(%q) emitted a spurious negation: %q", tc.in, got)
+		}
+	}
+}
+
 // Nested blocks indent further. `if` / `else` chain stays on the
 // same line as the closing brace of the previous arm.
 func TestFormatIfElseIndents(t *testing.T) {
@@ -673,6 +698,32 @@ defer w.close();
 		again := formatSrc(t, got)
 		if got != again {
 			t.Errorf("format not idempotent for input %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
+		}
+	}
+}
+
+// Block-shaped `defer { … }` / `errdefer { … }` (#5153) round-trips: the
+// action prints as a brace block with NO trailing `;` (so it re-parses), and
+// the format is idempotent.
+func TestFormatDeferBlockRoundTrip(t *testing.T) {
+	srcs := []string{
+		`function f(): void { var x = 0; defer { x = x + 1; } }`,
+		`function f(): Result[i32, i32] { var x = 0; errdefer { x = x + 2; } return Ok(x); }`,
+	}
+	for _, src := range srcs {
+		got := formatSrc(t, src)
+		if !strings.Contains(got, "defer { ") {
+			t.Errorf("block defer not formatted as a brace block for %q:\n%s", src, got)
+		}
+		if strings.Contains(got, "};") {
+			t.Errorf("block defer emitted an invalid trailing `;` for %q:\n%s", src, got)
+		}
+		// The formatted output must itself re-parse.
+		if _, err := parser.Parse(got); err != nil {
+			t.Errorf("formatted block defer does not re-parse for %q:\n%s\nerr: %v", src, got, err)
+		}
+		if again := formatSrc(t, got); got != again {
+			t.Errorf("format not idempotent for %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
 		}
 	}
 }

@@ -85,7 +85,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "bundled.wasm")
 
 	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false /*componentWrap*/, false /*componentWrapCli*/, false /*asyncExport*/, []string{provPath}, false /*shared*/, "", nil)
+		false /*componentWrap*/, false /*componentWrapCli*/, false /*asyncExport*/, []string{provPath}, false /*shared*/, "", false /*optimize*/, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-provider): code=%d err=%v", code, err)
 	}
@@ -183,7 +183,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "bundled.wasm")
 
 	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false, false, false, []string{provPath}, false, "", nil)
+		false, false, false, []string{provPath}, false, "", false, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-provider, params): code=%d err=%v", code, err)
 	}
@@ -245,7 +245,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "bundled.wasm")
 
 	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false, false, false, []string{"one=" + p1Path, "two=" + p2Path}, false, "", nil)
+		false, false, false, []string{"one=" + p1Path, "two=" + p2Path}, false, "", false, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-provider, multi): code=%d err=%v", code, err)
 	}
@@ -293,7 +293,7 @@ function main(): i32 { return 0; }
 	}
 	// Only `one` provided; `two` is unmapped → error mentioning two.
 	_, err := run(consumerPath, filepath.Join(dir, "o.wasm"), "wasm-bin", "", false, false, "qemu-aarch64",
-		false, false, false, []string{"one=" + p1Path}, false, "", nil)
+		false, false, false, []string{"one=" + p1Path}, false, "", false, nil)
 	if err == nil || !strings.Contains(err.Error(), "two") {
 		t.Fatalf("expected a 'no provider for two' error, got %v", err)
 	}
@@ -317,7 +317,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "add.wasm")
 
 	code, err := run(srcPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false, false, true /*asyncExport*/, nil /*asyncProviders*/, false, "", nil)
+		false, false, true /*asyncExport*/, nil /*asyncProviders*/, false, "", false, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-export, params): code=%d err=%v", code, err)
 	}

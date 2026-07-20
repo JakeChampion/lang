@@ -187,6 +187,31 @@ var loopReuseIRCases = []struct {
 	{"loop-funcupdate-nested-struct-churn-safe",
 		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var c: Outer = Outer { ...d, inner: Inner { a: i, b: 3 } }; sum = (sum + c.inner.a + c.inner.b + c.n) % 1000; i = i + 1; } return sum; }`,
 		0, 3},
+	// CROSS-BLOCK reuse of a struct with an ENUM field (Delta B follow-through:
+	// xblock_scan_body now takes struct_fields_reusable_cross + the shared
+	// cross_recipient_fields_fresh gate). The loop-body donor `d` (dead by the
+	// nested if) is reused by the if-arm recipient `b`; b's enum value is a fresh
+	// variant ctor, so the reuse arm's flat old-enum release is alias-free. Static
+	// box sites: d's M + d's On payload + b's On payload = THREE (b's M box is
+	// reused, __fern_alloc_reuse not arr_box). Value: sum over i of s=(i+1)+i plus
+	// r=3+i for i>0 → 16 + 15 = 31, matching the interp oracle.
+	{"cross-block-enum-field-reuse",
+		`enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: M = M { tag: i, st: On(i + 1) }; var s: i32 = 0; match (d.st) { On(v) => { s = v + d.tag; }, Off => { s = d.tag; } } if (i > 0) { var b: M = M { tag: i, st: On(3) }; var r: i32 = 0; match (b.st) { On(v) => { r = v + b.tag; }, Off => { r = 0; } } sum = sum + r; } sum = sum + s; i = i + 1; } return sum; }`,
+		31, 3},
+	// Cross-block enum-field donor USED AFTER the if: d's match sits after the
+	// nested if, so d is not dead-from-k and the reuse must be suppressed — b's M
+	// box allocates too (FOUR sites). Same value 31.
+	{"cross-block-enum-field-donor-live",
+		`enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: M = M { tag: i, st: On(i + 1) }; if (i > 0) { var b: M = M { tag: i, st: On(3) }; var r: i32 = 0; match (b.st) { On(v) => { r = v + b.tag; }, Off => { r = 0; } } sum = sum + r; } var s: i32 = 0; match (d.st) { On(v) => { s = v + d.tag; }, Off => { s = d.tag; } } sum = sum + s; i = i + 1; } return sum; }`,
+		31, 4},
+	// Cross-block enum-field memory safety at scale: 5M iterations of the reuse
+	// shape. The reuse arm flat-releases d's old enum payload box each turn; exit
+	// 229 (sum mod 1000, the interp oracle) with THREE static sites proves the
+	// per-iteration enum alloc/release stays balanced (a leak would exhaust the
+	// heap, a double-free would crash).
+	{"cross-block-enum-field-churn-safe",
+		`enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: M = M { tag: i, st: On(i + 1) }; var s: i32 = 0; match (d.st) { On(v) => { s = v + d.tag; }, Off => { s = d.tag; } } if (i > 0) { var b: M = M { tag: i, st: On(3) }; var r: i32 = 0; match (b.st) { On(v) => { r = v + b.tag; }, Off => { r = 0; } } sum = (sum + r) % 1000; } sum = (sum + s) % 1000; i = i + 1; } return sum; }`,
+		229, 3},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64

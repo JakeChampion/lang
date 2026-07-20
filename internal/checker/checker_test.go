@@ -1017,8 +1017,17 @@ func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *Error, got %T", es[0])
 	}
-	if ce.Note != `did you mean "counter"?` {
-		t.Errorf("hint = %q, want suggestion of \"counter\"", ce.Note)
+	if ce.Fix == nil {
+		t.Fatal("expected a machine-applicable fix")
+	}
+	if ce.Fix.Replacement != "counter" {
+		t.Errorf("fix replacement = %q, want %q", ce.Fix.Replacement, "counter")
+	}
+	if ce.Fix.Title != "replace `countr` with `counter`" {
+		t.Errorf("fix title = %q", ce.Fix.Title)
+	}
+	if ce.Fix.Length != len("countr") || ce.Fix.Pos != ce.Pos {
+		t.Errorf("fix span = (%v, %d), want the error's own (%v, %d)", ce.Fix.Pos, ce.Fix.Length, ce.Pos, len("countr"))
 	}
 	if ce.Span != len("countr") {
 		t.Errorf("span = %d, want %d", ce.Span, len("countr"))
@@ -1039,8 +1048,144 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 	}
 	es := err.(diag.Errors)
 	ce := es[0].(*Error)
-	if ce.Note != "" {
-		t.Errorf("expected no hint, got %q", ce.Note)
+	if ce.Fix != nil {
+		t.Errorf("expected no fix, got %+v", ce.Fix)
+	}
+}
+
+// E043 unknown-field joins the sound fix family (#4413 Rec §3): both
+// the field-ACCESS and struct-LITERAL sites attach a respelling fix
+// anchored at the field NAME token, and applying it fixes the program.
+func TestUnknownFieldFixApplies(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"access", "struct P { count: i32 }\nfunction main(): i32 {\n\tvar p = P { count: 1 };\n\treturn p.countr;\n}"},
+		{"literal", "struct P { count: i32 }\nfunction main(): i32 {\n\tvar p = P { countr: 1 };\n\treturn 0;\n}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Check(prog)
+			es, ok := err.(diag.Errors)
+			if !ok || len(es) == 0 {
+				t.Fatalf("expected diag.Errors, got %v", err)
+			}
+			var fix *diag.Suggestion
+			for _, e := range es {
+				if ce, ok := e.(*Error); ok && ce.Fix != nil {
+					fix = ce.Fix
+				}
+			}
+			if fix == nil {
+				t.Fatalf("no error carried a fix: %v", es)
+			}
+			if fix.Replacement != "count" {
+				t.Errorf("replacement = %q, want count", fix.Replacement)
+			}
+			lines := strings.Split(tc.src, "\n")
+			ln := lines[fix.Pos.Line-1]
+			col := fix.Pos.Col - 1
+			if got := ln[col : col+fix.Length]; got != "countr" {
+				t.Fatalf("fix span covers %q, want the misspelt field name", got)
+			}
+			lines[fix.Pos.Line-1] = ln[:col] + fix.Replacement + ln[col+fix.Length:]
+			applied := strings.Join(lines, "\n")
+			prog2, err := parser.Parse(applied)
+			if err != nil {
+				t.Fatalf("applied fix does not re-parse: %v\n%s", err, applied)
+			}
+			if _, err := Check(prog2); err != nil {
+				t.Fatalf("applied fix does not check: %v\n%s", err, applied)
+			}
+		})
+	}
+}
+
+// A misspelt METHOD call routes through the unknown-field path; the
+// receiver's registered method names join the candidates, so
+// `p.puzh(2)` suggests the `push` method (the field set alone offers
+// nothing that close). Applying it fixes the program.
+func TestUnknownMethodFixSuggestsMethod(t *testing.T) {
+	src := "struct P { x: i32 }\n" +
+		"pub function (p: P) push(v: i32): i32 { return p.x + v; }\n" +
+		"function main(): i32 {\n" +
+		"\tvar p = P { x: 1 };\n" +
+		"\treturn p.puzh(2);\n" +
+		"}"
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("expected diag.Errors, got %v", err)
+	}
+	var fix *diag.Suggestion
+	for _, e := range es {
+		if ce, ok := e.(*Error); ok && ce.Fix != nil {
+			fix = ce.Fix
+		}
+	}
+	if fix == nil {
+		t.Fatalf("no error carried a fix: %v", es)
+	}
+	if fix.Replacement != "push" {
+		t.Errorf("replacement = %q, want push", fix.Replacement)
+	}
+	lines := strings.Split(src, "\n")
+	ln := lines[fix.Pos.Line-1]
+	col := fix.Pos.Col - 1
+	lines[fix.Pos.Line-1] = ln[:col] + fix.Replacement + ln[col+fix.Length:]
+	applied := strings.Join(lines, "\n")
+	prog2, err := parser.Parse(applied)
+	if err != nil {
+		t.Fatalf("applied fix does not re-parse: %v\n%s", err, applied)
+	}
+	if _, err := Check(prog2); err != nil {
+		t.Fatalf("applied fix does not check: %v\n%s", err, applied)
+	}
+}
+
+// The E001 near-miss fix is MACHINE-APPLICABLE (#4413 Rec §3): applying
+// the suggested replacement over its span must yield a program that
+// parses AND checks cleanly — the soundness bar for attaching one.
+func TestUndefinedIdentifierFixApplies(t *testing.T) {
+	src := `function f(): i32 {
+	var counter: i32 = 0;
+	return countr;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("expected diag.Errors, got %v", err)
+	}
+	ce := es[0].(*Error)
+	if ce.Fix == nil {
+		t.Fatal("expected a fix")
+	}
+	// Apply: replace Length bytes at (Line, Col) with Replacement.
+	lines := strings.Split(src, "\n")
+	ln := lines[ce.Fix.Pos.Line-1]
+	col := ce.Fix.Pos.Col - 1
+	fixed := ln[:col] + ce.Fix.Replacement + ln[col+ce.Fix.Length:]
+	lines[ce.Fix.Pos.Line-1] = fixed
+	applied := strings.Join(lines, "\n")
+	prog2, err := parser.Parse(applied)
+	if err != nil {
+		t.Fatalf("applied fix does not re-parse: %v\n%s", err, applied)
+	}
+	if _, err := Check(prog2); err != nil {
+		t.Fatalf("applied fix does not check: %v\n%s", err, applied)
 	}
 }
 
@@ -3212,6 +3357,66 @@ function main(): i32 { return 0; }`, "unknown trait"},
 	}
 }
 
+// @derive(Eq/Ord/Hash) on a type whose field (or variant payload) type
+// does not implement the derived trait is ONE positioned E021 at the
+// deriving decl — not the position-less per-field E043 garbage the
+// ill-typed synthesized body used to surface (#5392). Conformance uses
+// the same sources as the E021 bound check: an explicit impl, a derive
+// on the field's type, or a receiver-method set covering the trait.
+func TestDeriveFieldConformancePreCheck(t *testing.T) {
+	const ordTrait = "trait Ord { function cmp(self: Self, other: Self): i32; }\n"
+	const ordI32 = "impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n"
+
+	// Broken derive: exactly one E021, positioned at the struct decl
+	// (line 3 — never 0:0), with the self-explanatory message.
+	err := checkSource(t, ordTrait+"@derive(Ord)\nstruct Foo { x: i32, y: i32 }\nfunction main(): i32 { return 0; }")
+	if err == nil {
+		t.Fatal("expected E021 for underivable @derive(Ord), got nil")
+	}
+	es, ok := err.(diag.Errors)
+	if !ok {
+		t.Fatalf("expected diag.Errors, got %T: %v", err, err)
+	}
+	if len(es) != 1 {
+		t.Fatalf("expected ONE error for the two-field gap, got %d: %v", len(es), err)
+	}
+	ce, ok := es[0].(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", es[0])
+	}
+	if ce.ErrCode != "E021" {
+		t.Errorf("code = %q, want E021", ce.ErrCode)
+	}
+	const wantMsg = "cannot @derive(Ord) for Foo: field x of type i32 does not implement Ord — add `impl Ord for i32` (or remove the derive)"
+	if !strings.Contains(ce.Error(), wantMsg) {
+		t.Errorf("message %q does not contain %q", ce.Error(), wantMsg)
+	}
+	if ce.Pos.Line != 3 || ce.Pos.Col == 0 {
+		t.Errorf("position = %d:%d, want line 3 with a non-zero column", ce.Pos.Line, ce.Pos.Col)
+	}
+
+	// Enum variant payload names the variant.
+	err = checkSource(t, "trait Eq { function eq(self: Self, other: Self): boolean; }\n@derive(Eq)\nenum E { A, B(i32) }\nfunction main(): i32 { return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "cannot @derive(Eq) for E: variant B payload of type i32 does not implement Eq") {
+		t.Errorf("enum payload gap: got %v", err)
+	}
+
+	// All three conformance sources keep a derive clean: an explicit
+	// impl, a field type with its own derive, and an inherent method set.
+	for _, src := range []string{
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }",
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Outer { inner: Inner }\n@derive(Ord)\nstruct Inner { a: i32 }\nfunction main(): i32 { return 0; }",
+		ordTrait + "struct Bar { a: i32 }\nfunction (self: Bar) cmp(other: Bar): i32 { return 0; }\n@derive(Ord)\nstruct Foo { b: Bar }\nfunction main(): i32 { return 0; }",
+		// A generic struct's type-param field is bound-checked per
+		// instantiation, not by the pre-check.
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Box[T] { v: T, n: i32 }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1, n: 2 }; if (b < b) { return 1; } return 0; }",
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected clean derive for %q, got: %v", src, err)
+		}
+	}
+}
+
 // @derive on a generic enum and @derive(Ord) on an enum are rejected
 // with clear messages (both are follow-ups). See docs/TRAITS.md.
 func TestDeriveEnumErrors(t *testing.T) {
@@ -3468,6 +3673,25 @@ function main(): i32 { var d: dyn Shape = Circle { r: 3 }; return f(d); }`); err
 		t.Fatalf("valid dyn use should check: %v", err)
 	}
 
+	// Accepted: a concrete value coerces to a `dyn Trait` STRUCT FIELD with
+	// no explicit `as dyn Shape` — the struct-field position was missing from
+	// assignable()'s boxing-site list, so this reported a spurious E043 even
+	// though var-init / argument / array-element / return all accept it.
+	if err := checkSource(t, prelude+`struct Holder { shape: dyn Shape, tag: i32 }
+function main(): i32 { var h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }; return h.shape.area() + h.tag; }`); err != nil {
+		t.Fatalf("implicit concrete->dyn coercion in a struct field should check: %v", err)
+	}
+
+	// Accepted: a concrete value coerces to a `dyn Trait` USER-ENUM variant
+	// payload with no explicit `as dyn Shape` — the variant-payload position
+	// was also missing from the boxing-site list, so this reported a spurious
+	// E036 even though the builtin Ok/Some/Err payloads and struct fields
+	// accept it.
+	if err := checkSource(t, prelude+`enum Box { Wrap(dyn Shape), Empty }
+function main(): i32 { var b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) => { return d.area(); }, Empty => { return 0; } } }`); err != nil {
+		t.Fatalf("implicit concrete->dyn coercion in a variant payload should check: %v", err)
+	}
+
 	cases := []struct{ name, src, want string }{
 		{"non-impl coercion",
 			prelude + `struct NoShape { z: i32 }
@@ -3490,6 +3714,16 @@ function main(): i32 { return 0; }`,
 			prelude + `struct NoShape { z: i32 }
 function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]; return 0; }`,
 			"does not implement Shape"},
+		{"non-impl in dyn struct field",
+			prelude + `struct NoShape { z: i32 }
+struct Holder { shape: dyn Shape }
+function main(): i32 { var h: Holder = Holder { shape: NoShape { z: 1 } }; return 0; }`,
+			"expected dyn Shape, got NoShape"},
+		{"non-impl in dyn variant payload",
+			prelude + `struct NoShape { z: i32 }
+enum Box { Wrap(dyn Shape) }
+function main(): i32 { var b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
+			"payload 0 type NoShape, expected dyn Shape"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -4045,6 +4279,64 @@ function main(): i32 { var c: Cell[Point] = cell_new(Point { x: 1 }); return 0; 
 	}
 }
 
+// The annotation form of E057 (`Cell[T]` in a field / param / var / return
+// position) must anchor at the annotation's use site, not the synthesized
+// builtin `Cell` decl (whose position is 0:0 — which diag.Format renders
+// without the `error[E057]` prefix, hiding the code from consumers like the
+// self-host checker differential). Pins the position and the code prefix
+// for each annotation position.
+func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
+	cases := []struct {
+		name, src string
+		line, col int
+	}{
+		{"field", "struct Point { x: i32 }\nstruct Holder {\n    c: Cell[Point],\n}\nfunction main(): i32 { return 0; }", 3, 5},
+		{"param", "struct Point { x: i32 }\nfunction f(c: Cell[Point]): i32 { return 0; }\nfunction main(): i32 { return 0; }", 2, 12},
+		{"var", "struct Point { x: i32 }\nfunction main(): i32 {\n    var c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if err == nil {
+				t.Fatalf("%s-position Cell[Point] should be E057, got no error", tc.name)
+			}
+			var found *Error
+			var errs diag.Errors
+			if errors.As(err, &errs) {
+				for _, e := range errs {
+					var ce *Error
+					if errors.As(e, &ce) && ce.ErrCode == "E057" {
+						found = ce
+						break
+					}
+				}
+			} else {
+				var ce *Error
+				if errors.As(err, &ce) && ce.ErrCode == "E057" {
+					found = ce
+				}
+			}
+			if found == nil {
+				t.Fatalf("no E057-coded error in: %v", err)
+			}
+			if found.Pos.Line != tc.line || found.Pos.Col != tc.col {
+				t.Errorf("E057 anchored at %d:%d, want %d:%d (the annotation site)",
+					found.Pos.Line, found.Pos.Col, tc.line, tc.col)
+			}
+			// The rendered form must carry the code prefix — a zero
+			// position drops it (that was the original bug).
+			rendered := diag.Format("", tc.src, found)
+			if !strings.Contains(rendered, "error[E057]") {
+				t.Errorf("rendered diagnostic missing error[E057] prefix:\n%s", rendered)
+			}
+		})
+	}
+}
+
 // An extern @import call with a type-mismatched argument is rejected.
 func TestExternImportArgTypeMismatch(t *testing.T) {
 	src := `@import("wasi:foo/bar@0.1.0", "do-thing")
@@ -4194,6 +4486,33 @@ func TestBlockExprChecker(t *testing.T) {
 		return r;
 	}`); err != nil {
 		t.Errorf("match-arm block tail: unexpected error: %v", err)
+	}
+}
+
+// A block-shaped `defer { … }` / `errdefer { … }` action (#5153) is
+// value-less by design — its result is discarded — so it must NOT trip the
+// E061 "block-expression has no trailing value" check that a value-position
+// void block does. The exemption is scoped to the immediate defer action:
+// a value-position void block anywhere else still errors E061.
+func TestCheckDeferBlockVoidAction(t *testing.T) {
+	// defer / errdefer with a value-less block action: clean.
+	if err := checkSource(t, `function f(): Result[i32, i32] {
+		var x: i32 = 0;
+		defer { x = x + 1; }
+		errdefer { x = x + 2; }
+		return Ok(x);
+	}`); err != nil {
+		t.Errorf("defer/errdefer void block action: unexpected error: %v", err)
+	}
+
+	// A value-less block in a genuine value position still errors E061 — the
+	// exemption must not leak beyond the immediate defer action.
+	err := checkSource(t, `function main(): i32 {
+		var y: i32 = { var z = 1; };
+		return y;
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "no trailing value") {
+		t.Errorf("value-position void block should still error E061, got: %v", err)
 	}
 }
 
@@ -4613,4 +4932,85 @@ function f(v: str): i32 { return consume(v) + borrow(v); }`
 	if n := strings.Count(err.Error(), "expected string, got str"); n != 1 {
 		t.Errorf("want exactly 1 str-arg mismatch (own position only), got %d in %v", n, err)
 	}
+}
+
+// TestPointerReinterpretFromI32Rejected (E069, #5053) locks the rule that a
+// 32-bit-only value (`i32` / `u32`) reinterpreted as a pointer-shaped type
+// (`string`, an array, or a struct) via `as` is a truncation footgun — the
+// high 32 bits of the address were lost when the value became i32, so the
+// recovered pointer is corrupt once the heap exceeds 4 GiB. A `usize` source
+// carries the full width and stays allowed (the stdlib's raw-block-to-handle
+// promotion), and a genuine numeric conversion (`i32 as usize`) is unaffected.
+func TestPointerReinterpretFromI32Rejected(t *testing.T) {
+	mustCode := func(src, code string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected %s for %q, got none", code, src)
+			return
+		}
+		if !hasCode(err, code) {
+			t.Errorf("%q: want %s, got %v", src, code, err)
+		}
+	}
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	// i32 / u32 reinterpreted as a pointer-shaped type — rejected.
+	mustCode(`function f(k: i32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
+	mustCode(`function f(k: i32): i32[] { return k as i32[]; } function main(): i32 { return 0; }`, "E069")
+	mustCode(`struct P { x: i32 } function f(k: i32): P { return k as P; } function main(): i32 { return 0; }`, "E069")
+	mustCode(`function f(k: u32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
+	// usize source is pointer-width — the honest promotion, still allowed.
+	mustOK(`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`)
+	mustOK(`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`)
+	// A plain numeric conversion (not a pointer reinterpret) is unaffected.
+	mustOK(`function main(): i32 { var a: i32 = 5; var b: usize = a as usize; return b as i32; }`)
+	// The forward pointer->i32 narrowing (the __memcpy escape hatch) is not
+	// this rule's target and stays allowed.
+	mustOK(`function main(): i32 { var s: string = "x"; return s as i32; }`)
+}
+
+// TestFloatAliasAndDefaultWidth pins the #5363 decision on the checker
+// surface: `float` is the width-unqualified alias for f64, and a bare
+// float literal with no expected-type pressure defaults to f64. The
+// mismatch messages must name f64 (proving both the alias's width and
+// the literal's default), while `float`-annotated code type-checks and
+// dispatches like f64.
+func TestFloatAliasAndDefaultWidth(t *testing.T) {
+	mustErr := func(src, want string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected an error for %q, got none", src)
+			return
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("for %q: want error containing %q, got: %v", src, want, err)
+		}
+	}
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	// The alias type-checks: annotation, param, return, cast, array elem.
+	mustOK(`function f(x: float): float { return x as float; } function main(): i32 { var v: float = 1.5; var xs: float[] = [v, f(v)]; return xs.len(); }`)
+	// `float` IS f64: it flows into an f64 destination both ways.
+	mustOK(`function main(): i32 { var x: float = 1.5; var y: f64 = x; var z: float = y; return 0; }`)
+	// ... and is NOT f32: the mismatch names f64.
+	mustErr(`function main(): i32 { var x: float = 1.5; var y: f32 = x; return 0; }`,
+		"cannot assign f64 to variable of type f32")
+	// A bare literal defaults to f64 — the unsettled-literal mismatch
+	// message names f64, not f32.
+	mustErr(`function main(): i32 { var s: string = 1.5; return 0; }`,
+		"cannot assign f64 to variable of type string")
+	// `float` is no longer an unknown type name, so E064's old
+	// `float` hint path is gone; `double` still draws the f64 hint.
+	mustErr(`function f(a: double): i32 { return 0; } function main(): i32 { return 0; }`,
+		"did you mean `f64`?")
 }

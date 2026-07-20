@@ -12,7 +12,7 @@ import "testing"
 // and, until the #4391 follow-up, an outer-scope mutation after capture was a
 // stale make-time snapshot (`outer-mutation`/`loop-outer-mutation` returned 0
 // where the interpreter returned 5/10). The fix boxes captured mutable scalars
-// into 1-element array cells (closureconv.BoxMutatedScalarCaptures) — boxing on
+// into 1-element array cells (closureconv.BoxMutatedCaptures) — boxing on
 // assignment ANYWHERE, not only inside the closure — and marks those cells so
 // the IR's index-assign copy-on-write is skipped for them (a shared cell is
 // never forked). This mirrors the self-host IR fix (#2895) and matches the Go
@@ -58,6 +58,63 @@ func TestNativeMutScalarCapture(t *testing.T) {
 		// outer reads the shared result → 7. Guards that skipping CoW on the cell
 		// keeps the outer write and the closure write on the SAME buffer.
 		{"outer-and-inner", `function main(): i32 { var x = 0; var f = function (): i32 { x = x + 4; return 0; }; x = 3; f(); return x; }`, 7},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("x86_64", func(t *testing.T) {
+				if _, got := compileAndRunX86_64(t, tc.src); got != tc.want {
+					t.Errorf("x86-64 %q: exit = %d, want %d", tc.name, got, tc.want)
+				}
+			})
+			t.Run("arm64", func(t *testing.T) {
+				if _, got := compileAndRunArm64(t, tc.src); got != tc.want {
+					t.Errorf("arm64 %q: exit = %d, want %d", tc.name, got, tc.want)
+				}
+			})
+			t.Run("wasm", func(t *testing.T) {
+				if got := compileAndRunWasmbinMain(t, tc.src); got != tc.want {
+					t.Errorf("wasm %q: exit = %d, want %d", tc.name, got, tc.want)
+				}
+			})
+		})
+	}
+}
+
+// TestNativeMutPointerCapture is the POINTER-typed sibling of
+// TestNativeMutScalarCapture (#5301): a captured outer array / string / struct
+// local reassigned in the ENCLOSING scope after the closure is created must be
+// seen by the closure (the interpreter — the oracle per #2896 — captures by
+// reference). E049 keeps the closure side read-only, so unlike scalars only the
+// outer→closure direction exists; boxcapture now boxes such pointer locals into
+// the same 1-element shared cell (boxableCapture admits ast.IsPointerType).
+// The aliasing rows guard the RC discipline: storing a still-live local's
+// pointer into the cell and later re-reading BOTH bindings must not
+// over-release (__rc_underflow_count() == 0 is asserted via the exit value —
+// any underflow or wrong read returns 100).
+func TestNativeMutPointerCapture(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Array reassigned after capture: closure reads the NEW buffer → 42.
+		{"array-reassign", `function main(): i32 { var a: i32[] = [10, 1]; var f: () => i32 = function (): i32 { return a[0]; }; a = [42, 1]; return f(); }`, 42},
+		// String reassigned after capture: closure sees the new length → 6+36.
+		{"string-reassign", `function main(): i32 { var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = "abcdef"; return f() + 36; }`, 42},
+		// Struct reassigned after capture: closure reads the new field → 42.
+		{"struct-reassign", `struct B { v: i32 } function main(): i32 { var b: B = B { v: 10 }; var f: () => i32 = function (): i32 { return b.v; }; b = B { v: 42 }; return f(); }`, 42},
+		// Struct with a HEAP field reassigned twice: deep shape survives → 42.
+		{"struct-heap-field", `struct B { name: string, v: i32 } function main(): i32 { var b: B = B { name: "aa", v: 10 }; var f: () => i32 = function (): i32 { return b.v + b.name.len(); }; b = B { name: "abcd", v: 20 }; b = B { name: "abcdef", v: 30 }; return f() + 6; }`, 42},
+		// Read-only pointer capture is NOT boxed (no reassignment anywhere) → 42.
+		{"array-read-only", `function main(): i32 { var a: i32[] = [40, 2]; var f: () => i32 = function (): i32 { return a[0] + a[1]; }; return f(); }`, 42},
+		// Reassign from another still-live local, then read both through closure
+		// and directly — and assert zero rc underflows (over-release guard).
+		{"alias-no-underflow", `function main(): i32 { var keep: i32[] = [40, 7]; var a: i32[] = [10, 1]; var f: () => i32 = function (): i32 { return a[0]; }; a = keep; a = [1, 2]; a = keep; var x: i32 = f() + keep[0]; if (x != 80) { return 100; } return __rc_underflow_count(); }`, 0},
+		// Same aliasing shape for strings → 0 underflows, values intact.
+		{"string-alias-no-underflow", `function main(): i32 { var keep: string = "abcdefgh"; var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = keep; s = "abc"; s = keep; var x: i32 = f() + keep.len(); if (x != 16) { return 100; } return __rc_underflow_count(); }`, 0},
+		// A loop that grows the captured string 40 times: cell stays shared → 42.
+		{"loop-string-grow", `function main(): i32 { var s: string = "x"; var f: () => i32 = function (): i32 { return s.len(); }; var i: i32 = 0; while (i < 40) { s = s + "y"; i = i + 1; } return f() + 1; }`, 42},
 	}
 	for _, tc := range cases {
 		tc := tc

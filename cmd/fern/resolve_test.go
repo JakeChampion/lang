@@ -121,6 +121,33 @@ func TestResolveURLIndex(t *testing.T) {
 	}
 }
 
+// The root manifest's [exclude] rounds a demanded version up to the
+// next non-excluded indexed one, and a DEPENDENCY's [exclude] is
+// ignored (top-level-only, Go's exclude semantics): foo@1.1.0 demands
+// bar>=2.0.0, the root excludes 2.0.0 so the lock pins 2.1.0 — even
+// though foo's own manifest excludes 2.1.0.
+func TestResolveExcludeTopLevelOnly(t *testing.T) {
+	root := writeResolveTree(t, map[string]string{
+		"app/fern.toml":               "[package]\nname = \"app\"\nindex = \"reg/index.toml\"\n[dependencies]\nfoo = \"1.1.0\"\nbar = \"1.0.0\"\n[exclude]\nbar = [\"2.0.0\"]\n",
+		"app/reg/index.toml":          "[foo]\n\"1.1.0\" = { path = \"foo-1.1.0\" }\n[bar]\n\"1.0.0\" = { path = \"bar-1.0.0\" }\n\"2.0.0\" = { path = \"bar-2.0.0\" }\n\"2.1.0\" = { path = \"bar-2.1.0\" }\n",
+		"app/reg/foo-1.1.0/fern.toml": "[package]\nname = \"foo\"\nindex = \"../index.toml\"\n[dependencies]\nbar = \"2.0.0\"\n[exclude]\nbar = [\"2.1.0\"]\n",
+		"app/reg/bar-1.0.0/fern.toml": "[package]\nname = \"bar\"\n",
+		"app/reg/bar-2.0.0/fern.toml": "[package]\nname = \"bar\"\n",
+		"app/reg/bar-2.1.0/fern.toml": "[package]\nname = \"bar\"\n",
+	})
+	app := filepath.Join(root, "app")
+	if err := runResolve(app); err != nil {
+		t.Fatal(err)
+	}
+	locked, err := mvs.ReadLock(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locked["bar"].Version.String() != "2.1.0" {
+		t.Fatalf("bar = %s, want 2.1.0 (2.0.0 excluded by root; foo's own exclude of 2.1.0 ignored)", locked["bar"].Version)
+	}
+}
+
 // A versioned dep with no index is a clear error.
 func TestResolveNoIndexErrors(t *testing.T) {
 	root := writeResolveTree(t, map[string]string{

@@ -5,9 +5,13 @@ MoonBit, Gleam, Elixir, Go, Zig — and proposes a prioritised
 list of stdlib additions for Fern. Companion to
 `ROADMAP-AND-SELF-HOSTING.md` and `LANGUAGE-DIRECTION.md`.
 
-Fern's target use cases are small fast-startup CLI tools and
-short-lived edge-function-style HTTP servers. The picks below
-favour those over general-purpose breadth.
+Fern is a general-purpose language whose two sweet spots are small
+fast-startup CLI tools and short-lived edge-function-style HTTP
+servers. The picks below are ordered by leverage for those two
+workloads first — that's where the stdlib is most complete — but
+general-purpose breadth is now in scope rather than something to
+trade away, so a broadly useful primitive is no longer disqualified
+just because it isn't edge/CLI-specific.
 
 ## Current state
 
@@ -282,7 +286,7 @@ already exist (Fern's `print` is the println variant — appends
 a newline). `copy(reader, writer)` deferred — needs a real
 Reader/Writer plumbing decision.
 
-### 10. Generic `sort_by(cmp)` + `sort_key(fn)` · medium · ☑ (sort_by done)
+### 10. Generic `sort_by(cmp)` + `sort_key(fn)` · medium · ☑
 
 **Surface**: `sort_by[T](xs: T[], cmp: fn(T, T) i32)`,
 `sort_key[T, K](xs, fn(T) K)` where `K` is `Ord`.
@@ -294,8 +298,17 @@ the common case.
 
 **Notes**: `sort_by[T](xs, cmp)` (comparator-driven, stable
 insertion sort) shipped in `std/array.fern` (#2689), free +
-receiver-method forms. `sort_key` still pending generic `Ord`
-dispatch; later deprecates `sort_i32_asc/desc` once `Ord` lands.
+receiver-method forms. `sort_key[T, K: cmp.Ord](xs, key)` has now
+landed in `std/sort.fern` — the generic-key Schwartzian sort
+(sibling of the i32-pinned `sort_by_i32_key`), dispatching the
+order through `key.cmp(...)` so any `Ord` key (`string`, `u64`, a
+`@derive(Ord)` type) works. Landing it self-host-first surfaced —
+and fixed — two monomorphiser gaps: a type param appearing ONLY in
+a fn-param's return (`key: (T) => K`) was never bound (template
+silently dropped → link error), and an UNBOUNDED element param
+surviving in the return type (`T[]`) left callers unable to recover
+the element type for dispatch. Deprecating `sort_i32_asc/desc` in
+favor of the `Ord`-bound generic remains open.
 **Status**: every non-consuming sort (generic `sort_by` /
 `core/cmp.sort[T: Ord]` and the monomorphic `sort_i32_*` /
 `sort_i64_*` / `sort_u32/u64_*` / `sort_strings_*` families) is now a

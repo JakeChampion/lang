@@ -1,10 +1,12 @@
 import "std/sort";
 import "std/string";
+import "core/cmp";
 
-// Property-based audit for std/sort's string sorts on every compiled
-// backend: sort_strings_asc / sort_strings_desc / sort_strings_asc_ci
-// (which delegate to the generic sort_by merge sort over string_cmp /
-// string_cmp_ci). Deterministic generated corpus => identical inputs
+// Property-based audit for string sorts on every compiled backend:
+// core/cmp's generic `sort` / `sort_desc` over `impl Ord for string` (the
+// retired sort_strings_asc / sort_strings_desc, #5397) plus std/sort's
+// sort_strings_asc_ci (which delegates to the generic sort_by merge sort
+// over string_cmp_ci). Deterministic generated corpus => identical inputs
 // everywhere. Asserted laws per trial:
 //   1. ordering    — asc is non-decreasing under string_cmp; desc is
 //                    non-increasing; ci is non-decreasing under
@@ -86,7 +88,7 @@ function main(): i32 {
             i = i + 1;
         }
 
-        var asc: string[] = sort.sort_strings_asc(arr);
+        var asc: string[] = cmp.sort(arr);
         if (!is_sorted_str(asc)) {
             print("asc ordering FAILED at trial " + trial.to_string());
             return 1;
@@ -96,7 +98,7 @@ function main(): i32 {
             return 1;
         }
 
-        var desc: string[] = sort.sort_strings_desc(arr);
+        var desc: string[] = cmp.sort_desc(arr);
         if (!is_sorted_str_desc(desc)) {
             print("desc ordering FAILED at trial " + trial.to_string());
             return 1;
@@ -120,12 +122,12 @@ function main(): i32 {
 
     // n < 2: the return-borrowed-param early-out over pointer elements.
     var empty: string[] = [];
-    if (sort.sort_strings_asc(empty).len() != 0) {
+    if (cmp.sort(empty).len() != 0) {
         print("empty FAILED");
         return 1;
     }
     var one: string[] = ["solo"];
-    var one_sorted: string[] = sort.sort_strings_asc(one);
+    var one_sorted: string[] = cmp.sort(one);
     if (one_sorted.len() != 1) {
         print("singleton len FAILED");
         return 1;

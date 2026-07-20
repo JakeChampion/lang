@@ -23,7 +23,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/caps"
 )
 
 // FileName is the manifest file modload looks for next to (or above)
@@ -58,6 +61,13 @@ type Dep struct {
 	// [package] index and pinned in fern.lock — never a range, so
 	// resolution stays deterministic and lockfile-driven (internal/mvs).
 	Version string
+	// Capabilities is the dependency's capability grant
+	// (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2): the v1 capabilities
+	// (internal/caps.Capabilities) this package allows the dependency's
+	// code to reach, sorted + deduped. nil means the key is ABSENT
+	// (warn-and-allow); an empty non-nil slice means `capabilities = []`
+	// (nothing granted). Valid on every dependency form.
+	Capabilities []string
 }
 
 // Manifest is a parsed fern.toml.
@@ -72,6 +82,13 @@ type Manifest struct {
 	// non-nil only when a [workspace] table is present. A manifest may be
 	// workspace-only (no [package]) or both a package and a workspace root.
 	Members []string
+	// Excludes is the [exclude] table: package name → versions banned from
+	// MVS ("1.9 is broken"). Go's answer to MVS's inexpressible upper
+	// bounds, copied per the SOTA research: a demand for an excluded
+	// version rounds up to the next higher non-excluded indexed version.
+	// Only the TOP-LEVEL manifest's excludes apply during `fern -resolve`
+	// (a dependency's [exclude] is ignored), preserving determinism.
+	Excludes map[string][]string
 }
 
 // VersionDeps returns the names→min-version of this manifest's versioned
@@ -198,13 +215,13 @@ func Parse(src string) (*Manifest, error) {
 			}
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			switch section {
-			case "package", "dependencies":
+			case "package", "dependencies", "exclude":
 			case "workspace":
 				if m.Members == nil {
 					m.Members = []string{}
 				}
 			default:
-				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace])", ln+1, section)
+				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude])", ln+1, section)
 			}
 			continue
 		}
@@ -248,6 +265,23 @@ func Parse(src string) (*Manifest, error) {
 				return nil, fmt.Errorf("line %d: members: %w", ln+1, err)
 			}
 			m.Members = ms
+		case "exclude":
+			if !validDepName(key) {
+				return nil, fmt.Errorf("line %d: invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
+			}
+			vs, err := parseStringArray(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: exclude %s: %w", ln+1, key, err)
+			}
+			for _, v := range vs {
+				if !isVersion(v) {
+					return nil, fmt.Errorf("line %d: exclude %s: version must be MAJOR.MINOR.PATCH digits, got %q", ln+1, key, v)
+				}
+			}
+			if m.Excludes == nil {
+				m.Excludes = map[string][]string{}
+			}
+			m.Excludes[key] = vs
 		default:
 			return nil, fmt.Errorf("line %d: %q outside a section (start with [package], [dependencies], or [workspace])", ln+1, key)
 		}
@@ -331,7 +365,7 @@ func parseDep(val string) (Dep, error) {
 	}
 	body := strings.TrimSpace(val[1 : len(val)-1])
 	dep := Dep{}
-	for _, part := range strings.Split(body, ",") {
+	for _, part := range splitTopLevel(body) {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -345,6 +379,14 @@ func parseDep(val string) (Dep, error) {
 				return Dep{}, fmt.Errorf("workspace must be `true` (the only supported value), got %q", v)
 			}
 			dep.Workspace = true
+			continue
+		}
+		if k == "capabilities" {
+			cs, err := parseCapabilities(v)
+			if err != nil {
+				return Dep{}, fmt.Errorf("capabilities: %w", err)
+			}
+			dep.Capabilities = cs
 			continue
 		}
 		s, err := parseString(v)
@@ -374,7 +416,7 @@ func parseDep(val string) (Dep, error) {
 			}
 			dep.Version = s
 		default:
-			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash, workspace, version)", k)
+			return Dep{}, fmt.Errorf("unknown dependency key %q (supported: path, url, hash, workspace, version, capabilities)", k)
 		}
 	}
 	switch {
@@ -397,6 +439,61 @@ func parseDep(val string) (Dep, error) {
 	default:
 		return Dep{}, fmt.Errorf("missing `path` (or `url` + `hash`, `workspace = true`, or a version)")
 	}
+}
+
+// splitTopLevel splits an inline-table body on commas that sit outside
+// any `[...]` — so an array-valued entry (`capabilities = ["net", "fs"]`)
+// stays one item. The manifest grammar has no nested tables or strings
+// containing brackets, so counting depth is sufficient.
+func splitTopLevel(body string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, r := range body {
+		switch r {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, body[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(out, body[start:])
+}
+
+// parseCapabilities parses a dependency's `capabilities = ["net", …]`
+// grant list and validates every name against the v1 vocabulary
+// (internal/caps.Capabilities), failing fast at manifest load so a
+// typo'd grant can't silently deny (or a stale name silently allow).
+// The result is sorted + deduped, and non-nil even when empty —
+// `capabilities = []` grants nothing, which is different from the key
+// being absent (Dep.Capabilities == nil, warn-and-allow).
+func parseCapabilities(val string) ([]string, error) {
+	names, err := parseStringArray(val)
+	if err != nil {
+		return nil, err
+	}
+	valid := map[string]bool{}
+	for _, c := range caps.Capabilities {
+		valid[c] = true
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, n := range names {
+		if !valid[n] {
+			return nil, fmt.Errorf("unknown capability %q (valid capabilities: %s)", n, strings.Join(caps.Capabilities, ", "))
+		}
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // isVersion reports whether s is a bare MAJOR.MINOR.PATCH version (the

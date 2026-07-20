@@ -114,6 +114,13 @@ function main(): i32 {
     // eor x0, x1, #1 (logical immediate, boolean-not idiom) -> 0xD2400020 -> 20 00 40 D2
     var q: Arm64Asm = arm64_gas_assemble("eor x0, x1, #1");
     if (q.code[0] != 32 || q.code[1] != 0 || q.code[2] != 64 || q.code[3] != 210) { return 16; }
+    // clz x0, x1 (freelist size-class log2, #4801) -> 0xDAC01020 -> 20 10 C0 DA
+    // (pinned against internal/native/arm64's CLZ test vectors)
+    var r: Arm64Asm = arm64_gas_assemble("clz x0, x1");
+    if (r.code[0] != 32 || r.code[1] != 16 || r.code[2] != 192 || r.code[3] != 218) { return 17; }
+    // clz x3, x2 -> 0xDAC01043 -> 43 10 C0 DA
+    var r2: Arm64Asm = arm64_gas_assemble("clz x3, x2");
+    if (r2.code[0] != 67 || r2.code[1] != 16 || r2.code[2] != 192 || r2.code[3] != 218) { return 18; }
     return 0;
 }
 `

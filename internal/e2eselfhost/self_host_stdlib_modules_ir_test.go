@@ -48,24 +48,24 @@ function main(): i32 {
     var s = stream.stream_from_string("hello world");
     return s.len() * 3;
 }`},
-	// std/array's Eq-driven generic verbs (`contains` / `index_of` / `distinct`,
-	// bound `[T: cmp.Eq]`) on the REAL stdlib via the self-host loader: the bound
+	// core/cmp's Eq-driven generic verbs (`contains` / `index_of` / `distinct`,
+	// bound `[T: Eq]`) on the REAL stdlib via the self-host loader: the bound
 	// makes them monomorphise per element type, so the i32 instances keep the
 	// scalar `==` while the string instances dispatch byte equality — proof the
 	// shipped bodies (not an inlined copy) lower through the IR path for both
-	// element types. #2689.
-	{"array-eq-verbs", `import "std/array";
+	// element types. #2689 / #5348 (the verbs' single home is core/cmp).
+	{"cmp-eq-verbs", `import "core/cmp" as cmp;
 function main(): i32 {
     var a: i32[] = [10, 20, 30, 20];
     var ss: string[] = ["a", "b", "a", "c", "b"];
     var r: i32 = 0;
-    if (array.contains(a, 20)) { r = r + 1; }
-    if (!array.contains(a, 99)) { r = r + 2; }
-    if (array.contains(ss, "c")) { r = r + 4; }
-    if (!array.contains(ss, "z")) { r = r + 8; }
-    if (array.distinct(a).len() == 3) { r = r + 16; }
-    if (array.distinct(ss).len() == 3) { r = r + 32; }
-    match (array.index_of(ss, "c")) {
+    if (cmp.contains(a, 20)) { r = r + 1; }
+    if (!cmp.contains(a, 99)) { r = r + 2; }
+    if (cmp.contains(ss, "c")) { r = r + 4; }
+    if (!cmp.contains(ss, "z")) { r = r + 8; }
+    if (cmp.distinct(a).len() == 3) { r = r + 16; }
+    if (cmp.distinct(ss).len() == 3) { r = r + 32; }
+    match (cmp.index_of(ss, "c")) {
         Some(v) => { if (v == 3) { r = r + 64; } },
         None => {}
     }

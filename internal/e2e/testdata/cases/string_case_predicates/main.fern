@@ -1,0 +1,23 @@
+import "std/string";
+// is_camel_case / is_pascal_case: the classifiers pairing with the
+// camel_case / pascal_case producers. Distinct nonzero exit per failure;
+// 42 = all pass. Runs across interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    if (!"fooBar".is_camel_case()) { return 1; }
+    if (!"foo".is_camel_case()) { return 2; }
+    if ("FooBar".is_camel_case()) { return 3; }
+    if ("foo_bar".is_camel_case()) { return 4; }
+    if ("foo bar".is_camel_case()) { return 5; }
+    if ("".is_camel_case()) { return 6; }
+    if ("2foo".is_camel_case()) { return 7; }
+    if (!"foo1Bar".is_camel_case()) { return 8; }
+    if (!"FooBar".is_pascal_case()) { return 9; }
+    if (!"Foo".is_pascal_case()) { return 10; }
+    if ("fooBar".is_pascal_case()) { return 11; }
+    if ("Foo_Bar".is_pascal_case()) { return 12; }
+    if ("".is_pascal_case()) { return 13; }
+    if (!"HTTPServer".is_pascal_case()) { return 14; }
+    if (!"foo_bar".camel_case().is_camel_case()) { return 15; }
+    if (!"foo_bar".pascal_case().is_pascal_case()) { return 16; }
+    return 42;
+}

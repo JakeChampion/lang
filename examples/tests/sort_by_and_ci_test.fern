@@ -1,15 +1,17 @@
 import "std/test";
 import "std/sort";
+import "core/cmp";
 // examples/tests/sort_by_and_ci_test.fern — pure-Fern coverage of the
 // std/sort surface NOT exercised by sort_wider_test (which does the
-// monomorphic wider-int + ascending-string sorts). This covers the
+// generic `cmp.sort` wider-int + string sorts). This covers the
 // comparator / case-insensitive / projection-key half:
 //   string_cmp / string_cmp_ci  (the ordering primitives)
-//   sort_strings_desc           (descending monomorphic string sort)
+//   cmp.sort_desc               (generic descending sort over string Ord)
 //   sort_strings_asc_ci         (case-insensitive ascending)
 //   sort_by[T]                  (generic comparator-driven sort — closure arg)
 //   is_sorted_by[T]             (the verification companion)
-//   sort_by_i32_key[T]          (Schwartzian projection sort)
+//   sort_by_i32_key[T]          (Schwartzian projection sort, i32 key)
+//   sort_key[T, K: Ord]         (generic-key projection sort — any Ord key)
 // The generic comparator/key shapes are the interesting ones — a closure
 // arg over a generic `T[]`. The Go-side suite unit-tests these; this is
 // the migration-shaped (pure-Fern, std/test-driven, self-host-gated)
@@ -32,7 +34,7 @@ function test_string_cmp_ci(): test.TestOutcome {
 
 function test_sort_strings_desc(): test.TestOutcome {
     var xs: string[] = ["banana", "apple", "cherry"];
-    return test.assert_eq_array(sort.sort_strings_desc(xs), ["cherry", "banana", "apple"]);
+    return test.assert_eq_array(cmp.sort_desc(xs), ["cherry", "banana", "apple"]);
 }
 
 function test_sort_strings_asc_ci(): test.TestOutcome {
@@ -80,6 +82,31 @@ function test_sort_by_i32_key(): test.TestOutcome {
     return test.assert_eq_array(out, [8, 6, 4, 2]);
 }
 
+function test_sort_key_i32(): test.TestOutcome {
+    // Generic-key projection with an i32 key: negate → descending, matching
+    // the i32-pinned `sort_by_i32_key` above but routed through `Ord.cmp`.
+    var xs: i32[] = [4, 2, 8, 6];
+    var out = sort.sort_key(xs, function (x: i32): i32 { return 0 - x; });
+    return test.assert_eq_array(out, [8, 6, 4, 2]);
+}
+
+function test_sort_key_string(): test.TestOutcome {
+    // Generic-key projection with a `string` key: the `Ord` dispatch must
+    // pick the lexicographic byte compare, not a scalar one.
+    var xs: string[] = ["banana", "apple", "cherry", "apple"];
+    var out = sort.sort_key(xs, function (w: string): string { return w; });
+    return test.assert_eq_array(out, ["apple", "apple", "banana", "cherry"]);
+}
+
+function test_sort_key_stable(): test.TestOutcome {
+    // Stability: distinct elements that project to an EQUAL key keep their
+    // input order. key = x % 10 groups {21,11} (key 1) and {3,13} (key 3);
+    // a stable sort emits each group in input order → [21, 11, 3, 13].
+    var xs: i32[] = [21, 11, 3, 13];
+    var out = sort.sort_key(xs, function (x: i32): i32 { return x - (x / 10) * 10; });
+    return test.assert_eq_array(out, [21, 11, 3, 13]);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/sort comparator + ci");
     r = r.it("string_cmp",          test_string_cmp());
@@ -92,5 +119,8 @@ function main(): i32 {
     r = r.it("is_sorted_by true",   test_is_sorted_by_true());
     r = r.it("is_sorted_by false",  test_is_sorted_by_false());
     r = r.it("sort_by_i32_key",     test_sort_by_i32_key());
+    r = r.it("sort_key i32",        test_sort_key_i32());
+    r = r.it("sort_key string",     test_sort_key_string());
+    r = r.it("sort_key stable",     test_sort_key_stable());
     return r.finish();
 }

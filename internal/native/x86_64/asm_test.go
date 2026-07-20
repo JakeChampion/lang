@@ -2,6 +2,7 @@ package x86_64
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/elf"
@@ -177,5 +178,66 @@ func TestEncodeMovImmToMemSize(t *testing.T) {
 		if got := asm(t, c.src); got != c.want {
 			t.Errorf("asm(%q) = %s, want %s", c.src, got, c.want)
 		}
+	}
+}
+
+// ALU-family (cmp/add/sub/and/or/xor) immediate forms honour the operand
+// size: a `byte ptr` memory operand (or an 8-bit register) selects the
+// 80 /ext ib byte opcode, not the 32-bit 83/81 forms. The regression this
+// pins: `cmp byte ptr [rdi], 61` — __fern_env's '=' scan — was encoded as
+// `cmp dword ptr [rdi], 61` (83 3f 3d), so the compare read 3 extra bytes
+// and env() always returned None in natively-linked binaries. Encodings
+// cross-checked against GNU as / objdump (for `cmp al, imm8` GNU as picks
+// the equivalent short 3C ib form; 80 /7 ib is the same comparison).
+func TestEncodeAluImmSize(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"cmp byte ptr [rdi], 61", "803f3d"},
+		{"cmp byte ptr [r8], 61", "4180383d"},
+		{"cmp byte ptr [rbp-24], 0", "807de800"},
+		{"add byte ptr [rdi], 1", "800701"},
+		{"cmp word ptr [rdi], 61", "6683 3f3d"},
+		{"cmp dword ptr [rdi], 61", "833f3d"},
+		{"cmp qword ptr [rdi], 61", "48833f3d"},
+		{"cmp al, 61", "80f83d"},
+		{"cmp cl, 5", "80f905"},
+		{"cmp sil, 5", "4080fe05"},
+		{"cmp r9b, 5", "4180f905"},
+	}
+	for _, c := range cases {
+		want := strings.ReplaceAll(c.want, " ", "")
+		if got := asm(t, c.src); got != want {
+			t.Errorf("asm(%q) = %s, want %s", c.src, got, want)
+		}
+	}
+}
+
+// A rip-relative disp32 is relative to the END of its instruction. For
+// lea/mov-load forms the disp32 IS the last field, but the mem,imm forms
+// (`add qword ptr [rip+sym], 1`, `mov qword ptr [rip+sym], 0`) append the
+// immediate after it — resolving against disp-field-end pointed the
+// access immLen bytes past the symbol. The regressions this pins: the
+// rc-underflow and leakcheck counters incremented at [sym+1] (a ×256
+// count drift) and strbuf_take's `mov qword ptr [rip+__fern_strbuf_len],
+// 0` cleared [sym+4..sym+12) instead of the length (so the builder never
+// reset on the in-process-assembled path). Layout: .text is 27 bytes,
+// .rodata starts at align8(27)=32, sym sits at its head, so the expected
+// disps are 32−7=25 (lea), 32−15=17 (add …,imm8), 32−26=6 (mov …,imm32).
+// Encodings cross-checked against GNU as / objdump.
+func TestEncodeRipRelativeDispIsFromInsnEnd(t *testing.T) {
+	src := `
+lea rax, [rip + sym]
+add qword ptr [rip + sym], 1
+mov qword ptr [rip + sym], 0
+ret
+.section .rodata
+sym:
+	.quad 0
+`
+	want := "488d0519000000" + // lea rax, [rip+25]
+		"48830511000000" + "01" + // add qword ptr [rip+17], 1
+		"48c70506000000" + "00000000" + // mov qword ptr [rip+6], 0
+		"c3"
+	if got := asm(t, src); got != want {
+		t.Errorf("asm rip-relative block = %s, want %s", got, want)
 	}
 }

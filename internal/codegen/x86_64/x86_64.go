@@ -251,6 +251,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
 		}
+		// A function's IR is dead the moment it is emitted — nothing after
+		// this loop reads ip.Funcs — but holding the whole slice keeps the
+		// entire program's ops (~160 B each, tens of millions for the
+		// self-host drivers) live until the last function is done, right
+		// when the output buffer is at its largest. Releasing each entry
+		// as we go lets the GC reclaim the IR incrementally, cutting the
+		// emit's live-heap peak by roughly the IR's size on driver-scale
+		// programs. Output is unaffected (the walk is forward-only).
+		ip.Funcs[i] = nil
 	}
 	// Reader/Writer runtime is emitted as a single bundle: every
 	// helper (open_*, read_line, read_chunk, close, write,
@@ -350,6 +359,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
+	if g.usesSliceRange {
+		g.emitSliceRangeRuntime()
+	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
@@ -370,6 +382,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesExit {
 		g.emitExitRuntime()
+	}
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the _start epilogue always
+		// calls the report, so the helper (and its BSS counters +
+		// .rodata labels, see emitDataSections) is unconditional under
+		// the flag — a no-alloc program just reports zeros.
+		g.emitLcReportRuntime()
 	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
@@ -463,6 +482,21 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
+	}
+	if g.usesRemoveDirAll {
+		g.emitRemoveDirAllRuntime()
+	}
+	if g.usesRemoveFile {
+		g.emitRemoveFileRuntime()
+	}
+	if g.usesTempDir {
+		g.emitTempDirRuntime()
+	}
+	if g.usesReadDir {
+		g.emitReadDirRuntime()
+	}
+	if g.usesStat {
+		g.emitStatRuntime()
 	}
 	if g.usesReaderWriter {
 		// Bundle: open_reader/writer/appender + stdin/stdout/
@@ -580,6 +614,7 @@ type generator struct {
 	usesStringFromBytes   bool
 	usesStrSlice          bool
 	usesSliceMake         bool
+	usesSliceRange        bool
 	usesRandomBytes       bool
 	usesRandomI32         bool
 	usesPoll              bool
@@ -645,6 +680,24 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// rcInlineOK gates the #4402 opt-2b inline rc fast path per function
+	// (arm64 parity — the arm64 backend carries the same field). Inlining
+	// expands each OpRcInc / OpRcDec / OpRcIsUnique from a single `call`
+	// into ~10 instructions; in the self-host compiler's largest lowering
+	// function (irlower__lower_expr, ~9.75M IR ops with ~1.66M rc ops) that
+	// bloat balloons the emitted `.s` — the inlined rc sequences alone add
+	// hundreds of MB, and GNU `as` on the resulting ~1 GB driver `.s` peaks
+	// at ~11 GB RSS, which is what forced the swap file the test harness
+	// used to need. Set false for such a function (see rcInlineMaxOps) so
+	// its rc ops fall back to the `call` form the runtime helper already
+	// provides (behaviour-identical — the inline path mirrors the helper
+	// instruction-for-instruction), shrinking the `.s` and its assembler
+	// footprint. Every normal function (all user code, and every self-host
+	// function but the one monster) stays on the inline fast path. Unlike
+	// arm64 — where the same field also dodges the ±128 MB branch-reach
+	// overflow — x86-64's rel32 jumps never overflow, so here the sole
+	// motive is `.s` size / assembler memory.
+	rcInlineOK bool
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter __fern_rc_dec bumps). Set when the IR emits the
@@ -739,7 +792,22 @@ type generator struct {
 	// `__fern_io_error(errno, path) → IoError box` helper.
 	usesReadFile  bool
 	usesWriteFile bool
-	usesIoError   bool
+	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
+	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
+	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
+	// what std/test's TestRunner.finish() needs to clean up its
+	// temp dirs when a TAP program links through the native CLI.
+	usesRemoveDirAll bool
+	// usesRemoveFile / usesTempDir / usesReadDir / usesStat pull in
+	// the rest of the filesystem-op family (#5372): unlinkat /
+	// mkdirat / getdents64 / newfstatat runtimes returning the same
+	// Option[IoError] / Result[_, IoError] box shapes as the file-I/O
+	// helpers above.
+	usesRemoveFile bool
+	usesTempDir    bool
+	usesReadDir    bool
+	usesStat       bool
+	usesIoError    bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -870,6 +938,8 @@ func (g *generator) recordUse(target string) {
 	case "__slice_make":
 		g.usesSliceMake = true
 		g.usesAlloc = true
+	case "__slice_range":
+		g.usesSliceRange = true
 	case "__fern_strcat":
 		g.usesStrcat = true
 		g.usesAlloc = true
@@ -999,6 +1069,27 @@ func (g *generator) recordUse(target string) {
 		g.usesWriteFile = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "remove_dir_all":
+		g.usesRemoveDirAll = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "remove_file":
+		g.usesRemoveFile = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "temp_dir":
+		g.usesTempDir = true
+		g.usesMonotonicNs = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "read_dir":
+		g.usesReadDir = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "stat":
+		g.usesStat = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	}
 }
 
@@ -1110,15 +1201,82 @@ func (g *generator) emitStartRuntime() {
 		g.emit("mov [rip + __fern_envp], rdi")
 	}
 	g.emit("call main")
-	g.emit("mov edi, eax") // exit code = main's return value
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): print the alloc/free summary
+		// before exiting. main's return value parks in rbx (callee-save,
+		// and _start has no caller to preserve it for; the report helper
+		// itself only touches caller-saved registers) so the exit code
+		// survives the report's syscalls.
+		g.emit("mov ebx, eax")
+		g.emit("call __fern_lc_report")
+		g.emit("mov edi, ebx")
+	} else {
+		g.emit("mov edi, eax") // exit code = main's return value
+	}
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 }
 
+// rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
+// fast path (see the rcInlineOK field). Matches the arm64 backend's threshold
+// so both backends flip exactly the same function (irlower__lower_expr,
+// ~9.75M ops) to the `call` form: 1M sits ~2× above the largest normal
+// self-host function (~0.5M ops) and ~10× below lower_expr, so every
+// user-scale function keeps the inline win. A var (not a const) only so the
+// backend's own tests can lower it to exercise the fall-back on a small
+// function; production never reassigns it.
+var rcInlineMaxOps = 1_000_000
+
 // emitFunc lowers one function to assembly. Per-function
 // scope-tracking state lives in `scope` (currently unused —
 // PR 1 has no block / loop / if ops to dispatch).
+// x86RegisterName is the set of tokens the assembler — both this project's
+// pure-Go one (internal/native/x86_64) and GNU as — resolves to a register.
+// A user function whose name matches one would be mis-assembled: `call ch`
+// reads `ch` as register CH and encodes an indirect `call rbp` through
+// garbage (SIGSEGV), and `.size ch, .-ch` / `.quad ch` fail to evaluate.
+var x86RegisterName = func() map[string]bool {
+	m := map[string]bool{}
+	for _, n := range []string{
+		"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+		"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
+		"ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
+		"al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
+		"ah", "ch", "dh", "bh", "st",
+	} {
+		m[n] = true
+	}
+	for i := 0; i < 16; i++ {
+		m[fmt.Sprintf("xmm%d", i)] = true
+	}
+	return m
+}()
+
+// asmFnName returns the asm symbol for a Fern function `name`, escaping
+// names that collide with an x86 register mnemonic (register names are
+// case-insensitive to the assembler, so the check folds case). The `$`
+// suffix is collision-proof: Fern identifiers cannot contain `$`, so no
+// real function name can equal an escaped one, and both assemblers accept
+// `$` in a symbol. Non-colliding names — the overwhelming majority,
+// including every `__fern_*` runtime helper — pass through unchanged, so
+// applying it to any function symbol (user or runtime) is safe. It must be
+// used at EVERY site that emits a function name as an asm token
+// (definition, call, and `.quad` pointer), or the definition and its
+// references disagree and the link fails with an undefined symbol.
+func asmFnName(name string) string {
+	if x86RegisterName[strings.ToLower(name)] {
+		return name + "$fn"
+	}
+	return name
+}
+
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
+	// #4402 opt 2b: inline rc ops only when the function is small enough that
+	// the ~10-instruction-per-op expansion doesn't balloon the emitted `.s`
+	// (and the assembler's peak RSS). Only the self-host compiler's largest
+	// lowering function exceeds this; see the rcInlineOK field comment.
+	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps
+
 	// Compute frame size from the highest local slot the IR
 	// referenced plus the parameter slots. Rounded up to a
 	// 16-byte multiple so `sub rsp, N` leaves rsp 16-aligned
@@ -1143,10 +1301,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		localsSize += 8
 	}
 
+	sym := asmFnName(fn.Name)
 	g.line("")
-	g.line(fmt.Sprintf(".globl %s", fn.Name))
-	g.line(fmt.Sprintf(".type %s, @function", fn.Name))
-	g.label(fn.Name)
+	g.line(fmt.Sprintf(".globl %s", sym))
+	g.line(fmt.Sprintf(".type %s, @function", sym))
+	g.label(sym)
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	if localsSize > 0 {
@@ -1192,7 +1351,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
+	g.line(fmt.Sprintf(".size %s, .-%s", sym, sym))
 	return nil
 }
 
@@ -1911,7 +2070,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 		g.emitCallArgsCleanup(argc)
 		g.push()
 
@@ -1962,12 +2121,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// method in declaration order (docs/DYN-TRAITS.md §4.2.2). On
 		// natives the vtable holds POINTERS, not table indices (the wasm
 		// form): OpCallDyn loads slot k and `call`s it directly.
-		key := op.Str + "/" + op.Str2
+		key := op.Str + "/" + op.Str2()
 		if g.dynVtableCells == nil {
 			g.dynVtableCells = map[string]bool{}
 		}
 		g.dynVtableCells[key] = true
-		g.emit(fmt.Sprintf("lea rax, [rip + %s]", dynVtableLabel(op.Str, op.Str2)))
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", dynVtableLabel(op.Str, op.Str2())))
 		g.push()
 
 	case ir.OpBoxDyn:
@@ -2014,13 +2173,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
 		// function pointer (`vtable + slot*8`), then do an indirect call
 		// with [data, args...] as the SysV args (receiver-first, plain —
-		// no closure env). op.Sig is the receiver-first method
+		// no closure env). op.Sig() is the receiver-first method
 		// signature; argc = len(params) (= 1 receiver + method args),
 		// void iff Result == nil.
-		if op.Sig == nil {
-			return fmt.Errorf("x86_64: OpCallDyn missing op.Sig")
+		if op.Sig() == nil {
+			return fmt.Errorf("x86_64: OpCallDyn missing op.Sig()")
 		}
-		argc := len(op.Sig.Params)
+		argc := len(op.Sig().Params)
 		g.pop()                // rax = vtable (top)
 		g.emit("mov r10, rax") // r10 = vtable base
 		if op.I32 != 0 {
@@ -2035,7 +2194,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emitCallArgsLoad(argc)
 		g.emit("call r11")
 		g.emitCallArgsCleanup(argc)
-		if op.Sig.Result == nil {
+		if op.Sig().Result == nil {
 			break
 		}
 		g.push()
@@ -2049,11 +2208,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// helpers stay emitted: runtime code tail-calls them and the
 		// debug build below still calls out). rc ops are pass-through —
 		// rax holds the pointer and doubles as the result.
-		if ast.RcFreeDebug {
+		if ast.RcFreeDebug || !g.rcInlineOK {
 			// Debug builds keep the call: the helpers carry the
 			// RcPoison use-after-free trap the inline path omits.
+			// !rcInlineOK falls back to the call in functions too large to
+			// absorb the inline bloat (see the rcInlineOK field) — the
+			// helper is behaviour-identical to the inline sequence.
 			g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", op.Str))
+			g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 			g.push()
 			return nil
 		}
@@ -2091,6 +2253,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// #4402 opt 2b: inline is_unique — load, sentinel test, ==1
 		// compare. Mirrors emitRcIsUniqueRuntime (note its guards
 		// differ from inc/dec: low bound 0x10000, no SSO-tag test).
+		if ast.RcFreeDebug || !g.rcInlineOK {
+			// !rcInlineOK falls back to the behaviour-identical helper in
+			// oversized functions (see the rcInlineOK field). The pre-scan
+			// recorded the "__fern_rc_is_unique" use, so the helper is
+			// emitted regardless of inline-vs-call.
+			g.emitCallArgsLoad(1)
+			g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
+			g.push()
+			return nil
+		}
 		uniqDone := fmt.Sprintf(".Lrcop_uniq_%d", g.labelCounter)
 		g.labelCounter++
 		g.pop()
@@ -2133,6 +2305,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_memcpy"
 		case "__slice_make":
 			target = "__fern_slice_make"
+		case "__slice_range":
+			target = "__fern_slice_range"
 		case "print":
 			target = "__fern_puts"
 		case "write":
@@ -2195,6 +2369,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_file"
 		case "write_file":
 			target = "__fern_write_file"
+		case "remove_dir_all":
+			target = "__fern_remove_dir_all"
+		case "remove_file":
+			target = "__fern_remove_file"
+		case "temp_dir":
+			target = "__fern_temp_dir"
+		case "read_dir":
+			target = "__fern_read_dir"
+		case "stat":
+			target = "__fern_stat"
 		case "random_bytes":
 			target = "__fern_random_bytes"
 		case "random_i32":
@@ -2283,7 +2467,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", target))
+		g.emit(fmt.Sprintf("call %s", asmFnName(target)))
 		g.emitCallArgsCleanup(argc)
 		// Void-returning callees push NOTHING. Without this gate,
 		// helpers like `__memcpy` / `__memset` leave a phantom
@@ -2313,7 +2497,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// call" contract is now register-backed.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
 		g.emitCallArgsCleanup(argc)
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)
@@ -3617,7 +3801,7 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
 			for _, m := range vt.Methods {
-				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+				g.line(fmt.Sprintf("\t.quad %s", asmFnName(m.Func)))
 			}
 			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
 			// §4.4, slice 4b): the concrete type's drop fn as an absolute
@@ -3627,7 +3811,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors wasm internVtable.
 			if vt.Drop != "" {
-				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
+				g.line(fmt.Sprintf("\t.quad %s", asmFnName(vt.Drop)))
 			} else {
 				g.line("\t.quad 0")
 			}
@@ -3652,13 +3836,13 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
 			g.label(fmt.Sprintf("__closure_cell_%s", name))
-			g.line(fmt.Sprintf("\t.quad %s", name))
+			g.line(fmt.Sprintf("\t.quad %s", asmFnName(name)))
 			g.line("\t.quad 0")
 		}
 	}
-	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes
+	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty {
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -3748,6 +3932,20 @@ func (g *generator) emitDataSections() {
 				g.line(fmt.Sprintf("\t.4byte %d", t))
 			}
 		}
+		if ast.LeakCheckEnabled {
+			// Leak detector (#5362 slice 1): the fixed text of
+			// __fern_lc_report's summary line. `.asciz` for uniformity
+			// with the literals above; the report writes exact lengths,
+			// so the trailing NULs are never emitted.
+			g.label(".Llc_str_allocs")
+			g.line(`	.asciz "leakcheck: allocs="`)
+			g.label(".Llc_str_frees")
+			g.line(`	.asciz " frees="`)
+			g.label(".Llc_str_live")
+			g.line(`	.asciz " live_bytes="`)
+			g.label(".Llc_str_nl")
+			g.line(`	.asciz "\n"`)
+		}
 	}
 	// SSO inline strings ride in a 64-bit register and don't
 	// have a usable memory address until materialised. The
@@ -3759,9 +3957,28 @@ func (g *generator) emitDataSections() {
 	// path spill is overwritten on each call, but the value
 	// is consumed immediately by OpLoadByte before the next
 	// __str_idx fires).
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || ast.LeakCheckEnabled {
 		g.line("")
 		g.line(".section .bss")
+		if ast.LeakCheckEnabled {
+			// Leak detector counters (#5362 slice 1). alloc_count /
+			// alloc_bytes tick in __fern_alloc (post-16-rounding, both
+			// the freelist-pop and bump paths); free_count / free_bytes
+			// in __fern_free (same rounding). __fern_lc_report prints
+			// them at exit; live_bytes = alloc_bytes − free_bytes.
+			g.line(".align 8")
+			g.label("__fern_lc_alloc_count")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__fern_lc_alloc_bytes")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__fern_lc_free_count")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__fern_lc_free_bytes")
+			g.line("\t.quad 0")
+		}
 		if g.usesAlloc {
 			// Single-cursor bump allocator. See the x86-64
 			// emitAllocRuntime comment. (The persistent cursor +
@@ -3853,7 +4070,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 8589934592 // 0x200000000 (8 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. The stage-2 self-compile live set crossed the exit-137 alloc trap at 2.5 GiB, 3.5 GiB, then filled 99.4% of the 3.875 GiB arena (3944 MB measured at the #4355 arr-of-arr slice, whose additions tipped it over); the u32 mmap-length form capped further bumps under 4 GiB (an interim 0xFF000000/3.984 GiB bump was superseded by this), so the length now loads via `movabs rsi` (64-bit imm) and the arena jumps to 8 GiB of real headroom. The arm64 backend is likewise at 8 GiB (its historical 32-bit-pointer ceiling was retired when the arm64 self-compile outgrew every sub-4 GiB arena — see internal/codegen/arm64's heapBytes). Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 8589934592) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. Lazy MAP_ANONYMOUS so it costs nothing until touched. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. The heap-END is built `movabs rcx, heapBytes` + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
+	const heapBytes = 17179869184 // 0x400000000 (16 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. Raised from 8 GiB (0x200000000) when the stage-2 x86 self-compile crossed the 8 GiB exit-137 alloc trap — the same wall arm64 hit and cleared: the compiler's live set grows with every compiler-source addition and reached ~8 GiB (0.6% headroom under the old ceiling), so an IR-widening addition tipped it. The mmap is MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000), so the wider reservation is exempt from Linux overcommit accounting and costs nothing until touched — the ~8 GiB actually touched is unchanged, only the exit-137 ceiling moves. The length loads via `movabs rsi` (64-bit imm). The arm64 backend is already at 16 GiB (internal/codegen/arm64's heapBytes) — this brings x86 up to match. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 17179869184) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. The heap-END is built `movabs rcx, heapBytes` + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
@@ -3870,6 +4087,18 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): count every allocation — the
+		// freelist-pop and bump paths both flow through here — at the
+		// 16-rounded size, the same rounding __fern_free's counter
+		// applies, so a block's alloc and eventual free cancel exactly.
+		// (The large tier's further round-up to a power-of-two-ish
+		// capacity is deliberately NOT counted: free is called with the
+		// logical size and never sees that capacity, so counting it
+		// would drift live_bytes by the internal waste.)
+		g.emit("add qword ptr [rip + __fern_lc_alloc_count], 1")
+		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rdi")
+	}
 	if ast.RcFreeEnabled {
 		// Two-tier segregated freelist — reuse a freed block before bumping.
 		//
@@ -3954,7 +4183,12 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov rdi, r13")
 	g.emit(fmt.Sprintf("movabs rsi, %d", heapBytes))
 	g.emit("mov edx, 3")
-	g.emit("mov r10d, 0x22")
+	// MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000): exempt the
+	// big lazy arena from Linux's overcommit accounting — without it the
+	// heuristic refuses the single 8 GiB anonymous map outright on hosts
+	// with RAM+swap below the arena size, failing every binary AT STARTUP
+	// (the arm64 backend does the same; its comment has the full story).
+	g.emit("mov r10d, 0x4022")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
 	g.emit(fmt.Sprintf("mov eax, %d", sysMmap))
@@ -4006,6 +4240,26 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".globl __fern_free")
 	g.line(".type __fern_free, @function")
 	g.label("__fern_free")
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): every reclamation site funnels
+		// through this helper (box_free / arr_dec / map_drop /
+		// drop_arr_ptr / drop_arr_str / alloc_reuse's mismatch path /
+		// the __free builtin — the freelist push below is the only
+		// other freelist writer and it's in this same function), so
+		// counting here covers them all. Count at the same
+		// (size+15)&-16 rounding __fern_alloc counted, in a scratch reg
+		// so the RcFreeEnabled body's own rounding of rsi is untouched
+		// (and the counters still tick when the freelist is compiled
+		// out). __fern_alloc_reuse's in-place path calls neither
+		// __fern_alloc nor __fern_free — in-place reuse counts as
+		// NEITHER an alloc nor a free, which is exact: its class match
+		// requires equal rounded sizes, so the block's original alloc
+		// count still cancels against its eventual free.
+		g.emit("lea rax, [rsi + 15]")
+		g.emit("and rax, -16")
+		g.emit("add qword ptr [rip + __fern_lc_free_count], 1")
+		g.emit("add qword ptr [rip + __fern_lc_free_bytes], rax")
+	}
 	if ast.RcFreeEnabled {
 		g.emit("add rsi, 15")
 		g.emit("and rsi, -16") // round size to the class granularity
@@ -4413,6 +4667,38 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.emit("pop r12")
 	g.emit("ret")
 	g.line(".size __fern_slice_make, .-__fern_slice_make")
+}
+
+// emitSliceRangeRuntime emits `__fern_slice_range(lo, hi, len)` — the
+// slice-construction bounds check (#5419). Traps with exit 134 unless
+// 0 <= lo <= hi <= len, then returns the slice length hi - lo in eax.
+// Two unsigned compares on the sign-extended values cover all four
+// conditions: a negative bound sign-extends to a huge unsigned 64-bit
+// value, so `hi > len` catches hi < 0 and `lo > hi` catches lo < 0.
+// The movsxd normalisation is the same #5294 fix as __str_slice: an
+// i32 bound can arrive with dirty high bits.
+//
+// Calling convention: edi = lo, esi = hi, edx = len (i32s).
+func (g *generator) emitSliceRangeRuntime() {
+	g.line("")
+	g.line(".globl __fern_slice_range")
+	g.line(".type __fern_slice_range, @function")
+	g.label("__fern_slice_range")
+	g.emit("movsxd rdi, edi") // lo (sign-extended from i32)
+	g.emit("movsxd rsi, esi") // hi
+	g.emit("movsxd rdx, edx") // len
+	g.emit("cmp rsi, rdx")
+	g.emit("ja .Lslicerange_trap") // hi > len (unsigned)
+	g.emit("cmp rdi, rsi")
+	g.emit("ja .Lslicerange_trap") // lo > hi (unsigned)
+	g.emit("mov eax, esi")
+	g.emit("sub eax, edi")
+	g.emit("ret")
+	g.label(".Lslicerange_trap")
+	g.emit("mov edi, 134")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.line(".size __fern_slice_range, .-__fern_slice_range")
 }
 
 // emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
@@ -5700,10 +5986,99 @@ func (g *generator) emitExitRuntime() {
 	g.line(".type __fern_exit, @function")
 	g.label("__fern_exit")
 	// rdi already holds the exit code (System V arg 1).
+	if ast.LeakCheckEnabled {
+		// Leak detector (#5362 slice 1): the exit() builtin bypasses the
+		// _start epilogue, so report here too. The code parks in rbx —
+		// clobbering a callee-save is fine on a path that never returns.
+		g.emit("mov ebx, edi")
+		g.emit("call __fern_lc_report")
+		g.emit("mov edi, ebx")
+	}
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 	g.emit("ret")
 	g.line(".size __fern_exit, .-__fern_exit")
+}
+
+// emitLcReportRuntime emits `__fern_lc_report()` — the leak detector's
+// (#5362 slice 1) exit-time summary. Writes one line to stderr:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = __fern_lc_alloc_bytes − __fern_lc_free_bytes (signed — an
+// over-free would show negative rather than wrapping). Only emitted
+// when ast.LeakCheckEnabled; called from the _start epilogue and
+// __fern_exit, which park the exit code in rbx across the call, so the
+// helper (and its two local subroutines) must touch caller-saved
+// registers only. The decimal formatting is a self-contained
+// divide-by-10 loop into a stack buffer (.Llc_wrnum) — the language's
+// i64-to-string paths are Fern-level and can't be assumed present.
+func (g *generator) emitLcReportRuntime() {
+	g.line("")
+	g.line(".globl __fern_lc_report")
+	g.line(".type __fern_lc_report, @function")
+	g.label("__fern_lc_report")
+	g.emit("lea rsi, [rip + .Llc_str_allocs]")
+	g.emit("mov edx, 18")
+	g.emit("call .Llc_write")
+	g.emit("mov rdi, [rip + __fern_lc_alloc_count]")
+	g.emit("call .Llc_wrnum")
+	g.emit("lea rsi, [rip + .Llc_str_frees]")
+	g.emit("mov edx, 7")
+	g.emit("call .Llc_write")
+	g.emit("mov rdi, [rip + __fern_lc_free_count]")
+	g.emit("call .Llc_wrnum")
+	g.emit("lea rsi, [rip + .Llc_str_live]")
+	g.emit("mov edx, 12")
+	g.emit("call .Llc_write")
+	g.emit("mov rdi, [rip + __fern_lc_alloc_bytes]")
+	g.emit("sub rdi, [rip + __fern_lc_free_bytes]")
+	g.emit("call .Llc_wrnum")
+	g.emit("lea rsi, [rip + .Llc_str_nl]")
+	g.emit("mov edx, 1")
+	g.emit("call .Llc_write")
+	g.emit("ret")
+	// .Llc_write(rsi = buf, edx = len): one write(2) to stderr.
+	g.label(".Llc_write")
+	g.emit("mov edi, 2")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("ret")
+	// .Llc_wrnum(rdi = signed i64): decimal itoa, digits built
+	// backwards from the end of a 32-byte stack buffer (an i64 is at
+	// most 19 digits + sign), then one write(2) to stderr.
+	g.label(".Llc_wrnum")
+	g.emit("sub rsp, 40") // 32-byte digit buffer + 8 spare
+	g.emit("lea rcx, [rsp + 32]")
+	g.emit("mov r8, 10")
+	g.emit("xor r9d, r9d") // sign flag
+	g.emit("mov rax, rdi")
+	g.emit("test rax, rax")
+	g.emit("jns .Llc_wrnum_loop")
+	g.emit("neg rax")
+	g.emit("mov r9d, 1")
+	g.label(".Llc_wrnum_loop")
+	g.emit("xor edx, edx")
+	g.emit("div r8")
+	g.emit("add edx, 48") // remainder → ASCII digit
+	g.emit("sub rcx, 1")
+	g.emit("mov byte ptr [rcx], dl")
+	g.emit("test rax, rax")
+	g.emit("jnz .Llc_wrnum_loop")
+	g.emit("test r9d, r9d")
+	g.emit("jz .Llc_wrnum_emit")
+	g.emit("sub rcx, 1")
+	g.emit("mov byte ptr [rcx], 45") // '-'
+	g.label(".Llc_wrnum_emit")
+	g.emit("lea rdx, [rsp + 32]")
+	g.emit("sub rdx, rcx") // len
+	g.emit("mov rsi, rcx")
+	g.emit("mov edi, 2")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("add rsp, 40")
+	g.emit("ret")
+	g.line(".size __fern_lc_report, .-__fern_lc_report")
 }
 
 // emitNowUnixMsRuntime emits `__fern_now_unix_ms()` — wall-
@@ -6899,9 +7274,14 @@ func (g *generator) emitStrSliceRuntime() {
 	// 16 bytes scratch: [rbp - 40] for emitStrDataPtr(base) and
 	// [rbp - 48] for the inline output buffer.
 	g.emit("sub rsp, 16")
-	g.emit("mov rbx, rdi")      // base (possibly inline-tagged)
-	g.emit("mov r12, rsi")      // low
-	g.emit("mov r13, rdx")      // high
+	g.emit("mov rbx, rdi") // base (possibly inline-tagged)
+	// Sign-extend the i32 bounds from their low 32 bits (#5294): a negative
+	// i32 constant materialises zero-extended (mov eax, N), so `len + (-2)`
+	// reaches here as 0x1_0000_0003 and the (partly-unsigned) 64-bit bounds
+	// compares below miss the trap — the slice then reads out of bounds.
+	// movsxd is a no-op for a clean bound, so a correct slice is unchanged.
+	g.emit("movsxd r12, esi")   // low (sign-extended from i32)
+	g.emit("movsxd r13, edx")   // high (sign-extended from i32)
 	g.emitStrLen("r14d", "rbx") // src_len
 	// Bounds checks: low < 0 OR high > src_len OR low > high → trap.
 	g.emit("test r12, r12")
@@ -7392,6 +7772,726 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_write_file, .-__fern_write_file")
+}
+
+// emitRemoveDirAllRuntime emits
+// `__fern_remove_dir_all(path) → Option[IoError]` — a recursive
+// `rm -rf`. It's the x86-64 sibling of arm64-ssa's
+// emitRemoveDirAllHelper: syscalls are inlined and the helper
+// self-recurses per directory entry, so it pulls in no separate
+// read_dir/stat helpers. Pipeline:
+//
+//	openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
+//	  fd >= 0        → it's a directory: drain entries, recurse
+//	                   on each non-dot child, close, rmdir → None
+//	  -ENOENT (-2)   → already gone → None
+//	  -ENOTDIR (-20) → it's a file: unlinkat(file) → None
+//	  else           → Some(IoError) via __fern_io_error
+//
+// Option[IoError] layout matches write_file: None = 8-byte box
+// tag=1; Some = 16-byte box tag=0 with the IoError box @+8.
+//
+// The path is copied into a NUL-terminated heap buffer (pathz,
+// rbx) once at entry — handling both inline-SSO and heap string
+// inputs — and every syscall + child-path build reads from pathz.
+// Child paths "pathz/name" are freshly-allocated single-word rc
+// strings passed to the recursion (leaked one-level, same as the
+// arm64 helper and the other drop paths). Callee-saved across the
+// recursion: rbx=pathz, r12=dir fd, r13=dirent buf, r14=total,
+// r15=offset. System V: rdi = path string value.
+func (g *generator) emitRemoveDirAllRuntime() {
+	g.line("")
+	g.line(".globl __fern_remove_dir_all")
+	g.line(".type __fern_remove_dir_all, @function")
+	g.label("__fern_remove_dir_all")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz (NUL-terminated path buffer)
+	g.emit("push r12") // dir fd
+	g.emit("push r13") // dirent buffer base
+	g.emit("push r14") // total bytes drained
+	g.emit("push r15") // iteration offset
+	// Frame (5 pushes ⇒ rsp≡8 mod 16; sub 40 realigns to 0). The
+	// scratch slots live BELOW the saved registers (which occupy
+	// rbp-8..rbp-40), so they start at rbp-48:
+	//   [rbp-48] emitStrDataPtr inline-spill scratch
+	//   [rbp-56] child name ptr    (across __fern_alloc_rc1)
+	//   [rbp-64] plen = strlen(pathz)
+	//   [rbp-72] nlen = strlen(name)
+	g.emit("sub rsp, 40")
+
+	// Materialise the incoming path into pathz (NUL-terminated).
+	// r12/r13 are callee-saved so they survive the __fern_alloc.
+	g.emitStrLen("r13d", "rdi")                  // r13 = path len
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]") // r12 = path byte ptr
+	g.emit("lea edi, [r13 + 1]")                 // len + NUL
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax") // rbx = pathz
+	g.emit("xor ecx, ecx")
+	g.label(".Lrda_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lrda_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrda_cp")
+	g.label(".Lrda_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0") // NUL-terminate
+
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=0x10000, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, 0x10000")
+	g.emit("xor r10d, r10d")
+	g.emit("mov eax, 257")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jns .Lrda_dir") // fd >= 0 → directory
+	g.emit("cmp rax, -2")   // -ENOENT → already gone
+	g.emit("je .Lrda_none")
+	g.emit("cmp rax, -20") // -ENOTDIR → it's a file
+	g.emit("jne .Lrda_some")
+	// unlinkat(AT_FDCWD, pathz, 0) — remove the file.
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("xor edx, edx")
+	g.emit("mov eax, 263")
+	g.emit("syscall")
+	g.emit("jmp .Lrda_none")
+
+	g.label(".Lrda_dir")
+	g.emit("mov r12, rax") // r12 = dir fd
+	// Allocate a 1 KiB dirent buffer (r13) and drain the directory.
+	g.emit("mov edi, 1024")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")
+	g.emit("xor r14, r14") // total
+	g.label(".Lrda_g")
+	g.emit("mov edx, 1024")
+	g.emit("sub rdx, r14")
+	g.emit("jz .Lrda_gd") // buffer full → stop (small-tree cap)
+	g.emit("mov edi, r12d")
+	g.emit("lea rsi, [r13 + r14]")
+	g.emit("mov eax, 217") // getdents64
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jle .Lrda_gd") // 0 (end) or <0 (error) → stop draining
+	g.emit("add r14, rax")
+	g.emit("jmp .Lrda_g")
+
+	g.label(".Lrda_gd")
+	g.emit("xor r15, r15") // offset
+	g.label(".Lrda_it")
+	g.emit("cmp r15, r14")
+	g.emit("jae .Lrda_itd")
+	g.emit("lea rax, [r13 + r15]")
+	g.emit("lea rsi, [rax + 19]") // d_name ptr
+	g.emit("movzx ecx, byte ptr [rsi]")
+	g.emit("cmp cl, 46") // '.'
+	g.emit("jne .Lrda_ch")
+	g.emit("movzx ecx, byte ptr [rsi + 1]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrda_adv") // "."
+	g.emit("cmp cl, 46")
+	g.emit("jne .Lrda_ch")
+	g.emit("movzx ecx, byte ptr [rsi + 2]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrda_adv") // ".."
+	g.label(".Lrda_ch")
+	g.emit("mov [rbp - 56], rsi") // name ptr (survives __fern_alloc_rc1)
+	// plen = strlen(pathz)
+	g.emit("xor rcx, rcx")
+	g.label(".Lrda_pl")
+	g.emit("cmp byte ptr [rbx + rcx], 0")
+	g.emit("je .Lrda_pld")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrda_pl")
+	g.label(".Lrda_pld")
+	g.emit("mov [rbp - 64], rcx") // plen
+	// nlen = strlen(name)
+	g.emit("xor rdx, rdx")
+	g.label(".Lrda_nl")
+	g.emit("cmp byte ptr [rsi + rdx], 0")
+	g.emit("je .Lrda_nld")
+	g.emit("add rdx, 1")
+	g.emit("jmp .Lrda_nl")
+	g.label(".Lrda_nld")
+	g.emit("mov [rbp - 72], rdx") // nlen
+	// childlen = plen + 1 + nlen; alloc single-word rc string (childlen+NUL).
+	g.emit("lea edi, [rcx + rdx + 2]") // childlen + 1
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r8, rax")              // child data ptr (r8 caller-saved, dead by recursion)
+	g.emit("mov rcx, [rbp - 64]")      // plen
+	g.emit("mov rdx, [rbp - 72]")      // nlen
+	g.emit("lea eax, [rcx + rdx + 1]") // childlen
+	g.emitStrLenStore("eax", "r8")
+	// copy pathz[0..plen]
+	g.emit("xor r9, r9")
+	g.label(".Lrda_c1")
+	g.emit("cmp r9, rcx")
+	g.emit("jae .Lrda_c1d")
+	g.emit("mov al, [rbx + r9]")
+	g.emit("mov [r8 + r9], al")
+	g.emit("add r9, 1")
+	g.emit("jmp .Lrda_c1")
+	g.label(".Lrda_c1d")
+	g.emit("mov byte ptr [r8 + rcx], 47") // '/'
+	// copy name at plen+1
+	g.emit("mov rsi, [rbp - 56]") // name ptr
+	g.emit("xor r9, r9")
+	g.label(".Lrda_c2")
+	g.emit("cmp r9, rdx")
+	g.emit("jae .Lrda_c2d")
+	g.emit("mov al, [rsi + r9]")
+	g.emit("lea r10, [rcx + r9 + 1]")
+	g.emit("mov [r8 + r10], al")
+	g.emit("add r9, 1")
+	g.emit("jmp .Lrda_c2")
+	g.label(".Lrda_c2d")
+	g.emit("lea r10, [rcx + rdx + 1]") // childlen
+	g.emit("mov byte ptr [r8 + r10], 0")
+	// recurse: remove_dir_all(child).
+	g.emit("mov rdi, r8")
+	g.emit("call __fern_remove_dir_all")
+	g.label(".Lrda_adv")
+	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
+	g.emit("add r15, rax")
+	g.emit("jmp .Lrda_it")
+
+	g.label(".Lrda_itd")
+	// close(fd), then rmdir the now-empty directory.
+	g.emit("mov edi, r12d")
+	g.emit("mov eax, 3") // close
+	g.emit("syscall")
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, 512") // AT_REMOVEDIR
+	g.emit("mov eax, 263") // unlinkat
+	g.emit("syscall")
+
+	g.label(".Lrda_none")
+	g.emit("mov edi, 8")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Option.None
+	g.emit("jmp .Lrda_return")
+
+	g.label(".Lrda_some")
+	g.emit("neg rax")
+	g.emit("mov r12, rax") // errno (r12 free — never opened a fd on this path)
+	g.emit("mov edi, r12d")
+	g.emitStrEmpty("rsi") // io_error path arg (empty, as arm64 does)
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax") // stash IoError box across the alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Option.Some
+	g.emit("mov [rax + 8], r12")
+
+	g.label(".Lrda_return")
+	g.emit("add rsp, 40")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_remove_dir_all, .-__fern_remove_dir_all")
+}
+
+// emitRemoveFileRuntime emits `__fern_remove_file(path) →
+// Option[IoError]` — unlinkat(AT_FDCWD, path, 0). None on
+// success; Some(IoError) on failure (removing a missing file IS
+// an error, matching the checker's contract — unlike
+// remove_dir_all's silent-ENOENT). Box shapes match write_file:
+// None = 8-byte box tag=1; Some = 16-byte box tag=0 with the
+// IoError box @+8. System V: rdi = path string value.
+func (g *generator) emitRemoveFileRuntime() {
+	g.line("")
+	g.line(".globl __fern_remove_file")
+	g.line(".type __fern_remove_file, @function")
+	g.label("__fern_remove_file")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // path byte ptr
+	g.emit("push r12") // path len / errno
+	g.emit("push r13") // pathz
+	// 4 pushes ⇒ rsp≡8 mod 16; sub 24 realigns. Slots:
+	//   [rbp-32] emitStrDataPtr inline-spill scratch
+	//   [rbp-40] original path string value (io_error arg)
+	g.emit("sub rsp, 24")
+	g.emit("mov [rbp - 40], rdi")
+	g.emitStrLen("r12d", "rdi")
+	g.emitStrDataPtr("rbx", "rdi", "[rbp - 32]")
+	// pathz = NUL-terminated heap copy of the path.
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Lrmf_cp")
+	g.emit("cmp rcx, r12")
+	g.emit("jae .Lrmf_cpd")
+	g.emit("mov al, [rbx + rcx]")
+	g.emit("mov [r13 + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrmf_cp")
+	g.label(".Lrmf_cpd")
+	g.emit("mov byte ptr [r13 + r12], 0")
+	// unlinkat(AT_FDCWD=-100, pathz, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, r13")
+	g.emit("xor edx, edx")
+	g.emit("mov eax, 263")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lrmf_some")
+	g.emit("mov edi, 8")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Option.None
+	g.emit("jmp .Lrmf_return")
+
+	g.label(".Lrmf_some")
+	g.emit("neg rax")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, r12d")
+	g.emit("mov rsi, [rbp - 40]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax") // stash IoError box across the alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Option.Some
+	g.emit("mov [rax + 8], r12")
+
+	g.label(".Lrmf_return")
+	g.emit("add rsp, 24")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_remove_file, .-__fern_remove_file")
+}
+
+// emitTempDirRuntime emits `__fern_temp_dir(prefix) →
+// Result[string, IoError]` — creates "/tmp/<prefix>-<ns>" (ns =
+// __fern_monotonic_ns, decimal digits, so concurrent runs don't
+// clash) via mkdirat and returns Ok(path). The path is built in a
+// plain scratch buffer first, then copied into an exactly-sized
+// rc=1 string so the Ok payload's length prefix matches its
+// allocation (the box-free path sizes the block from data-4).
+// Result box: Ok = 16-byte tag=0 + string data ptr @+8; Err =
+// 16-byte tag=1 + IoError box @+8 (same as read_file).
+// System V: rdi = prefix string value.
+func (g *generator) emitTempDirRuntime() {
+	g.line("")
+	g.line(".globl __fern_temp_dir")
+	g.line(".type __fern_temp_dir, @function")
+	g.label("__fern_temp_dir")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // prefix data ptr / final string
+	g.emit("push r12") // prefix len / errno
+	g.emit("push r13") // scratch path buffer
+	g.emit("push r14") // total path len
+	g.emit("push r15") // ns
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 40 realigns. Slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	//   [rbp-64] original prefix string value (io_error arg)
+	g.emit("sub rsp, 40")
+	g.emit("mov [rbp - 64], rdi")
+	g.emitStrLen("r12d", "rdi")
+	g.emitStrDataPtr("rbx", "rdi", "[rbp - 56]")
+	g.emit("call __fern_monotonic_ns")
+	g.emit("mov r15, rax")
+	// Scratch: 5 ("/tmp/") + plen + 1 ('-') + 20 (max digits) + 1 NUL.
+	g.emit("lea edi, [r12 + 27]")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")
+	g.emit("mov byte ptr [r13], 47")      // '/'
+	g.emit("mov byte ptr [r13 + 1], 116") // 't'
+	g.emit("mov byte ptr [r13 + 2], 109") // 'm'
+	g.emit("mov byte ptr [r13 + 3], 112") // 'p'
+	g.emit("mov byte ptr [r13 + 4], 47")  // '/'
+	g.emit("mov r14d, 5")
+	// Append the prefix bytes.
+	g.emit("xor ecx, ecx")
+	g.label(".Ltd_pcp")
+	g.emit("cmp rcx, r12")
+	g.emit("jae .Ltd_pcpd")
+	g.emit("mov al, [rbx + rcx]")
+	g.emit("mov [r13 + r14], al")
+	g.emit("add r14, 1")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Ltd_pcp")
+	g.label(".Ltd_pcpd")
+	g.emit("mov byte ptr [r13 + r14], 45") // '-'
+	g.emit("add r14, 1")
+	// Count decimal digits of ns into r9 (do-while: ns=0 → 1).
+	g.emit("mov rax, r15")
+	g.emit("xor r9d, r9d")
+	g.label(".Ltd_cnt")
+	g.emit("xor edx, edx")
+	g.emit("mov ecx, 10")
+	g.emit("div rcx")
+	g.emit("add r9, 1")
+	g.emit("test rax, rax")
+	g.emit("jnz .Ltd_cnt")
+	// Write the digits least-significant-first into
+	// [r14 .. r14+r9-1], then advance the cursor.
+	g.emit("lea r10, [r14 + r9 - 1]")
+	g.emit("mov rax, r15")
+	g.label(".Ltd_wr")
+	g.emit("xor edx, edx")
+	g.emit("mov ecx, 10")
+	g.emit("div rcx")
+	g.emit("add dl, 48")
+	g.emit("mov [r13 + r10], dl")
+	g.emit("sub r10, 1")
+	g.emit("test rax, rax")
+	g.emit("jnz .Ltd_wr")
+	g.emit("add r14, r9")
+	g.emit("mov byte ptr [r13 + r14], 0") // NUL
+	// mkdirat(AT_FDCWD=-100, pathz, 0700=448)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, r13")
+	g.emit("mov edx, 448")
+	g.emit("mov eax, 258")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jnz .Ltd_err")
+	// Ok: copy the path into an exactly-sized rc=1 string.
+	g.emit("lea edi, [r14 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rbx, rax")
+	g.emitStrLenStore("r14d", "rbx")
+	g.emit("xor ecx, ecx")
+	g.label(".Ltd_ccp")
+	g.emit("cmp rcx, r14")
+	g.emit("jae .Ltd_ccpd")
+	g.emit("mov al, [r13 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Ltd_ccp")
+	g.label(".Ltd_ccpd")
+	g.emit("mov byte ptr [rbx + r14], 0")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Ltd_return")
+
+	g.label(".Ltd_err")
+	g.emit("neg rax")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, r12d")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], r12")
+
+	g.label(".Ltd_return")
+	g.emit("add rsp, 40")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_temp_dir, .-__fern_temp_dir")
+}
+
+// emitReadDirRuntime emits `__fern_read_dir(path) →
+// Result[string[], IoError]` — lists the non-recursive children
+// of `path` as base names (unsorted). Pipeline: openat(O_RDONLY|
+// O_DIRECTORY) → getdents64-drain into a 1 MiB heap buffer →
+// close → pass 1 counts entries (skipping "." / "..") → array
+// alloc (canonical layout: 16-byte header, cap@data-12,
+// rc=1@data-8, len@data-4, 8-byte string-ptr elements) → pass 2
+// fills with fresh rc=1 strings. openat failure → Err(IoError).
+// System V: rdi = path string value.
+func (g *generator) emitReadDirRuntime() {
+	g.line("")
+	g.line(".globl __fern_read_dir")
+	g.line(".type __fern_read_dir, @function")
+	g.label("__fern_read_dir")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz, then array data ptr
+	g.emit("push r12") // path byte ptr / fd / count / index
+	g.emit("push r13") // path len / dirent buf
+	g.emit("push r14") // total bytes drained
+	g.emit("push r15") // iteration offset
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 40 realigns. Slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	//   [rbp-64] original path string value (io_error arg)
+	//   [rbp-72] nlen / name ptr scratch
+	//   [rbp-80] name ptr (across __fern_alloc_rc1)
+	g.emit("sub rsp, 40")
+	g.emit("mov [rbp - 64], rdi")
+	g.emitStrLen("r13d", "rdi")
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 56]")
+	// pathz = NUL-terminated heap copy.
+	g.emit("lea edi, [r13 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Lrdd_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lrdd_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrdd_cp")
+	g.label(".Lrdd_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0")
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=0x10000, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, 0x10000")
+	g.emit("xor r10d, r10d")
+	g.emit("mov eax, 257")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lrdd_err")
+	g.emit("mov r12, rax") // fd
+	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
+	g.emit("mov edi, 1048576")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")
+	g.emit("xor r14, r14")
+	g.label(".Lrdd_g")
+	g.emit("mov edx, 1048576")
+	g.emit("sub rdx, r14")
+	g.emit("jz .Lrdd_gd")
+	g.emit("mov edi, r12d")
+	g.emit("lea rsi, [r13 + r14]")
+	g.emit("mov eax, 217") // getdents64
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jle .Lrdd_gd")
+	g.emit("add r14, rax")
+	g.emit("jmp .Lrdd_g")
+	g.label(".Lrdd_gd")
+	g.emit("mov edi, r12d")
+	g.emit("mov eax, 3") // close
+	g.emit("syscall")
+	// Pass 1: count entries that aren't "." / "..".
+	g.emit("xor r12d, r12d") // count (fd is closed)
+	g.emit("xor r15, r15")   // offset
+	g.label(".Lrdd_c1")
+	g.emit("cmp r15, r14")
+	g.emit("jae .Lrdd_c1d")
+	g.emit("lea rsi, [r13 + r15 + 19]") // d_name ptr
+	g.emit("movzx ecx, byte ptr [rsi]")
+	g.emit("cmp cl, 46") // '.'
+	g.emit("jne .Lrdd_c1n")
+	g.emit("movzx ecx, byte ptr [rsi + 1]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrdd_c1s") // "."
+	g.emit("cmp cl, 46")
+	g.emit("jne .Lrdd_c1n")
+	g.emit("movzx ecx, byte ptr [rsi + 2]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrdd_c1s") // ".."
+	g.label(".Lrdd_c1n")
+	g.emit("add r12, 1")
+	g.label(".Lrdd_c1s")
+	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
+	g.emit("add r15, rax")
+	g.emit("jmp .Lrdd_c1")
+	g.label(".Lrdd_c1d")
+	// Array alloc: 16-byte header + count * 8. pathz (rbx) is dead
+	// past openat, so rbx becomes the array data ptr.
+	g.emit("lea rdi, [r12 * 8 + 16]")
+	g.emit("call __fern_alloc")
+	g.emit("lea rbx, [rax + 16]")
+	g.emit("mov dword ptr [rbx - 12], r12d") // cap = count
+	g.emit("mov dword ptr [rbx - 8], 1")     // rc = 1
+	g.emitArrayLenStore("r12d", "rbx")
+	// Pass 2: fill with fresh rc=1 strings.
+	g.emit("xor r12d, r12d") // element index
+	g.emit("xor r15, r15")   // offset
+	g.label(".Lrdd_p2")
+	g.emit("cmp r15, r14")
+	g.emit("jae .Lrdd_p2d")
+	g.emit("lea rsi, [r13 + r15 + 19]") // d_name ptr
+	g.emit("movzx ecx, byte ptr [rsi]")
+	g.emit("cmp cl, 46")
+	g.emit("jne .Lrdd_p2t")
+	g.emit("movzx ecx, byte ptr [rsi + 1]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrdd_p2a")
+	g.emit("cmp cl, 46")
+	g.emit("jne .Lrdd_p2t")
+	g.emit("movzx ecx, byte ptr [rsi + 2]")
+	g.emit("test cl, cl")
+	g.emit("jz .Lrdd_p2a")
+	g.label(".Lrdd_p2t")
+	g.emit("mov [rbp - 80], rsi") // name ptr (survives the alloc)
+	// nlen = strlen(name)
+	g.emit("xor rdx, rdx")
+	g.label(".Lrdd_nl")
+	g.emit("cmp byte ptr [rsi + rdx], 0")
+	g.emit("je .Lrdd_nld")
+	g.emit("add rdx, 1")
+	g.emit("jmp .Lrdd_nl")
+	g.label(".Lrdd_nld")
+	g.emit("mov [rbp - 72], rdx") // nlen
+	g.emit("lea edi, [rdx + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdx, [rbp - 72]")
+	g.emitStrLenStore("edx", "rax")
+	g.emit("mov rsi, [rbp - 80]")
+	g.emit("xor ecx, ecx")
+	g.label(".Lrdd_nc")
+	g.emit("cmp rcx, rdx")
+	g.emit("jae .Lrdd_ncd")
+	g.emit("mov r9b, [rsi + rcx]")
+	g.emit("mov [rax + rcx], r9b")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lrdd_nc")
+	g.label(".Lrdd_ncd")
+	g.emit("mov byte ptr [rax + rdx], 0")
+	g.emit("mov [rbx + r12 * 8], rax")
+	g.emit("add r12, 1")
+	g.label(".Lrdd_p2a")
+	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
+	g.emit("add r15, rax")
+	g.emit("jmp .Lrdd_p2")
+	g.label(".Lrdd_p2d")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lrdd_return")
+
+	g.label(".Lrdd_err")
+	g.emit("neg rax")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, r12d")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], r12")
+
+	g.label(".Lrdd_return")
+	g.emit("add rsp, 40")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_read_dir, .-__fern_read_dir")
+}
+
+// emitStatRuntime emits `__fern_stat(path) →
+// Result[FileStat, IoError]` — newfstatat(AT_FDCWD, path, buf, 0)
+// into a 144-byte stack buffer; st_mode is the u32 at offset 24,
+// st_size the i64 at offset 48 (Linux x86-64 struct stat). The
+// FileStat box uses the native structFieldLayout offsets —
+// is_file (i32) @0, is_dir (i32) @4, size (i64) @8 — 16 bytes via
+// __fern_alloc_box (immortal, same class as the Result boxes).
+// System V: rdi = path string value.
+func (g *generator) emitStatRuntime() {
+	g.line("")
+	g.line(".globl __fern_stat")
+	g.line(".type __fern_stat, @function")
+	g.label("__fern_stat")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // path byte ptr / is_file
+	g.emit("push r13") // path len / IoError box
+	g.emit("push r14") // is_dir
+	g.emit("push r15") // st_size
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 168 realigns — 144-byte stat
+	// buf at [rsp..143] + slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	//   [rbp-64] original path string value (io_error arg)
+	g.emit("sub rsp, 168")
+	g.emit("mov [rbp - 64], rdi")
+	g.emitStrLen("r13d", "rdi")
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 56]")
+	// pathz = NUL-terminated heap copy.
+	g.emit("lea edi, [r13 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Lst_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lst_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lst_cp")
+	g.label(".Lst_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0")
+	// newfstatat(AT_FDCWD=-100, pathz, statbuf, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, rsp")
+	g.emit("xor r10d, r10d")
+	g.emit("mov eax, 262")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lst_err")
+	g.emit("mov eax, [rsp + 24]") // st_mode
+	g.emit("and eax, 61440")      // S_IFMT
+	g.emit("xor r12d, r12d")
+	g.emit("cmp eax, 32768") // S_IFREG
+	g.emit("jne .Lst_nf")
+	g.emit("mov r12d, 1")
+	g.label(".Lst_nf")
+	g.emit("xor r14d, r14d")
+	g.emit("cmp eax, 16384") // S_IFDIR
+	g.emit("jne .Lst_nd")
+	g.emit("mov r14d, 1")
+	g.label(".Lst_nd")
+	g.emit("mov r15, [rsp + 48]") // st_size
+	// FileStat box: is_file @0, is_dir @4, size @8.
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov [rax], r12d")
+	g.emit("mov [rax + 4], r14d")
+	g.emit("mov [rax + 8], r15")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .Lst_return")
+
+	g.label(".Lst_err")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lst_return")
+	g.emit("add rsp, 168")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_stat, .-__fern_stat")
 }
 
 // emitReaderWriterRuntime emits the full Reader / Writer

@@ -5,8 +5,9 @@
 // string; `read_input(path)` is the CLI-tool companion that picks
 // stdin or a file from a path operand.
 //
-// Migrated from the former auto-injected prelude per
-// docs/PRELUDE-TO-MODULES.md.
+// No prelude: these are in scope only after a program
+// declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
+// Phase 5).
 
 import "std/array";
 

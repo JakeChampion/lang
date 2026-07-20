@@ -39,6 +39,16 @@ pub function (n: i32) abs_diff(other: i32): i32 {
     if (n >= other) { return n - other; }
     return other - n;
 }
+
+// `(n: i32) midpoint(other)` — the average of `n` and `other`, rounded toward
+// negative infinity, computed WITHOUT overflow via the classic
+// `(a & b) + ((a ^ b) >> 1)` identity. The naive `(a + b) / 2` overflows for
+// large same-sign operands (the well-known binary-search bug); this form never
+// does. `midpoint(4, 6)` is `5`, `midpoint(i32::MAX, i32::MAX - 2)` is
+// `i32::MAX - 1`, and `midpoint(-2, 4)` is `1`.
+pub function (n: i32) midpoint(other: i32): i32 {
+    return (n & other) + ((n ^ other) >> 1);
+}
 // ASCII byte predicates — `is_digit` / `is_alpha` / `is_alnum` /
 // `is_ascii_white_space` classify a single byte (typically an
 // `s[i]` index into a string, i.e. a UTF-8 code unit, hence the
@@ -463,6 +473,190 @@ pub function (n: i32) checked_div(other: i32): Option[i32] {
     return Some(n / other);
 }
 
+// `(n: i32) checked_rem(other)` — `Some(n % other)`, or `None` on divide-by-zero
+// or on i32::MIN % -1 (the single remainder that overflows — its division
+// counterpart does, and the operation traps on some targets). The remainder
+// sibling of `checked_div`, completing the `checked_` family for `%`.
+pub function (n: i32) checked_rem(other: i32): Option[i32] {
+    if (other == 0) { return None; }
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return None; }
+    return Some(n % other);
+}
+
+// `(n: i32) checked_mul(other)` — `Some(n * other)`, or `None` when the
+// product overflows i32. Completes the `checked_` family (add/sub/div) with
+// the most overflow-prone op. Exact: the full i32×i32 product always fits an
+// i64, so it widens and range-checks against the i32 bounds — no wrap to
+// second-guess.
+pub function (n: i32) checked_mul(other: i32): Option[i32] {
+    var p: i64 = (n as i64) * (other as i64);
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);   // i32::MIN
+    var hi: i64 = 2147483647 as i64;                               // i32::MAX
+    if (p < lo || p > hi) { return None; }
+    return Some(p as i32);
+}
+
+// `(n: i32) saturating_mul(other)` — `n * other` clamped to the i32 range
+// instead of wrapping: a positive overflow saturates to i32::MAX, a negative
+// one to i32::MIN. The clamping companion of `checked_mul` and the multiply
+// sibling of `saturating_add` / `saturating_sub`. Exact: the full i32×i32
+// product fits an i64, so the clamp reads off the widened product's sign.
+pub function (n: i32) saturating_mul(other: i32): i32 {
+    var p: i64 = (n as i64) * (other as i64);
+    if (p > (2147483647 as i64)) { return 2147483647; }
+    if (p < ((0 as i64) - (2147483647 as i64) - (1 as i64))) { return 0 - 2147483647 - 1; }
+    return p as i32;
+}
+
+// `(n: i32) saturating_div(other)` — `n / other` clamped to the i32 range, the
+// clamping companion of `checked_div` and the divide sibling of
+// `saturating_mul`. The one overflowing divide is `MIN / -1` (true result 2^31
+// has no i32 form), which saturates to i32::MAX instead of wrapping to MIN;
+// every other pair is exact. Divide-by-zero is the caller's responsibility, as
+// for the bare `/` operator.
+pub function (n: i32) saturating_div(other: i32): i32 {
+    if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return 2147483647; }
+    return n / other;
+}
+
+// `(n: i32) saturating_neg()` / `saturating_abs()` — `-n` / `|n|` clamped to the
+// i32 range, the clamping companions of `checked_neg` / `checked_abs`. i32::MIN
+// is the one value whose negation / magnitude (2^31) overflows, so both saturate
+// it to i32::MAX instead of wrapping it back to MIN.
+pub function (n: i32) saturating_neg(): i32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
+    return 0 - n;
+}
+pub function (n: i32) saturating_abs(): i32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
+    if (n < 0) { return 0 - n; }
+    return n;
+}
+
+// `(n: i32) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
+// or `None` if any intermediate multiply overflows i32. Completes the `checked_`
+// family for the last arithmetic op. Overflow is detected the same way
+// `checked_mul` does — the running result and the squared base are accumulated
+// in i64 and range-checked against the i32 bounds each step (the full i32×i32
+// product always fits i64). A negative `exp` has no integer power and returns
+// `None`; `exp == 0` is `Some(1)` for every `n`. The final base squaring is
+// skipped once the exponent is exhausted, so an exact result never reports a
+// spurious overflow from an unused square.
+pub function (n: i32) checked_pow(exp: i32): Option[i32] {
+    if (exp < 0) { return None; }
+    var result: i64 = 1 as i64;
+    var base: i64 = n as i64;
+    var e: i32 = exp;
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);   // i32::MIN
+    var hi: i64 = 2147483647 as i64;                               // i32::MAX
+    while (e > 0) {
+        if (e % 2 == 1) {
+            result = result * base;
+            if (result < lo || result > hi) { return None; }
+        }
+        e = e / 2;
+        if (e > 0) {
+            base = base * base;
+            if (base < lo || base > hi) { return None; }
+        }
+    }
+    return Some(result as i32);
+}
+
+// `(n: i32) overflowing_add(other)` / `overflowing_sub(other)` /
+// `overflowing_mul(other)` — the two's-complement wrapped result paired with a
+// boolean that is true iff the operation overflowed i32. The (result,
+// did_overflow) shape of Rust's overflowing_* family: the value is always the
+// wrapped result (identical to the bare operator), and the flag lets the caller
+// detect overflow without recomputing it. The overflow tests are the same ones
+// `checked_add` / `checked_sub` / `checked_mul` use.
+pub function (n: i32) overflowing_add(other: i32): (i32, boolean) {
+    var r: i32 = n + other;
+    return (r, (n > 0 && other > 0 && r < 0) || (n < 0 && other < 0 && r >= 0));
+}
+pub function (n: i32) overflowing_sub(other: i32): (i32, boolean) {
+    var r: i32 = n - other;
+    return (r, (n >= 0 && other < 0 && r < 0) || (n < 0 && other > 0 && r > 0));
+}
+pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
+    var p: i64 = (n as i64) * (other as i64);
+    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    var hi: i64 = 2147483647 as i64;
+    return (p as i32, p < lo || p > hi);
+}
+
+// `(n: i32) overflowing_div(other)` / `overflowing_rem(other)` — the wrapped
+// quotient / remainder paired with a did-overflow boolean, completing the
+// overflowing_ family for `/` and `%`. The one overflowing pair is `MIN / -1`
+// (true result 2^31 has no i32 form, wraps to MIN) and `MIN % -1` (true result
+// 0, reported with the flag set to match `/`). Every other pair is exact, so
+// the flag is false. Divide-by-zero is the caller's responsibility, exactly as
+// for the bare `/` and `%` operators.
+pub function (n: i32) overflowing_div(other: i32): (i32, boolean) {
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return (min32, true); }
+    return (n / other, false);
+}
+pub function (n: i32) overflowing_rem(other: i32): (i32, boolean) {
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return (0, true); }
+    return (n % other, false);
+}
+
+// Unary overflow: negation and magnitude. i32::MIN (-2147483648) is the one
+// value where `-n` and `|n|` overflow — the result 2^31 has no i32
+// representation — so `abs()` / unary `-` wrap MIN to itself. These give the
+// overflow-safe forms, the unary counterparts of the checked_ / overflowing_
+// binary ops.
+
+// `(n: i32) checked_neg()` — `Some(-n)`, or `None` for i32::MIN.
+pub function (n: i32) checked_neg(): Option[i32] {
+    if (n == (0 - 2147483647 - 1)) { return None; }
+    return Some(0 - n);
+}
+
+// `(n: i32) checked_abs()` — `Some(|n|)`, or `None` for i32::MIN (whose
+// magnitude overflows). The overflow-safe counterpart of `abs`.
+pub function (n: i32) checked_abs(): Option[i32] {
+    if (n == (0 - 2147483647 - 1)) { return None; }
+    if (n < 0) { return Some(0 - n); }
+    return Some(n);
+}
+
+// `(n: i32) unsigned_abs()` — `|n|` as a u32, where the one magnitude the signed
+// `abs` / `checked_abs` cannot represent — i32::MIN, whose |n| is 2^31 — fits
+// exactly (2147483648). For every other value it equals the signed magnitude.
+// The MIN case takes the u32 literal directly, since `0 - n` would overflow i32
+// before the widening cast.
+pub function (n: i32) unsigned_abs(): u32 {
+    if (n == (0 - 2147483647 - 1)) { return 2147483648 as u32; }
+    if (n < 0) { return (0 - n) as u32; }
+    return n as u32;
+}
+
+// `(n: i32) overflowing_neg()` — the wrapped negation paired with a
+// did-overflow boolean; only i32::MIN overflows (negating to itself).
+pub function (n: i32) overflowing_neg(): (i32, boolean) {
+    if (n == (0 - 2147483647 - 1)) { return (n, true); }
+    return (0 - n, false);
+}
+
+// `(n: i32) checked_shl(rhs)` / `checked_shr(rhs)` — `Some(n << rhs)` /
+// `Some(n >> rhs)`, or `None` when the shift amount is out of range (`rhs < 0`
+// or `rhs >= 32`). The bare `<<` / `>>` mask the amount to the width — `1 << 32`
+// silently yields `1`, not `0` — so these guard the amount for the "shift by a
+// runtime value" case. `>>` is arithmetic (sign-extending) on the signed type,
+// matching Rust's `checked_shr`.
+pub function (n: i32) checked_shl(rhs: i32): Option[i32] {
+    if (rhs < 0 || rhs >= 32) { return None; }
+    return Some(n << rhs);
+}
+pub function (n: i32) checked_shr(rhs: i32): Option[i32] {
+    if (rhs < 0 || rhs >= 32) { return None; }
+    return Some(n >> rhs);
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }
@@ -540,6 +734,20 @@ pub function (n: i32) log2_floor(): i32 {
     return 31 - n.leading_zeros();
 }
 
+// `(n: i32) log10_floor()` — `floor(log10(n))` for `n >= 1`; `-1`
+// for `n <= 0` (no real log; the same `>= 0`-means-valid sentinel
+// as `log2_floor`). The base-10 sibling of `log2_floor`, and the
+// digit-count primitive: a positive `n` has `n.log10_floor() + 1`
+// decimal digits. Counts divisions by ten (exact, overflow-free —
+// it only ever shrinks `n`), so it needs no float `log10`.
+pub function (n: i32) log10_floor(): i32 {
+    if (n <= 0) { return 0 - 1; }
+    var r: i32 = 0;
+    var m: i32 = n;
+    while (m >= 10) { m = m / 10; r = r + 1; }
+    return r;
+}
+
 // `(n: i32) sqrt_floor()` — integer square root. floor(sqrt(n))
 // for n >= 0; 0 for n <= 0 (degenerate fallback). Newton's
 // method from a half-of-n starting point — converges in
@@ -564,6 +772,35 @@ pub function (n: i32) ceil_div(d: i32): i32 {
     if (d <= 0) { return 0; }
     if (n <= 0) { return n / d; }
     return (n + d - 1) / d;
+}
+
+// `(n: i32) div_euclid(rhs)` — Euclidean division: the quotient `q` for which
+// the remainder `n - rhs*q` is always in `[0, |rhs|)` (unlike `/`, which
+// truncates toward zero and leaves a sign-of-`n` remainder). For `n >= 0` it
+// equals `n / rhs`; for negative `n` it rounds the truncating quotient one step
+// further from zero so the remainder stays non-negative. `rhs` must be non-zero
+// (same contract as `/`).
+pub function (n: i32) div_euclid(rhs: i32): i32 {
+    var q: i32 = n / rhs;
+    if (n % rhs < 0) {
+        if (rhs > 0) { return q - 1; }
+        return q + 1;
+    }
+    return q;
+}
+
+// `(n: i32) rem_euclid(rhs)` — the non-negative Euclidean remainder, always in
+// `[0, |rhs|)` — the "true modulo" for wrap-around indexing where `n % rhs`
+// would go negative for negative `n` (e.g. `(-1).rem_euclid(3) == 2`). Pairs
+// with `div_euclid`: `n == rhs * n.div_euclid(rhs) + n.rem_euclid(rhs)`. `rhs`
+// must be non-zero.
+pub function (n: i32) rem_euclid(rhs: i32): i32 {
+    var r: i32 = n % rhs;
+    if (r < 0) {
+        if (rhs < 0) { return r - rhs; }
+        return r + rhs;
+    }
+    return r;
 }
 
 // `(n: i32) round_up_to(m)` — round n up to the nearest
@@ -644,6 +881,26 @@ pub function (n: i32) trailing_zeros(): i32 {
     return c;
 }
 
+// `(n: i32) bit_length()` — the number of bits needed to represent the
+// MAGNITUDE `|n|`: the position of the highest set bit, plus one. `0` needs 0
+// bits, `1` needs 1, `5` (101) needs 3, `255` needs 8, `256` needs 9. Negative
+// `n` uses its magnitude, so `bit_length(-5) == bit_length(5) == 3` (except
+// i32::MIN, whose magnitude 2^31 needs 32). Matches Rust's `i32::ilog2() + 1`
+// / Python's `int.bit_length`. Handy for sizing bitfields and buffers.
+pub function (n: i32) bit_length(): i32 {
+    if (n == 0) { return 0; }
+    // Magnitude as u32 (i32::MIN's negation is representable here).
+    var mag: i64 = n as i64;
+    if (mag < (0 as i64)) { mag = 0 - mag; }
+    var u: u32 = mag as u32;
+    var c: i32 = 0;
+    while (u != (0 as u32)) {
+        c = c + 1;
+        u = u >> (1 as u32);
+    }
+    return c;
+}
+
 // `(n: i32) bit(i)` — read bit at position i (0 = LSB).
 // Out-of-range returns false. Useful for unpacking bit-
 // packed flags / nibbles.
@@ -687,6 +944,24 @@ pub function (n: i32) byte_swap(): i32 {
     return ((b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3) as i32;
 }
 
+// `(n: i32) reverse_bits()` — reverse the ORDER of the 32 bits: bit i moves to
+// bit 31-i. The bit-level counterpart of `byte_swap` (which reverses whole
+// bytes), completing the bit-ops family; useful for FFT/Gray-code/hash bit
+// tricks. Operates on the raw two's-complement pattern via u32 (logical shifts,
+// like the rest of the family), so `reverse_bits(1)` is i32::MIN (bit 0 -> bit
+// 31) and it round-trips (`n.reverse_bits().reverse_bits() == n`).
+pub function (n: i32) reverse_bits(): i32 {
+    var u: u32 = n as u32;
+    var r: u32 = 0 as u32;
+    var i: i32 = 0;
+    while (i < 32) {
+        r = (r << (1 as u32)) | (u & (1 as u32));
+        u = u >> (1 as u32);
+        i = i + 1;
+    }
+    return r as i32;
+}
+
 // `(n: i32) rotate_left(bits)` / `rotate_right(bits)` —
 // circular shift by `bits` positions. Bits shifted out one
 // end re-enter the other. The bit count is masked to 0..31
@@ -721,6 +996,16 @@ pub function (n: i32) to_binary(): string {
 
 pub function (n: i32) to_oct(): string {
     return int.int_to_string_radix(n, 8);
+}
+
+// `(n: i32) to_string_radix(base)` — render `n` in an arbitrary `base` (2..36),
+// digits `0-9a-z` (lowercase), signed (a negative `n` gets a leading `-`). The
+// general form behind `to_binary` (2) / `to_oct` (8) / `to_hex` (16) — reach for
+// it for base-36 ids or any other radix. The exact write-side inverse of
+// `string.parse_int_radix`: `n.to_string_radix(b).parse_int_radix(b) == Some(n)`
+// for any valid base. An out-of-range base (< 2 or > 36) yields `""`.
+pub function (n: i32) to_string_radix(base: i32): string {
+    return int.int_to_string_radix(n, base);
 }
 
 

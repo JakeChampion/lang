@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // stripLinesWithPrefix drops every line that starts with the given
@@ -236,6 +238,36 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"filesystem_ops", langSrcAbs(t, "examples/tests/filesystem_ops_test.fern"), ""},
 		{"float_math", langSrcAbs(t, "examples/tests/float_math_test.fern"), ""},
 		{"float_convert", langSrcAbs(t, "examples/tests/float_convert_test.fern"), ""},
+		{"float_hypot", langSrcAbs(t, "examples/tests/float_hypot_test.fern"), ""},
+		{"float_round_to", langSrcAbs(t, "examples/tests/float_round_to_test.fern"), ""},
+		{"float_log2_log10", langSrcAbs(t, "examples/tests/float_log2_log10_test.fern"), ""},
+		{"float_exp2_exp10", langSrcAbs(t, "examples/tests/float_exp2_exp10_test.fern"), ""},
+		{"float_recip_copysign_midpoint", langSrcAbs(t, "examples/tests/float_recip_copysign_midpoint_test.fern"), ""},
+		{"i64_roots", langSrcAbs(t, "examples/tests/i64_roots_test.fern"), ""},
+		{"i64_intdiv", langSrcAbs(t, "examples/tests/i64_intdiv_test.fern"), ""},
+		{"u64_roots", langSrcAbs(t, "examples/tests/u64_roots_test.fern"), ""},
+		{"float_clamp01_absdiff_muladd", langSrcAbs(t, "examples/tests/float_clamp01_absdiff_muladd_test.fern"), ""},
+		{"float_cbrt_hypot3", langSrcAbs(t, "examples/tests/float_cbrt_hypot3_test.fern"), ""},
+		{"float_hyperbolic", langSrcAbs(t, "examples/tests/float_hyperbolic_test.fern"), ""},
+		{"array_stats", langSrcAbs(t, "examples/tests/array_stats_test.fern"), ""},
+		{"sort_f64", langSrcAbs(t, "examples/tests/sort_f64_test.fern"), ""},
+		{"array_median_range", langSrcAbs(t, "examples/tests/array_median_range_test.fern"), ""},
+		{"array_vector", langSrcAbs(t, "examples/tests/array_vector_test.fern"), ""},
+		{"array_distance_normalize", langSrcAbs(t, "examples/tests/array_distance_normalize_test.fern"), ""},
+		{"array_product_cumsum", langSrcAbs(t, "examples/tests/array_product_cumsum_test.fern"), ""},
+		{"array_scale_add", langSrcAbs(t, "examples/tests/array_scale_add_test.fern"), ""},
+		{"array_cumprod_diff", langSrcAbs(t, "examples/tests/array_cumprod_diff_test.fern"), ""},
+		{"int_midpoint", langSrcAbs(t, "examples/tests/int_midpoint_test.fern"), ""},
+		// uint_midpoint + u32_roots are now self-host gated. Both were formerly
+		// interp-only, blamed on a "u32 self-host gap" (an arithmetic/sign-extending
+		// `>>` for u32, plus a next_power_of_2 doubling loop that spun forever). The
+		// real cause was a single mis-dispatch bug: irlower's expr_recv_prim_type had
+		// no u32 branch, so a u32-receiver method call keyed "i32.<method>" and ran
+		// the SIGNED std/i32 method (signed compare + arithmetic shift) instead of
+		// the unsigned std/u32 one. Fixed in expr_recv_prim_type; both now match the
+		// interpreter byte-for-byte on x86-64, arm64, and wasm IR.
+		{"uint_midpoint", langSrcAbs(t, "examples/tests/uint_midpoint_test.fern"), ""},
+		{"u32_roots", langSrcAbs(t, "examples/tests/u32_roots_test.fern"), ""},
 		{"float_array_strict_sort", langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern"), ""},
 		{"lines_log", langSrcAbs(t, "examples/tests/lines_log_test.fern"), ""},
 		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern"), ""},
@@ -287,8 +319,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"int", langSrcAbs(t, "examples/tests/int_test.fern"), ""},
 		{"i32", langSrcAbs(t, "examples/tests/i32_test.fern"), ""},
 		{"i32_bit_arith", langSrcAbs(t, "examples/tests/i32_bit_arith_test.fern"), ""},
+		{"i32_to_string_radix", langSrcAbs(t, "examples/tests/i32_to_string_radix_test.fern"), ""},
+		{"i32_bit_length", langSrcAbs(t, "examples/tests/i32_bit_length_test.fern"), ""},
 		{"i64", langSrcAbs(t, "examples/tests/i64_test.fern"), ""},
 		{"i64_range", langSrcAbs(t, "examples/tests/i64_range_test.fern"), ""},
+		{"i64_bit_ops", langSrcAbs(t, "examples/tests/i64_bit_ops_test.fern"), ""},
+		{"i64_to_string_radix", langSrcAbs(t, "examples/tests/i64_to_string_radix_test.fern"), ""},
 		// u64 routes IR now that mono_infer types an `as u64` cast arg, so a
 		// bounded-generic assert_eq(x.min(y), v as u64) binds T=u64 (#3457).
 		{"u64", langSrcAbs(t, "examples/tests/u64_test.fern"), ""},
@@ -302,6 +338,13 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// IR routing can't silently regress (it was previously only covered by the
 		// synthetic single-function closure/typaram IR tests).
 		{"array_hof", langSrcAbs(t, "examples/tests/array_hof_test.fern"), ""},
+		{"array_accessors", langSrcAbs(t, "examples/tests/array_accessors_test.fern"), ""},
+		{"array_dedup", langSrcAbs(t, "examples/tests/array_dedup_test.fern"), ""},
+		{"array_binary_search", langSrcAbs(t, "examples/tests/array_binary_search_test.fern"), ""},
+		{"array_min_max_index", langSrcAbs(t, "examples/tests/array_min_max_index_test.fern"), ""},
+		{"array_all_equal", langSrcAbs(t, "examples/tests/array_all_equal_test.fern"), ""},
+		{"array_none", langSrcAbs(t, "examples/tests/array_none_test.fern"), ""},
+		{"array_rotate", langSrcAbs(t, "examples/tests/array_rotate_test.fern"), ""},
 		{"array_batch", langSrcAbs(t, "examples/tests/array_batch_test.fern"), ""},
 		{"iter_combinators", langSrcAbs(t, "examples/tests/iter_combinators_test.fern"), ""},
 		{"num_reducers", langSrcAbs(t, "examples/tests/num_reducers_test.fern"), ""},
@@ -310,6 +353,11 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"time_http_date", langSrcAbs(t, "examples/tests/time_http_date_test.fern"), ""},
 		{"time_timezone", langSrcAbs(t, "examples/tests/time_timezone_test.fern"), ""},
 		{"string_replace_split", langSrcAbs(t, "examples/tests/string_replace_split_test.fern"), ""},
+		{"string_rsplit_once", langSrcAbs(t, "examples/tests/string_rsplit_once_test.fern"), ""},
+		{"string_partition", langSrcAbs(t, "examples/tests/string_partition_test.fern"), ""},
+		{"string_parse_radix", langSrcAbs(t, "examples/tests/string_parse_radix_test.fern"), ""},
+		{"string_zfill", langSrcAbs(t, "examples/tests/string_zfill_test.fern"), ""},
+		{"string_swap_case", langSrcAbs(t, "examples/tests/string_swap_case_test.fern"), ""},
 		{"utf8", langSrcAbs(t, "examples/tests/utf8_test.fern"), ""},
 		{"string_escape_count", langSrcAbs(t, "examples/tests/string_escape_count_test.fern"), ""},
 		{"string_slice_extract", langSrcAbs(t, "examples/tests/string_slice_extract_test.fern"), ""},
@@ -340,18 +388,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 	}
 }
 
-// buildBinArm64 assembles+links arm64 asm into dir/name and returns
-// its path. Drops the x86-specific `-no-pie` flag (some aarch64 gcc
-// builds reject it).
+// buildBinArm64 assembles+links arm64 asm into dir/name and returns its
+// path. Now a thin alias for the harness helper, which routes HUGE asm
+// (the aarch64 stage-2 self-compile, the native-mmc driver) through the
+// in-process native arm64 assembler under a memory-budget reservation
+// and keeps small programs on the aarch64 gcc toolchain unchanged.
 func buildBinArm64(t *testing.T, gcc, dir, name, asm string) string {
 	t.Helper()
-	asmPath := filepath.Join(dir, name+".s")
-	binPath := filepath.Join(dir, name)
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write %s asm: %v", name, err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc %s: %v\n%s", name, err, out)
-	}
-	return binPath
+	return e2eharness.BuildBinArm64(t, gcc, dir, name, asm)
 }

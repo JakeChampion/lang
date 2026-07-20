@@ -16,7 +16,10 @@ import (
 // expected output matches std/float's __float_to_string (k=15, trailing
 // zeros trimmed) exactly — including the IEEE noise digits — so the
 // self-host's native __fern_f64_to_string helper is held to the same
-// contract as the pure-Fern formatter the Go backend compiles.
+// contract as the pure-Fern formatter the Go backend compiles. The last
+// two lines pin the #5363 defaults on the self-host: a bare unsuffixed
+// literal is f64 (1.0/3.0 renders at the 15-digit f64 precision, not
+// f32's 7) and `float` is the f64 alias.
 const f64ToStringProgram = `function main(): i32 {
     print((3.5 as f64).to_string());
     print((0.0 as f64 - 2.25).to_string());
@@ -28,6 +31,9 @@ const f64ToStringProgram = `function main(): i32 {
     print((0.5 as f64).to_string());
     print((9999999.99 as f64).to_string());
     print((0.0 as f64 - 0.000125).to_string());
+    print((1.0 / 3.0).to_string());
+    var fx: float = 1.0;
+    print((fx / 3.0).to_string());
     return 0;
 }`
 
@@ -40,7 +46,9 @@ const f64ToStringWant = "3.5\n" +
 	"0.1\n" +
 	"0.5\n" +
 	"9999999.990000000223517\n" +
-	"-0.000125\n"
+	"-0.000125\n" +
+	"0.333333333333333\n" +
+	"0.333333333333333\n"
 
 // TestSelfHostF64ToStringX86_64 compiles the float-formatting program
 // with the self-hosted x86-64 emitter and checks its stdout against the

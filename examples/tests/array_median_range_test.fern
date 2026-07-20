@@ -1,0 +1,67 @@
+import "std/test";
+import "std/array" as array;
+// examples/tests/array_median_range_test.fern — pure-Fern coverage of
+// std/array.median_f64 (median, averaging the two middles for even length) and
+// range_f64 (max - min spread), both Option[f64] (None for empty). The Go-side
+// TestArrayMedianRange pins these across interp / x86-64 / arm64 (the wasmbin
+// leg skips Option over a 64-bit payload, the gap avg_f64 / variance_f64
+// share); this is the migration-shaped companion. Option[f64] and sort_f64
+// lower on the self-host asm_ir path, so this rides both self-host gates too.
+
+function unwrap(o: Option[f64]): f64 {
+    match (o) {
+        Some(v) => { return v; },
+        None => { return 0.0 - 999.0; }
+    }
+}
+
+function is_none(o: Option[f64]): boolean {
+    match (o) {
+        Some(v) => { return false; },
+        None => { return true; }
+    }
+}
+
+function near(a: f64, b: f64): boolean {
+    var d: f64 = a - b;
+    if (d < 0.0) { d = 0.0 - d; }
+    return d < 0.0001;
+}
+
+function test_median_odd(): test.TestOutcome {
+    var odd: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
+    return test.assert_eq_f64_near(unwrap(array.median_f64(odd)), 3.0, 0.0001);
+}
+
+function test_median_even(): test.TestOutcome {
+    // sorted 2,4,8,10 -> average of 4 and 8.
+    var even: f64[] = [10.0, 2.0, 8.0, 4.0];
+    return test.assert_eq_f64_near(unwrap(array.median_f64(even)), 6.0, 0.0001);
+}
+
+function test_median_single(): test.TestOutcome {
+    return test.assert_eq_f64_near(unwrap(array.median_f64([42.0])), 42.0, 0.0001);
+}
+
+function test_range(): test.TestOutcome {
+    var xs: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
+    if (!near(unwrap(array.range_f64(xs)), 4.0)) { return test.fail("range 5-1"); }
+    if (!near(unwrap(array.range_f64([7.0])), 0.0)) { return test.fail("single -> 0"); }
+    return test.assert_eq_f64_near(unwrap(array.range_f64([0.0 - 3.0, 5.0, 1.0])), 8.0, 0.0001);
+}
+
+function test_empty_none(): test.TestOutcome {
+    var empty: f64[] = [];
+    if (!is_none(array.median_f64(empty))) { return test.fail("median of empty"); }
+    return test.assert_true(is_none(array.range_f64(empty)));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/array f64 median/range");
+    r = r.it("median odd",    test_median_odd());
+    r = r.it("median even",   test_median_even());
+    r = r.it("median single", test_median_single());
+    r = r.it("range",         test_range());
+    r = r.it("empty -> none", test_empty_none());
+    return r.finish();
+}

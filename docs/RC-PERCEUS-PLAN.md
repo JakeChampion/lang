@@ -2590,6 +2590,40 @@ bump growth is identical at N=50 and N=5000 on x86_64 + arm64 + wasm —
 the proof that Phase 5h / push-loop reclamation holds memory bounded,
 which the soundness-only tests couldn't show.
 
+**Leak detector — `FERN_LEAKCHECK=1` (SHIPPED, #5362 slice 1).** A
+compile-time build mode (`ast.LeakCheckEnabled`, the `RcReuseDropGuided`
+env-flag precedent) that turns the alloc/free seam into an exact leak
+counter on the native backends. `__fern_alloc` bumps
+`__fern_lc_alloc_count` / `__fern_lc_alloc_bytes` after its 16-byte
+rounding (covering both the freelist-pop and bump paths, but NOT the
+large tier's capacity round-up); `__fern_free` — which every
+reclamation site funnels through (box_free, arr_dec, map_drop,
+drop_arr_ptr/str, alloc_reuse's mismatch path, the `__free` builtin) —
+bumps `__fern_lc_free_count` / `__fern_lc_free_bytes` at the identical
+rounding, so a block's alloc and eventual free cancel exactly. At BOTH
+exit seams (the `_start` epilogue and the `exit()` builtin's
+`__fern_exit`), `__fern_lc_report` writes one line to stderr, exit code
+and stdout untouched:
+
+    leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+
+with `K = alloc_bytes − free_bytes` (exact, not high-water — unlike
+`__heap_bump_bytes()` it distinguishes "still reachable at exit" from
+"churned through the freelist"). `__fern_alloc_reuse`'s in-place path
+counts as NEITHER an alloc nor a free: its class match requires equal
+rounded sizes, so the reused block's original alloc still cancels
+against its eventual free and live_bytes stays exact. x86-64 + arm64
+(Linux and, structurally, arm64-darwin — the helper uses the portable
+`syscall("write")` split); wasm/interp ignore the flag. Flag-off
+emission is byte-identical to a build without the feature (verified by
+`.s` diff; `TestLeakCheckOffEmitsNoSymbols` pins the no-symbols proxy).
+Tests: `internal/e2e/leakcheck_test.go` (balanced `__alloc`/`__free`
+loop, rc-driven drop-everything loop, deliberate leak with pinned
+counts, exit-code + stdout preservation on both seams, both backends).
+Slice 2 (parked): a uniform allocation header would upgrade the counts
+to a real census — per-class live-block breakdown and leak-site
+attribution — instead of the current aggregate bytes.
+
 Next Phase-6 steps (at the time): wire `__heap_bump_bytes()` into a
 profiling pass over compound workloads, then evaluate retiring `strbuf_*`.
 (DONE — the profiling pass drove the tuple / map / nested-array / string

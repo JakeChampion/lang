@@ -26,8 +26,8 @@ var stdlibModloadIRCases = []struct {
 	{"i64-abs", "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 0 - 17; return a.abs() as i32; }\n"},
 	{"i64-gcd", "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 48; var b: i64 = 36; return a.gcd(b) as i32; }\n"},
 	{"i64-pow", "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 2; return a.pow(6) as i32; }\n"},
-	{"sort-i32-desc", "import \"std/sort\";\nfunction main(): i32 { var a: i32[] = [3, 1, 4, 1, 5]; var s = sort.sort_i32_desc(a); return s[0] + s[4]; }\n"},
-	{"sort-u32-asc", "import \"std/sort\";\nfunction main(): i32 { var a: u32[] = [9 as u32, 2 as u32, 7 as u32]; var s = sort.sort_u32_asc(a); return s[0] as i32; }\n"},
+	{"sort-i32-desc", "import \"core/cmp\";\nfunction main(): i32 { var a: i32[] = [3, 1, 4, 1, 5]; var s = cmp.sort_desc(a); return s[0] + s[4]; }\n"},
+	{"sort-u32-asc", "import \"core/cmp\";\nfunction main(): i32 { var a: u32[] = [9 as u32, 2 as u32, 7 as u32]; var s = cmp.sort(a); return s[0] as i32; }\n"},
 	// UTF-8 codepoint layer (#4416): decode a 2-byte é to its scalar U+00E9=233.
 	{"utf8-decode", "import \"std/string\";\nfunction main(): i32 { return \"é\".codepoints()[0]; }\n"},
 	// codepoint_count over a mixed-width string (a=1, €=3 bytes) is 2, not the byte len 4.

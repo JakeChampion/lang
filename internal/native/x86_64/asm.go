@@ -56,9 +56,18 @@ type relFixup struct {
 }
 
 // ripFixup records a rip-relative disp32 field (lea/mov [rip+sym]) to be
-// resolved against a .rodata label once the section layout is final.
+// resolved against a .rodata label once the section layout is final. `end`
+// is the text offset of the END of the containing instruction — the
+// runtime RIP the displacement is relative to. It is stamped by the
+// assemble loop once the instruction finishes encoding: for most forms
+// that's at+4, but mem,imm forms (`add qword ptr [rip+sym], 1`,
+// `mov qword ptr [rip+sym], 0`) place the immediate AFTER the disp32, and
+// resolving against at+4 pointed the access `immLen` bytes past the
+// symbol (the ×256 rc-underflow / leakcheck counter drift and the
+// strbuf_take length-reset miss on the in-process-assembled path).
 type ripFixup struct {
 	at  int
+	end int
 	sym string
 }
 
@@ -185,8 +194,15 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		if sec != "text" {
 			return nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
 		}
+		nRip := len(a.ripFixups)
 		if err := a.insn(line); err != nil {
 			return nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+		}
+		// Stamp every rip fixup this instruction produced with the
+		// instruction's end offset — the runtime RIP its disp32 is
+		// relative to (see the ripFixup comment).
+		for i := nRip; i < len(a.ripFixups); i++ {
+			a.ripFixups[i].end = len(a.text)
 		}
 	}
 	// Resolve rel32 branch/call targets now that all labels are placed.
@@ -244,7 +260,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else {
 			return nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
-		disp := int32(symOff - (f.at + 4))
+		disp := int32(symOff - f.end)
 		putLE32(a.text, f.at, uint32(disp))
 	}
 	// Fill ".quad <symbol>" pointer-table slots. In a PIE these values are
@@ -773,8 +789,20 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 	case dst.kind == opReg && src.kind == opMem:
 		return a.regMem(opBase|0x02, dst, src)
 	case dst.kind == opReg && src.kind == opImm:
+		// Byte register: <alu> r/m8, imm8 is its own opcode (80 /ext ib) —
+		// 83/81 are the 16/32/64-bit forms and would silently widen the
+		// operation (the mov-imm encoder had the same bug, #3544).
+		if dst.size == 8 {
+			if rex := rexFor(false, 0, dst.reg, needsRexByte(dst)); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0x80)
+			a.emit(modrmReg(ext, dst.reg))
+			a.emit(byte(src.imm))
+			return nil
+		}
 		w := dst.size == 64
-		if fitsInt8(src.imm) && dst.size != 8 {
+		if fitsInt8(src.imm) {
 			if rex := rexFor(w, 0, dst.reg, false); rex != 0 {
 				a.emit(rex)
 			}
@@ -791,6 +819,38 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 		a.emit32(uint32(src.imm))
 		return nil
 	case dst.kind == opMem && src.kind == opImm:
+		// Honour the operand size from a `byte ptr` prefix: <alu> r/m8,
+		// imm8 is 80 /ext ib. The 83/81 forms below are 32/64-bit — using
+		// them for a byte compare reads/writes 4 bytes (`cmp byte ptr
+		// [rdi], 61` in __fern_env's '=' scan silently became cmp dword,
+		// so env() never matched a name and always returned None on the
+		// natively-linked path).
+		if dst.memSize == 8 {
+			if rex := memRex(false, 0, dst, false); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0x80)
+			a.encodeMem(ext, dst)
+			a.emit(byte(src.imm))
+			return nil
+		}
+		if dst.memSize == 16 {
+			// 66 [REX] 83 /ext ib (sign-extended imm8) or 66 [REX] 81 /ext iw.
+			a.emit(0x66)
+			if rex := memRex(false, 0, dst, false); rex != 0 {
+				a.emit(rex)
+			}
+			if fitsInt8(src.imm) {
+				a.emit(0x83)
+				a.encodeMem(ext, dst)
+				a.emit(byte(src.imm))
+				return nil
+			}
+			a.emit(0x81)
+			a.encodeMem(ext, dst)
+			a.emit(byte(src.imm), byte(src.imm>>8))
+			return nil
+		}
 		w := dst.memSize == 64
 		if fitsInt8(src.imm) {
 			if rex := memRex(w, 0, dst, false); rex != 0 {

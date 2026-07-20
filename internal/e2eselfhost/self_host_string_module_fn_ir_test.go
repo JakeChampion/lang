@@ -36,6 +36,34 @@ function main(): i32 { return string.repeat_char(67, 0).len(); }`},
 	// A string METHOD still lowers (regression guard for the parser change).
 	{"trim-method", `import "std/string";
 function main(): i32 { return "  hi  ".trim().len(); }`},
+	// camel_case / pascal_case (the inverse of snake_case): method calls,
+	// oracle-checked against the interpreter. Probe result CONTENT via
+	// byte-indexing so a self-host miscompile of the case fold — not just
+	// a length change — is caught. "foo_bar".camel_case() == "fooBar", so
+	// [3] is 'B' (66); "foo_bar".pascal_case() == "FooBar", [0] is 'F'
+	// (70); "Foo_bar".camel_case() lower-cases the first initial to 'f'
+	// (102); "__foo__bar__".camel_case() == "fooBar" (len 6).
+	{"camel_case-boundary", `import "std/string";
+function main(): i32 { return "foo_bar".camel_case()[3]; }`},
+	{"pascal_case-initial", `import "std/string";
+function main(): i32 { return "foo_bar".pascal_case()[0]; }`},
+	{"camel_case-first-lower", `import "std/string";
+function main(): i32 { return "Foo_bar".camel_case()[0]; }`},
+	{"camel_case-collapse-len", `import "std/string";
+function main(): i32 { return "__foo__bar__".camel_case().len(); }`},
+	// is_camel_case / is_pascal_case predicates, oracle-checked. Return
+	// the boolean as an exit code (true=1) so a self-host miscompile of
+	// the classifier diverges from the interpreter. "fooBar" is camel (1);
+	// "FooBar" is not camel (0); "FooBar" is pascal (1); "foo_bar" (with a
+	// separator) is neither (0).
+	{"is_camel_case-true", `import "std/string";
+function main(): i32 { if ("fooBar".is_camel_case()) { return 1; } return 0; }`},
+	{"is_camel_case-false", `import "std/string";
+function main(): i32 { if ("FooBar".is_camel_case()) { return 1; } return 0; }`},
+	{"is_pascal_case-true", `import "std/string";
+function main(): i32 { if ("FooBar".is_pascal_case()) { return 1; } return 0; }`},
+	{"is_pascal_case-sep", `import "std/string";
+function main(): i32 { if ("foo_bar".is_pascal_case()) { return 1; } return 0; }`},
 }
 
 func TestSelfHostStringModuleFnIR(t *testing.T) {

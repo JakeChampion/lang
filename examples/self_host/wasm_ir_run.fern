@@ -33,6 +33,9 @@ function main(): i32 {
     // miscompile. Checked on a default-filled COPY (the emit input is
     // untouched; both emit paths fill defaults themselves).
     var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    // Bare-map_new chain gate (native E038/E003 parity) — same
+    // reject-don't-miscompile rationale as the arity gate.
+    arity_errs = arity_errs + asmcore.check_map_new_chain(mod);
     if (arity_errs.len() > 0) {
         eprint(arity_errs);
         return 1;
@@ -316,8 +319,14 @@ function main(): i32 {
         // read_dir builds its string[] result via $__fern_arr_push, so it folds
         // into this gate (emitted once — a read_dir module that ALSO uses .append
         // shares the single definition).
-        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push") || wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all")) { o = o + wasm.arr_push_helper(); }
-        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) { o = o + wasm.arr_push_owned_helper(); }
+        // str_split_helper (emitted above for str_split / str_lines) already
+        // begins with arr_push_helper(), so it defines $__fern_arr_push itself —
+        // gating that out here keeps the single definition (else a module using
+        // BOTH .split()/lines AND .append double-defines it → "duplicate func").
+        var needs_arr_push: boolean = wasm_ir.module_emits_op_cached(ir_cache, "arr_push") || wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all");
+        var split_emits_push: boolean = wasm_ir.module_emits_op_cached(ir_cache, "str_split") || wasm_ir.module_uses_str_lines(ir_cache);
+        if (needs_arr_push && !split_emits_push) { o = o + wasm.arr_push_helper(); }
+        if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) { o = o + wasm.arr_push_owned_helper(wasm_ir.heap_base_for(ir_cache)); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
         if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
         if (wasm_ir.module_uses_maps(ir_cache)) { o = o + wasm.map_helpers(); }

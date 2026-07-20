@@ -1,4 +1,4 @@
 E001_undefined_suggestion.fern:1:46: error[E001]: undefined identifier "kount"
     function main(): i32 { var count = 1; return kount; }
                                                  ^~~~~
-    note: did you mean "count"?
+    help: replace `kount` with `count`

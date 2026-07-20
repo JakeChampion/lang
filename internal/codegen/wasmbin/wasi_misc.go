@@ -96,6 +96,37 @@ func buildSliceIdxBody(stride int32) func(map[string]uint32) []byte {
 	}
 }
 
+// buildSliceRangeBody assembles __slice_range.
+//
+// Signature: (lo, hi, len: i32) → i32 — the slice-construction
+// bounds check (#5419). Traps unless 0 <= lo <= hi <= len, then
+// returns the slice length hi - lo. Both compares are unsigned,
+// so a negative lo or hi reads as huge and trips them (wasm32
+// i32s have no dirty-high-bits case to normalise).
+func buildSliceRangeBody(_ map[string]uint32) []byte {
+	var body []byte
+	// hi > len (unsigned) → trap
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// lo > hi (unsigned) → trap
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// hi - lo
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Sub(body)
+	locals := inst.PutLocalsOneGroup(nil, 0, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildStringAsBytesBody assembles __method_string_as_bytes.
 //
 // Signature: (s_data, s_len: i32) → i32 — heap pointer to an

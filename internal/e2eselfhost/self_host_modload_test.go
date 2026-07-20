@@ -63,6 +63,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		files    map[string]string
 		entryRel string            // entry file relative to the program dir (default main.fern)
 		lockDeps map[string]string // dep name → target dir (rel to progDir), written into fern.lock with abs paths
+		cacheDir bool              // point FERN_CACHE_DIR at <progDir>/cache (url-dep store cases, #4949)
 		wantExit int
 	}{
 		{
@@ -184,11 +185,55 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			entryRel: "app/main.fern",
 			wantExit: 42,
 		},
+		{
+			// url+hash dep resolved from the content-addressed store
+			// (#4949): app declares `pkg = { url = "…", hash = "sha256:…" }`
+			// and the store (FERN_CACHE_DIR layout: <root>/pkgs/<hex>/)
+			// holds the unpacked package. The loader reads the store via
+			// the `env` builtin — no network, populating stays `fern
+			// -fetch`. v() = 42.
+			name:     "url-store-dep",
+			cacheDir: true,
+			files: map[string]string{
+				"builtins.fern": string(builtinsSrc),
+				"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\npkg = { url = \"https://example.com/pkg-1.0.0.tar.gz\", hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n",
+				"app/main.fern": "import \"pkg\";\nfunction main(): i32 { return pkg.v(); }\n",
+				"cache/pkgs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/fern.toml": "[package]\nname = \"pkg\"\n",
+				"cache/pkgs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/lib.fern":  "pub function v(): i32 { return 42; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 42,
+		},
+		{
+			// Versioned dep whose fern.lock source is a URL (#4949): the
+			// lock's [[package]] entry carries url+hash (no path), so the
+			// loader resolves it from the store by the lock's hash — the
+			// Fern lock parser used to skip these with an empty path.
+			// w() = 42.
+			name:     "lock-url-dep",
+			cacheDir: true,
+			files: map[string]string{
+				"builtins.fern": string(builtinsSrc),
+				"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nbar = \"1.0.0\"\n",
+				"app/fern.lock": "[[package]]\nname = \"bar\"\nversion = \"1.0.0\"\nurl = \"https://example.com/bar-1.0.0.tar.gz\"\nhash = \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n",
+				"app/main.fern": "import \"bar\";\nfunction main(): i32 { return bar.w(); }\n",
+				"cache/pkgs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/fern.toml": "[package]\nname = \"bar\"\n",
+				"cache/pkgs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/lib.fern":  "pub function w(): i32 { return 42; }\n",
+			},
+			entryRel: "app/main.fern",
+			wantExit: 42,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			progDir := t.TempDir()
+			if tc.cacheDir {
+				// The driver inherits the test process env, so the
+				// self-host loader's env("FERN_CACHE_DIR") sees the
+				// per-case store at compile time.
+				t.Setenv("FERN_CACHE_DIR", filepath.Join(progDir, "cache"))
+			}
 			for name, src := range tc.files {
 				dst := filepath.Join(progDir, name)
 				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {

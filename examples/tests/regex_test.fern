@@ -1,0 +1,154 @@
+// examples/tests/regex_test.fern — exercise std/regex through the
+// pure-Fern test runner: the matcher (match / search / find), the bulk
+// operations (find_all / count / replace / split), and the capture engine
+// (regex_captures, named groups, $-template replacement). The regex module
+// had only Go-side coverage; this is the shape its unit tests take once the
+// Fern runner replaces the *_test.go harness. Passing suite → exit 0.
+import "std/test";
+import "std/regex" as regex;
+
+// --- matcher ---------------------------------------------------------------
+
+function test_match_anywhere(): test.TestOutcome {
+    return test.assert_true(regex.regex_match("b", "abc") && !regex.regex_match("z", "abc"));
+}
+
+function test_anchors(): test.TestOutcome {
+    return test.assert_true(regex.regex_match("^ab", "abc") && regex.regex_match("bc$", "abc")
+        && !regex.regex_match("^bc", "abc"));
+}
+
+function test_classes_and_quantifiers(): test.TestOutcome {
+    return test.assert_true(regex.regex_match("[abc]+", "cab") && regex.regex_match("\\d{2,4}", "x123y")
+        && regex.regex_match("(ab)+c", "ababc"));
+}
+
+function test_alternation(): test.TestOutcome {
+    return test.assert_true(regex.regex_match("^(cat|dog)$", "dog") && !regex.regex_match("^(cat|dog)$", "fox"));
+}
+
+function test_search_span(): test.TestOutcome {
+    var m: regex.RMatch = regex.regex_search("\\d+", "order 123 shipped");
+    return test.assert_true(m.found && m.start == 6 && m.end == 9);
+}
+
+function test_find_index(): test.TestOutcome {
+    return test.assert_eq(regex.regex_find("world", "hello world"), 6);
+}
+
+function test_case_insensitive_flag(): test.TestOutcome {
+    return test.assert_true(regex.regex_match("(?i)hel+o", "say HELLO"));
+}
+
+// --- bulk operations -------------------------------------------------------
+
+function test_count(): test.TestOutcome {
+    return test.assert_eq(regex.regex_count("\\d+", "a1 b22 c333"), 3);
+}
+
+function test_find_all(): test.TestOutcome {
+    var all: regex.RMatch[] = regex.regex_find_all("\\d+", "a1 b22");
+    return test.assert_true(all.len() == 2 && all[0].start == 1 && all[1].start == 4);
+}
+
+function test_replace_all(): test.TestOutcome {
+    return test.assert_eq(regex.regex_replace_all("\\d+", "a1b22c", "#"), "a#b#c");
+}
+
+function test_replace_first(): test.TestOutcome {
+    return test.assert_eq(regex.regex_replace("\\d", "1 2 3", "#"), "# 2 3");
+}
+
+function test_split(): test.TestOutcome {
+    var parts: string[] = regex.regex_split("a,b;c", "[,;]");
+    return test.assert_true(parts.len() == 3 && parts[0] == "a" && parts[1] == "b" && parts[2] == "c");
+}
+
+function test_full_match(): test.TestOutcome {
+    return test.assert_true(regex.regex_full_match("a|aa", "aa") && !regex.regex_full_match("a", "aa"));
+}
+
+// --- captures --------------------------------------------------------------
+
+function test_captures_positional(): test.TestOutcome {
+    var m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x");
+    return test.assert_true(m.found && m.group_count() == 2
+        && m.group(0) == "12-34" && m.group(1) == "12" && m.group(2) == "34"
+        && m.group_start(1) == 3 && m.group_end(1) == 5);
+}
+
+function test_captures_optional_group(): test.TestOutcome {
+    var absent: regex.RCaps = regex.regex_captures("a(bc)?d", "ad");
+    var present: regex.RCaps = regex.regex_captures("a(bc)?d", "abcd");
+    return test.assert_true(!absent.has_group(1) && absent.group(1) == ""
+        && present.has_group(1) && present.group(1) == "bc");
+}
+
+function test_captures_all(): test.TestOutcome {
+    var all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
+    return test.assert_true(all.len() == 2 && all[0].group(1) == "a" && all[1].group(2) == "d");
+}
+
+function test_captures_quantified_last_iteration(): test.TestOutcome {
+    // a group under `+` reports its LAST iteration's span
+    var m: regex.RCaps = regex.regex_captures("(a|b)+", "ab");
+    return test.assert_eq(m.group(1), "b");
+}
+
+// --- named groups ----------------------------------------------------------
+
+function test_named_groups(): test.TestOutcome {
+    var m: regex.RCaps = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07");
+    return test.assert_true(m.group_named("year") == "2026" && m.group_named("mon") == "07"
+        && m.group_index("year") == 1 && m.group_index("mon") == 2
+        && m.group(1) == "2026");
+}
+
+function test_named_group_unknown(): test.TestOutcome {
+    var m: regex.RCaps = regex.regex_captures("(?<w>\\w+)", "hi");
+    return test.assert_true(m.group_named("nope") == "" && m.group_index("nope") == 0 - 1
+        && m.has_group_named("w") && !m.has_group_named("nope"));
+}
+
+// --- $-template replacement ------------------------------------------------
+
+function test_replace_groups_numeric(): test.TestOutcome {
+    return test.assert_eq(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1"), "b@a d@c");
+}
+
+function test_replace_groups_named(): test.TestOutcome {
+    return test.assert_eq(regex.regex_replace_all_groups("(?<k>\\w+)=(?<v>\\d+)", "a=1 b=22", "${v}:${k}"), "1:a 22:b");
+}
+
+function test_replace_groups_escape(): test.TestOutcome {
+    // $$ → literal $, $0 → whole match, first-match-only
+    return test.assert_true(regex.regex_replace_all_groups("(\\d+)", "x5", "$$$1") == "x$5"
+        && regex.regex_replace_groups("(\\d)", "1 2", "[$0]") == "[1] 2");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/regex");
+    r = r.it("match anywhere", test_match_anywhere());
+    r = r.it("anchors", test_anchors());
+    r = r.it("classes + quantifiers", test_classes_and_quantifiers());
+    r = r.it("alternation", test_alternation());
+    r = r.it("search span", test_search_span());
+    r = r.it("find index", test_find_index());
+    r = r.it("(?i) flag", test_case_insensitive_flag());
+    r = r.it("count", test_count());
+    r = r.it("find_all", test_find_all());
+    r = r.it("replace_all", test_replace_all());
+    r = r.it("replace first", test_replace_first());
+    r = r.it("split", test_split());
+    r = r.it("full_match", test_full_match());
+    r = r.it("captures positional", test_captures_positional());
+    r = r.it("captures optional group", test_captures_optional_group());
+    r = r.it("captures_all", test_captures_all());
+    r = r.it("captures quantified last iteration", test_captures_quantified_last_iteration());
+    r = r.it("named groups", test_named_groups());
+    r = r.it("named group unknown", test_named_group_unknown());
+    r = r.it("replace_groups numeric $1", test_replace_groups_numeric());
+    r = r.it("replace_groups named ${name}", test_replace_groups_named());
+    r = r.it("replace_groups $$ escape", test_replace_groups_escape());
+    return r.finish();
+}
