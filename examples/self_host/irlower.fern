@@ -17204,7 +17204,10 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         // mirror of the fn-body loop's rcoptfrees emission.
         var rk: i32 = 0;
         while (rk < rcopt.idxs.len()) {
-            if (rcopt.idxs[rk] == i) {
+            // blockable-only: a struct-literal payload's shallow drop relies on
+            // the fn-level OPTSTRUCT machinery for its array FIELDS — claiming
+            // it here zeroes the slot and starves that machinery (leak).
+            if (rcopt.idxs[rk] == i && rcopt.blockable[rk]) {
                 var rslot: i32 = st.slot_of(rcopt.names[rk]);
                 if (rslot >= st.n_params) {
                     if (rcopt.strs[rk]) { st = emit_opt_str_payload_drop(st, rslot); }
@@ -22908,8 +22911,14 @@ function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string
 // STRING (#4355: released via __fern_str_free instead of the shallow
 // __fern_rc_dec — on asm a string box's data buffer is separate and its
 // 24-byte block class differs from the array layout, so the array dec would
-// free it wrongly).
-struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[] }
+// free it wrongly). blockable marks payloads whose drop is COMPLETE on its
+// own (string / leak-safe scalar-array) — the only kinds lower_block's
+// per-nested-block pass may claim. A struct-literal payload's shallow box
+// dec relies on the surrounding OPTSTRUCT machinery to release its array
+// FIELDS; a block-level drop zeroes the slot and starves that machinery,
+// leaking the field buffers (the #5453 CI regression) — so struct payloads
+// stay fn-level-only, where the pass and the machinery agree.
+struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: boolean[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
 // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
@@ -22923,6 +22932,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
     var idxs: i32[] = [];
     var names: string[] = [];
     var strs: boolean[] = [];
+    var blockable: boolean[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
@@ -22946,6 +22956,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
                             strs = strs.append(cand.ptype == "string");
+                            blockable = blockable.append(cand.ptype == "string" || is_leaksafe_array_field(cand.ptype));
                         }
                     }
                 }
@@ -22954,7 +22965,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
         }
         vi = vi + 1;
     }
-    return OptRcFrees { idxs: idxs, names: names, strs: strs };
+    return OptRcFrees { idxs: idxs, names: names, strs: strs, blockable: blockable };
 }
 
 // emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
