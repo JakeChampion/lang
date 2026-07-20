@@ -3354,16 +3354,33 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
             // Single-field arms (0 or 1 payload): i32/u32 (4-byte), i64/u64 or
             // f64 (8-byte, S1 wide slot). A mixed-width set joins to an i64
             // canonical slot (per-arm extend/load — an f64 arm reinterprets via
-            // the i64 bit-load); a uniform i32 set keeps the i32 join.
+            // the i64 bit-load); a uniform i32 set keeps the i32 join. An f32
+            // arm (stored in the box as an 8-byte f64 — the self-host has no
+            // distinct f32) is accepted only in the S2 shape checked below.
+            var any_f32: boolean = false;
+            var any_i32: boolean = false;
+            var any_64: boolean = false;
             var k2: i32 = 0;
             while (k2 < n) {
                 var vn3: string = mod.enums[i].variant_names[k2];
                 if (struct_field_count(mod.structs, vn3) == 1) {
                     var ft3: string = struct_field_type_at(mod.structs, vn3, 0);
-                    if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64" && ft3 != "f64") { return false; }
+                    if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64" && ft3 != "f64" && ft3 != "f32") { return false; }
+                    if (ft3 == "f32") { any_f32 = true; }
+                    if (ft3 == "i32" || ft3 == "u32") { any_i32 = true; }
+                    if (ft3 == "i64" || ft3 == "u64" || ft3 == "f64") { any_64 = true; }
                 }
                 k2 = k2 + 1;
             }
+            // S2 f32 scope (#5327): only the non-uniform same-width shape
+            // `{ i(s32), f(f32) }` — the f32 arm rides the canonical 32-bit
+            // i32 join via a demote+reinterpret bridge, so the variant must
+            // ALSO carry an i32/u32 payload arm (keeping the join i32) and NO
+            // 64-bit arm. Still deferred: a uniform-f32 variant (its canonical
+            // join is an f32 signature slot, which the self-host — no distinct
+            // f32 — can't carry) and an f32 arm mixed with a 64-bit arm (a
+            // 4-vs-8-byte impedance against the i64 join).
+            if (any_f32 && (!any_i32 || any_64)) { return false; }
             // A uniform-f64 variant (every payloaded arm f64) is accepted too: it
             // joins to an f64 canonical slot (not the i64 bit-container the mixed-
             // width path emits) — see extern_variant_is_uniform_f64 + the f64-join
@@ -3489,6 +3506,31 @@ function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boolean {
     return false;
 }
 
+// extern_variant_has_f32_arm is true when a supported variant carries an f32
+// single-field arm. Its canonical join stays the 32-bit i32 slot (the gate
+// requires a sibling i32/u32 arm and no 64-bit arm — the S2 scope), but the
+// box stores an f32 payload widened to an 8-byte f64 (the self-host has no
+// distinct f32), so every i32-join read/write of the payload needs the
+// demote+reinterpret bridge (extern_variant_payload_join_i32_f32 on the param
+// side, extern_variant_result_store_f32 on the result side).
+function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        if (mod.enums[i].name == t) {
+            var n: i32 = mod.enums[i].variant_names.len();
+            var j: i32 = 0;
+            while (j < n) {
+                var vn: string = mod.enums[i].variant_names[j];
+                if (struct_field_count(mod.structs, vn) == 1 && struct_field_type_at(mod.structs, vn, 0) == "f32") { return true; }
+                j = j + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // extern_variant_payload_join_i64 builds the i64 canonical-join value for a
 // variant @import parameter whose join is i64: a lazy if/else chain on the box's
 // struct_id that, for the matched arm, loads the payload at offset 4 and coerces
@@ -3531,6 +3573,86 @@ function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: str
         return "(i64.extend_i32_u (i32.load offset=4 (local.get " + boxloc + ")))";
     }
     return "(i64.const 0)";
+}
+
+// extern_variant_payload_join_i32_f32 builds the i32 canonical-join value for a
+// variant @import parameter that carries an f32 arm (the join is still i32 —
+// the gate's S2 scope): a lazy if/else chain on the box's struct_id that, for
+// the matched arm, reads the payload at offset 4 — an f32 arm f64.loads its
+// widened payload and bridges it to the join (f32.demote_f64 then
+// i32.reinterpret_f32, the canonical f32→i32 bit coercion); an i32/u32 arm
+// i32.loads directly; a payloadless arm contributes 0 (the host drops it). The
+// chain MUST be if/else (not select), same as extern_variant_payload_join_i64:
+// the arms read the box at different widths, and only the matched arm's box is
+// wide enough, so non-taken branches must not run. Used only when
+// extern_variant_has_f32_arm — an f32-free variant keeps the single
+// unconditional i32.load (byte-identical output).
+function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, boxloc: string): string {
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        if (mod.enums[ei].name == t) {
+            var n: i32 = mod.enums[ei].variant_names.len();
+            var acc: string = extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[n - 1], boxloc);
+            var k: i32 = n - 2;
+            while (k >= 0) {
+                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                acc = "(if (result i32) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[k], boxloc) + ") (else " + acc + "))";
+                k = k - 1;
+            }
+            return acc;
+        }
+        ei = ei + 1;
+    }
+    return "(i32.const 0)";
+}
+
+// extern_variant_arm_join_i32_f32 emits one arm's payload coerced to the i32
+// join: the demote+reinterpret bridge for an f32 field (the box holds it as an
+// 8-byte f64 at struct_field_off(0) = 4), a plain i32.load for a 32-bit field,
+// i32.const 0 for a payloadless arm.
+function extern_variant_arm_join_i32_f32(mod: parser.Module, vn: string, boxloc: string): string {
+    if (struct_field_count(mod.structs, vn) == 1) {
+        if (struct_field_type_at(mod.structs, vn, 0) == "f32") {
+            return "(i32.reinterpret_f32 (f32.demote_f64 (f64.load offset=4 (local.get " + boxloc + "))))";
+        }
+        return "(i32.load offset=4 (local.get " + boxloc + "))";
+    }
+    return "(i32.const 0)";
+}
+
+// extern_variant_result_store_f32 builds the payload store for an i32-join
+// variant result that carries an f32 arm: an if/else chain on the wire disc $d
+// (the variant index) that, for an f32 arm, bridges the host's i32 payload —
+// the f32's raw bits — into the box's 8-byte f64 slot (f32.reinterpret_i32
+// then f64.promote_f32, so the S1 f64.load match bind recovers the float); for
+// every other arm it copies the i32 payload (unread garbage for a payloadless
+// arm, exactly as on the f32-free i32-join path). Reads the host payload at
+// offset 4 of $rb (the i32-join return area), stores at offset 4 of $s.
+function extern_variant_result_store_f32(mod: parser.Module, t: string): string {
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        if (mod.enums[ei].name == t) {
+            var n: i32 = mod.enums[ei].variant_names.len();
+            var acc: string = extern_variant_result_store_f32_arm(mod, mod.enums[ei].variant_names[n - 1]);
+            var k: i32 = n - 2;
+            while (k >= 0) {
+                acc = "(if (i32.eq (local.get $d) (i32.const " + util.i32_to_string(k) + ")) (then " + extern_variant_result_store_f32_arm(mod, mod.enums[ei].variant_names[k]) + ") (else " + acc + "))";
+                k = k - 1;
+            }
+            return acc;
+        }
+        ei = ei + 1;
+    }
+    return "(i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))";
+}
+
+// extern_variant_result_store_f32_arm emits one arm's result payload store:
+// the promote bridge for an f32 field, the plain i32 copy otherwise.
+function extern_variant_result_store_f32_arm(mod: parser.Module, vn: string): string {
+    if (struct_field_count(mod.structs, vn) == 1 && struct_field_type_at(mod.structs, vn, 0) == "f32") {
+        return "(f64.store offset=4 (local.get $s) (f64.promote_f32 (f32.reinterpret_i32 (i32.load offset=4 (local.get $rb)))))";
+    }
+    return "(i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))";
 }
 
 // extern_variant_result_supported is the result-side gate for a general
@@ -4407,6 +4529,10 @@ function extern_wrappers(mod: parser.Module): string {
                         out = out + " (f64.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
                     } else if (extern_variant_join_is64(mod, f.params[fi].type_name)) {
                         out = out + " " + extern_variant_payload_join_i64(mod, f.params[fi].type_name, fppn);
+                    } else if (extern_variant_has_f32_arm(mod, f.params[fi].type_name)) {
+                        // i32 join with an f32 arm (S2, #5327): per-arm bridge —
+                        // the f32 arm's payload sits in the box as an f64.
+                        out = out + " " + extern_variant_payload_join_i32_f32(mod, f.params[fi].type_name, fppn);
                     } else {
                         out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
                     }
@@ -4601,6 +4727,15 @@ function extern_wrappers(mod: parser.Module): string {
                 out = out + "    (local.set $s (call $__fern_alloc (i32.const 12)))\n";
                 out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
                 out = out + "    (i64.store offset=4 (local.get $s) (i64.load offset=8 (local.get $rb)))\n";
+            } else if (extern_variant_has_f32_arm(mod, f.ret_type)) {
+                // i32 join with an f32 arm (S2, #5327): the host's payload slot
+                // carries the f32's raw bits @4. The box stores an f32 payload
+                // widened to f64 (S1), so the store is branched per-arm on the
+                // disc: the f32 arm bridges bits → f32 → f64 into a 12-byte
+                // box; every other arm keeps the plain i32 copy.
+                out = out + "    (local.set $s (call $__fern_alloc (i32.const 12)))\n";
+                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
+                out = out + "    " + extern_variant_result_store_f32(mod, f.ret_type) + "\n";
             } else {
                 out = out + "    (local.set $s (call $__fern_alloc (i32.const 8)))\n";
                 out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
