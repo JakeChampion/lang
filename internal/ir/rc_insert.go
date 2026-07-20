@@ -1500,13 +1500,19 @@ func appendMapDrop(ops []Op) []Op {
 }
 
 // substituteEnumDecl returns a copy of ed with each variant payload's
-// top-level ParamType bound to its concrete type arg (Option[Item] →
-// Some(Item)). Reproduces exactly the payload types emitEnumNew sized
-// the box from (b.info.VariantCallPayloads), so the resulting drop plan
-// frees with the right box size. Returns ed unchanged when not a
-// type-arg-bearing instantiation. Nested ParamType (e.g. `T[]`) is left
-// alone — enumVariantDropPlan then finds no droppable load and bails,
-// keeping the flat dec (safe).
+// ParamTypes bound to their concrete type args (Option[Item] →
+// Some(Item)) — including ParamTypes NESTED in a composite payload
+// (`T[]` at Wrap[string] → `string[]`, #2704 class 2): a composite
+// payload slipped past enumVariantDropPlan's top-level-ParamType bail
+// and classified from the still-generic shape, so `W(T[])` got a
+// buffer-only __fern_arr_dec and leaked its elements' heap. Reproduces
+// exactly the payload types emitEnumNew sized the box from
+// (b.info.VariantCallPayloads) — the box layout for a composite payload
+// is a single pointer regardless of T, so sharpening the type changes
+// no sizing, only how deep the (is_unique-gated) drop recursion sees.
+// Returns ed unchanged when not a type-arg-bearing instantiation; a
+// ParamType left unbound (genuinely-still-generic context) still hits
+// the plan's bail, preserving the safe-leak fallback.
 func substituteEnumDecl(ed *ast.EnumDecl, args []ast.Type) *ast.EnumDecl {
 	if len(ed.TypeParams) == 0 || len(args) != len(ed.TypeParams) {
 		return ed
@@ -1517,11 +1523,54 @@ func substituteEnumDecl(ed *ast.EnumDecl, args []ast.Type) *ast.EnumDecl {
 		nv := v
 		nv.Payloads = make([]ast.Type, len(v.Payloads))
 		for j, pt := range v.Payloads {
-			nv.Payloads[j] = resolveTypeParam(pt, ed.TypeParams, args)
+			nv.Payloads[j] = substituteTypeParamsDeep(pt, ed.TypeParams, args)
 		}
 		out.Variants[i] = nv
 	}
 	return &out
+}
+
+// substituteTypeParamsDeep binds ParamTypes to their concrete args
+// through the composite shapes a variant payload can carry (arrays,
+// slices, tuples, generic struct/enum instantiations) — the recursive
+// sibling of resolveTypeParam, which handles only a bare top-level
+// ParamType (and stays that way: its pair-form/layout callers inspect a
+// single scalar payload). Mirrors monomorph.substituteType's shape set;
+// implemented here because ir must not import monomorph.
+func substituteTypeParamsDeep(t ast.Type, params []string, args []ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ParamType:
+		return resolveTypeParam(x, params, args)
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substituteTypeParamsDeep(x.Elem, params, args)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substituteTypeParamsDeep(x.Elem, params, args)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substituteTypeParamsDeep(x.Elems[i], params, args)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		nargs := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			nargs[i] = substituteTypeParamsDeep(x.Args[i], params, args)
+		}
+		return ast.StructType{Name: x.Name, Args: nargs}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		nargs := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			nargs[i] = substituteTypeParamsDeep(x.Args[i], params, args)
+		}
+		return ast.EnumType{Name: x.Name, Args: nargs}
+	}
+	return t
 }
 
 // arrElemStructDropName returns the __drop_arr_struct_<Elem> function
