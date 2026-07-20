@@ -126,6 +126,137 @@ var optStrBlockReclaimCases = []struct {
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, 0},
+	// RETURNING ARMS (#4353 p1): every arm returns, so the post-match drop
+	// site is dead code — the return-path sweep now fires the pending drop
+	// before op_return. Churned via a caller loop; flat after the fix.
+	{"optstr-return-arms-churn", `function probe(k: i32): i32 {
+    var o: Option[string] = Some("v" + k.to_string());
+    match (o) {
+        Some(s) => { return s.len(); },
+        None => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// Result sibling (#4353 p3): Err payload with returning arms.
+	{"resulterr-return-arms-churn", `function probe(k: i32): i32 {
+    var r: Result[i32, string] = Err("e" + k.to_string());
+    match (r) {
+        Ok(v) => { return v; },
+        Err(m) => { return m.len(); }
+    }
+    return 0;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// MIXED arms — the dual-site soundness case: one arm returns (drop via
+	// the return-path sweep), the other falls through (drop via the
+	// post-match site). Each dynamic path frees exactly once — a double-free
+	// trips the underflow detector, a miss trips the bump guard.
+	{"optstr-mixed-arms-churn", `function probe(k: i32): i32 {
+    var o: Option[string] = Some("v" + k.to_string());
+    var acc: i32 = 0;
+    match (o) {
+        Some(s) => { if (s.len() > 100) { return 1; } acc = s.len(); },
+        None => { return 0; }
+    }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// Array payload with returning arms — the "#a" pending kind.
+	{"optarr-return-arms-churn", `function probe(k: i32): i32 {
+    var o: Option[i32[]] = Some([k, k + 1]);
+    match (o) {
+        Some(xs) => { return xs[0]; },
+        None => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	// PAYLOAD-RETURN negative: `Some(s) => { return s; }` moves the payload
+	// out — binds_esc rejects the credit entirely (no pending, no post-match
+	// drop), the returned string is valid in the caller, detector zero.
+	{"optstr-return-payload-safe", `function pick(k: i32): string {
+    var o: Option[string] = Some("k" + k.to_string());
+    match (o) {
+        Some(s) => { return s; },
+        None => { }
+    }
+    return "";
+}
+function main(): i32 {
+    var s = pick(7);
+    if (s.len() < 2) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// Nested-block candidate with a returning arm: the block-level pending
+	// rides the same return-path sweep (a return exits the FUNCTION).
+	{"optstr-nested-return-arm-churn", `function probe(k: i32): i32 {
+    if (k >= 0) {
+        var o: Option[string] = Some("v" + k.to_string());
+        match (o) {
+            Some(s) => { return s.len(); },
+            None => { return 0; }
+        }
+    }
+    return 0;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostOptStrBlockReclaimIRX86_64 drives the cases through the
