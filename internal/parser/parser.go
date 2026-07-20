@@ -3716,6 +3716,14 @@ func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error
 	}
 	if !p.match(lexer.Punct, "}") {
 		for {
+			// A trailing `..` marks intentionally-omitted fields (a partial
+			// bind — `Point { x, .. }`). Named-field patterns already bind
+			// only the fields they list, so `..` is documentation; consume
+			// it and stop. Matches the destructure form and the self-host.
+			if p.match(lexer.Punct, "..") {
+				p.advance()
+				break
+			}
 			nameTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, false, err
