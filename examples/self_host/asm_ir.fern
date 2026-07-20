@@ -3494,12 +3494,6 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // shared helpers or every library unit dangles at the per-module link.
         "__fern_oob_abort",
         "__fern_arr_push_owned",
-        // arr_get / arr_set bounds checks (#5410): every library module's
-        // indexed access `jae`s to this shared abort; the entry owns the
-        // single definition (emit_ir_runtime). Without the export the
-        // per-module whole-compiler link fails with undefined
-        // __fern_oob_abort from every bounds-checked unit.
-        "__fern_oob_abort",
         "__fern_arr_slice", "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
