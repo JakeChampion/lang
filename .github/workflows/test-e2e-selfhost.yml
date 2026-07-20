@@ -161,18 +161,33 @@ concurrency:
 # name here too, or it will cold-build inside a preemptable shard again.
 env:
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
-  # QUARANTINED (issue #4801): the watbin / wit / component self-host tests
-  # below fail on CI since wasmtime was restored to the shards — the failure
-  # class is the SELF-HOST-COMPILED watbin assembler crashing (SIGABRT /
-  # truncated emissions), i.e. live self-host breakage that accumulated while
-  # these tests silently skipped, not stale expectations. They are excluded
-  # from shard selection (they still run locally) so the ~250+ healthy wasm
-  # selfhost tests keep their restored CI coverage while #4801 is fixed.
-  # EXACT names only — passing siblings (e.g. TestSelfHostWasmComponentFull*,
-  # TestSelfHostWasmComponentSuffixStdout) must keep running. Remove names as
-  # #4801 lands fixes; add names (with an issue note) only for the same rot
-  # class surfacing on the two preempted inventory shards.
-  QUARANTINED_TESTS: "TestSelfHostWasmComponent|TestSelfHostWasmComponentAdapter|TestSelfHostWasmComponentArgs|TestSelfHostWasmComponentArgsRead|TestSelfHostWasmComponentArgsReadWrite|TestSelfHostWasmComponentClock|TestSelfHostWasmComponentClockMono|TestSelfHostWasmComponentEndToEnd|TestSelfHostWasmComponentEnv|TestSelfHostWasmComponentEprint|TestSelfHostWasmComponentExit|TestSelfHostWasmComponentRandom|TestSelfHostWasmComponentRandomWrite|TestSelfHostWasmComponentReadEnv|TestSelfHostWasmComponentReadFile|TestSelfHostWasmComponentReadWriteEnv|TestSelfHostWasmComponentReadWriteFile|TestSelfHostWasmComponentStdout|TestSelfHostWasmComponentWriteFile|TestSelfHostWitClassify|TestSelfHostWitPrefixLayout|TestSelfHostComposeFromWorld|TestSelfHostWasmRun"
+  # QUARANTINED (issue #4801): tests excluded from shard selection (they still
+  # run locally) while their root cause is fixed. EXACT names only — passing
+  # siblings (e.g. TestSelfHostWasmComponentFull*, TestSelfHostWasmComponentSuffixStdout)
+  # must keep running. Remove names as #4801 lands fixes; add names (with an
+  # issue note) only for the same rot class surfacing on the inventory shards.
+  #
+  # The original quarantine (23 names) was the watbin/wit/component family
+  # crashing with SIGABRT after wasmtime was restored to the shards. That root
+  # cause is gone: #4833 (RC over-free on `return r.field`), #4836 (0xFC
+  # saturating truncations + offset= memarg), #4847 (call_indirect in
+  # enc_flat_body), #5261, #5264 and #5285 between them fixed the crash class.
+  # A full local re-run of all 23 on the x86-64 lane (qemu-x86_64, wasmtime
+  # v46.0.1) now shows 22 GREEN — the whole TestSelfHostWasmComponent* family,
+  # both TestSelfHostWit* tests, and TestSelfHostComposeFromWorld — so they are
+  # un-quarantined here and regain CI coverage.
+  #
+  # TestSelfHostWasmRun stays quarantined: 21 of its ~300 subtests still fail,
+  # on three causes unrelated to the watbin crash class (all reproduce on the
+  # x86 watbin path, no wasmtime needed):
+  #   1. wasm_run.fern does not emit the WASI runtime helpers its IR path calls
+  #      ($__fern_env / args / write_file / the clock ops) — "unknown func".
+  #   2. i64/f64 `const` decls lower as i32 — "type mismatch: expected i32,
+  #      found i64" (const-i64 / const-f64).
+  #   3. An int literal passed to an f64 param is not coerced — "expected f64,
+  #      found i32" (f64-param-int-arg), plus a closure capture-by-value /
+  #      method-returned-closure cluster.
+  QUARANTINED_TESTS: "TestSelfHostWasmRun"
 
 jobs:
   # Local-CI sign-off gate. `gh signoff e2e-selfhost` on this commit skips the
