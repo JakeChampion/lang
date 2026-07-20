@@ -224,6 +224,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// checkers must now flag E064 here, the mirror image of the
 		// subword-int-vars-clean case above.
 		{"unknown-retired-subword-var-type", "function main(): i32 { var x: i8 = q(); return 0; }\n", []string{"E001", "E064"}},
+		// `float` is the width-unqualified f64 alias (#5363). The self-host
+		// checker always resolved it; the Go checker used to reject it with
+		// E064 (+ a "did you mean f64?" hint) — this fixture pins the
+		// reconciled behavior: clean on BOTH checkers, including flowing
+		// into an f64 destination.
+		{"float-alias-ok", "function main(): i32 { var x: float = 1.5; var y: f64 = x; if (y > 1.0) { return 0; } return 1; }\n", nil},
+		// ... and a `float` value in a mismatched destination draws the
+		// same E003 both sides (it is a real float type, not unknown).
+		{"float-alias-mismatch", "function main(): i32 { var x: float = 1.5; var s: string = x; return 0; }\n", []string{"E003"}},
 		// E064 widening (#4363 item 3): an unknown nominal reached through an
 		// array-element (`Nope[]`) or generic-argument (`Map[string, Nope]`)
 		// spelling draws E064 just like a bare `Nope` — the check used to bail on

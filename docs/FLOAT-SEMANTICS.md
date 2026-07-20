@@ -171,36 +171,43 @@ fractional digits, no trailing-zero trim, rounded half-away-from-zero.
 
 ### `parse_float` round-trips within a tolerance, not exactly
 
-`(string).parse_float(): Option[f32]` (`std/string.fern`) accepts an
+`(string).parse_float(): Option[f64]` (`std/string.fern`) accepts an
 optional sign, integer and fractional digits, and returns `None` on empty
-/ sign-only / no-digit / trailing-garbage input. Two properties matter for
-the contract:
+/ sign-only / no-digit / trailing-garbage input. It parses in the f64
+domain (flipped from f32 alongside the #5363 default-width decision;
+`std/json`'s number decoding now reuses it instead of carrying a private
+f64 mirror). Two properties matter for the contract:
 
 - **Mantissa saturation.** Digits accumulate into an i64 capped at 1e15;
   beyond that, extra integer digits bump the decimal exponent and extra
-  fractional digits are dropped. Very-high-precision inputs therefore lose
-  their low-order digits before the f32 rounding even happens.
+  fractional digits are dropped. Very-high-precision inputs therefore
+  lose their low-order digits.
 - **Round-trip is within tolerance, not identity.** `parse_float ∘
   to_string` recovers a value within a small relative tolerance (the
-  e2e checks use `≤ 0.001` for f32), not the exact original — both the
-  7-digit formatting and the f32-domain `* 10^n` scaling in the parser
-  accumulate rounding. Code that needs a value to survive a
-  string round-trip unchanged must not assume float equality; compare
-  with a tolerance. Exactly-representable values (dyadic rationals like
-  `0.5`, `-0.25`, `2.5`) do round-trip exactly.
+  e2e checks use `≤ 0.001`), not the exact original — the fixed-digit
+  formatting and the `* 10^n` scaling in the parser accumulate rounding.
+  Code that needs a value to survive a string round-trip unchanged must
+  not assume float equality; compare with a tolerance.
+  Exactly-representable values (dyadic rationals like `0.5`, `-0.25`,
+  `2.5`) do round-trip exactly.
 
 ### Default float width
 
-`f32` is the default float (`float` is not a keyword — the native parser
-recognises only `f32` / `f64`, and a bare `float` annotation is `E064`
-with a "did you mean `f64`?" hint; the self-host compiler treats a
-`float` type name as f64-width in several paths, a discrepancy to
-reconcile if `float` ever becomes a real alias). Whether the default
-*should* be f64 (matching JSON and most scripting expectations), with f32
-opt-in, is an open **owner decision** — it would also shrink the
-"two float widths + polymorphic-literal promotion" surface. Left
-unresolved here on purpose; this doc pins the *current* contract, not the
-future default.
+**f64 is the default and primary float** (owner decision, #5363). An
+unsuffixed float literal with no expected-type pressure settles to f64
+(`ast.FloatType.NormalWidth`, mirrored by the interp and the IR
+lowering's Width-0 → `OpConstF64` path), and `float` is a first-class
+alias for f64 on both compilers — the native parser resolves it
+contextually in type position (like `str`; it is not a lexer keyword,
+so `float.pi()`-style module calls keep working), matching the
+self-host checker's long-standing resolution. The old discrepancy
+(native E064 on `float`, self-host silently f64) is resolved. f32
+remains fully supported via explicit annotation (`var x: f32`), suffix
+(`1.5f32`), or cast (`x as f32`); it is opt-in precision-narrowing,
+never a default. Pinned by `TestFloatDefaultWidthF64`
+(`internal/e2e/float_semantics_test.go`), `TestFloatAliasAndDefaultWidth`
+(checker), and the `float-alias-ok` / `float-alias-mismatch`
+self-host checker-codes fixtures.
 
 ## Generator + oracle implications
 

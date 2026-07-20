@@ -969,6 +969,11 @@ in writing every dependency themselves.
   own shims; `std/jni` enables Android embedding experiments, not apps).
 - **Scientific computing / data science — no** (no vectors/matrices/SIMD/
   bignum; f32-default floats; O(n²) sort).
+  > **Correction (2026-07-19):** "f32-default floats" was already stale
+  > at review time — unsettled float literals default to f64 on every
+  > backend (`ast.FloatType.NormalWidth`), and #5363 has since decided
+  > f64 as the primary float with `float` as its alias. The other gaps
+  > in this bullet stand.
 - **Embedded — no** (64-bit-only targets, RC heap, 1 MB binary floor;
   arm32 was deliberately retired).
 - **Games — no** (no GPU story, single thread, GC-free but not

@@ -562,7 +562,13 @@ func printType(t ast.Type) string {
 		// The borrowed-string view type (#4813).
 		return "str"
 	case ast.FloatType:
-		return "float"
+		if x.Spelling != "" {
+			return x.Spelling
+		}
+		if x.NormalWidth() == 64 {
+			return "f64"
+		}
+		return "f32"
 	case ast.StructType:
 		return x.Name
 	case ast.ArrayType:

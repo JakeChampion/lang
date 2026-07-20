@@ -2140,6 +2140,17 @@ func (p *parser) parseType() (ast.Type, error) {
 		// like Self).
 		p.advance()
 		base = ast.StrType{}
+	case t.Kind == lexer.Ident && t.Text == "float" &&
+		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
+		// `float` is the width-unqualified float alias — f64, the
+		// language's primary float (#5363), matching the self-host
+		// checker's long-standing resolution. Contextual like `str`:
+		// an Ident, not a lexer keyword, so `float.pi()` calls into
+		// the std/float module and `float` locals stay untouched;
+		// the `float.` guard keeps module-qualified struct references
+		// (`float.Foo`) on the bare-identifier path below.
+		p.advance()
+		base = ast.FloatType{Width: 64, Spelling: t.Text}
 	case t.Kind == lexer.Ident:
 		// Bare identifier is a struct type reference. The checker
 		// validates that the name actually resolves to a struct.

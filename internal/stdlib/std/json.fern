@@ -834,8 +834,10 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
 }
 
 // __json_number_to_f64 parses a JSON number's raw text into an f64.
-// Mirrors std/string.parse_float but accumulates into a full-width
-// f64 (parse_float returns f32). The mantissa collects into an i64
+// Mirrors std/string.parse_float (also f64 since #5363); kept as a
+// private twin because the self-host pipeline does not yet emit
+// cross-module method references from json to string — dedupe the two
+// when that gap closes. The mantissa collects into an i64
 // with a 1e15 saturation cap — beyond that, extra integer digits bump
 // exp_adj and extra fraction digits are dropped — then the value is
 // `mantissa * 10^exp_adj`. The caller only reaches here with a
