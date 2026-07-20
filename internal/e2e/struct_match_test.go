@@ -83,6 +83,34 @@ function f(p: P): i32 { match (p) { P { y } => { return y; } } return 0; }
 function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`,
 		want: 42,
 	},
+	{
+		// Expression-form struct match: each arm body is an expr and the
+		// match yields the unified result.
+		name: "expr_form",
+		src: `struct Point { x: i32, y: i32 }
+function area(p: Point): i32 {
+  return match (p) {
+    Point { x, y } when x == y => x * 10,
+    Point { x, y } => x + y,
+  };
+}
+function main(): i32 { return area(Point { x: 4, y: 4 }) + area(Point { x: 3, y: 5 }); }`,
+		want: 48, // 40 + 8
+	},
+	{
+		// Expression-form with a string-typed result (RC through the
+		// match-expr result slot).
+		name: "expr_string_result",
+		src: `struct Named { id: i32, label: string }
+function tag(n: Named): string {
+  return match (n) {
+    Named { id, label } when id > 0 => label,
+    Named { id, label } => "none",
+  };
+}
+function main(): i32 { return tag(Named { id: 1, label: "hello" }).len() + tag(Named { id: 0, label: "x" }).len(); }`,
+		want: 9, // len("hello")=5 + len("none")=4
+	},
 }
 
 func TestStructMatchX86_64(t *testing.T) {

@@ -3358,6 +3358,37 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
 		}
+		// Struct scrutinee: struct-pattern arms bind fields irrefutably;
+		// the first arm whose guard passes yields the result.
+		if st, ok := tag.(*Struct); ok && x.StructMatch != "" {
+			for _, arm := range x.Arms {
+				armEnv := newEnv(env)
+				if !arm.IsWildcard {
+					for _, b := range arm.Bindings {
+						fv, ok := st.Fields[b]
+						if !ok {
+							return nil, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, b)
+						}
+						armEnv.declare(b, fv)
+					}
+				}
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return nil, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return nil, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
+				return i.evalExpr(arm.Body, armEnv)
+			}
+			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no struct arm matched)")
+		}
 		// Tuple scrutinee: tuple-pattern arms — same element rules as
 		// the statement form (literal by equality, binder binds, `_`
 		// ignored), but each arm body is an Expr.
