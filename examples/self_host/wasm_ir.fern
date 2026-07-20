@@ -1507,7 +1507,16 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // bounds-checked (len @ base+0) before the address is formed — an
             // out-of-range read traps (exit 134) instead of reading past the end.
             out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
-            out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+            // Elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc — the foreach
+            // counted reads) skips the len-load / compare / trap. The base is
+            // still on the stack after the local.set; `local.get bctmp` re-pushes
+            // the index, leaving `base, idx` for the address compute below — the
+            // same shape wasm_arr_bounds_check leaves on its in-range path.
+            if (o.i32_imm == 1) {
+                out = out + "    local.get " + util.i32_to_string(bctmp) + "\n";
+            } else {
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+            }
             if (o.width == 64 && o.unsigned) {
                 out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n";
             } else if (o.width == 64) {

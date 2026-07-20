@@ -480,7 +480,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // first (docs/ARRAY-BOUNDS.md): idx vs the length prefix at [data].
             // The UNSIGNED compare (b.hs) catches both idx >= len and a negative
             // idx (a huge unsigned) with one branch to the shared abort.
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x0]\n    cmp x1, x2\n    b.hs __fern_oob_abort\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+            // Elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc — the foreach
+            // counted reads) drops the ldr-len / cmp / b.hs, the `idx < arr_len`
+            // guard having run immediately before. The checked path already
+            // compares the full x1, so the elided form needs no zero-extend.
+            if (o.i32_imm == 1) {
+                s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x0]\n    cmp x1, x2\n    b.hs __fern_oob_abort\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 89) {  // arr_set
             // pop val (top), idx, base; store at [data + (idx+1)*8]. Same bounds
             // check as arr_get: an out-of-range write aborts, never corrupts.
