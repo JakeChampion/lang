@@ -9,16 +9,22 @@ import (
 )
 
 // TestSelfHostStructDeepDropIRX86_64 covers the Perceus slice-3 DEEP-DROP: a
-// direct nested-struct field (`Outer { inner: Inner }`) whose inner is a LEAF
-// struct carrying its own rc-array field is now RECURSIVELY reclaimed — when the
-// inner box is uniquely owned, `__struct_drop_<Inner>` releases the inner's array
-// buffers before the inner box is freed, instead of the shallow box-only free that
-// leaked them (slices 3a/b/c).
+// direct nested-struct field (`Outer { inner: Inner }`) whose inner carries its
+// own rc-array field is RECURSIVELY reclaimed — when the inner box is uniquely
+// owned, `__struct_drop_<Inner>` releases the inner's array buffers before the
+// inner box is freed, instead of the shallow box-only free that leaked them
+// (slices 3a/b/c).
 //
-// CYCLE SAFETY: deep-drop fires ONLY for a leaf inner (no nested-struct field of
-// its own), so `__struct_drop_<Inner>` makes no further recursive struct_drop call
-// — the recursion is depth-1 and cannot loop. A self-referential / tree struct
-// necessarily carries a nested-struct field, so its field edge stays shallow.
+// DEPTH: `nested_field_deep_drop_ok` / `nddo_reach` admits ARBITRARY acyclic depth,
+// so `__struct_drop_<Inner>` may itself recurse into Inner's own deep-drop-ok
+// nested-struct fields (the depth-2+ cases below): the emitted call graph is a DAG
+// bounded by the struct-type count, and the per-type bodies are emitted for the
+// whole transitive closure (asm_ir's index-driven `struct_drop:` need loop / wasm's
+// `struct_drop_types` transitive walk / arm64 mirror).
+//
+// CYCLE SAFETY: a back-edge on the nested-struct closure (a self-referential / tree
+// struct — `Node { kids: Node[] }`) poisons the whole chain, so `nddo_reach` returns
+// the cyclic sentinel and the field edge stays SHALLOW — the recursion cannot loop.
 //
 // The leak/reclaim signal is heap exhaustion: a long churn that leaks the inner's
 // array buffer each iteration exhausts the bump heap and is SIGKILLed (exit 137);
@@ -101,4 +107,55 @@ function main(): i32 {
     while (f < 1000000) { s = mk(); f = f + 1; }
     return s - 8;
 }`, "struct_deep_drop_cyclic_safe", 0, "")
+
+	// DEPTH-2 DEEP-DROP + CHURN (#5336): `Outer { mid: Mid }`, `Mid { inner: Inner }`,
+	// `Inner { items: i32[] }`. `__struct_drop_Outer` must call `__struct_drop_Mid`
+	// which must call `__struct_drop_Inner` (transitive closure), releasing the
+	// depth-2 `inner.items` buffer. Asserts BOTH transitive calls are emitted, and
+	// that 150M alloc→drop cycles stay bounded (exit 0); a depth-1-only deep-drop
+	// leaks `inner.items` every call → heap exhausted → SIGKILL (137). items[0]+
+	// items[15]=17, +mid.m 2 +tag 7 = 26, so s-26==0.
+	run(t, `struct Inner { items: i32[] }
+struct Mid { inner: Inner, m: i32 }
+struct Outer { mid: Mid, tag: i32 }
+function mk(): i32 {
+    var o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 };
+    return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag;
+}
+function main(): i32 {
+    var s: i32 = 0; var f: i32 = 0;
+    while (f < 150000000) { s = mk(); f = f + 1; }
+    return s - 26;
+}`, "struct_deep_drop_depth2_churn", 0, "call __fn___struct_drop_Mid")
+
+	// DEPTH-3 with a STRING leaf field (also reclaimable via nddo_reach's #4297 A2
+	// string credit): `A { b: B }`, `B { c: C }`, `C { name: string, xs: i32[] }`.
+	// The full chain __struct_drop_A → _B → _C must be emitted; the depth-3 `name`
+	// string + `xs` buffer are reclaimed each iteration. Bounded (exit 0) after,
+	// unbounded (137) if any level short-circuits. xs[0]+xs[1]=1, +name.len() 3 = 4.
+	run(t, `struct C { name: string, xs: i32[] }
+struct B { c: C, y: i32 }
+struct A { b: B, z: i32 }
+function mk(): i32 {
+    var a: A = A { b: B { c: C { name: "abc", xs: [0, 1] }, y: 9 }, z: 4 };
+    return a.b.c.xs[0] + a.b.c.xs[1] + a.b.c.name.len();
+}
+function main(): i32 {
+    var s: i32 = 0; var f: i32 = 0;
+    while (f < 100000000) { s = mk(); f = f + 1; }
+    return s - 4;
+}`, "struct_deep_drop_depth3_str_churn", 0, "call __fn___struct_drop_C")
+
+	// DEPTH-2 VALUE-CORRECTNESS: read the whole depth-2 chain back before the drop; a
+	// wrong free of a live buffer would corrupt the sum. items[0..15] sum 136 + mid.m
+	// 2 + tag 7 = 145.
+	run(t, `struct Inner { items: i32[] }
+struct Mid { inner: Inner, m: i32 }
+struct Outer { mid: Mid, tag: i32 }
+function main(): i32 {
+    var o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 };
+    var sum: i32 = 0; var j: i32 = 0;
+    while (j < 16) { sum = sum + o.mid.inner.items[j]; j = j + 1; }
+    return sum + o.mid.m + o.tag;
+}`, "struct_deep_drop_depth2_value", 145, "")
 }
