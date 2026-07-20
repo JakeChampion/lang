@@ -6,12 +6,18 @@ import (
 )
 
 // `@` bindings on the self-host IR path (#5356): `match (b) { n @ Full(v) => … }`
-// binds the whole matched value to `n` alongside the payload. The self-host
-// parser records at_binding on PatVariant; lower_stmt_match prepends
-// `var n = <cached scrutinee>;` to the arm body and rewrites any guard
-// reference to `n` to the cached scrutinee (astwalk.subst_ident_expr) so a
-// guard sees the value before the body-prepended bind. The expression form
-// delegates to lower_stmt_match via lower_iife_match, so it inherits both.
+// and `match (p) { w @ Point { x, y } => … }` bind the whole matched value
+// alongside the payload / field binds.
+//
+// Variant `@`: the parser records at_binding on PatVariant; lower_stmt_match
+// prepends `var n = <cached scrutinee>;` to the arm body and rewrites any
+// guard reference to `n` to the cached scrutinee (astwalk.subst_ident_expr)
+// so the guard sees the value before the body-prepended bind. The expression
+// form delegates via lower_iife_match, inheriting both.
+//
+// Struct `@`: struct matches desugar at parse time (build_struct_match), so
+// the at-name is emitted as `var w = <cached scrutinee>;` in the arm's bind
+// list — ahead of the guard — no lowering change needed.
 var selfHostAtBindingCases = []struct {
 	name string
 	src  string
@@ -40,6 +46,25 @@ function f(b: Box): i32 {
   };
 }
 function main(): i32 { return f(Full(3)); }`},
+	{"struct_whole_and_fields", `struct Point { x: i32, y: i32 }
+function f(p: Point): i32 {
+  match (p) {
+    w @ Point { x, y } => { return w.x + w.y + x + y; },
+  }
+  return 0;
+}
+function main(): i32 { return f(Point { x: 3, y: 4 }); }`},
+	{"struct_expr_guard_uses_at", `struct P { a: i32, b: i32 }
+function f(p: P): i32 {
+  return match (p) {
+    w @ P { a, b } when w.a > 0 => a + b,
+    P { a, b } => 0,
+  };
+}
+function main(): i32 { return f(P { a: 2, b: 8 }); }`},
+	{"struct_at_with_rename", `struct Point { x: i32, y: i32 }
+function f(p: Point): i32 { match (p) { w @ Point { x: nx, y: ny } => { return w.x * 100 + nx * 10 + ny; } } return 0; }
+function main(): i32 { return f(Point { x: 1, y: 2 }); }`},
 }
 
 func TestSelfHostAtBindingX86_64(t *testing.T) {

@@ -1,8 +1,9 @@
-// `@` bindings on variant patterns (#5356): `match (b) { n @ Full(v) => … }`
-// binds the whole matched value to `n` (at the scrutinee's type) alongside
-// the variant's payload. v1 is variant-pattern-only; the whole value is a
-// borrowed reference to the scrutinee box, so an `@` binding forces the
-// heap-form match path. These pin the native binaries against the interp
+// `@` bindings on variant and struct patterns (#5356): `match (b) { n @
+// Full(v) => … }` / `match (p) { w @ Point { x, y } => … }` bind the whole
+// matched value to the `@`-name (at the scrutinee's type) alongside the
+// payload / field binds. The whole value is a borrowed reference to the
+// scrutinee (box or struct pointer). Tuple / literal / wildcard sub-patterns
+// stay rejected (v1). These pin the native binaries against the interp
 // oracle; a couple also run through wasm.
 package e2e
 
@@ -69,6 +70,41 @@ function depth(b: Box): i32 {
 function main(): i32 { return depth(Full(7)); }`,
 		want: 107,
 	},
+	{
+		// `@` on a struct pattern: `w` is the whole struct, `x`/`y` the
+		// fields. w.x + w.y + x + y.
+		name: "struct_whole_and_fields",
+		src: `struct Point { x: i32, y: i32 }
+function f(p: Point): i32 {
+  match (p) {
+    w @ Point { x, y } => { return w.x + w.y + x + y; },
+  }
+  return 0;
+}
+function main(): i32 { return f(Point { x: 3, y: 4 }); }`,
+		want: 14, // (3+4) + (3+4)
+	},
+	{
+		// Expression form + a guard referencing the struct `@` binding.
+		name: "struct_expr_guard_uses_at",
+		src: `struct P { a: i32, b: i32 }
+function f(p: P): i32 {
+  return match (p) {
+    w @ P { a, b } when w.a > 0 => a + b,
+    P { a, b } => 0,
+  };
+}
+function main(): i32 { return f(P { a: 2, b: 8 }); }`,
+		want: 10,
+	},
+	{
+		// `@` combined with field renaming (`x: nx`) in the same arm.
+		name: "struct_at_with_rename",
+		src: `struct Point { x: i32, y: i32 }
+function f(p: Point): i32 { match (p) { w @ Point { x: nx, y: ny } => { return w.x * 100 + nx * 10 + ny; } } return 0; }
+function main(): i32 { return f(Point { x: 1, y: 2 }); }`,
+		want: 112, // 100 + 10 + 2
+	},
 }
 
 func TestAtBindingX86_64(t *testing.T) {
@@ -97,7 +133,7 @@ func TestAtBindingArm64(t *testing.T) {
 }
 
 func TestAtBindingWasm(t *testing.T) {
-	for _, name := range []string{"stmt_whole_and_payload", "expr_guard_uses_at"} {
+	for _, name := range []string{"stmt_whole_and_payload", "expr_guard_uses_at", "struct_whole_and_fields", "struct_at_with_rename"} {
 		tc := atBindingCaseByName(t, name)
 		t.Run(name, func(t *testing.T) {
 			if got := runWasm(t, tc.src); got != tc.want {

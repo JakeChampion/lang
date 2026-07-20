@@ -9214,6 +9214,10 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			continue
 		}
 		armScope := newScope(s)
+		// `@` binding: the whole matched struct, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = st
+		}
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		seen := map[string]bool{}
 		for k, b := range arm.Bindings {
@@ -9544,6 +9548,10 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			continue
 		}
 		armScope := newScope(s)
+		// `@` binding: the whole matched struct, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = st
+		}
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		seen := map[string]bool{}
 		for k, b := range arm.Bindings {

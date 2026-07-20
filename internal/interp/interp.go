@@ -2670,6 +2670,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(e)
 				if !arm.IsWildcard {
+					if arm.AtBinding != "" {
+						armEnv.declare(arm.AtBinding, st)
+					}
 					for k, b := range arm.Bindings {
 						field := b
 						if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
@@ -3374,6 +3377,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(env)
 				if !arm.IsWildcard {
+					if arm.AtBinding != "" {
+						armEnv.declare(arm.AtBinding, st)
+					}
 					for k, b := range arm.Bindings {
 						field := b
 						if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
