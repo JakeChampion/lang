@@ -2625,6 +2625,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			for _, arm := range x.Arms {
 				if arm.IsWildcard || arm.VariantName == ev.VariantName {
 					armEnv := newEnv(e)
+					if arm.AtBinding != "" {
+						armEnv.declare(arm.AtBinding, tag)
+					}
 					if !arm.IsWildcard {
 						for j, name := range arm.Bindings {
 							if j < len(ev.Payloads) {
@@ -3334,6 +3337,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 					continue
 				}
 				armEnv := newEnv(env)
+				if arm.AtBinding != "" {
+					armEnv.declare(arm.AtBinding, tag)
+				}
 				if !arm.IsWildcard {
 					for j, name := range arm.Bindings {
 						if j < len(ev.Payloads) {

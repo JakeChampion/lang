@@ -1,11 +1,12 @@
 // examples/self_host/ir_kind_run.fern — round-trip driver for the integer
 // op-kind registry (ir.fern's kind_id / kind_name, issue #4394 lever 2).
 //
-// It walks the WHOLE registry (ids 1..kind_count()) and asserts the id<->name
-// bijection — kind_id(kind_name(id)) == id and kind_name(id) is never the
-// "invalid" sentinel — so a new op kind added to one direction but not the
-// other (or a duplicate id) fails here rather than silently miscompiling a
-// backend once the int tag is wired. It also pins the KIND_INVALID contract
+// It walks the WHOLE registry (ids 1..kind_count(), plus the named extension
+// tags beyond it) and asserts the id<->name bijection —
+// kind_id(kind_name(id)) == id and kind_name(id) is never the "invalid"
+// sentinel — so a new op kind added to one direction but not the other (or a
+// duplicate id) fails here rather than silently miscompiling a backend once
+// the int tag is wired. It also pins the KIND_INVALID contract
 // (unknown tag -> 0, out-of-range / 0 id -> "invalid") and the int-keyed
 // classifier predicates (is_const_kind / is_terminator_kind /
 // is_foldable_binary_kind / is_commutative_kind).
@@ -42,16 +43,39 @@ function main(): i32 {
         id = id + 1;
     }
 
+    // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
+    //     (struct_copy=198 … raw_environ=207). Each must sit past the dense
+    //     table and round-trip through kind_name, so a tag reachable from
+    //     kind_id but unrendered by kind_name (the #5452 skew, which made
+    //     ssa_lift's struct_copy bail read "invalid") fails here.
+    var ext_names: string[] = [
+        "struct_copy", "store_i64", "tcp_listen", "tcp_accept", "writer_write",
+        "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ"
+    ];
+    var ext_max: i32 = n;
+    var ext_ok: i32 = 0;
+    var ext_failures: i32 = 0;
+    var ei: i32 = 0;
+    while (ei < ext_names.len()) {
+        var eid: i32 = ir.kind_id(ext_names[ei]);
+        if (eid > ext_max) { ext_max = eid; }
+        if (eid <= n || ir.kind_name(eid) != ext_names[ei]) { ext_failures = ext_failures + 1; }
+        else { ext_ok = ext_ok + 1; }
+        ei = ei + 1;
+    }
+
     var out: string = "";
     out = out + "kind_count=" + util.i32_to_string(n) + "\n";
     out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
     out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
+    out = out + "ext_ok=" + util.i32_to_string(ext_ok) + "\n";
+    out = out + "ext_failures=" + util.i32_to_string(ext_failures) + "\n";
 
-    // 2. KIND_INVALID contract: unknown tag -> 0, and 0 / out-of-range id ->
-    //    the "invalid" sentinel.
+    // 2. KIND_INVALID contract: unknown tag -> 0, and 0 / past-every-
+    //    registered-id (extension tags included) -> the "invalid" sentinel.
     out = out + "unknown_id=" + util.i32_to_string(ir.kind_id("not_an_op_kind")) + "\n";
     out = out + "id0=" + ir.kind_name(0) + "\n";
-    out = out + "oob=" + ir.kind_name(n + 1) + "\n";
+    out = out + "oob=" + ir.kind_name(ext_max + 1) + "\n";
 
     // 3. Spot-check a few tags round-trip to the right names (locks the actual
     //    ids down for the golden, so a reorder that still bijects is visible).
@@ -117,7 +141,7 @@ function main(): i32 {
     // accumulated buffer with `write` (no extra newline) rather than `print`.
     write(out);
 
-    // Exit code is the total failure count (bijection + tag consistency): 0
-    // on a clean sweep.
-    return failures + tag_bad;
+    // Exit code is the total failure count (bijection + extension sweep +
+    // tag consistency): 0 on a clean sweep.
+    return failures + ext_failures + tag_bad;
 }

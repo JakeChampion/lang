@@ -159,8 +159,10 @@ function drop_n(a: i32[], n: i32): i32[] {
 
 // is_rc_noop reports whether a call target is an irlower RC runtime helper the
 // lift strips (SSA has no free — see the arr_make note). All of them take the
-// box and return it (or void), and irlower always drops the result, so replacing
-// the call with a const 0 is sound on the leak-only SSA heap.
+// subject box as their FIRST argument and return it (or void with the result
+// drop'd), so substituting that box for the call's result is sound on the
+// leak-only SSA heap — including when the result FLOWS onward (the
+// consume-rebind `__field_reclaim_<T>(new, old, snap) -> new` is store_local'd).
 // has_prefix reports whether `s` begins with `p` (a byte-wise compare — the
 // compiler's own checker has no `.starts_with` method).
 function has_prefix(s: string, p: string): boolean {
@@ -184,8 +186,8 @@ function is_rc_noop(name: string): boolean {
     if (name == "__fern_str_arr_free") { return true; }
     // Per-type reclamation helpers irlower emits at scope exit (deep-drop of a
     // struct's rc-tracked fields / a consume-rebind field reclaim). The type
-    // name is a dynamic suffix, and their result is always drop'd, so a prefix
-    // match + const-0 stand-in is sound on the leak-only SSA heap.
+    // name is a dynamic suffix; both take + return the subject box (arg 0), so
+    // the box-for-result stand-in is sound on the leak-only SSA heap.
     if (has_prefix(name, "__struct_drop_")) { return true; }
     if (has_prefix(name, "__field_reclaim_")) { return true; }
     return false;
@@ -630,15 +632,17 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
                 var e: i32 = 0;
                 while (e < argc) { stack = drop_last(stack); e = e + 1; }
-                if (is_rc_noop(op.str)) {
+                if (is_rc_noop(op.str) && argc >= 1) {
                     // SSA lowers onto a leak-only bump heap (no free), so the RC
                     // runtime helpers irlower threads through are inert here —
                     // build_func emits no RC at all, and the lift strips the same
-                    // calls to keep one memory model. Each such call's result is
-                    // always immediately drop'd, so a const 0 stands in for it.
-                    var rz: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: rz, args: [], imm: 0, str: "" });
-                    stack = stack.append(rz);
+                    // calls to keep one memory model. Every such helper takes the
+                    // subject box FIRST and returns it (or void with the result
+                    // drop'd), so the box argument stands in for the result: a
+                    // helper whose result FLOWS (e.g. the consume-rebind
+                    // `__field_reclaim_<T>(new, old, snap) -> new`, which irlower
+                    // store_local's) yields the live box, not a null const 0.
+                    stack = stack.append(cargs[0]);
                 } else {
                     var cv: i32 = nvals; nvals = nvals + 1;
                     cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: cv, args: cargs, imm: 0, str: op.str });
@@ -875,6 +879,32 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: soff3, args: [], imm: op.i32_imm + 1, str: "" });
                 var ssv3: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ssv3, args: [sp3, soff3, sv3], imm: 0, str: "" });
+            }
+        } else if (k == "struct_copy") {
+            // A functional update's compact base copy (#4650): pop the src box
+            // and push a FRESH box that is a shallow word-for-word copy of its
+            // ndecl+1 slots (slot 0 tag + the ndecl fields) — the lift-side
+            // mirror of the `__fern_struct_copy` helper call the asm backends
+            // emit for this op. Field pointers are shared, exactly like the
+            // inline base-copy path; on the leak-only SSA heap no rc is needed.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var scsrc: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var scn: i32 = op.i32_imm;
+                var sch2: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: sch2, args: [], imm: scn + 1, str: "" });
+                var scw: i32 = 0;
+                while (scw <= scn) {
+                    var scwi: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: scwi, args: [], imm: scw, str: "" });
+                    var scwv: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: scwv, args: [scsrc, scwi], imm: 0, str: "" });
+                    var scws: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: scws, args: [sch2, scwi, scwv], imm: 0, str: "" });
+                    scw = scw + 1;
+                }
+                stack = stack.append(sch2);
             }
         } else if (k == "tuple_make") {
             // A tuple `(a, b, …)` → a heap box with element i at slot i (NO
@@ -1315,8 +1345,13 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             ok = false;   // outside the slice — caller falls back.
         }
         // Record the offending op kind the first time the lift bails (any
-        // branch above — unhandled op, width-64, stack underflow, …).
-        if (!ok && bail == "") { bail = k; }
+        // branch above — unhandled op, width-64, stack underflow, …). A tag
+        // ir.kind_name can't render carries its raw id (#5452 — a bare
+        // "invalid" hid the registry skew that unnamed struct_copy=198).
+        if (!ok && bail == "") {
+            bail = k;
+            if (k == "invalid") { bail = bail + "#" + util.i32_to_string(op.kind_tag); }
+        }
         i = i + 1;
     }
 

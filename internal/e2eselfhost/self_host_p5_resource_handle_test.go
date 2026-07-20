@@ -376,7 +376,7 @@ function main(): i32 {
 
 // TestSelfHostExternResourceHandleAutoDrop is the self-host parity gate for P5
 // slice 3 (docs/WIT-BRING-YOUR-OWN.md): AUTOMATIC drop. The program declares NO
-// drop function — the self-host compiler (parser.fern insert_resource_drops)
+// drop function — the self-host compiler (parser.fern lower_defers_prepass_module)
 // inserts `defer <drop>(p);` for the owned `own Pollable` local, lower_defers
 // expands it on the return path, and the synthesized `[resource-drop]pollable`
 // import is emitted in the core. The Go world-driven composer (slice 2) then
