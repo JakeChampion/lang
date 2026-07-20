@@ -84,11 +84,16 @@ These are not just smells — they can produce wrong output today.
   `StepSignal` union (`SigReturn(Value)|SigBreak|SigContinue|SigError`) distinct
   from `Value`; distinct `OpBreak`/`OpContinue` ops in the VM.
 
-- [ ] **SH-003 — `watbin` encodes a trap on unknown opcode.** `watbin.fern:556-645,
-  683-696` — `arith_opcode`/`mem_load_opcode`/`mem_store_opcode` `return 0` on no
-  match; `0x00` is `unreachable`, so an unhandled instruction silently emits a
-  broken module. Severity **High**. _Fix:_ return `-1` / a `(found, byte)` result
-  and raise an explicit "unknown opcode" error.
+- [x] **SH-003 — `watbin` silently drops unknown instructions.** _Done:_ the
+  opcode tables' `return 0` sentinel made an unhandled instruction fall
+  through BOTH encoder paths (folded `enc_instr` and the flat token loop)
+  and emit NOTHING — the module encoded with the operation missing, so it
+  failed validation with a baffling type mismatch or ran with wrong values
+  (the `sat_trunc_opcode` comment records a real instance). Both
+  fallthroughs now `eprint` the op and `exit(1)` when a NAMED op reaches
+  them (empty/unnamed nodes keep the lenient skip). Verified benign-token
+  clean across the wasm-binary, CLI (`-target wasm-bin`), leb128,
+  ret-struct-field, streq-helper, and arm64-builds suites.
 
 - [ ] **SH-004 — `parse_f64` does not round-trip to nearest double.**
   `watbin.fern:381-413` accumulates `v*10+digit` then scales by `0.1`-fractions,
