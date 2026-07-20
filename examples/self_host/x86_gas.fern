@@ -1032,6 +1032,29 @@ function x86_gas_assemble(src: string): X86Asm {
                 } else {
                     a = x86_rodata_quad(a, x86_gas_atoi(x86_gas_trim(line[6:line.len()])), 0);
                 }
+            } else if (line.starts_with(".long")) {
+                // `.long a, b, …`: each comma-separated value as 4 little-endian
+                // bytes. The IR emitters lay an f64 constant down as two `.long`
+                // halves (exact bits, so the encoding is assembler-independent —
+                // see const_f64). Splitting the comma list keeps a single
+                // labelled directive; ignoring it (the pre-#5434 behaviour)
+                // silently dropped the 8 rodata bytes and shifted everything
+                // after — the SH-005 hazard class.
+                var lrest: string = x86_gas_trim(line[6:line.len()]);
+                var ltok: string = "";
+                var lci: i32 = 0;
+                while (lci < lrest.len()) {
+                    if (lrest[lci] == 44) {   // ','
+                        a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
+                        ltok = "";
+                    } else {
+                        ltok = ltok + lrest[lci:lci + 1];
+                    }
+                    lci = lci + 1;
+                }
+                if (x86_gas_trim(ltok).len() > 0) {
+                    a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
+                }
             } else if (line.starts_with(".double")) {
                 a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(line[8:line.len()])))) };
             } else if (line.starts_with(".ascii")) {

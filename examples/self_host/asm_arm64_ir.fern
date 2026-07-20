@@ -1246,11 +1246,18 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             if (icargc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(icargc * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 4) {  // const_f64
-            // Float literal: GAS assembles the text to an IEEE double in .rodata;
-            // load its bits and push them (floats flow as their 8-byte pattern).
+            // Float literal: emit the EXACT IEEE-754 bits (round-to-nearest,
+            // ties-to-even) as two little-endian 32-bit halves in .rodata, then
+            // load them. Emitting bits — not a decimal `.double` — makes the
+            // rounding assembler-independent: GNU `as` rounds `.double` ties
+            // half-UP, mis-encoding tie literals (#5434). Floats flow as their
+            // 8-byte pattern.
             var flb: asmcore.LabelOut = asmcore.fresh_label(s);
             s = flb.state;
-            s = s.write("    .section .rodata\n" + flb.name + ": .double " + o.str + "\n    .text\n");
+            var fbits: i64 = util.parse_f64_bits(o.str);
+            var flo: i32 = fbits as i32;
+            var fhi: i32 = (fbits >> 32) as i32;
+            s = s.write("    .section .rodata\n" + flb.name + ": .long " + util.i32_to_string(flo) + ", " + util.i32_to_string(fhi) + "\n    .text\n");
             s = s.write("    adrp x0, " + flb.name + "\n    add x0, x0, :lo12:" + flb.name + "\n    ldr d0, [x0]\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 11) {  // i32_to_f64
             // signed i32 -> f64 (scvtf); value rides the stack as bits.

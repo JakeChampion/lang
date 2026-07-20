@@ -217,3 +217,185 @@ pub function contains(haystack: string, needle: string): boolean {
     }
     return false;
 }
+
+// parse_f64_bits converts a decimal float spelling to the i64 IEEE-754
+// bit pattern of the nearest double (round-to-nearest, ties-to-even). It
+// exists so the codegen emitters can lay down EXACT f64 bits (`.long`
+// halves) instead of a decimal `.double` directive, whose rounding is at
+// the mercy of the downstream assembler — GNU `as`, for one, rounds ties
+// half-UP, so a literal on a ULP tie (e.g. 9007199254740993.0 = 2^53+1)
+// gets the wrong bits. Emitting the bits directly makes float output
+// assembler-independent (#5434, the emit-side sibling of SH-004).
+//
+// Method — the classic exact decimal-shift algorithm (a digit buffer with
+// a movable decimal point, halved/doubled in grade-school decimal, as in
+// Go's strconv/decimal.go): collect the significant digits D so the value
+// is 0.D × 10^dp; binary-normalize into [0.5, 1) by exact ÷2/×2 counting
+// the binary exponent; pull the mantissa bits by repeated ×2 (the carry
+// out of the integer place is the next bit); round on the next bit + a
+// sticky flag. This is a verbatim mirror of watbin.parse_f64_bits and the
+// three assemblers' parsers (x86_gas_parse_f64 / arm64_parse_f64) — those
+// stay standalone (deliberately import-free); this copy is the reachable-
+// from-the-emitters one (asm_ir / asm_arm64_ir already import util).
+pub function parse_f64_bits(s: string): i64 {
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == 43) { i = 1; }
+    var signbit: i64 = 0;
+    if (neg) { var one: i64 = 1; signbit = one << 63; }
+    var digits: i32[] = [];
+    var dp: i32 = 0;
+    var sticky: boolean = false;
+    var started: boolean = false;
+    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        var d: i32 = s[i] - 48;
+        if (started || d != 0) {
+            started = true;
+            if (digits.len() < 40) { digits = digits.append(d); }
+            else { if (d != 0) { sticky = true; } }
+            dp = dp + 1;
+        }
+        i = i + 1;
+    }
+    if (i < s.len() && s[i] == 46) {        // '.'
+        i = i + 1;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            var fd: i32 = s[i] - 48;
+            if (started || fd != 0) {
+                started = true;
+                if (digits.len() < 40) { digits = digits.append(fd); }
+                else { if (fd != 0) { sticky = true; } }
+            } else {
+                dp = dp - 1;                // leading fraction zero shifts the point
+            }
+            i = i + 1;
+        }
+    }
+    if (i < s.len() && (s[i] == 101 || s[i] == 69)) {   // 'e' / 'E'
+        i = i + 1;
+        var eneg: boolean = false;
+        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        var exp: i32 = 0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            if (exp < 100000) { exp = exp * 10 + (s[i] - 48); }
+            i = i + 1;
+        }
+        if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
+    }
+    while (digits.len() > 0 && digits[digits.len() - 1] == 0) {
+        digits = pf64_sub(digits, 0, digits.len() - 1);
+    }
+    if (digits.len() == 0) { return signbit; }          // ±0.0
+    if (dp > 310) { var inf: i64 = 2047; return signbit | (inf << 52); }
+    if (dp < 0 - 350) { return signbit; }
+    var bexp: i32 = 0;
+    while (dp > 0) {
+        var hb: i32[] = pf64_div2(digits);
+        if (hb.len() > 0 && hb[0] == 0) {
+            digits = pf64_sub(hb, 1, hb.len());
+            dp = dp - 1;
+        } else {
+            digits = hb;
+        }
+        bexp = bexp + 1;
+        while (digits.len() > 0 && digits[digits.len() - 1] == 0) { digits = pf64_sub(digits, 0, digits.len() - 1); }
+    }
+    while (dp < 0 || (digits.len() > 0 && digits[0] < 5)) {
+        var db: i32[] = pf64_mul2(digits);
+        if (db[0] != 0) {
+            digits = db;
+            dp = dp + 1;
+        } else {
+            digits = pf64_sub(db, 1, db.len());
+        }
+        bexp = bexp - 1;
+        while (digits.len() > 0 && digits[digits.len() - 1] == 0) { digits = pf64_sub(digits, 0, digits.len() - 1); }
+        if (digits.len() == 0) { return signbit; }
+    }
+    var e: i32 = bexp + 1022;
+    if (e >= 2047) { var inf2: i64 = 2047; return signbit | (inf2 << 52); }
+    var nbits: i32 = 53;
+    if (e <= 0) { nbits = 52 + e; }
+    if (nbits < 0) { return signbit; }
+    var mant: i64 = 0;
+    var k2: i32 = 0;
+    while (k2 < nbits) {
+        var mb: i32[] = pf64_mul2(digits);
+        mant = mant * 2 + (mb[0] as i64);
+        digits = pf64_sub(mb, 1, mb.len());
+        k2 = k2 + 1;
+    }
+    var rb: i32[] = pf64_mul2(digits);
+    var roundbit: i32 = rb[0];
+    var rest: i32[] = pf64_sub(rb, 1, rb.len());
+    var st: boolean = sticky || !pf64_all_zero(rest);
+    if (roundbit == 1 && (st || (mant & 1) == 1)) { mant = mant + 1; }
+    if (e <= 0) {
+        return signbit | mant;
+    }
+    var full: i64 = 1;
+    full = full << 53;
+    if (mant == full) {
+        mant = mant / 2;
+        e = e + 1;
+        if (e >= 2047) { var inf3: i64 = 2047; return signbit | (inf3 << 52); }
+    }
+    var hidden: i64 = 1;
+    hidden = hidden << 52;
+    return signbit | ((e as i64) << 52) | (mant - hidden);
+}
+
+// pf64_div2 halves the fraction buffer 0.B (grade-school left-to-right).
+function pf64_div2(b: i32[]): i32[] {
+    var out: i32[] = [];
+    var r: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.len()) {
+        var cur: i32 = r * 10 + b[i];
+        out = out.append(cur / 2);
+        r = cur % 2;
+        i = i + 1;
+    }
+    if (r != 0) { out = out.append(5); }
+    return out;
+}
+
+// pf64_mul2 doubles the fraction buffer 0.B; the carry out of the front
+// (0 or 1) is prepended as the first element for the caller to split off.
+function pf64_mul2(b: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(0); i = i + 1; }
+    var carry: i32 = 0;
+    var j: i32 = b.len() - 1;
+    while (j >= 0) {
+        var cur: i32 = b[j] * 2 + carry;
+        out = out.with(j, cur % 10);
+        carry = cur / 10;
+        j = j - 1;
+    }
+    var res: i32[] = [carry];
+    var k: i32 = 0;
+    while (k < out.len()) { res = res.append(out[k]); k = k + 1; }
+    return res;
+}
+
+// pf64_sub returns b[from : upto) as a fresh array.
+function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = from;
+    while (i < upto) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
+// pf64_all_zero reports whether every digit in b is zero.
+function pf64_all_zero(b: i32[]): boolean {
+    var i: i32 = 0;
+    while (i < b.len()) {
+        if (b[i] != 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
