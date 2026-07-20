@@ -75,6 +75,7 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 		return prog, diag.Errors(p.errors)
 	}
 	desugarForEachProgram(prog)
+	elideLenBoundedChecks(prog)
 	return prog, nil
 }
 
