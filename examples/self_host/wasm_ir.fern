@@ -1116,6 +1116,26 @@ pub function fn_support_section(cache: irlower.LowerResult[]): string {
     return out;
 }
 
+// wasm_arr_bounds_check emits the array index bounds check shared by arr_get /
+// arr_set (docs/ARRAY-BOUNDS.md). Precondition: the index has already been
+// popped into idx_local and the base pointer is on top of the wasm stack.
+// It compares idx against the length prefix (len @ base+0) with a single
+// unsigned compare — `len <= idx` catches both a negative index (which reads
+// as a huge unsigned) and `idx >= len` — and traps (`unreachable`, which
+// wasmtime surfaces as exit 134) when out of range. On the in-range path it
+// leaves `base, idx` back on the stack for the caller's load/store sequence.
+function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
+    var s: string = "";
+    s = s + "    local.tee " + util.i32_to_string(base_local) + "\n";
+    s = s + "    i32.load\n";
+    s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
+    s = s + "    i32.le_u\n";
+    s = s + "    if\n      unreachable\n    end\n";
+    s = s + "    local.get " + util.i32_to_string(base_local) + "\n";
+    s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
+    return s;
+}
+
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
@@ -1132,6 +1152,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     // elements (i64[] arr_make / arr_set) through the typed wasm stack — the i32
     // eltmp can't hold an i64, and f64tmp is float-typed.
     var i64tmp: i32 = r.n_locals + 3;
+    // bctmp: an i32 scratch holding the index across the arr_get / arr_set bounds
+    // check (arrtmp holds the base). Needed as a fifth scratch because arr_set's
+    // i32 path already parks the value in eltmp, so the index needs its own home.
+    var bctmp: i32 = r.n_locals + 4;
     // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
     // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
     // allow `.`. r.n_params already counts the receiver as the first param.
@@ -1152,11 +1176,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
     else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + " (result f64)\n"; }
     else { out = out + " (result i32)\n"; }
-    // body locals + 4 scratch locals. A body local in r.i64_slots is declared
+    // body locals + 5 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
-    // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp).
+    // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp), one i32
+    // (bctmp, the bounds-check index holder).
     var nbody: i32 = r.n_locals - r.n_params;
-    var nloc: i32 = nbody + 4;
+    var nloc: i32 = nbody + 5;
     out = out + "    (local";
     var l: i32 = 0;
     while (l < nloc) {
@@ -1473,7 +1498,11 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 88) {  // arr_get
             // stack: base, idx -> load(base + 8 + idx*esz). 8-byte elements (width
             // 64) use an 8-byte stride: i64.load for an i64[] (unsigned flag),
-            // f64.load for an f64[]; i32 elements the 4-byte path.
+            // f64.load for an f64[]; i32 elements the 4-byte path. The index is
+            // bounds-checked (len @ base+0) before the address is formed — an
+            // out-of-range read traps (exit 134) instead of reading past the end.
+            out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+            out = out + wasm_arr_bounds_check(arrtmp, bctmp);
             if (o.width == 64 && o.unsigned) {
                 out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n";
             } else if (o.width == 64) {
@@ -1484,13 +1513,25 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 89) {  // arr_set
             // stack: base, idx, val -> store val at base+8+idx*esz. 8-byte elements
             // stash through the matching scratch (i64tmp for i64[], f64tmp for
-            // f64[]) and i64.store / f64.store at 8-byte stride.
+            // f64[]) and i64.store / f64.store at 8-byte stride. The value is
+            // parked first, then the index is bounds-checked (len @ base+0) before
+            // the address is formed — an out-of-range write traps (exit 134)
+            // instead of clobbering memory past the end.
             if (o.width == 64 && o.unsigned) {
-                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
             } else if (o.width == 64) {
-                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
             } else {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+                out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+                out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             }
         } else if (o.kind_tag == 90) {  // arr_len
             // stack: base -> i32.load(base)  (len @ a+0)
