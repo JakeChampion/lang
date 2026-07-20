@@ -1009,6 +1009,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.VoidType{},
 	}
+	// print_int(n: i32): void — n's decimal text on stdout, no newline. The
+	// integer counterpart of `write`, and the shape self-host driver programs
+	// use to report values.
+	//
+	// This existed only in the self-host compiler (asmcore's need("print_int")
+	// / irlower's print_int arm) and not in the native checker + interpreter,
+	// so no self-host test whose program printed a value could be oracle-checked
+	// against the reference interpreter — the oracle rejected every such program
+	// with E001 "undefined identifier". Adding it here is convergence (native
+	// catching up to self-host), not new native-only surface — see
+	// docs/NATIVE-CONVERGENCE.md and #4451.
+	//
+	// NOTE: the self-host lowering also accepts an i64 argument (it widens to
+	// $__fern_print_int64 when the argument infers 64-bit); this signature is
+	// i32-only, like `putchar`, because argAssignable does not narrow i64 to
+	// i32 and there is no "any integer width" param type to spell. An i64
+	// print_int therefore still fails the native check — tracked with the two
+	// sibling native const-typing gaps in #5477.
+	c.info.FuncSigs["print_int"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	// write(s: string): void — stdout without a trailing newline.
 	// Use this when you want to format your own output (status
 	// lines, prompts, custom delimiters) instead of one line per

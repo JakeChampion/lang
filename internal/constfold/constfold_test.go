@@ -236,6 +236,38 @@ func countIdents(prog *ast.Program, target string) int {
 			}
 		case *ast.FieldAccess:
 			walkExpr(x.Target)
+		// These mirror the compound forms the substituter walks. Without them
+		// this helper cannot see a stray reference inside a cast / slice bound
+		// / tuple element / lambda body — exactly the forms substitution used
+		// to miss (#5477), so the gap hid itself from the tests.
+		case *ast.CastExpr:
+			walkExpr(x.Inner)
+		case *ast.DowncastExpr:
+			walkExpr(x.Inner)
+		case *ast.SliceExpr:
+			walkExpr(x.Source)
+			walkExpr(x.Low)
+			walkExpr(x.High)
+		case *ast.TupleLit:
+			for _, el := range x.Elems {
+				walkExpr(el)
+			}
+		case *ast.MapLit:
+			for _, en := range x.Entries {
+				walkExpr(en.Key)
+				walkExpr(en.Value)
+			}
+		case *ast.EnumLit:
+			for _, a := range x.Args {
+				walkExpr(a)
+			}
+		case *ast.FString:
+			for _, p := range x.Parts {
+				walkExpr(p.Expr)
+			}
+			walkExpr(x.Desugared)
+		case *ast.Lambda:
+			walkStmt(x.Body)
 		}
 	}
 	walkStmt = func(s ast.Stmt) {
