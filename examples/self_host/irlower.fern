@@ -7270,6 +7270,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // An argument bound to an i64 param must be lowered as
                             // an i64 value (so an i64 literal / i32 source widens).
                             sc = lower_i64(c.args[ai], sc);
+                        } else if (sc.param_is_f64(cid.name, ai)
+                                   && !expr_is_f64(c.args[ai], sc)
+                                   && infer_expr_width(c.args[ai], sc) == 32) {
+                            // An INTEGER argument bound to an f64 param: lower it
+                            // as i32 then convert. `addhalf(3)` at
+                            // `addhalf(x: f64)` previously pushed a raw i32 and
+                            // wasm rejected the module ("type mismatch: expected
+                            // f64, found i32"); the register backends took the
+                            // same untyped path. Guarded on width 32 so an i64
+                            // argument (which would need a different conversion)
+                            // is left to the existing path rather than silently
+                            // narrowed. #4801.
+                            sc = lower_expr(c.args[ai], sc);
+                            if (!sc.ok) { return sc; }
+                            sc = sc.emit(ir.op_i32_to_f64());
                         } else if (sc.callee_param_is_typevar(cid.name, ai)
                                    && !expr_is_f64(c.args[ai], sc) && infer_expr_width(c.args[ai], sc) == 64) {
                             // A 64-bit (i64/u64) argument at a BARE-TYPEVAR
@@ -33283,6 +33298,16 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         var pj: i32 = 0;
         while (pj < funcs[k].params.len()) {
             if (funcs[k].params[pj].type_name == "i64" || funcs[k].params[pj].type_name == "u64") { flags = flags + "1"; any = true; }
+            // An f64 PARAM flags '4'. It does not widen anything (f64 rides its
+            // own lowering path, not lower_i64), so param_is_i64 — which matches
+            // only '1' — never sees it; it exists so param_is_f64 can recover
+            // the callee's float-ness at the call site and coerce an integer
+            // argument. Without it `addhalf(3)` at `addhalf(x: f64)` pushed a
+            // raw i32 and wasm rejected the module with "type mismatch:
+            // expected f64, found i32" (#4801). Registering the function on
+            // this flag alone is why `any` is set here too — a function with an
+            // f64 param and no 64-bit integer anywhere still needs an entry.
+            else if (is_f64_scalar_type_name(funcs[k].params[pj].type_name)) { flags = flags + "4"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -35373,6 +35398,16 @@ pub function (s: LowerState) param_is_i64(name: string, idx: i32): boolean {
     var sig: string = s.i64_sig_of(name);
     var pos: i32 = idx + 1;   // skip the ret flag
     return pos < sig.len() && sig[pos] == 49;   // 49 = '1'
+}
+
+// param_is_f64 reports whether callee `name`'s param `idx` is an f64/f32, so
+// an integer argument there can be converted rather than pushed raw. Reads the
+// same "ret+params" signature registry param_is_i64 does — the f64 flag is '4'
+// (see i64_ret_fns_of) — which is why this needs no extra LowerState field.
+pub function (s: LowerState) param_is_f64(name: string, idx: i32): boolean {
+    var sig: string = s.i64_sig_of(name);
+    var pos: i32 = idx + 1;   // skip the ret flag
+    return pos < sig.len() && sig[pos] == 52;   // 52 = '4'
 }
 
 // callee_param_is_fn reports whether callee `name`'s param `idx` is a function

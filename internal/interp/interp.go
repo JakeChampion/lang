@@ -2982,6 +2982,27 @@ func valuesEqual(a, b Value) bool {
 func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
+		// IsFloat is the checker's record (settleFloat) that a polymorphic
+		// integer literal settled into FLOAT context — `var x: f64 = 3`, or an
+		// integer literal at an f64 parameter. Ignoring it handed the body a
+		// Number where it expected a Float, so the first arithmetic op failed
+		// with `"+" on interp.Number and interp.Float not supported` even
+		// though the checker had accepted the program. The compiled backends
+		// read the same stamp (the IR's NumberLit lowering takes its f-const
+		// path on it). #5477.
+		if x.IsFloat {
+			// FloatWidth is the width settleFloat resolved; 0 means it never
+			// ran, in which case f64 is the language's default float.
+			w := x.FloatWidth
+			if w == 0 {
+				w = 64
+			}
+			v := float64(x.Value)
+			if w == 32 {
+				v = float64(float32(v))
+			}
+			return Float{V: v, Width: w}, nil
+		}
 		return Number(x.Value), nil
 	case *ast.FloatLit:
 		// Width comes from the checker. An unsettled literal
