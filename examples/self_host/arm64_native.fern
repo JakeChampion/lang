@@ -2097,6 +2097,29 @@ function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
         if (arm64_str_starts_with(line, ".word")) { off = 5; }
         return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[off:line.len()])) as i64, 4);
     }
+    if (arm64_str_starts_with(line, ".long")) {
+        // `.long a, b, …`: each comma-separated value as 4 little-endian bytes.
+        // The IR emitters lay an f64 constant down as two `.long` halves (exact
+        // bits, assembler-independent — see const_f64). Ignoring it (the
+        // pre-#5434 behaviour) silently dropped the 8 rodata bytes.
+        var lrest: string = arm64_gas_trim(line[5:line.len()]);
+        var ltok: string = "";
+        var lci: i32 = 0;
+        var lp: Arm64GasProg = p;
+        while (lci < lrest.len()) {
+            if (lrest[lci] == 44) {   // ','
+                lp = arm64_gas_data_le(lp, arm64_gas_atoi(arm64_gas_trim(ltok)) as i64, 4);
+                ltok = "";
+            } else {
+                ltok = ltok + lrest[lci:lci + 1];
+            }
+            lci = lci + 1;
+        }
+        if (arm64_gas_trim(ltok).len() > 0) {
+            lp = arm64_gas_data_le(lp, arm64_gas_atoi(arm64_gas_trim(ltok)) as i64, 4);
+        }
+        return lp;
+    }
     if (arm64_str_starts_with(line, ".byte")) {
         return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 1);
     }
