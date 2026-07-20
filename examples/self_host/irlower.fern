@@ -13558,9 +13558,10 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             mkf = mkf.emit(ir.op_load_local(mkidxslot));
             // 64-bit values() column: full 8-byte element read (#5253) —
             // arr_get_i64 for i64/u64, arr_get width 64 (f64.load) for f64.
-            if (mki_vw == "i64" || mki_vw == "u64") { mkf = mkf.emit(ir.op_arr_get_i64()); }
-            else if (mki_vw == "f64") { mkf = mkf.emit(ir.op_arr_get(64)); }
-            else { mkf = mkf.emit(ir.op_arr_get(32)); }
+            // idx < arr_len guard ran above → unchecked reads (#4380 lever 3).
+            if (mki_vw == "i64" || mki_vw == "u64") { mkf = mkf.emit(ir.op_arr_get_i64_nc()); }
+            else if (mki_vw == "f64") { mkf = mkf.emit(ir.op_arr_get_nc(64)); }
+            else { mkf = mkf.emit(ir.op_arr_get_nc(32)); }
             mkf = mkf.emit(ir.op_store_local(mkivslot));
             mkf = lower_block(fr.body, mkf);
             if (!mkf.ok) { return mkf; }
@@ -13706,7 +13707,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             lf = lf.emit(ir.op_brif(1));
             lf = lf.emit(ir.op_load_local(fldslot));
             lf = lf.emit(ir.op_load_local(fldidxslot));
-            lf = lf.emit(ir.op_arr_get(32));
+            lf = lf.emit(ir.op_arr_get_nc(32));   // idx < arr_len guard ran above (#4380 lever 3)
             lf = lf.emit(ir.op_store_local(fldvslot));
             lf = lower_block(fr.body, lf);
             if (!lf.ok) { return lf; }
@@ -13799,16 +13800,16 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         fm = fm.emit(ir.op_brif(1));
         fm = fm.emit(ir.op_load_local(ksslot));
         fm = fm.emit(ir.op_load_local(idxslot2));
-        fm = fm.emit(ir.op_arr_get(32));
+        fm = fm.emit(ir.op_arr_get_nc(32));   // key: idx < ks_len guard ran above (#4380 lever 3)
         fm = fm.emit(ir.op_store_local(kslot));
         fm = fm.emit(ir.op_load_local(vsslot));
         fm = fm.emit(ir.op_load_local(idxslot2));
         // 64-bit value column: read the full 8-byte element — arr_get_i64
         // (i64.load) for i64/u64, arr_get width 64 (f64.load) for f64 —
         // not a 32-bit slice of it (#5253).
-        if (vty == "i64" || vty == "u64") { fm = fm.emit(ir.op_arr_get_i64()); }
-        else if (vty == "f64") { fm = fm.emit(ir.op_arr_get(64)); }
-        else { fm = fm.emit(ir.op_arr_get(32)); }
+        if (vty == "i64" || vty == "u64") { fm = fm.emit(ir.op_arr_get_i64_nc()); }
+        else if (vty == "f64") { fm = fm.emit(ir.op_arr_get_nc(64)); }
+        else { fm = fm.emit(ir.op_arr_get_nc(32)); }
         fm = fm.emit(ir.op_store_local(vslot));
         fm = lower_block(fr.body, fm);
         if (!fm.ok) { return fm; }
@@ -13965,8 +13966,11 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // x = arr[idx]  (8-byte i64 / f64 element, or 4-byte i32 / string[])
     ff = ff.emit(ir.op_load_local(aslot));
     ff = ff.emit(ir.op_load_local(idxslot));
-    if (elem_is_i64 || elem_is_u64) { ff = ff.emit(ir.op_arr_get_i64()); }
-    else { ff = ff.emit(ir.op_arr_get(elem_w)); }
+    // Unchecked reads (#4380 lever 3): the `idx < arr.len()` guard ran at the top
+    // of this iteration, so the element read is provably in bounds — drop the
+    // per-iteration bounds check (x86 honours the flag; arm64/wasm keep theirs).
+    if (elem_is_i64 || elem_is_u64) { ff = ff.emit(ir.op_arr_get_i64_nc()); }
+    else { ff = ff.emit(ir.op_arr_get_nc(elem_w)); }
     ff = ff.emit(ir.op_store_local(xslot));
     ff = lower_block(fr.body, ff);
     if (!ff.ok) { return ff; }

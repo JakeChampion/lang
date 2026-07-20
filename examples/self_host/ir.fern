@@ -233,6 +233,12 @@ pub function op_arr_make(n: i32, width: i32): Op {
     return Op { kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_arr_get(width: i32): Op { return Op { kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+// Unchecked `arr_get` (#4380 lever 3, self-host port): i32_imm == 1 flags a read
+// the emitter has statically proven in bounds — the foreach counted loops, whose
+// `idx < arr_len` guard runs immediately before the read every iteration. The
+// x86 backend skips the bounds compare + oob trap for it; arm64 / wasm read only
+// kind_tag and keep their checks (a safe no-op there until they honour the flag).
+pub function op_arr_get_nc(width: i32): Op { return Op { kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 pub function op_arr_set(width: i32): Op { return Op { kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 // i64-element array ops: an 8-byte stride like f64, but the wasm backend uses
 // i64.load / i64.store (an INTEGER 8-byte slot) instead of f64.load/store. The
@@ -243,6 +249,8 @@ pub function op_arr_make_i64(n: i32): Op {
     return Op { kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 pub function op_arr_get_i64(): Op { return Op { kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+// Unchecked 8-byte `arr_get` (i64/u64 element) — the i64 sibling of op_arr_get_nc.
+pub function op_arr_get_i64_nc(): Op { return Op { kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_set_i64(): Op { return Op { kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
