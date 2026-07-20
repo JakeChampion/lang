@@ -40,13 +40,13 @@ function main(): i32 {
         eprint(arity_errs);
         return 1;
     }
-    // subprocess (child-process spawning) is unsupportable on wasm/WASI. Reject
-    // it with a clean diagnostic here — before either emit path — rather than
-    // routing to the AST emitter (no wasm subprocess runtime → invalid WAT) or
-    // emitting a broken IR module (#4320). This is the one op that is an
-    // error-endpoint even in the full async/socket port.
-    if (wasm_ir.module_uses_subprocess(mod)) {
-        eprint("error: subprocess is not supported on the wasm target\n");
+    // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317)
+    // are error endpoints, not deferrals: reject here, before either emit path,
+    // rather than routing to the AST emitter — which has no runtime for them and
+    // emits a call against a symbol nothing defines.
+    var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
+    if (unsupported.len() > 0) {
+        eprint(wasm_ir.wasm_unsupported_message(unsupported));
         return 1;
     }
     var emitted: string = "";

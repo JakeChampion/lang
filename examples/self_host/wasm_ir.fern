@@ -907,15 +907,24 @@ function module_erased_wide(cache: irlower.LowerResult[]): boolean {
     return false;
 }
 
-// module_uses_subprocess reports whether any function body calls the
-// `subprocess(cmd, args, stdin)` builtin. subprocess (child-process spawning) is
-// unsupportable on wasm/WASI, so the wasm driver rejects such a program with a
-// clean diagnostic (#4320) instead of routing it to the AST emitter — which has
-// no subprocess runtime and would emit invalid WAT. Detection is syntactic: the
-// bare callee ident `subprocess` as collected by astwalk (a call's callee IS
-// collected; a `.subprocess` field access is not), the same pre-emit gate shape
-// check_call_arity uses.
-pub function module_uses_subprocess(mod: parser.Module): boolean {
+// wasm_unsupported_builtin returns the name of the first builtin the module
+// calls that has NO wasm meaning at all, or "" when there is none. These are
+// error endpoints, not deferrals: routing them to the AST emitter produces a
+// module that references a runtime symbol nothing defines, so the failure lands
+// as an opaque `unknown func: failed to find name $X` from the wasm loader
+// instead of a diagnostic naming the unsupported feature.
+//
+//   - subprocess — child-process spawning, unsupportable on wasm/WASI (#4320).
+//   - timer_fd — the native fd-based CLOCK_MONOTONIC timerfd. wasm has no file
+//     descriptors to poll, and its analog already exists and lowers:
+//     wasm_timer_pollable, which returns a wasi:io/poll pollable instead of an
+//     fd (#4317). Before this, a timer_fd module fell to the AST path and
+//     emitted `call $timer_fd` against nothing.
+//
+// Detection is syntactic: the bare callee ident as collected by astwalk (a
+// call's callee IS collected; a `.name` field access is not), the same pre-emit
+// gate shape check_call_arity uses.
+pub function wasm_unsupported_builtin(mod: parser.Module): string {
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var ids: string[] = [];
@@ -924,10 +933,21 @@ pub function module_uses_subprocess(mod: parser.Module): boolean {
             ids = astwalk.collect_idents_stmt(mod.funcs[fi].body[si], ids);
             si = si + 1;
         }
-        if (util.index_of_str(ids, "subprocess") >= 0) { return true; }
+        if (util.index_of_str(ids, "subprocess") >= 0) { return "subprocess"; }
+        if (util.index_of_str(ids, "timer_fd") >= 0) { return "timer_fd"; }
         fi = fi + 1;
     }
-    return false;
+    return "";
+}
+
+// wasm_unsupported_message is the diagnostic both wasm drivers print for an
+// unsupported builtin, so the wording cannot drift between them. timer_fd gets
+// a pointer at its wasm analog; there is no analog to suggest for subprocess.
+pub function wasm_unsupported_message(name: string): string {
+    if (name == "timer_fd") {
+        return "error: timer_fd is not supported on the wasm target (wasm has no pollable file descriptors); use wasm_timer_pollable, which returns a wasi:io/poll pollable\n";
+    }
+    return "error: " + name + " is not supported on the wasm target\n";
 }
 
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
@@ -952,10 +972,12 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // only a single-clock poll_oneoff and DOES lower on the wasm IR path — see
         // $__fern_sleep_ms; it is no longer deferred.)
         && !module_emits_op_cached(cache, "poll")
-        // timer_fd is the native timerfd (fd-based); it has no direct wasm
-        // preview2 analog (the wasm reactor uses wasm_timer_pollable instead), so
-        // a timer_fd module stays on the wasm AST path for now.
-        && !module_emits_op_cached(cache, "timer_fd")
+        // timer_fd is NOT deferred to the AST path — it is an error endpoint on
+        // wasm, rejected before emit by wasm_unsupported_builtin (#4317). It is
+        // the native fd-based timerfd, and wasm has no pollable file descriptors;
+        // its analog wasm_timer_pollable already lowers. Deferring it only moved
+        // the failure to the wasm loader, which reported the unhelpful
+        // `unknown func: failed to find name $timer_fd`. No exclusion here.
         // wasm_timer_pollable / wasm_pollable_drop / wasm_block DO lower on the
         // wasm IR path now (#3457 / #4317): wasm_ir emits direct preview2 calls
         // (wasi:clocks/monotonic-clock.subscribe-duration, wasi:io/poll
