@@ -48,6 +48,47 @@ var strConcatTempIRCases = []struct {
 	{"ident-operands-result-only",
 		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; return (a + b).len(); }`,
 		5, 1},
+	// A scalar `.to_string()` operand (`"n" + w.to_string()`) is the builtin
+	// fresh producer — freed after the concat (#4353 concat-temp finding: it
+	// was the one producer is_fresh_str_temp missed, leaking the temp per
+	// evaluation). Heap-bump flat across 5000 iterations.
+	{"tostring-operand-churn",
+		`function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { var r: string = "n" + w.to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
+    var b1: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < 5000) { var r2: string = "n" + i.to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
+    var b2: i32 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`,
+		0, -1},
+	// Value shape: "n" + 47.to_string() = "n47", len 3 (scalar-receiver
+	// admission via the ident-slot arm; the cast arm gets its own case).
+	{"tostring-operand-len",
+		`function main(): i32 { var w: i32 = 47; return ("n" + w.to_string()).len(); }`,
+		3, -1},
+	// Cast-receiver form `(k as u32).to_string()` — the as_* scalar arm.
+	{"tostring-cast-operand-len",
+		`function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
+		3, -1},
+	// NEGATIVE: a STRING-receiver `.to_string()` is the identity case — its
+	// result aliases the receiver, so the operand must NOT be freed. Exactly
+	// 2 sites: the inline-consumed result temp + the "x" literal operand (3
+	// would mean the aliased identity result was mis-freed — the over-release
+	// this case exists to catch); the exit code proves s survives the concat.
+	{"tostring-string-recv-alias-safe",
+		`function main(): i32 {
+    var s: string = "abcd";
+    if (("x" + s.to_string()).len() != 5) { return 97; }
+    if (s.len() != 4) { return 96; }
+    return 0;
+}`,
+		0, 2},
 }
 
 // TestSelfHostStrConcatTempIRX86_64 compiles each case through the self-hosted
