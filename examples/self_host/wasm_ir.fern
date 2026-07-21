@@ -129,6 +129,12 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 
 // str_offset returns the data-section offset of literal index `idx`: 24 + the
 // summed block sizes (4 + len) of all prior literals.
+// str_region_base is where a unit's string-literal region starts: the 24-byte
+// low scratch (fd_write iovec at 0/4/8, the newline byte at 12) sits below it.
+// Named rather than inlined because const_str now emits offsets RELATIVE to it
+// (#5331 step 1), so the two must agree by construction.
+pub function str_region_base(): i32 { return 24; }
+
 pub function str_offset(vals: string[], idx: i32): i32 {
     var off: i32 = 24;
     var i: i32 = 0;
@@ -2168,7 +2174,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 5) {  // const_str
             // String literal -> the data-section block pointer (its interned
             // offset). The block is `[len@0][bytes@4]`; static, no allocation.
-            out = out + "    i32.const " + util.i32_to_string(offset_of_value(str_vals, o.str)) + "\n";
+            // Relative to $__str_base rather than absolute, so this unit's code
+            // does not depend on where its literals land program-wide (#5331).
+            out = out + "    global.get $__str_base\n    i32.const "
+                + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n";
         } else if (o.kind_tag == 97) {  // str_len
             // stack: block ptr -> i32.load(ptr)  (len @ +0)
             out = out + "    i32.load\n";
