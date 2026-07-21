@@ -155,6 +155,122 @@ pub function str_region_base(): i32 { return 24; }
 // change to that set.
 pub function fn_table_base(): i32 { return 0; }
 
+// ---- unit needs (#5331) -----------------------------------------------------
+// Which runtime helpers a module requires. The link step must emit the UNION of
+// its units' needs, but computing that from a combined ir_cache would mean
+// re-lowering every module — the exact cost the per-module object cache exists
+// to avoid.
+//
+// So a unit records its needs as METADATA at emit time, when its cache is
+// already in hand, and link merges the recorded sets instead. Cheap, and exact:
+// the asm side over-approximates with a fixed root set
+// (asm_ir.all_runtime_need_roots) precisely because it has no such per-unit
+// record, and pays for it in dead runtime code.
+//
+// Op needs are stored under their op name; the boolean predicates are stored
+// under an "@"-prefixed name so the two namespaces cannot collide.
+pub function need(needs: string[], name: string): boolean {
+    return util.index_of_str(needs, name) >= 0;
+}
+
+// needs_of records every predicate emit_ir_module_units gates on. It MUST stay
+// exhaustive: a missing entry silently drops a runtime helper, which surfaces as
+// an undefined-function link failure rather than a wrong answer. The
+// byte-identity invariant is what pins it — whole-program emit routes through
+// this same set, so an omission changes the emitted module and fails the suite.
+pub function needs_of(cache: irlower.LowerResult[]): string[] {
+    var out: string[] = [];
+    if (module_emits_op_cached(cache, "args")) { out = out.append("args"); }
+    if (module_emits_op_cached(cache, "arr_push")) { out = out.append("arr_push"); }
+    if (module_emits_op_cached(cache, "arr_push_f64")) { out = out.append("arr_push_f64"); }
+    if (module_emits_op_cached(cache, "arr_push_i64")) { out = out.append("arr_push_i64"); }
+    if (module_emits_op_cached(cache, "arr_push_owned")) { out = out.append("arr_push_owned"); }
+    if (module_emits_op_cached(cache, "env")) { out = out.append("env"); }
+    if (module_emits_op_cached(cache, "eprint_str")) { out = out.append("eprint_str"); }
+    if (module_emits_op_cached(cache, "fcos")) { out = out.append("fcos"); }
+    if (module_emits_op_cached(cache, "fexp")) { out = out.append("fexp"); }
+    if (module_emits_op_cached(cache, "flog")) { out = out.append("flog"); }
+    if (module_emits_op_cached(cache, "fpow")) { out = out.append("fpow"); }
+    if (module_emits_op_cached(cache, "fsin")) { out = out.append("fsin"); }
+    if (module_emits_op_cached(cache, "map_iter")) { out = out.append("map_iter"); }
+    if (module_emits_op_cached(cache, "monotonic_ns")) { out = out.append("monotonic_ns"); }
+    if (module_emits_op_cached(cache, "now_ns")) { out = out.append("now_ns"); }
+    if (module_emits_op_cached(cache, "now_unix_ms")) { out = out.append("now_unix_ms"); }
+    if (module_emits_op_cached(cache, "poll")) { out = out.append("poll"); }
+    if (module_emits_op_cached(cache, "print_i64")) { out = out.append("print_i64"); }
+    if (module_emits_op_cached(cache, "print_int")) { out = out.append("print_int"); }
+    if (module_emits_op_cached(cache, "print_str")) { out = out.append("print_str"); }
+    if (module_emits_op_cached(cache, "putchar")) { out = out.append("putchar"); }
+    if (module_emits_op_cached(cache, "random_bytes")) { out = out.append("random_bytes"); }
+    if (module_emits_op_cached(cache, "random_i32")) { out = out.append("random_i32"); }
+    if (module_emits_op_cached(cache, "read_chunk")) { out = out.append("read_chunk"); }
+    if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
+    if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
+    if (module_emits_op_cached(cache, "read_int")) { out = out.append("read_int"); }
+    if (module_emits_op_cached(cache, "read_line")) { out = out.append("read_line"); }
+    if (module_emits_op_cached(cache, "reader_close")) { out = out.append("reader_close"); }
+    if (module_emits_op_cached(cache, "remove_dir_all")) { out = out.append("remove_dir_all"); }
+    if (module_emits_op_cached(cache, "remove_file")) { out = out.append("remove_file"); }
+    if (module_emits_op_cached(cache, "sleep_ms")) { out = out.append("sleep_ms"); }
+    if (module_emits_op_cached(cache, "stat")) { out = out.append("stat"); }
+    if (module_emits_op_cached(cache, "str_bytes")) { out = out.append("str_bytes"); }
+    if (module_emits_op_cached(cache, "str_from_bytes")) { out = out.append("str_from_bytes"); }
+    if (module_emits_op_cached(cache, "str_split")) { out = out.append("str_split"); }
+    if (module_emits_op_cached(cache, "tcp_accept")) { out = out.append("tcp_accept"); }
+    if (module_emits_op_cached(cache, "tcp_close")) { out = out.append("tcp_close"); }
+    if (module_emits_op_cached(cache, "tcp_connect")) { out = out.append("tcp_connect"); }
+    if (module_emits_op_cached(cache, "tcp_listen")) { out = out.append("tcp_listen"); }
+    if (module_emits_op_cached(cache, "tcp_pollable")) { out = out.append("tcp_pollable"); }
+    if (module_emits_op_cached(cache, "tcp_recv")) { out = out.append("tcp_recv"); }
+    if (module_emits_op_cached(cache, "tcp_send")) { out = out.append("tcp_send"); }
+    if (module_emits_op_cached(cache, "temp_dir")) { out = out.append("temp_dir"); }
+    if (module_emits_op_cached(cache, "udp_send")) { out = out.append("udp_send"); }
+    if (module_emits_op_cached(cache, "wasm_block")) { out = out.append("wasm_block"); }
+    if (module_emits_op_cached(cache, "wasm_poll")) { out = out.append("wasm_poll"); }
+    if (module_emits_op_cached(cache, "wasm_pollable_drop")) { out = out.append("wasm_pollable_drop"); }
+    if (module_emits_op_cached(cache, "wasm_timer_pollable")) { out = out.append("wasm_timer_pollable"); }
+    if (module_emits_op_cached(cache, "write_file")) { out = out.append("write_file"); }
+    if (module_allocates(cache)) { out = out.append("@allocates"); }
+    if (module_calls_optarrarr_free(cache)) { out = out.append("@calls_optarrarr_free"); }
+    if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
+    if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
+    if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
+    if (module_uses_chr(cache)) { out = out.append("@uses_chr"); }
+    if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
+    if (module_uses_i32_to_string(cache)) { out = out.append("@uses_i32_to_string"); }
+    if (module_uses_i64_divrem(cache)) { out = out.append("@uses_i64_divrem"); }
+    if (module_uses_maps(cache)) { out = out.append("@uses_maps"); }
+    if (module_uses_random(cache)) { out = out.append("@uses_random"); }
+    if (module_uses_str_case(cache)) { out = out.append("@uses_str_case"); }
+    if (module_uses_str_chars(cache)) { out = out.append("@uses_str_chars"); }
+    if (module_uses_str_cmp(cache)) { out = out.append("@uses_str_cmp"); }
+    if (module_uses_str_lines(cache)) { out = out.append("@uses_str_lines"); }
+    if (module_uses_str_predicate(cache)) { out = out.append("@uses_str_predicate"); }
+    if (module_uses_str_repeat(cache)) { out = out.append("@uses_str_repeat"); }
+    if (module_uses_str_replace(cache)) { out = out.append("@uses_str_replace"); }
+    if (module_uses_str_reverse(cache)) { out = out.append("@uses_str_reverse"); }
+    if (module_uses_str_slice(cache)) { out = out.append("@uses_str_slice"); }
+    if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
+    if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
+    if (module_uses_strbuf(cache)) { out = out.append("@uses_strbuf"); }
+    if (module_uses_strings(cache)) { out = out.append("@uses_strings"); }
+    return out;
+}
+
+// union_strs unions two string sets, order-preserving. Link folds its units
+// together with it: the need sets, and equally the per-type RC helper lists,
+// which are the same shape of metadata.
+pub function union_strs(a: string[], b: string[]): string[] {
+    var out: string[] = a;
+    var k: i32 = 0;
+    while (k < b.len()) {
+        if (util.index_of_str(out, b[k]) < 0) { out = out.append(b[k]); }
+        k = k + 1;
+    }
+    return out;
+}
+
+
 // str_base_global / fn_base_global name a UNIT's base globals (#5331 step 4a).
 // Whole-program emit passes ns = "" and gets the historical `$__str_base` /
 // `$__fn_base`, so its output is byte-identical; a per-module unit passes its
