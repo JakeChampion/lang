@@ -48,7 +48,13 @@ func TestWorldInterfaces(t *testing.T) {
 		},
 		[]string{"input-stream", "output-stream"})
 	checkInv(t, byName, "wasi:cli/stdout@0.2.0", []string{"get-stdout"}, nil)
-	checkInv(t, byName, "wasi:io/poll@0.2.0", []string{"[method]pollable.block"}, []string{"pollable"})
+	// `poll` (the list<borrow<pollable>> -> list<u32> multiplexer) joined the
+	// vendored interface for the self-host wasm backend's wasm_poll (#4316):
+	// that path composes via `wasm-tools component embed` + `component new`,
+	// which resolves imports against the WIT, and a list-typed import cannot be
+	// inferred from the core signature alone. Native is unaffected — it composes
+	// in Go and never reads this.
+	checkInv(t, byName, "wasi:io/poll@0.2.0", []string{"[method]pollable.block", "poll"}, []string{"pollable"})
 	checkInv(t, byName, "wasi:filesystem/preopens@0.2.0", []string{"get-directories"}, nil)
 	checkInv(t, byName, "wasi:random/random@0.2.0", []string{"get-random-bytes", "get-random-u64"}, nil)
 	checkInv(t, byName, "wasi:cli/environment@0.2.0", []string{"get-arguments", "get-environment"}, nil)

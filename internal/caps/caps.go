@@ -90,6 +90,7 @@ var BuiltinCaps = map[string]string{
 var Ungated = map[string]bool{
 	"putchar":            true,
 	"print":              true,
+	"print_int":          true,
 	"write":              true,
 	"eprint":             true,
 	"read_line":          true,
