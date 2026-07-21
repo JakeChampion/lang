@@ -12646,6 +12646,8 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // only when the module has not already imported them for wasm_block /
     // wasm_pollable_drop, since a duplicate import is an invalid module.
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_close")) { out = out + wasm_ir.wasi_sockets_imports(); }
+    // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2).
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) { out = out + wasm_ir.wasi_stream_io_imports(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") && !wasm_ir.module_emits_op_cached(ir_cache, "wasm_block")) { out = out + wasm_ir.wasi_pollable_block_import(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") && !wasm_ir.module_emits_op_cached(ir_cache, "wasm_pollable_drop")) { out = out + wasm_ir.wasi_pollable_drop_import(); }
     // wasm_poll: the LIST-typed wasi:io/poll.poll multiplexer (#4316). Its
@@ -12663,7 +12665,7 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
             + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
         di = di + 1;
     }
-    if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "env") || wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk") || wasm_ir.module_emits_op_cached(ir_cache, "reader_close") || wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect")) {
+    if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "env") || wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk") || wasm_ir.module_emits_op_cached(ir_cache, "reader_close") || wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) {
         out = out + heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
         out = out + rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
     }
@@ -12750,11 +12752,18 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // fails with "module does not export a function named cabi_realloc".
     // Shares $heap / $__fern_alloc with the heap runtime the gate above pulls
     // in for wasm_poll.
-    if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll")) { out = out + wasm_ir.wasm_poll_func() + cabi_realloc_helper(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll")) { out = out + wasm_ir.wasm_poll_func(); }
+    // cabi_realloc is the canonical ABI's GUEST allocator, needed by every op
+    // whose import RETURNS a list: wasm_poll (list<u32>) and tcp_recv
+    // (list<u8>). One shared gate so it is emitted exactly once — a second
+    // definition is a duplicate-export error.
+    if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) { out = out + cabi_realloc_helper(); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect")) { out = out + wasm_ir.network_handle_func() + wasm_ir.tcp_connect_func(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_close")) { out = out + wasm_ir.tcp_close_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_send")) { out = out + wasm_ir.tcp_send_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) { out = out + wasm_ir.tcp_recv_func(); }
     // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
     // read/write the whole file, boxing a Result[string, IoError] /
     // Option[IoError]. They alloc via the heap runtime (module_allocates
