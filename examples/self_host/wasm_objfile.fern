@@ -1,0 +1,149 @@
+// examples/self_host/wasm_objfile.fern — the per-module wasm object format
+// (#5331).
+//
+// A cached unit is not just its WAT text. Link needs the unit's METADATA too —
+// its string literals, its address-taken functions, its runtime needs, its
+// call_indirect arities, and the three type lists behind the per-type RC helper
+// bodies. Recomputing any of that means lowering the module, which is exactly
+// the cost the cache exists to avoid, so it is all persisted alongside the text.
+//
+// Format. Every section is `<tag><count>\n` followed by `count` items, and every
+// string item is LENGTH-PREFIXED (`<len>\n<raw bytes>`) rather than delimited or
+// escaped:
+//
+//     FERNWU1\n
+//     S<n>\n  <len>\n<bytes> ...   string literals
+//     F<n>\n  <len>\n<bytes> ...   address-taken function names
+//     N<n>\n  <len>\n<bytes> ...   runtime needs (wasm_ir.needs_of)
+//     A<n>\n  <int>\n ...          call_indirect arities
+//     R<n>\n  <len>\n<bytes> ...   field_reclaim types
+//     D<n>\n  <len>\n<bytes> ...   struct_drop types
+//     E<n>\n  <len>\n<bytes> ...   struct_arr_elems_drop types
+//     U<len>\n<unit WAT text>
+//
+// Length prefixes rather than escaping because a string literal may contain
+// anything at all — newlines, quotes, NUL. An escaping scheme has to be exactly
+// inverted by the decoder or literals corrupt silently; a byte count cannot be
+// got subtly wrong, it either reads the right span or fails the round-trip test.
+
+import "./util";
+
+pub struct UnitObj {
+    strs: string[],
+    fns: string[],
+    needs: string[],
+    arities: i32[],
+    frt: string[],
+    sdt: string[],
+    aet: string[],
+    text: string,
+}
+
+// Cursor threads a decode position alongside its result. The self-host language
+// has tuples, but a named struct keeps the two-field returns below readable.
+pub struct StrsAt { items: string[], pos: i32 }
+pub struct IntsAt { items: i32[], pos: i32 }
+
+function enc_strs(tag: string, xs: string[]): string {
+    var out: string = tag + util.i32_to_string(xs.len()) + "\n";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        out = out + util.i32_to_string(xs[i].len()) + "\n" + xs[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+function enc_ints(tag: string, xs: i32[]): string {
+    var out: string = tag + util.i32_to_string(xs.len()) + "\n";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        out = out + util.i32_to_string(xs[i]) + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function encode(u: UnitObj): string {
+    return "FERNWU1\n"
+        + enc_strs("S", u.strs)
+        + enc_strs("F", u.fns)
+        + enc_strs("N", u.needs)
+        + enc_ints("A", u.arities)
+        + enc_strs("R", u.frt)
+        + enc_strs("D", u.sdt)
+        + enc_strs("E", u.aet)
+        + "U" + util.i32_to_string(u.text.len()) + "\n" + u.text;
+}
+
+// scan_int reads decimal digits from `pos` up to the next newline and returns
+// the position just past it. Every count and length in the format is read this
+// way, so the decoder never has to search for a delimiter inside payload bytes.
+function scan_int(s: string, pos: i32): IntsAt {
+    var p: i32 = pos;
+    var v: i32 = 0;
+    while (p < s.len() && s[p] != 10) {          // 10 = '\n'
+        if (s[p] >= 48 && s[p] <= 57) { v = v * 10 + (s[p] - 48); }
+        p = p + 1;
+    }
+    return IntsAt { items: [v], pos: p + 1 };
+}
+
+// dec_strs reads one length-prefixed string section. `pos` must point at the
+// section's count (i.e. just past its tag byte).
+function dec_strs(s: string, pos: i32): StrsAt {
+    var hdr: IntsAt = scan_int(s, pos);
+    var n: i32 = hdr.items[0];
+    var p: i32 = hdr.pos;
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var lh: IntsAt = scan_int(s, p);
+        var len: i32 = lh.items[0];
+        out = out.append(s[lh.pos:lh.pos + len] + "");
+        p = lh.pos + len;
+        i = i + 1;
+    }
+    return StrsAt { items: out, pos: p };
+}
+
+function dec_ints(s: string, pos: i32): IntsAt {
+    var hdr: IntsAt = scan_int(s, pos);
+    var n: i32 = hdr.items[0];
+    var p: i32 = hdr.pos;
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var v: IntsAt = scan_int(s, p);
+        out = out.append(v.items[0]);
+        p = v.pos;
+        i = i + 1;
+    }
+    return IntsAt { items: out, pos: p };
+}
+
+// decode inverts encode. Sections are read in the order encode writes them, so
+// each tag byte is skipped positionally rather than searched for — a malformed
+// or truncated file therefore yields wrong spans rather than a wrong-but-
+// plausible unit, which the round-trip test catches.
+pub function decode(s: string): UnitObj {
+    var p: i32 = 8;                              // past "FERNWU1\n"
+    var st: StrsAt = dec_strs(s, p + 1);
+    var fn: StrsAt = dec_strs(s, st.pos + 1);
+    var nd: StrsAt = dec_strs(s, fn.pos + 1);
+    var ar: IntsAt = dec_ints(s, nd.pos + 1);
+    var r: StrsAt = dec_strs(s, ar.pos + 1);
+    var d: StrsAt = dec_strs(s, r.pos + 1);
+    var e: StrsAt = dec_strs(s, d.pos + 1);
+    var tl: IntsAt = scan_int(s, e.pos + 1);
+    return UnitObj {
+        strs: st.items,
+        fns: fn.items,
+        needs: nd.items,
+        arities: ar.items,
+        frt: r.items,
+        sdt: d.items,
+        aet: e.items,
+        text: s[tl.pos:tl.pos + tl.items[0]] + "",
+    };
+}
