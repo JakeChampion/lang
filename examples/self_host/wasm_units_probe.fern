@@ -66,11 +66,19 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
     };
 }
 
-function concat_results(a: irlower.LowerResult[], b: irlower.LowerResult[]): irlower.LowerResult[] {
-    var out: irlower.LowerResult[] = a;
+// merge_arities unions two call_indirect arity sets — the type section must
+// cover every signature either unit calls through.
+function merge_arities(a: i32[], b: i32[]): i32[] {
+    var out: i32[] = a;
     var i: i32 = 0;
     while (i < b.len()) {
-        out = out.append(b[i]);
+        var seen: boolean = false;
+        var j: i32 = 0;
+        while (j < out.len()) {
+            if (out[j] == b[i]) { seen = true; }
+            j = j + 1;
+        }
+        if (!seen) { out = out.append(b[i]); }
         i = i + 1;
     }
     return out;
@@ -128,13 +136,33 @@ function main(): i32 {
     var fns_a: string[] = wasm_ir.fn_value_table(cache_a);
     var fns_b: string[] = wasm_ir.fn_value_table(cache_b);
 
-    var combined: irlower.LowerResult[] = concat_results(cache_a, cache_b);
+    // Link gates on the MERGED needs of the two units, not on a combined cache
+    // (#5331). That is the whole point: a real driver reads each unit's recorded
+    // needs from its cache entry, never re-lowering a module it did not have to
+    // re-emit. Here both caches are in hand, so merging them exercises the same
+    // path a cached link takes.
+    var needs: string[] = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
+    var arities: i32[] = merge_arities(wasm_ir.indirect_arities(cache_a), wasm_ir.indirect_arities(cache_b));
+
+    // The per-type RC helper bodies come from the MERGED type lists, not a
+    // combined cache — the same metadata a cached link reads back. Both units
+    // resolve against one shared struct world, so a type named by both yields a
+    // single body.
+    var frt: string[] = wasm_ir.union_strs(wasm_ir.field_reclaim_types(cache_a), wasm_ir.field_reclaim_types(cache_b));
+    var sdt: string[] = wasm_ir.union_strs(wasm_ir.struct_drop_types(cache_a, im.structs), wasm_ir.struct_drop_types(cache_b, im.structs));
+    var aet: string[] = wasm_ir.union_strs(wasm_ir.struct_arr_elems_drop_types(cache_a, im.structs), wasm_ir.struct_arr_elems_drop_types(cache_b, im.structs));
+
+    // heap_base is a whole-LINK quantity (it sits past every unit's literals),
+    // so it is computed from the concatenated literal list, exactly as the link
+    // step computes it.
+    var all_strs: string[] = concat_strs(strs_a, strs_b);
+    var rc_bodies: string = wasm.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
 
     write(wasm.emit_ir_module_units(
         ["", "$u1"],
         [unit_a, unit_b],
-        concat_strs(strs_a, strs_b), [strs_a.len(), strs_b.len()],
+        all_strs, [strs_a.len(), strs_b.len()],
         concat_strs(fns_a, fns_b), [fns_a.len(), fns_b.len()],
-        im, combined));
+        im, needs, arities, rc_bodies));
     return 0;
 }
