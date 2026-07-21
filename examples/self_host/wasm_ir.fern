@@ -145,6 +145,20 @@ pub function str_region_base(): i32 { return 24; }
 // change to that set.
 pub function fn_table_base(): i32 { return 0; }
 
+// str_base_global / fn_base_global name a UNIT's base globals (#5331 step 4a).
+// Whole-program emit passes ns = "" and gets the historical `$__str_base` /
+// `$__fn_base`, so its output is byte-identical; a per-module unit passes its
+// namespace and gets `$__str_base$<ns>`, which the link step defines as the
+// absolute start of that module's region.
+//
+// Only the NAME varies. The offsets themselves are already unit-relative: a
+// unit emits against its OWN str_values / fn_value_table, so subtracting
+// str_region_base() / fn_table_base() yields an offset within the unit's own
+// region either way. That is the whole point of steps 1 and 2 — this step just
+// stops every unit from claiming the same global.
+pub function str_base_global(ns: string): string { return "$__str_base" + ns; }
+pub function fn_base_global(ns: string): string { return "$__fn_base" + ns; }
+
 // ---- type ids (#5331 step 3) ------------------------------------------------
 // A struct/enum-variant value carries its TYPE ID at offset 0: struct_make and
 // dyn_box store it, variant_is / dyn_dispatch / dyn_downcast compare against it.
@@ -240,8 +254,19 @@ function offset_of_value(vals: string[], v: string): i32 {
 
 // fl_base_for / heap_base_for recompute the freelist + heap bases including the
 // literal blocks (heap_extra = 0 in the IR subset — no i64 / print buffers).
+// The *_for_strs variants take the literal list directly rather than deriving it
+// from a cache (#5331 step 4b). A linked multi-unit module lays every unit's
+// literals out contiguously in one flat list, so there is no single cache to
+// derive them from — but the arithmetic is identical, since a flat list's own
+// str_offset already yields each literal's absolute address.
+pub function fl_base_for_strs(sv: string[]): i32 {
+    return (str_offset(sv, sv.len()) + 16 + 7) / 8 * 8;
+}
+pub function heap_base_for_strs(sv: string[]): i32 {
+    return fl_base_for_strs(sv) + fl_cells() * 4;
+}
 pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
-    return (str_offset(str_values(cache), str_values(cache).len()) + 16 + 7) / 8 * 8;
+    return fl_base_for_strs(str_values(cache));
 }
 pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for(cache) + fl_cells() * 4;
@@ -1714,7 +1739,7 @@ pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
 // indirect_arities collects the distinct argument counts used by call_indirect
 // ops across the module (deduped), so fn_support_section declares one
 // `$fn<argc>` signature type per arity actually dispatched.
-function indirect_arities(cache: irlower.LowerResult[]): i32[] {
+pub function indirect_arities(cache: irlower.LowerResult[]): i32[] {
     var out: i32[] = [];
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -1745,10 +1770,17 @@ function indirect_arities(cache: irlower.LowerResult[]): i32[] {
 // `(table <M> funcref)` sized to the address-taken set, and an `(elem (i32.const
 // 0) $f0 $f1 …)` filling it in fn_value_table order. Empty string when the
 // module has no function values, so non-closure modules are byte-unchanged.
-pub function fn_support_section(cache: irlower.LowerResult[]): string {
-    var ft: string[] = fn_value_table(cache);
-    var arities: i32[] = indirect_arities(cache);
-    if (ft.len() == 0 && arities.len() == 0) { return ""; }
+// fn_support_section_units is the multi-unit form (#5331 step 4b): one table and
+// one elem segment covering every unit's address-taken functions, plus one
+// $__fn_base<ns> global per unit holding that unit's start index. `all_fns` is
+// the flat concatenation of the per-unit tables and `counts` their lengths, so
+// unit i occupies [sum(counts[0..i]), +counts[i]) — exactly the relative indices
+// its bodies were emitted against.
+//
+// The single-unit call below passes nss = [""] and the whole table, which
+// reproduces the historical output byte for byte.
+pub function fn_support_section_units(nss: string[], all_fns: string[], counts: i32[], arities: i32[]): string {
+    if (all_fns.len() == 0 && arities.len() == 0) { return ""; }
     var out: string = "";
     var ai: i32 = 0;
     while (ai < arities.len()) {
@@ -1758,24 +1790,35 @@ pub function fn_support_section(cache: irlower.LowerResult[]): string {
         out = out + " (result i32)))\n";
         ai = ai + 1;
     }
-    // The table must exist for any call_indirect to validate — including the
-    // map's struct-key hk/keq, which is emitted (but dead) even when no
-    // function VALUE is taken. Size it to the funcref set, or a minimal 1 slot
-    // when the only indirect calls are the (dead-for-i32/string) map ones.
-    var tsize: i32 = ft.len();
+    var tsize: i32 = all_fns.len();
     if (tsize == 0) { tsize = 1; }
-    out = out + "  (global $__fn_base i32 (i32.const " + util.i32_to_string(fn_table_base()) + "))\n";
+    var base: i32 = 0;
+    var ni: i32 = 0;
+    while (ni < nss.len()) {
+        out = out + "  (global " + fn_base_global(nss[ni]) + " i32 (i32.const " + util.i32_to_string(base) + "))\n";
+        base = base + counts[ni];
+        ni = ni + 1;
+    }
     out = out + "  (table " + util.i32_to_string(tsize) + " funcref)\n";
-    if (ft.len() > 0) {
+    if (all_fns.len() > 0) {
         out = out + "  (elem (i32.const 0)";
         var ei: i32 = 0;
-        while (ei < ft.len()) {
-            out = out + " $" + ft[ei];
+        while (ei < all_fns.len()) {
+            out = out + " $" + all_fns[ei];
             ei = ei + 1;
         }
         out = out + ")\n";
     }
     return out;
+}
+
+// fn_support_section is whole-program emit: a single unit, so the table needs
+// exactly one base at 0. The table must exist for any call_indirect to validate
+// — including the map's struct-key hk/keq, which is emitted (but dead) even when
+// no function VALUE is taken — so the units form sizes an empty set to 1 slot.
+pub function fn_support_section(cache: irlower.LowerResult[]): string {
+    var ft: string[] = fn_value_table(cache);
+    return fn_support_section_units([""], ft, [ft.len()], indirect_arities(cache));
 }
 
 // wasm_arr_bounds_check emits the array index bounds check shared by arr_get /
@@ -1802,7 +1845,7 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[], consume_safe_params: string[]): string {
+function emit_function_ir(ns: string, fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[], consume_safe_params: string[]): string {
     var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.closurearr_ret_fns_of(funcs, structs), irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs), irlower.str_fresh_ret_fns_of(funcs), irlower.opt_fresh_ret_fns_of(funcs, structs), irlower.strfld_reclaim_ok_types_of(funcs, structs), irlower.tuple_fresh_ret_fns_of(funcs));
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
@@ -2255,7 +2298,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // offset). The block is `[len@0][bytes@4]`; static, no allocation.
             // Relative to $__str_base rather than absolute, so this unit's code
             // does not depend on where its literals land program-wide (#5331).
-            out = out + "    global.get $__str_base\n    i32.const "
+            out = out + "    global.get " + str_base_global(ns) + "\n    i32.const "
                 + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n";
         } else if (o.kind_tag == 97) {  // str_len
             // stack: block ptr -> i32.load(ptr)  (len @ +0)
@@ -2375,8 +2418,8 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
                 // Struct/enum key: push the derived hash + eq funcref-table slot
                 // indices; $__fern_map_new_struct stores them in the box so
                 // hk/keq dispatch them via call_indirect. #2671.
-                out = out + "    global.get $__fn_base\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str)) - fn_table_base()) + "\n    i32.add\n";
-                out = out + "    global.get $__fn_base\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str)) - fn_table_base()) + "\n    i32.add\n";
+                out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str)) - fn_table_base()) + "\n    i32.add\n";
+                out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str)) - fn_table_base()) + "\n    i32.add\n";
                 out = out + "    call $__fern_map_new_struct\n";
             } else if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
             else { out = out + "    call $__fern_map_new_str\n"; }
@@ -2848,7 +2891,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // (fn_table). The table is built over the address-taken functions in
             // first-seen order (fn_value_table), so the index here matches the
             // elem segment fn_support_section emits.
-            out = out + "    global.get $__fn_base\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n";
+            out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n";
         } else if (o.kind_tag == 150) {  // call_indirect
             // Indirect call: args + the table index are already on the stack
             // (the index pushed last, on top). Dispatch through the per-arity
@@ -2884,7 +2927,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
 // (wasm.emit_module, or the differential driver). Keeping the runtime on the
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
-pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): string {
+// emit_functions emits a unit's function bodies. `ns` namespaces the base
+// globals the bodies reference (see str_base_global); "" is whole-program emit.
+pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irlower.LowerResult[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging matches the AST path (parity with the
     // x86 IR path in asm_ir.emit_module_ir).
@@ -2911,10 +2956,15 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
     var csparams: string[] = irlower.consume_safe_params_interproc(mod.funcs, bparams);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, mod.funcs, bparams, csparams);
+        out = out + emit_function_ir(ns, mod.funcs[fi], str_vals, mod.structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, mod.funcs, bparams, csparams);
         fi = fi + 1;
     }
     return out;
+}
+
+// emit_functions is whole-program emit: one unit, so the bases are unnamespaced.
+pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): string {
+    return emit_functions_ns("", mod, cache);
 }
 
 // struct_type_id returns a struct's runtime type id = its index in the module's
