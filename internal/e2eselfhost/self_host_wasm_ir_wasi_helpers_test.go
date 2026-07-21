@@ -114,24 +114,23 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 			stdout: "5000000001",
 		},
 		{
-			// The same const through an i32-typed result, so the reference
-			// interpreter can run it too: 5000000000 % 97 == 73 only if the
-			// const kept its 64 bits.
+			// The same const through an i32-typed RESULT rather than stdout, so
+			// the reference interpreter can run it: 5000000000 % 97 == 73 only
+			// if the const kept its 64 bits. Oracled cases return their value
+			// instead of printing it because print_int is a self-host-only
+			// builtin the native checker does not accept (#5477).
 			name:   "const-i64-oracled",
-			src:    `const BIG: i64 = 5000000000; function main(): i32 { print_int((BIG % 97) as i32); return 0; }`,
-			stdout: "73",
+			src:    `const BIG: i64 = 5000000000; function main(): i32 { return (BIG % 97) as i32; }`,
 			oracle: true,
 		},
 		{
 			name:   "const-f64",
-			src:    `const HALF: f64 = 3.5; function main(): i32 { print_int((HALF * 2.0) as i32); return 0; }`,
-			stdout: "7",
+			src:    `const HALF: f64 = 3.5; function main(): i32 { return (HALF * 2.0) as i32; }`,
 			oracle: true,
 		},
 		{
 			name:   "const-i32-unchanged",
-			src:    `const N: i32 = 41; function main(): i32 { print_int(N + 1); return 0; }`,
-			stdout: "42",
+			src:    `const N: i32 = 41; function main(): i32 { return N + 1; }`,
 			oracle: true,
 		},
 	}
@@ -167,7 +166,7 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 			if got := rcmd.ProcessState.ExitCode(); got != want {
 				t.Errorf("%s: wasm exited %d, want %d", tc.name, got, want)
 			}
-			if string(out) != tc.stdout {
+			if tc.stdout != "" && string(out) != tc.stdout {
 				t.Errorf("%s: wasm stdout = %q, want %q", tc.name, string(out), tc.stdout)
 			}
 		})

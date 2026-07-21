@@ -435,7 +435,6 @@ func New() *Interp {
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
 	i.Builtins["write"] = &Builtin{Fn: builtinWrite}
-	i.Builtins["print_int"] = &Builtin{Fn: builtinPrintInt}
 	i.Builtins["eprint"] = &Builtin{Fn: builtinEprint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
@@ -2043,22 +2042,6 @@ func builtinWrite(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("write: expected string arg, got %T", args[0])
 	}
 	fmt.Fprint(i.Stdout, string(s))
-	return Void{}, nil
-}
-
-// builtinPrintInt writes an integer's decimal text to stdout with no trailing
-// newline — the integer counterpart of `write`. Number is the interpreter's
-// single numeric value type, so one implementation covers the i32 and i64 forms
-// the compiled backends split across $__fern_print_int / $__fern_print_int64.
-func builtinPrintInt(i *Interp, args []Value) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("print_int: expected 1 arg, got %d", len(args))
-	}
-	n, ok := args[0].(Number)
-	if !ok {
-		return nil, fmt.Errorf("print_int: expected number arg, got %T", args[0])
-	}
-	fmt.Fprintf(i.Stdout, "%d", int64(n))
 	return Void{}, nil
 }
 
