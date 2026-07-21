@@ -7053,6 +7053,49 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 // (replacing one identifier with another always re-parses). namePos is
 // the field NAME token's own position (FieldInit.NamePos /
 // FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
+// scalarMethodModule returns the stdlib module that defines `method` on the
+// scalar type `t`, or "" when there is no such pairing. It exists so a method
+// call on a scalar whose module was not imported gets a diagnostic naming the
+// import, rather than the raw "field access on non-struct value" E043 — which
+// describes the desugared shape rather than the user's code, and is especially
+// confusing for f-strings (`f"{n}"` becomes `n.to_string()`).
+//
+// Deliberately narrow: only method names these modules actually define on the
+// scalar receivers, so a typo'd method still gets the generic error rather than
+// a confidently wrong import suggestion. Since the auto-prelude was removed
+// (Phase 5) a program sees only what it imports, which is what makes this class
+// of confusion reachable at all. #5494.
+func scalarMethodModule(t ast.Type, method string) string {
+	var mod string
+	switch x := t.(type) {
+	case ast.NumberType:
+		if !x.IsSigned() {
+			if x.NormalWidth() == 64 {
+				mod = "std/u64"
+			} else {
+				mod = "std/u32"
+			}
+		} else if x.NormalWidth() == 64 {
+			mod = "std/i64"
+		} else {
+			mod = "std/i32"
+		}
+	case ast.FloatType:
+		mod = "std/float"
+	case ast.StringType:
+		mod = "std/string"
+	default:
+		return ""
+	}
+	// to_string is the one every scalar module defines, and the f-string
+	// desugar target — the case that motivates this. Keep the set tight.
+	switch method {
+	case "to_string", "to_string_radix", "to_string_padded", "to_string_with_sep", "to_string_prec":
+		return mod
+	}
+	return ""
+}
+
 func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
 	e := &Error{
 		Pos:     pos,
@@ -12184,6 +12227,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		st, ok := tt.(ast.StructType)
 		if !ok {
 			if tt != nil {
+				// A method call on a SCALAR whose defining stdlib module was not
+				// imported lands here, and the bare E043 actively misleads: it
+				// talks about struct field access on code the user may not have
+				// written at all. An f-string desugars `f"{n}"` to
+				// `n.to_string()`, so `write(f"x{n}y")` without `import "std/i32"`
+				// reports "field access on non-struct value of type i32" pointing
+				// at the f-string. Name the import instead (#5494).
+				if mod := scalarMethodModule(tt, n.Field); mod != "" {
+					// The f-string note only makes sense for to_string — it is the
+					// only method the desugar produces, and the only way a user can
+					// reach this without writing a method call themselves.
+					hint := ""
+					if n.Field == "to_string" {
+						hint = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
+					}
+					c.errfCode(n.P, "E043",
+						"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
+					return nil
+				}
 				c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
 			}
 			return nil
