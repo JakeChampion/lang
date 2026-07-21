@@ -145,6 +145,74 @@ pub function str_region_base(): i32 { return 24; }
 // change to that set.
 pub function fn_table_base(): i32 { return 0; }
 
+// ---- type ids (#5331 step 3) ------------------------------------------------
+// A struct/enum-variant value carries its TYPE ID at offset 0: struct_make and
+// dyn_box store it, variant_is / dyn_dispatch / dyn_downcast compare against it.
+// The id is positional — struct_type_id is an index into the struct table, and
+// prim_type_id is `structs.len() + i` — so it is a WHOLE-PROGRAM value in the
+// strongest sense: adding one struct to any module shifts the ids of every
+// later struct AND of every primitive dyn-box in the program.
+//
+// That is fatal for the per-module object cache (#5331): the id must be
+// IDENTICAL at the construction site and the test site, which may live in
+// different modules, so it cannot be made unit-relative the way string offsets
+// (str_region_base) and funcref indices (fn_table_base) were in steps 1 and 2.
+// Instead every site names the type and reads its id from a global the link
+// step defines — the same indirection, but keyed by NAME rather than by a base
+// offset, which is what a globally-agreed namespace needs.
+//
+// Whole-program emit defines those globals with exactly the positional ids, so
+// every value is unchanged; only the reference form differs.
+pub function tid_global(name: string): string { return "$__tid$" + name; }
+
+// tid_get emits a type id as an operand: `global.get $__tid$<name>`.
+pub function tid_get(name: string): string { return "    global.get " + tid_global(name) + "\n"; }
+
+// tid_named collects the type names referenced by LITERAL string in the emitter
+// (rather than via a struct-table walk), so their globals exist even in a module
+// that never declares them. struct_type_id falls back to 0 for an unknown name,
+// and build_io_error_func / the stat op reference these unconditionally once a
+// module does file I/O — without this the emitted WAT would name an undeclared
+// global and fail to parse.
+pub function tid_named(): string[] {
+    return ["FileStat", "NotFound", "PermissionDenied", "AlreadyExists", "Interrupted", "Unsupported", "Other"];
+}
+
+// tid_globals_section declares one immutable global per type id: every struct in
+// the program, every primitive dyn-box shape (prim_type_id), and the literal
+// names above. Emitted once per module by wasm.emit_ir_module.
+pub function tid_globals_section(structs: parser.StructDecl[]): string {
+    var out: string = "";
+    var seen: string[] = [];
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (util.index_of_str(seen, structs[i].name) < 0) {
+            seen = seen.append(structs[i].name);
+            out = out + "  (global " + tid_global(structs[i].name) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, structs[i].name)) + "))\n";
+        }
+        i = i + 1;
+    }
+    var prims: string[] = irlower.prim_type_ids();
+    var p: i32 = 0;
+    while (p < prims.len()) {
+        if (util.index_of_str(seen, prims[p]) < 0) {
+            seen = seen.append(prims[p]);
+            out = out + "  (global " + tid_global(prims[p]) + " i32 (i32.const " + util.i32_to_string(irlower.prim_type_id(structs, prims[p])) + "))\n";
+        }
+        p = p + 1;
+    }
+    var named: string[] = tid_named();
+    var n: i32 = 0;
+    while (n < named.len()) {
+        if (util.index_of_str(seen, named[n]) < 0) {
+            seen = seen.append(named[n]);
+            out = out + "  (global " + tid_global(named[n]) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, named[n])) + "))\n";
+        }
+        n = n + 1;
+    }
+    return out;
+}
+
 pub function str_offset(vals: string[], idx: i32): i32 {
     var off: i32 = 24;
     var i: i32 = 0;
@@ -2378,7 +2446,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // FileStat's module-specific type-id, which only the backend knows, so
             // push it as the second arg before the call (emitted caller-side in
             // wasm_ir_run with the path_filestat_get import + heap).
-            out = out + "    i32.const " + util.i32_to_string(struct_type_id(structs, "FileStat")) + "\n    call $__fern_stat\n";
+            out = out + tid_get("FileStat") + "    call $__fern_stat\n";
         } else if (o.kind_tag == 173) {  // remove_file
             // stack: path strblock ptr -> unlink the file, push an Option[IoError]
             // box (None on success / Some(IoError) on failure). $__fern_remove_file
@@ -2515,7 +2583,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // $arrtmp holds the base across the field pops.
             var nf: i32 = o.i32_imm;
             out = out + "    i32.const " + util.i32_to_string(8 + nf * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n";
             var em: i32 = nf - 1;
             while (em >= 0) {
                 var emoff: i32 = 8 + em * 8;
@@ -2585,10 +2653,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // on the stack. Used by the enum-donor in-place reuse to re-shape a
             // dead scalar-enum box as a same-size struct.
             out = out + "    local.tee " + util.i32_to_string(arrtmp) + "\n";
-            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n";
         } else if (o.kind_tag == 145) {  // variant_is
             // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
-            out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
+            out = out + "    i32.load\n" + tid_get(o.str) + "    i32.eq\n";
         } else if (o.kind_tag == 142) {  // tuple_make
             // n elements on the stack (element n-1 on top). Box = [e0@0, e1@8, …]
             // via $__fern_str_box (rc-headered), n*8 bytes (uniform 8-byte slots,
@@ -2681,9 +2749,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
                         && (irlower.decl_is_struct(structs, dbn) || dprim)) {
                     // Shape compare: a struct value carries its type id @0; a
                     // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
-                    var dsid: i32 = struct_type_id(structs, dbn);
-                    if (dprim) { dsid = irlower.prim_type_id(structs, dbn); }
-                    out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dsid) + "\n    i32.eq\n";
+                    out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n" + tid_get(dbn) + "    i32.eq\n";
                     out = out + "    if (result " + drt + ")\n";
                     var dk: i32 = 0;
                     while (dk < dargc) {
@@ -2751,7 +2817,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // unboxes @8.
             out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
             out = out + "    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(irlower.prim_type_id(structs, o.str)) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind_tag == 148) {  // dyn_downcast
@@ -2763,7 +2829,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // i32-payload Option box (matching opt_make/opt_none) a downstream
             // `match` reads with opt_tag/opt_payload.
             out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n" + tid_get(o.str) + "    i32.eq\n";
             out = out + "    if (result i32)\n";
             // hit: Some(value) — 8-byte box [tag0@0, payload(dyn ptr)@4].
             out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
@@ -2881,48 +2947,42 @@ function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
 // 8 + nfields*8 — so 16 for a single-string variant, 8 for a payloadless one,
 // 24 for two-field Other. A string field is a single [len][bytes] block pointer.
 pub function build_io_error_func(structs: parser.StructDecl[]): string {
-    var nf: i32 = struct_type_id(structs, "NotFound");
-    var pd: i32 = struct_type_id(structs, "PermissionDenied");
-    var ae: i32 = struct_type_id(structs, "AlreadyExists");
-    var it: i32 = struct_type_id(structs, "Interrupted");
-    var un: i32 = struct_type_id(structs, "Unsupported");
-    var ot: i32 = struct_type_id(structs, "Other");
     var o: string = "";
     o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
     o = o + "    (local $r i32) (local $e i32)\n";
     // ENOENT(44) -> NotFound(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
-    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(nf) + "))\n";
+    o = o + "      (i32.store (local.get $r) (global.get " + tid_global("NotFound") + "))\n";
     o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // EACCES(2) -> PermissionDenied(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 2)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
-    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(pd) + "))\n";
+    o = o + "      (i32.store (local.get $r) (global.get " + tid_global("PermissionDenied") + "))\n";
     o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // EEXIST(20) -> AlreadyExists(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 20)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
-    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(ae) + "))\n";
+    o = o + "      (i32.store (local.get $r) (global.get " + tid_global("AlreadyExists") + "))\n";
     o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // EINTR(27) -> Interrupted (payloadless)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 27)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(it) + "))\n";
+    o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Interrupted") + "))\n";
     o = o + "      (return (local.get $r))))\n";
     // ENOTSUP(58) -> Unsupported (payloadless)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 58)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "      (i32.store (local.get $r) (i32.const " + util.i32_to_string(un) + "))\n";
+    o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Unsupported") + "))\n";
     o = o + "      (return (local.get $r))))\n";
     // default -> Other(path, "") — the empty message is a valid [len=0] block.
     o = o + "    (local.set $e (call $__fern_alloc (i32.const 4)))\n";
     o = o + "    (i32.store (local.get $e) (i32.const 0))\n";
     o = o + "    (local.set $r (call $__fern_str_box (i32.const 24)))\n";
-    o = o + "    (i32.store (local.get $r) (i32.const " + util.i32_to_string(ot) + "))\n";
+    o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
     o = o + "    (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
     o = o + "    (i32.store (i32.add (local.get $r) (i32.const 16)) (local.get $e))\n";
     o = o + "    (local.get $r))\n";

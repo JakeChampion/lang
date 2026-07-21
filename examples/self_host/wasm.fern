@@ -12698,6 +12698,12 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     if (sv.len() > 0) {
         out = out + "  (global $__str_base i32 (i32.const " + util.i32_to_string(wasm_ir.str_region_base()) + "))\n";
     }
+    // Type-id globals (#5331 step 3): every construction / comparison site names
+    // its type and reads the id from here, rather than baking the positional
+    // index. See wasm_ir.tid_globals_section for why type ids, unlike string
+    // offsets and funcref indices, must stay globally agreed rather than
+    // unit-relative.
+    out = out + wasm_ir.tid_globals_section(mod.structs);
     var di: i32 = 0;
     while (di < sv.len()) {
         out = out + "  (data (i32.const " + util.i32_to_string(wasm_ir.str_offset(sv, di)) + ") \""
@@ -13175,7 +13181,17 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // Preview-1 read_file/write_file box their Err payload via
     // $__fern_build_io_error; emit it once for either. (The preview-2 _p2
     // helpers keep their own shape.)
-    if (!fs && (has_readfile || has_writefile)) { out = out + wasm_ir.build_io_error_func(mod.structs); }
+    // build_io_error_func stores its variant ids via `global.get $__tid$<Name>`
+    // (#5331 step 3), so this legacy AST path — which never emits
+    // tid_globals_section, being whole-program by construction and no part of
+    // the per-module story — must declare them here or the WAT names undefined
+    // globals and fails to parse. The two module paths are mutually exclusive
+    // (emit_ir_module returns early for an IR-eligible module), so this cannot
+    // double-declare.
+    if (!fs && (has_readfile || has_writefile)) {
+        out = out + wasm_ir.tid_globals_section(mod.structs);
+        out = out + wasm_ir.build_io_error_func(mod.structs);
+    }
     if (has_readfile) {
         if (fs) { out = out + readfile_func_p2(); } else { out = out + readfile_func(); }
     }
