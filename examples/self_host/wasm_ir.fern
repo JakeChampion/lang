@@ -1016,10 +1016,8 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // that subset has to be declared there before `component new` can
         // resolve it. Do wasm_poll (#4316) first — it is the smaller instance of
         // the identical problem and proves the pipeline.
-        && !module_emits_op_cached(cache, "tcp_connect")
         && !module_emits_op_cached(cache, "tcp_send")
         && !module_emits_op_cached(cache, "tcp_recv")
-        && !module_emits_op_cached(cache, "tcp_close")
         && !module_emits_op_cached(cache, "tcp_pollable")
         && !module_emits_op_cached(cache, "tcp_listen")
         && !module_emits_op_cached(cache, "tcp_accept")
@@ -1093,6 +1091,115 @@ pub function wasi_poll_import(): string {
 // Elements are contiguous i32 from p+8, which is exactly the canonical
 // list<borrow<pollable>> data pointer, so no copy is needed. The returned
 // list<u32> is written into an 8-byte return area: data ptr @ +0, count @ +4.
+// --- TCP outbound client (#4318 slice 1) -------------------------------------
+//
+// A Fern tcp "fd" is a POINTER to a 12-byte heap struct, the same shape native
+// uses (internal/codegen/wasmbin/wasi_tcp.go) so the two stay swappable:
+//
+//     [0..3]  tcp-socket handle
+//     [4..7]  input-stream handle   (0 for listening sockets)
+//     [8..11] output-stream handle  (0 for listening sockets)
+//
+// wasm has no file descriptors, so the i32 the language hands back is this
+// pointer; a negative value is -errno.
+pub function wasi_sockets_imports(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi:sockets/instance-network@0.2.0\" \"instance-network\" (func $__fern_wasi_instance_network (result i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp-create-socket@0.2.0\" \"create-tcp-socket\" (func $__fern_wasi_create_tcp_socket (param i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.start-connect\" (func $__fern_wasi_tcp_start_connect (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.finish-connect\" (func $__fern_wasi_tcp_finish_connect (param i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.subscribe\" (func $__fern_wasi_tcp_subscribe (param i32) (result i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[resource-drop]tcp-socket\" (func $__fern_wasi_tcp_socket_drop (param i32)))\n";
+    o = o + "  (import \"wasi:io/streams@0.2.0\" \"[resource-drop]input-stream\" (func $__fern_wasi_input_stream_drop (param i32)))\n";
+    o = o + "  (import \"wasi:io/streams@0.2.0\" \"[resource-drop]output-stream\" (func $__fern_wasi_output_stream_drop (param i32)))\n";
+    return o;
+}
+
+// $__fern_network_handle(): the wasi:sockets/instance-network handle, fetched
+// once and cached in a global. A resource handle is an opaque int where 0 is a
+// legitimate value, so the cache needs its own init flag rather than a
+// 0-sentinel on the handle itself (same reasoning as native's
+// networkHandleInitAddr).
+pub function network_handle_func(): string {
+    var o: string = "";
+    o = o + "  (global $__fern_net (mut i32) (i32.const 0))\n";
+    o = o + "  (global $__fern_net_init (mut i32) (i32.const 0))\n";
+    o = o + "  (func $__fern_network_handle (result i32)\n";
+    o = o + "    (if (i32.eqz (global.get $__fern_net_init)) (then\n";
+    o = o + "      (global.set $__fern_net (call $__fern_wasi_instance_network))\n";
+    o = o + "      (global.set $__fern_net_init (i32.const 1))))\n";
+    o = o + "    (global.get $__fern_net))\n";
+    return o;
+}
+
+// $__fern_tcp_connect(host_be, port) -> i32. The outbound client:
+// create-tcp-socket -> start-connect -> subscribe -> block (wait for the
+// connection to establish) -> drop the pollable -> finish-connect, yielding the
+// 12-byte struct above, or -errno.
+//
+// host_be packs the IPv4 address a | b<<8 | c<<16 | d<<24 (the std/fetch `ipv4`
+// convention), unpacked here into the four octets of the ip-socket-address
+// ipv4 arm. start-connect's canonical flattening is 15 i32: self, network,
+// variant disc (0 = ipv4), then 11 payload slots of which ipv4 uses 5 (port +
+// 4 octets) and pads the rest for the larger ipv6 arm, then the retptr.
+//
+// Every step's result<> puts its discriminant byte at retptr+0 and, on the Err
+// arm, the error-code at retptr+4 — hence the repeated "if disc then return
+// -errno" guard.
+pub function tcp_connect_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_connect (param $host i32) (param $port i32) (result i32)\n";
+    o = o + "    (local $sock i32) (local $ret i32) (local $st i32) (local $p i32)\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "    (call $__fern_wasi_create_tcp_socket (i32.const 0) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (call $__fern_wasi_tcp_start_connect (local.get $sock) (call $__fern_network_handle)\n";
+    o = o + "      (i32.const 0) (local.get $port)\n";
+    o = o + "      (i32.and (local.get $host) (i32.const 255))\n";
+    o = o + "      (i32.and (i32.shr_u (local.get $host) (i32.const 8)) (i32.const 255))\n";
+    o = o + "      (i32.and (i32.shr_u (local.get $host) (i32.const 16)) (i32.const 255))\n";
+    o = o + "      (i32.and (i32.shr_u (local.get $host) (i32.const 24)) (i32.const 255))\n";
+    o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
+    o = o + "      (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
+    o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
+    o = o + "    (call $__fern_wasi_pollable_drop (local.get $p))\n";
+    o = o + "    (call $__fern_wasi_tcp_finish_connect (local.get $sock) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
+    o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
+    o = o + "    (local.get $st))\n";
+    return o;
+}
+
+// $__fern_tcp_close(conn) -> i32 (always 0; resource drops are infallible at
+// the canonical-ABI layer, and the i32 return keeps the tcp_* surface uniform).
+//
+// Drop order matters: the streams are CHILDREN of the tcp-socket, and the
+// canonical ABI rejects a parent drop while children live. The stream slots are
+// 0 for listener structs, and passing 0 to a resource-drop import traps host-
+// side, so each drop is guarded on a non-zero handle.
+pub function tcp_close_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
+    o = o + "    (local $h i32)\n";
+    o = o + "    (local.set $h (i32.load offset=4 (local.get $c)))\n";
+    o = o + "    (if (local.get $h) (then (call $__fern_wasi_input_stream_drop (local.get $h))))\n";
+    o = o + "    (local.set $h (i32.load offset=8 (local.get $c)))\n";
+    o = o + "    (if (local.get $h) (then (call $__fern_wasi_output_stream_drop (local.get $h))))\n";
+    o = o + "    (local.set $h (i32.load (local.get $c)))\n";
+    o = o + "    (if (local.get $h) (then (call $__fern_wasi_tcp_socket_drop (local.get $h))))\n";
+    o = o + "    (i32.const 0))\n";
+    return o;
+}
+
 pub function wasm_poll_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_wasm_poll (param $arr i32) (result i32)\n";
@@ -1439,6 +1546,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // the other pollable ops. The pollable handle is already on the stack.
             out = out + "    call $__fern_wasi_pollable_block\n";
             out = out + "    i32.const 0\n";
+        } else if (o.kind_tag == 193) {  // tcp_connect
+            // tcp_connect(host_be, port) -> 12-byte connection struct pointer,
+            // or -errno. Both args are already on the stack (#4318).
+            out = out + "    call $__fern_tcp_connect\n";
+        } else if (o.kind_tag == 196) {  // tcp_close
+            // tcp_close(conn) -> 0. Drops the streams then the socket.
+            out = out + "    call $__fern_tcp_close\n";
         } else if (o.kind_tag == 192) {  // wasm_poll
             // wasm_poll(ps: i32[]) -> i32. The readiness multiplexer: block until
             // at least one pollable in the array is ready, then push the FIRST
