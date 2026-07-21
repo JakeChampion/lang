@@ -1313,13 +1313,33 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 					if err != nil {
 						return 1, fmt.Errorf("-async-provider: reading provider %q: %w", path, err)
 					}
+					// COMPONENT-level signature of this import, distinct from the
+					// core-level LowerParams above. Since the v46 async port
+					// (#5456) the consumer is its own nested component that
+					// IMPORTS each awaited function, so it must declare that
+					// function's component functype — and an empty
+					// ImportParamNames means "no-param import". Omitting these
+					// made the consumer declare `add: async func() -> u32`
+					// against a provider exporting `add(a: u32, b: u32) -> u32`,
+					// so instantiation failed with an export arity mismatch
+					// (#5490). The no-param case was unaffected, which is why
+					// only the params variant broke.
+					impParamNames := make([]string, len(imp.Params))
+					impParamVals := make([][]byte, len(imp.Params))
+					for i, p := range imp.Params {
+						impParamNames[i] = p.Name
+						impParamVals[i] = []byte{asyncResultCValtype(p.Type)}
+					}
 					specs = append(specs, component.AsyncImportSpec{
-						Iface:              imp.ImportIface,
-						WITName:            imp.ImportWITName,
-						Provider:           provBytes,
-						ProviderExportName: imp.ImportWITName,
-						LowerParams:        lowerParams,
-						LowerResults:       []byte{0x7f}, // i32 status
+						Iface:               imp.ImportIface,
+						WITName:             imp.ImportWITName,
+						Provider:            provBytes,
+						ProviderExportName:  imp.ImportWITName,
+						LowerParams:         lowerParams,
+						LowerResults:        []byte{0x7f}, // i32 status
+						ImportParamNames:    impParamNames,
+						ImportParamVals:     impParamVals,
+						ImportResultValtype: asyncResultCValtype(imp.ReturnType),
 					})
 				}
 				if len(byName) > 0 {

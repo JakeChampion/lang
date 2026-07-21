@@ -162,25 +162,6 @@ func buildAsyncProviderComponentParams(t *testing.T, src, srcFn, exportName stri
 // `-async-provider` flattens the import's scalar params into the canon-lower
 // signature; the bundled provider (authored in Fern) computes 20+22 → 42.
 func TestAsyncProviderBundleParamsCLI(t *testing.T) {
-	// SKIPPED (#5490): this emits a component carrying the PRE-v46
-	// component-model-async ABI, so wasmtime v46 rejects it with an
-	// export-arity mismatch:
-	//
-	//	type mismatch for export `0` of module instantiation argument ``
-	//	expected: (func (param i32 i32 i32) (result i32))
-	//	found:    (func (param i32) (result i32))
-	//
-	// #5456 ported component-model-async to v46 and its own
-	// internal/wasm/component tests pass, but the CLI's -async-provider
-	// BUNDLING path exercises a parameter-lowering shape those tests do not
-	// cover — and cmd/** had no CI lane, so nothing surfaced it. The sibling
-	// TestAsyncProviderBundleCLI (no params) still passes, which narrows it to
-	// the params half of the composer.
-	//
-	// Skipped rather than left failing so the other 41 cmd/** tests can be
-	// gated in CI now (this commit adds ./cmd/... to test-units.yml).
-	// Removing this skip is the definition of done on #5490.
-	t.Skip("pre-v46 component-model-async ABI in the -async-provider params path (#5490)")
 	dir := t.TempDir()
 
 	prov := buildAsyncProviderComponentParams(t,
