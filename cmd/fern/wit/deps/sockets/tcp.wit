@@ -1,11 +1,18 @@
 package wasi:sockets@0.2.0;
 
-// Vendored subset of wasi:sockets/tcp@0.2.0 — only the methods
-// the wasm backend actually emits: start/finish-bind,
-// start/finish-listen, accept, subscribe, plus the
-// `[resource-drop]tcp-socket` import. The full API includes
-// connect/shutdown/keep-alive/etc.; we lower Fern's narrower
-// listen+accept+stream pattern.
+// Vendored subset of wasi:sockets/tcp@0.2.0 — the methods the wasm
+// backends emit: start/finish-bind, start/finish-listen, accept,
+// start/finish-connect, subscribe, plus the `[resource-drop]tcp-socket`
+// import. The full API also has shutdown/keep-alive/etc., which we do
+// not lower.
+//
+// start/finish-connect back the OUTBOUND client (tcp_connect, #4318).
+// They are declared here for the SELF-HOST wasm path, which composes via
+// `wasm-tools component embed` + `component new` and therefore resolves
+// imports against this file. Native emits the same two imports but never
+// reads this: it composes in Go (component.ClassifyCore ->
+// component.Compose), hand-writing the canonical-ABI adapters — which is
+// why connect worked there while absent here.
 interface tcp {
     use wasi:io/streams@0.2.0.{input-stream, output-stream};
     use wasi:io/poll@0.2.0.{pollable};
@@ -17,6 +24,8 @@ interface tcp {
         start-listen: func() -> result<_, error-code>;
         finish-listen: func() -> result<_, error-code>;
         accept: func() -> result<tuple<tcp-socket, input-stream, output-stream>, error-code>;
+        start-connect: func(network: borrow<network>, remote-address: ip-socket-address) -> result<_, error-code>;
+        finish-connect: func() -> result<tuple<input-stream, output-stream>, error-code>;
         subscribe: func() -> pollable;
     }
 }
