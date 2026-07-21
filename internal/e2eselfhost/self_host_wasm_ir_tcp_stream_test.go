@@ -104,7 +104,7 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		return ln.Addr().(*net.TCPAddr).Port
 	}
 
-	run := func(t *testing.T, name, src string) string {
+	runWith := func(t *testing.T, name, src string, wantSyms []string) string {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -117,7 +117,7 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("driver failed: %v", err)
 		}
-		for _, sym := range []string{"call $__fern_tcp_send", "call $__fern_tcp_recv"} {
+		for _, sym := range wantSyms {
 			if !strings.Contains(string(wat), sym) {
 				t.Fatalf("%s: emitted WAT has no `%s` (module bailed off the IR path?)", name, sym)
 			}
@@ -147,6 +147,15 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 
+	run := func(t *testing.T, name, src string) string {
+		return runWith(t, name, src, []string{"call $__fern_tcp_send", "call $__fern_tcp_recv"})
+	}
+	// runSendOnly asserts only the send symbol — the send-only module has no
+	// tcp_recv in it, which is the whole point of that case.
+	runSendOnly := func(t *testing.T, name, src string) string {
+		return runWith(t, name, src, []string{"call $__fern_tcp_send"})
+	}
+
 	const localhostBE = "127 + (0 * 256) + (0 * 65536) + (1 * 16777216)"
 
 	// Round-trip: send a short payload, read the echo back. Pins that the
@@ -167,6 +176,29 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 }`, localhostBE, port)
 		if got := run(t, "tcp_roundtrip", src); got != "sent=5 got=ECHO:hello" {
 			t.Errorf("stdout = %q, want %q", got, "sent=5 got=ECHO:hello")
+		}
+	})
+
+	// tcp_send ALONE, with no tcp_recv in the module. This is the case the
+	// original stream test missed: it exercised send and recv together, and
+	// recv's cabi_realloc gate satisfied the requirement that send also has
+	// (its blocking-write-and-flush takes a list<u8>), so a send-only program
+	// failed to compose with "module does not export a function named
+	// cabi_realloc" while the paired test stayed green. Asserting the compose
+	// succeeds is the point; the byte count confirms it still works.
+	t.Run("send_only_composes_without_recv", func(t *testing.T) {
+		port := serve(t, 4, func(got []byte) string { return "" })
+		src := fmt.Sprintf(`function main(): i32 {
+    var host: i32 = %s;
+    var c: i32 = tcp_connect(host, %d);
+    if (c < 0) { write("connect-failed\n"); return 1; }
+    var n: i32 = tcp_send(c, "ping");
+    write("sent="); print_int(n); write("\n");
+    tcp_close(c);
+    return 0;
+}`, localhostBE, port)
+		if got := runSendOnly(t, "tcp_send_only", src); got != "sent=4" {
+			t.Errorf("stdout = %q, want %q", got, "sent=4")
 		}
 	})
 

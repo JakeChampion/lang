@@ -12780,7 +12780,15 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // whose import RETURNS a list: wasm_poll (list<u32>) and tcp_recv
     // (list<u8>). One shared gate so it is emitted exactly once — a second
     // definition is a duplicate-export error.
-    if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv") || wasm_ir.module_emits_op_cached(ir_cache, "poll")) { out = out + cabi_realloc_helper(); }
+    // Every op whose component import carries a LIST needs the guest
+    // allocator exported. tcp_send belongs here too — its
+    // blocking-write-and-flush takes a list<u8>, and `component new`
+    // rejects the module without it ("does not export a function named
+    // cabi_realloc"). That was missed when tcp_send landed because the
+    // test paired it with tcp_recv, whose own gate satisfied the
+    // requirement and hid it; a send-only program failed to compose.
+    // One shared gate, so it is emitted exactly once.
+    if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv") || wasm_ir.module_emits_op_cached(ir_cache, "poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "udp_send")) { out = out + cabi_realloc_helper(); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen") || wasm_ir.module_emits_op_cached(ir_cache, "udp_send")) { out = out + wasm_ir.network_handle_func(); }
