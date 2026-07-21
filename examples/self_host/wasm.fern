@@ -12569,7 +12569,35 @@ pub function emit_module_run_io_fs(mod: parser.Module): string {
 //
 // `ir_cache` must be the lowering the caller also passes to emit_functions —
 // the gates below and the emitted bodies have to agree on the same lowering.
-pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
+// emit_ir_module_units links N per-module units into one core module (#5331
+// step 4b). It owns everything a unit does NOT: the imports, the memory, the
+// base/type-id globals, the data section, the runtime helper bodies, the funcref
+// table, and _start. A unit (wasm_ir.emit_functions_ns) owns only its function
+// bodies, emitted against `$__str_base<ns>` / `$__fn_base<ns>` — which this
+// function defines, and which is what makes a unit cacheable independently of
+// its siblings.
+//
+// The per-unit inputs are flat parallel arrays rather than nested ones: `nss`
+// holds each unit's namespace, `unit_texts` its emitted bodies, and
+// (all_strs, str_counts) / (all_fns, fn_counts) the concatenation of the
+// per-unit literal and address-taken-function tables with their lengths. Unit i
+// therefore owns [sum(counts[0..i]), +counts[i]) in each, which is exactly the
+// relative numbering its bodies were emitted against.
+//
+// Laying the literals out contiguously in that flat order means str_offset over
+// the flat list already yields every literal's absolute address, so the data section
+// and heap-base arithmetic are unchanged from whole-program emit — only their
+// input differs.
+//
+// `mod` supplies the struct table (type ids must agree across all units, hence
+// step 3's by-name globals) and `ir_cache` the combined lowering that gates
+// which runtime helpers are needed. Both are whole-program views; keeping the
+// gating exact here preserves the byte-identity invariant for the single-unit
+// case. Deciding the helper set WITHOUT a combined cache is the out-of-process
+// driver's problem (step 4c), where the asm side's precedent is a sound
+// over-approximation (asm_ir.all_runtime_need_roots) rather than an exact union,
+// because the exact aggregation re-lowers every module and OOMs (#3425).
+pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     // wasi random_get import (issue #2747) — must precede the function
@@ -12677,7 +12705,7 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
     // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
     // distinct values + their offsets so the data + const_str ptrs agree.
-    var sv: string[] = wasm_ir.str_values(ir_cache);
+    var sv: string[] = all_strs;
     // $__str_base: the base of this unit's string-literal region. const_str
     // emits `global.get $__str_base` + a RELATIVE offset rather than baking the
     // absolute one, so a unit's emitted code no longer depends on where its
@@ -12696,7 +12724,17 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // Whole-program emit (this path) is a single unit, so the base is just the
     // region start and every emitted address is unchanged.
     if (sv.len() > 0) {
-        out = out + "  (global $__str_base i32 (i32.const " + util.i32_to_string(wasm_ir.str_region_base()) + "))\n";
+        // One base per unit, at the absolute offset of that unit's first
+        // literal. The single-unit case yields str_region_base() and the
+        // historical unnamespaced name, so its output is unchanged.
+        var sbi: i32 = 0;
+        var sbstart: i32 = 0;
+        while (sbi < nss.len()) {
+            out = out + "  (global " + wasm_ir.str_base_global(nss[sbi]) + " i32 (i32.const "
+                + util.i32_to_string(wasm_ir.str_offset(sv, sbstart)) + "))\n";
+            sbstart = sbstart + str_counts[sbi];
+            sbi = sbi + 1;
+        }
     }
     // Type-id globals (#5331 step 3): every construction / comparison site names
     // its type and reads the id from here, rather than baking the positional
@@ -12711,14 +12749,14 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
         di = di + 1;
     }
     if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "env") || wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk") || wasm_ir.module_emits_op_cached(ir_cache, "reader_close") || wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept") || wasm_ir.module_emits_op_cached(ir_cache, "udp_send") || wasm_ir.module_emits_op_cached(ir_cache, "poll")) {
-        out = out + heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
-        out = out + rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
+        out = out + heap_alloc_helpers(wasm_ir.heap_base_for_strs(sv), wasm_ir.fl_base_for_strs(sv), wasm_ir.fl_cells());
+        out = out + rc_runtime_helpers(wasm_ir.heap_base_for_strs(sv));
     }
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not ride along unconditionally.
-    if (wasm_ir.module_calls_strarrarr_free(ir_cache)) { out = out + arr_dec_ptr2_func(wasm_ir.heap_base_for(ir_cache)); }
-    if (wasm_ir.module_calls_optarrarr_free(ir_cache)) { out = out + optarrarr_free_func(wasm_ir.heap_base_for(ir_cache)); }
+    if (wasm_ir.module_calls_strarrarr_free(ir_cache)) { out = out + arr_dec_ptr2_func(wasm_ir.heap_base_for_strs(sv)); }
+    if (wasm_ir.module_calls_optarrarr_free(ir_cache)) { out = out + optarrarr_free_func(wasm_ir.heap_base_for_strs(sv)); }
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
     if (wasm_ir.module_uses_strbuf(ir_cache)) { out = out + strbuf_helpers(); }
@@ -12893,7 +12931,7 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     var needs_arr_push: boolean = wasm_ir.module_emits_op_cached(ir_cache, "arr_push") || wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all");
     var split_emits_push: boolean = wasm_ir.module_emits_op_cached(ir_cache, "str_split") || wasm_ir.module_uses_str_lines(ir_cache);
     if (needs_arr_push && !split_emits_push) { out = out + arr_push_helper(); }
-    if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) { out = out + arr_push_owned_helper(wasm_ir.heap_base_for(ir_cache)); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_owned")) { out = out + arr_push_owned_helper(wasm_ir.heap_base_for_strs(sv)); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
     if (wasm_ir.module_uses_maps(ir_cache)) { out = out + map_helpers(); }
@@ -12925,11 +12963,25 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     if (wasm_ir.module_emits_op_cached(ir_cache, "str_from_bytes")) { out = out + string_from_bytes_helper(); }
     // Function-value support: the $fn<N> call_indirect signature types, the
     // funcref table, and its elem segment (empty for non-closure modules).
-    out = out + wasm_ir.fn_support_section(ir_cache);
-    out = out + wasm_ir.emit_functions(mod, ir_cache);
+    out = out + wasm_ir.fn_support_section_units(nss, all_fns, fn_counts, wasm_ir.indirect_arities(ir_cache));
+    var ui: i32 = 0;
+    while (ui < unit_texts.len()) {
+        out = out + unit_texts[ui];
+        ui = ui + 1;
+    }
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";
     out = out + "  (export \"_start\" (func $_start)))\n";
     return out;
+}
+
+// emit_ir_module is whole-program emit: a single unnamespaced unit. Kept as the
+// entry point every existing caller uses, and the byte-identity invariant for
+// #5331 step 4b — its output must not change at all.
+pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
+    var sv: string[] = wasm_ir.str_values(ir_cache);
+    var ft: string[] = wasm_ir.fn_value_table(ir_cache);
+    var unit: string = wasm_ir.emit_functions_ns("", mod, ir_cache);
+    return emit_ir_module_units([""], [unit], sv, [sv.len()], ft, [ft.len()], mod, ir_cache);
 }
 
 function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, fs: boolean): string {
