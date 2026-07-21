@@ -35,6 +35,7 @@ import "./wasm_ir";
 import "./irlower";
 import "./asm_ir";
 import "./modloader";
+import "./wasm_objfile";
 
 // unit_ns namespaces module `idx`'s base globals. Module 0 keeps the historical
 // unnamespaced names so a single-module program's unit is byte-identical to the
@@ -57,6 +58,54 @@ function whole_program_view(parts: flatten.PerModule[]): parser.Module[] {
         i = i + 1;
     }
     return out;
+}
+
+// build_unit lowers module `idx` and packages its bodies with the metadata link
+// needs. This is the only place lowering happens, which is what makes a cache
+// hit cheap: it skips this entirely.
+function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], idx: i32): wasm_objfile.UnitObj {
+    var ns: string = unit_ns(idx);
+    var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(infmods[idx], all_funcs, all_structs);
+    return wasm_objfile.UnitObj {
+        strs: wasm_ir.str_values(cache),
+        fns: wasm_ir.fn_value_table(cache),
+        needs: wasm_ir.needs_of(cache),
+        arities: wasm_ir.indirect_arities(cache),
+        frt: wasm_ir.field_reclaim_types(cache),
+        sdt: wasm_ir.struct_drop_types(cache, all_structs),
+        aet: wasm_ir.struct_arr_elems_drop_types(cache, all_structs),
+        text: wasm_ir.emit_functions_view(ns, infmods[idx], cache, all_funcs, all_structs),
+    };
+}
+
+// load_unit returns module `idx`'s object, served from the cache when its key
+// still matches and built (lowered) only when it does not. hit/miss goes to
+// stderr so a build, or a test, can observe exactly which modules were reused.
+function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], idx: i32, cache_dir: string): wasm_objfile.UnitObj {
+    var cachefile: string = "";
+    if (cache_dir.len() > 0 && sighashes.len() > 0) {
+        var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, idx);
+        var key: string = modloader.module_cache_key(parts, infmods, sighashes, idx, src_hash, []);
+        if (key.len() > 0) {
+            cachefile = cache_dir + "/" + parts[idx].ns + "__" + util.hash_key(key) + ".wu";
+            match (read_file(cachefile)) {
+                Ok(cached) => {
+                    eprint("cache-hit " + parts[idx].ns + "\n");
+                    return wasm_objfile.decode(cached);
+                },
+                Err(e) => { },
+            }
+        }
+    }
+    var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_structs, idx);
+    if (cachefile.len() > 0) {
+        eprint("cache-miss " + parts[idx].ns + "\n");
+        match (write_file(cachefile, wasm_objfile.encode(obj))) {
+            Some(werr) => { eprint("wasm per-module: cache write failed for " + parts[idx].ns + "\n"); },
+            None => { },
+        }
+    }
+    return obj;
 }
 
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, cache_dir: string): i32 {
@@ -88,7 +137,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // only then: computing them is a whole-program string walk the self-host
     // runtime does not yet reclaim (#3425), so an uncached emit must not pay it.
     var sighashes: string[] = [];
-    if (pm_mode == "manifest" || (pm_mode == "emit" && cache_dir.len() > 0)) {
+    if (pm_mode == "manifest" || ((pm_mode == "emit" || pm_mode == "link") && cache_dir.len() > 0)) {
         var shi: i32 = 0;
         while (shi < parts.len()) {
             sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi])));
@@ -106,42 +155,68 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         return 0;
     }
 
+    if (pm_mode == "link") {
+        // Assemble the whole module from per-unit objects. Each unit is served
+        // from the cache when its key still matches, so an incremental rebuild
+        // lowers ONLY the modules that actually changed — the payoff the rest of
+        // #5331 was building toward. Link itself consults no ir_cache at all: the
+        // needs, arities and RC type lists all come from the objects.
+        var nss: string[] = [];
+        var texts: string[] = [];
+        var all_strs: string[] = [];
+        var str_counts: i32[] = [];
+        var all_fns: string[] = [];
+        var fn_counts: i32[] = [];
+        var needs: string[] = [];
+        var arities: i32[] = [];
+        var frt: string[] = [];
+        var sdt: string[] = [];
+        var aet: string[] = [];
+        var li: i32 = 0;
+        while (li < parts.len()) {
+            var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, all_funcs, all_structs, li, cache_dir);
+            nss = nss.append(unit_ns(li));
+            texts = texts.append(obj.text);
+            var si: i32 = 0;
+            while (si < obj.strs.len()) { all_strs = all_strs.append(obj.strs[si]); si = si + 1; }
+            str_counts = str_counts.append(obj.strs.len());
+            var fi2: i32 = 0;
+            while (fi2 < obj.fns.len()) { all_fns = all_fns.append(obj.fns[fi2]); fi2 = fi2 + 1; }
+            fn_counts = fn_counts.append(obj.fns.len());
+            needs = wasm_ir.union_strs(needs, obj.needs);
+            frt = wasm_ir.union_strs(frt, obj.frt);
+            sdt = wasm_ir.union_strs(sdt, obj.sdt);
+            aet = wasm_ir.union_strs(aet, obj.aet);
+            var ai2: i32 = 0;
+            while (ai2 < obj.arities.len()) {
+                var seen: boolean = false;
+                var aj: i32 = 0;
+                while (aj < arities.len()) {
+                    if (arities[aj] == obj.arities[ai2]) { seen = true; }
+                    aj = aj + 1;
+                }
+                if (!seen) { arities = arities.append(obj.arities[ai2]); }
+                ai2 = ai2 + 1;
+            }
+            li = li + 1;
+        }
+        // The struct world is shared by every unit, so the RC helper bodies are
+        // emitted once against the merged module. heap_base is a whole-LINK
+        // quantity: it sits past every unit's literals.
+        var merged: parser.Module = flatten.bundle(entry, loaded);
+        merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(modloader.merge_builtins(dir, merged)));
+        var rc: string = wasm.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
+        write(wasm.emit_ir_module_units(nss, texts, all_strs, str_counts, all_fns, fn_counts, merged, needs, arities, rc));
+        return 0;
+    }
+
     if (pm_index < 0 || pm_index >= parts.len()) {
         eprint("wasm per-module: emit index out of range\n");
         return 1;
     }
 
-    var cachefile: string = "";
-    if (cache_dir.len() > 0) {
-        var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, pm_index);
-        var key: string = modloader.module_cache_key(parts, infmods, sighashes, pm_index, src_hash, []);
-        if (key.len() > 0) {
-            cachefile = cache_dir + "/" + parts[pm_index].ns + "__" + util.hash_key(key) + ".wat";
-            match (read_file(cachefile)) {
-                Ok(cached) => {
-                    eprint("cache-hit " + parts[pm_index].ns + "\n");
-                    write(cached);
-                    return 0;
-                },
-                Err(e) => { },
-            }
-        }
-    }
-
-    // The expensive part, reached only on a miss: lower THIS module (against the
-    // whole-program view) and emit its bodies.
-    var ns: string = unit_ns(pm_index);
-    var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(infmods[pm_index], all_funcs, all_structs);
-    var unit: string = wasm_ir.emit_functions_view(ns, infmods[pm_index], cache, all_funcs, all_structs);
-
-    write(unit);
-    if (cachefile.len() > 0) {
-        eprint("cache-miss " + parts[pm_index].ns + "\n");
-        match (write_file(cachefile, unit)) {
-            Some(werr) => { eprint("wasm per-module: cache write failed for " + parts[pm_index].ns + "\n"); },
-            None => { },
-        }
-    }
+    var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, all_funcs, all_structs, pm_index, cache_dir);
+    write(wasm_objfile.encode(obj));
     return 0;
 }
 
@@ -155,13 +230,14 @@ function main(): i32 {
     while (ai < a.len()) {
         if (a[ai] == "-per-module-count") { pm_mode = "count"; }
         else if (a[ai] == "-per-module-manifest") { pm_mode = "manifest"; }
+        else if (a[ai] == "-link") { pm_mode = "link"; }
         else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-cache-dir" && ai + 1 < a.len()) { cache_dir = a[ai + 1]; ai = ai + 1; }
         else if (entry_path == "") { entry_path = a[ai]; }
         ai = ai + 1;
     }
     if (entry_path == "" || pm_mode == "") {
-        eprint("usage: wasm_modload_run <entry.fern> [-per-module-count | -per-module-manifest | -per-module-emit N [-cache-dir DIR]]\n");
+        eprint("usage: wasm_modload_run <entry.fern> [-per-module-count | -per-module-manifest | -per-module-emit N | -link] [-cache-dir DIR]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
