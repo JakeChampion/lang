@@ -971,7 +971,6 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // a poll module stays on the wasm AST path. (sleep_ms, by contrast, needs
         // only a single-clock poll_oneoff and DOES lower on the wasm IR path — see
         // $__fern_sleep_ms; it is no longer deferred.)
-        && !module_emits_op_cached(cache, "poll")
         // timer_fd is NOT deferred to the AST path — it is an error endpoint on
         // wasm, rejected before emit by wasm_unsupported_builtin (#4317). It is
         // the native fd-based timerfd, and wasm has no pollable file descriptors;
@@ -1368,6 +1367,50 @@ pub function tcp_close_func(): string {
     return o;
 }
 
+// $__fern_poll(ps: i32[], timeout_ms) -> i32: the POSIX-shaped readiness
+// multiplexer — the index of the first ready element, or -1 on TIMEOUT. A
+// negative timeout blocks indefinitely; 0 polls without waiting.
+//
+// On wasm the elements are wasi:io/poll pollable handles (what tcp_pollable and
+// wasm_timer_pollable hand back) — wasm has no file descriptors, so a pollable
+// IS the fd analog. That makes the indefinite case exactly $__fern_wasm_poll,
+// which this delegates to rather than duplicating.
+//
+// The timeout is expressed the only way wasi:io/poll can express one: subscribe
+// a monotonic-clock timer for `timeout_ms` and add it to the polled set as one
+// extra entry. If the winning index is that trailing entry (== the caller's
+// length), the wait timed out and the result is -1; otherwise the winner is a
+// caller pollable and its index is already correct, since the timer was
+// appended AFTER them. #4316 follow-up.
+pub function poll_fds_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_poll (param $arr i32) (param $ms i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $buf i32) (local $t i32) (local $ret i32) (local $i i32) (local $idx i32)\n";
+    o = o + "    (if (i32.lt_s (local.get $ms) (i32.const 0)) (then\n";
+    o = o + "      (return (call $__fern_wasm_poll (local.get $arr)))))\n";
+    o = o + "    (local.set $n (i32.load (local.get $arr)))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (i32.mul (i32.add (local.get $n) (i32.const 1)) (i32.const 4))))\n";
+    o = o + "    (block $copied\n";
+    o = o + "      (loop $more\n";
+    o = o + "        (br_if $copied (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (i32.store (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 4)))\n";
+    o = o + "          (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $more)))\n";
+    o = o + "    (local.set $t (call $__fern_wasi_subscribe_duration\n";
+    o = o + "      (i64.mul (i64.extend_i32_s (local.get $ms)) (i64.const 1000000))))\n";
+    o = o + "    (i32.store (i32.add (local.get $buf) (i32.mul (local.get $n) (i32.const 4))) (local.get $t))\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "    (call $__fern_wasi_poll (local.get $buf) (i32.add (local.get $n) (i32.const 1)) (local.get $ret))\n";
+    o = o + "    (local.set $idx (i32.const -1))\n";
+    o = o + "    (if (i32.load offset=4 (local.get $ret)) (then\n";
+    o = o + "      (local.set $idx (i32.load (i32.load (local.get $ret))))))\n";
+    o = o + "    (call $__fern_wasi_pollable_drop (local.get $t))\n";
+    o = o + "    (if (i32.ge_u (local.get $idx) (local.get $n)) (then (return (i32.const -1))))\n";
+    o = o + "    (local.get $idx))\n";
+    return o;
+}
+
 pub function wasm_poll_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_wasm_poll (param $arr i32) (result i32)\n";
@@ -1736,6 +1779,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind_tag == 196) {  // tcp_close
             // tcp_close(conn) -> 0. Drops the streams then the socket.
             out = out + "    call $__fern_tcp_close\n";
+        } else if (o.kind_tag == 187) {  // poll
+            // poll(fds, timeout_ms) -> first ready index, or -1 on timeout.
+            // Both args are already on the stack (#4316 follow-up).
+            out = out + "    call $__fern_poll\n";
         } else if (o.kind_tag == 192) {  // wasm_poll
             // wasm_poll(ps: i32[]) -> i32. The readiness multiplexer: block until
             // at least one pollable in the array is ready, then push the FIRST
