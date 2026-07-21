@@ -67,37 +67,47 @@ pub function heap_base(): i32 { return 40 + 65536 * 4; }
 // lower_func_for's exactly (including the empty consume_safe_params — the query
 // passes deliberately use the per-function borrowability, NOT the interprocedural
 // fixpoint the emit path threads through emit_function_ir).
-pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
-    var arf: string[] = asm_ir.array_ret_fns(mod);
-    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(mod.funcs), mod.trait_reqs, "string[]");
-    var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
-    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
-    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
-    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
-    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
-    var cnf: string[] = irlower.const_fns_of(mod.funcs);
-    var bp: string[] = irlower.borrowable_params_of(mod.funcs);
-    var fnames: string[] = irlower.fn_names_of(mod.funcs);
-    var frsf: string[] = irlower.fresh_struct_ret_fns_of(mod.funcs, mod.structs);
-    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(mod.funcs, mod.structs);
-    var sfrf: string[] = irlower.str_fresh_ret_fns_of(mod.funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(mod.funcs, mod.structs);
-    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
-    var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(mod.funcs);
+// lower_all_for_view lowers ONE unit's functions against a WHOLE-PROGRAM view
+// (#5331 step 4b). Same split as emit_functions_view, one layer down: the side
+// tables must see every function in the program (a call is lowered by its
+// CALLEE's shape, and a unit calls into its siblings), while the loop lowers
+// only this unit's functions.
+pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): irlower.LowerResult[] {
+    var arf: string[] = asm_ir.array_ret_fns_of(all_funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(all_funcs), mod.trait_reqs, "string[]");
+    var amf: string[] = irlower.arr_method_fns_of(all_funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(all_funcs), mod.trait_reqs);
+    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs, "f64[]");
+    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
+    var cnf: string[] = irlower.const_fns_of(all_funcs);
+    var bp: string[] = irlower.borrowable_params_of(all_funcs);
+    var fnames: string[] = irlower.fn_names_of(all_funcs);
+    var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
+    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
+    var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
+    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(all_funcs);
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(all_funcs, all_structs), cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
         fi = fi + 1;
     }
     return out;
+}
+
+// lower_all_for is the single-unit case: the unit IS the whole program.
+pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
+    return lower_all_for_view(mod, mod.funcs, mod.structs);
 }
 
 // str_values collects the module's distinct string literals (first-seen order,
@@ -2929,37 +2939,60 @@ function emit_function_ir(ns: string, fd: parser.FuncDecl, str_vals: string[], s
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
 // emit_functions emits a unit's function bodies. `ns` namespaces the base
 // globals the bodies reference (see str_base_global); "" is whole-program emit.
-pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irlower.LowerResult[]): string {
+// emit_functions_view emits ONE unit's function bodies against a WHOLE-PROGRAM
+// view of the program's functions and structs (#5331 step 4b).
+//
+// The split matters and is easy to get wrong:
+//
+//   - The SIDE TABLES (ret-type tagging, borrowability, closure/fn-ptr sets,
+//     struct layouts) derive from all_funcs / all_structs. A unit calls into its
+//     sibling modules, and a call is tagged by its CALLEE's return type — derive
+//     these from the unit's own functions and every cross-module call is
+//     mis-tagged. This is why asm_ir.emit_module_ir_unit takes the same two
+//     views.
+//   - The EMIT LOOP and the string / funcref tables stay unit-local. Those are
+//     what make a unit's offsets relative to its own $__str_base / $__fn_base,
+//     which is the whole point of steps 1 and 2.
+//
+// Whole-program emit passes all_funcs = mod.funcs and all_structs = mod.structs,
+// so it is unchanged.
+pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging matches the AST path (parity with the
     // x86 IR path in asm_ir.emit_module_ir).
     mod = parser.infer_ret_types_module(mod);
     var str_vals: string[] = str_values(cache);
-    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(mod.funcs), mod.trait_reqs, "string[]");
-    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
-    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(mod.funcs), mod.trait_reqs);
-    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(mod.funcs), mod.trait_reqs, "f64[]");
-    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
+    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(all_funcs), mod.trait_reqs, "string[]");
+    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(all_funcs), mod.trait_reqs);
+    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs, "f64[]");
+    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
     var ft: string[] = fn_value_table(cache);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs, mod.structs);
-    var cfs: string[] = irlower.closure_and_fnptr_fns_of(mod.funcs, mod.structs);
-    var arf: string[] = asm_ir.array_ret_fns(mod);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
+    var arf: string[] = asm_ir.array_ret_fns_of(all_funcs);
     var out: string = "";
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_ir.
-    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
-    var csparams: string[] = irlower.consume_safe_params_interproc(mod.funcs, bparams);
+    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(ns, mod.funcs[fi], str_vals, mod.structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, mod.funcs, bparams, csparams);
+        out = out + emit_function_ir(ns, mod.funcs[fi], str_vals, all_structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, all_funcs, bparams, csparams);
         fi = fi + 1;
     }
     return out;
+}
+
+// emit_functions_ns is the single-unit case: the unit IS the whole program.
+pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irlower.LowerResult[]): string {
+    var im: parser.Module = parser.infer_ret_types_module(mod);
+    return emit_functions_view(ns, im, cache, im.funcs, im.structs);
 }
 
 // emit_functions is whole-program emit: one unit, so the bases are unnamespaced.

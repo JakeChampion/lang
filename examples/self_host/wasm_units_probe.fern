@@ -1,0 +1,140 @@
+// examples/self_host/wasm_units_probe.fern — the N=2 validation for #5331's
+// per-module wasm emit.
+//
+// Steps 1-3 removed a module's dependence on its siblings' string literals,
+// funcref indices, and type ids; step 4a/4b split the emitter into a link scope
+// (wasm.emit_ir_module_units) and per-unit bodies (wasm_ir.emit_functions_view).
+// Every one of those landed on a byte-identity invariant: whole-program output
+// must not change. That proves nothing was BROKEN. It does not prove two units
+// link into a working module, because until this driver existed nothing ever
+// emitted more than one.
+//
+// So: read a program, split its functions in half, emit each half as its own
+// unit with its own namespace, link the two, and print the WAT. If the split is
+// sound the program behaves exactly as the whole-program build of the same
+// source — which is what the Go-side test asserts, by running both and
+// comparing.
+//
+// The halves are arbitrary and deliberately so. A real per-module split follows
+// import boundaries; an arbitrary one is strictly harder, since it guarantees
+// cross-unit calls in both directions and shared literals. If this passes, the
+// module-boundary case is easier.
+//
+// The one thing that must NOT be split is the whole-program VIEW: both the
+// lowering and the emit of each half take `im.funcs` / `im.structs`, because a
+// call is shaped by its CALLEE, which now routinely lives in the other unit.
+// Passing a half's own functions there is exactly the bug this driver exists to
+// catch, and it fails loudly rather than subtly — a mis-tagged cross-unit call
+// miscompiles at runtime.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./asmcore";
+import "./wasm";
+import "./wasm_ir";
+import "./irlower";
+import "./util";
+
+// slice_funcs returns funcs[lo:hi] — the self-host language has no slice
+// syntax for struct arrays, so build it by hand.
+function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[] {
+    var out: parser.FuncDecl[] = [];
+    var i: i32 = lo;
+    while (i < hi) {
+        out = out.append(fs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// with_funcs clones a module carrying only `fs`. Everything else — structs,
+// enums, impls, trait_reqs — stays whole: those are the program's type world and
+// are shared by every unit, exactly as they are in the linked output.
+function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
+    return parser.Module {
+        funcs: fs,
+        structs: m.structs,
+        aliases: m.aliases,
+        imports: m.imports,
+        top_stmts: m.top_stmts,
+        enums: m.enums,
+        resources: m.resources,
+        exports: m.exports,
+        impls: m.impls,
+        trait_reqs: m.trait_reqs,
+    };
+}
+
+function concat_results(a: irlower.LowerResult[], b: irlower.LowerResult[]): irlower.LowerResult[] {
+    var out: irlower.LowerResult[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) {
+        out = out.append(b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+function concat_strs(a: string[], b: string[]): string[] {
+    var out: string[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) {
+        out = out.append(b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+
+    var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    arity_errs = arity_errs + asmcore.check_call_arity(mod);
+    if (arity_errs.len() > 0) {
+        eprint(arity_errs);
+        return 1;
+    }
+
+    // Infer BEFORE snapshotting the view: the side tables are derived over it,
+    // so they must see inferred return types or an unannotated function's
+    // callers are mis-tagged (the same ordering asm_ir.emit_module_ir documents).
+    // lift_lambdas BEFORE the view snapshot, matching emit_module_mode's order
+    // (module_with_builtins -> lift_lambdas -> infer). The lift synthesises the
+    // `$<fn>$wrap<N>` thunks a function VALUE is taken through, so skipping it
+    // leaves the funcref table naming functions the units never emit — which
+    // traps at call_indirect rather than failing to link.
+    var im: parser.Module = parser.infer_ret_types_module(wasm_ir.lift_lambdas(parser.module_with_builtins(mod)));
+
+    var n: i32 = im.funcs.len();
+    if (n < 2) {
+        eprint("wasm_units_probe: need at least 2 functions to split\n");
+        return 1;
+    }
+    var half: i32 = n / 2;
+    var mod_a: parser.Module = with_funcs(im, slice_funcs(im.funcs, 0, half));
+    var mod_b: parser.Module = with_funcs(im, slice_funcs(im.funcs, half, n));
+
+    // Whole-program view for both halves — see the header.
+    var cache_a: irlower.LowerResult[] = wasm_ir.lower_all_for_view(mod_a, im.funcs, im.structs);
+    var cache_b: irlower.LowerResult[] = wasm_ir.lower_all_for_view(mod_b, im.funcs, im.structs);
+
+    var unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, im.structs);
+    var unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, im.structs);
+
+    var strs_a: string[] = wasm_ir.str_values(cache_a);
+    var strs_b: string[] = wasm_ir.str_values(cache_b);
+    var fns_a: string[] = wasm_ir.fn_value_table(cache_a);
+    var fns_b: string[] = wasm_ir.fn_value_table(cache_b);
+
+    var combined: irlower.LowerResult[] = concat_results(cache_a, cache_b);
+
+    write(wasm.emit_ir_module_units(
+        ["", "$u1"],
+        [unit_a, unit_b],
+        concat_strs(strs_a, strs_b), [strs_a.len(), strs_b.len()],
+        concat_strs(fns_a, fns_b), [fns_a.len(), fns_b.len()],
+        im, combined));
+    return 0;
+}
