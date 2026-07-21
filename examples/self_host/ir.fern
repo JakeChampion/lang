@@ -476,6 +476,7 @@ pub function op_tcp_connect(): Op { return op0("tcp_connect"); }
 pub function op_tcp_send(): Op { return op0("tcp_send"); }
 pub function op_tcp_recv(): Op { return op0("tcp_recv"); }
 pub function op_tcp_close(): Op { return op0("tcp_close"); }
+pub function op_udp_send(): Op { return op0("udp_send"); }
 pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
 // `tcp_listen` [port] -> i32 listener fd (or -errno): socket + bind to
 // 0.0.0.0:port + listen. `tcp_accept` [fd] -> i32 connection fd (or -errno):
@@ -1271,6 +1272,8 @@ function kind_id_4(name: string): i32 {
     if (name == "raw_scratch") { return 205; }
     if (name == "syscall4") { return 206; }
     if (name == "raw_environ") { return 207; }
+    // udp_send(host, port, data): one-shot fire-and-forget datagram (#4375).
+    if (name == "udp_send") { return 208; }
     return 0;
 }
 
@@ -1507,6 +1510,7 @@ function kind_name_4(id: i32): string {
     if (id == 205) { return "raw_scratch"; }
     if (id == 206) { return "syscall4"; }
     if (id == 207) { return "raw_environ"; }
+    if (id == 208) { return "udp_send"; }
     return "invalid";
 }
 
