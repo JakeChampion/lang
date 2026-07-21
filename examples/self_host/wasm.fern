@@ -12678,6 +12678,26 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
     // distinct values + their offsets so the data + const_str ptrs agree.
     var sv: string[] = wasm_ir.str_values(ir_cache);
+    // $__str_base: the base of this unit's string-literal region. const_str
+    // emits `global.get $__str_base` + a RELATIVE offset rather than baking the
+    // absolute one, so a unit's emitted code no longer depends on where its
+    // literals land in the whole-program data section (#5331 step 1).
+    //
+    // Why that matters: str_offset sums over every literal in the program, so
+    // growing ONE literal shifts every later literal's offset (measured: a
+    // second literal moves 31 -> 48 when the first grows) and the heap/freelist
+    // bases with it. Under the per-module object cache planned for wasm, a
+    // body-only edit to one module would therefore invalidate the emitted code
+    // of every module after it — exactly the invalidation module_sig_string's
+    // body exclusion prevents on the asm side. Routing literal references
+    // through a base the link step assigns is the wasm analogue of an asm
+    // label: the reference is relative, and only the base moves.
+    //
+    // Whole-program emit (this path) is a single unit, so the base is just the
+    // region start and every emitted address is unchanged.
+    if (sv.len() > 0) {
+        out = out + "  (global $__str_base i32 (i32.const " + util.i32_to_string(wasm_ir.str_region_base()) + "))\n";
+    }
     var di: i32 = 0;
     while (di < sv.len()) {
         out = out + "  (data (i32.const " + util.i32_to_string(wasm_ir.str_offset(sv, di)) + ") \""
