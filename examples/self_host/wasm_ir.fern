@@ -135,6 +135,16 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 // (#5331 step 1), so the two must agree by construction.
 pub function str_region_base(): i32 { return 24; }
 
+// fn_table_base is where a unit's funcref-table region starts. The elem
+// segment is emitted at index 0 today, so whole-program emit uses 0 — but
+// const_func and the map hash/eq slots now emit indices RELATIVE to it
+// (#5331 step 2), the same treatment string literals get from
+// str_region_base. fn_value_table is whole-program, so without this a
+// module's function-VALUE indices depend on every other module's
+// address-taken functions, and the per-module cache would invalidate on any
+// change to that set.
+pub function fn_table_base(): i32 { return 0; }
+
 pub function str_offset(vals: string[], idx: i32): i32 {
     var off: i32 = 24;
     var i: i32 = 0;
@@ -1686,6 +1696,7 @@ pub function fn_support_section(cache: irlower.LowerResult[]): string {
     // when the only indirect calls are the (dead-for-i32/string) map ones.
     var tsize: i32 = ft.len();
     if (tsize == 0) { tsize = 1; }
+    out = out + "  (global $__fn_base i32 (i32.const " + util.i32_to_string(fn_table_base()) + "))\n";
     out = out + "  (table " + util.i32_to_string(tsize) + " funcref)\n";
     if (ft.len() > 0) {
         out = out + "  (elem (i32.const 0)";
@@ -2296,8 +2307,8 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
                 // Struct/enum key: push the derived hash + eq funcref-table slot
                 // indices; $__fern_map_new_struct stores them in the box so
                 // hk/keq dispatch them via call_indirect. #2671.
-                out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str))) + "\n";
-                out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str))) + "\n";
+                out = out + "    global.get $__fn_base\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str)) - fn_table_base()) + "\n    i32.add\n";
+                out = out + "    global.get $__fn_base\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str)) - fn_table_base()) + "\n    i32.add\n";
                 out = out + "    call $__fern_map_new_struct\n";
             } else if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
             else { out = out + "    call $__fern_map_new_str\n"; }
@@ -2771,7 +2782,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // (fn_table). The table is built over the address-taken functions in
             // first-seen order (fn_value_table), so the index here matches the
             // elem segment fn_support_section emits.
-            out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str)) + "\n";
+            out = out + "    global.get $__fn_base\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n";
         } else if (o.kind_tag == 150) {  // call_indirect
             // Indirect call: args + the table index are already on the stack
             // (the index pushed last, on top). Dispatch through the per-arity
