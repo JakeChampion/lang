@@ -6675,6 +6675,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!wd.ok) { return wd; }
                         return wd.emit(ir.op_wasm_pollable_drop());
                     }
+                    // udp_send(host, port, data) — one-shot datagram (#4375).
+                    // host is an IPv4 LITERAL STRING ("a.b.c.d"), not a packed
+                    // i32 like tcp_connect's, so all three args lower as plain
+                    // values and the backend helper parses the dotted quad.
+                    if (cid.name == "udp_send" && c.args.len() == 3) {
+                        var us: LowerState = lower_expr(c.args[0], s);
+                        if (!us.ok) { return us; }
+                        us = lower_expr(c.args[1], us);
+                        if (!us.ok) { return us; }
+                        us = lower_expr(c.args[2], us);
+                        if (!us.ok) { return us; }
+                        return us.emit(ir.op_udp_send());
+                    }
                     if (cid.name == "wasm_block" && c.args.len() == 1) {
                         var wb: LowerState = lower_expr(c.args[0], s);
                         if (!wb.ok) { return wb; }
