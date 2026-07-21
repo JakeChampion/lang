@@ -12645,11 +12645,14 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     // to establish, so it needs pollable.block / [resource-drop]pollable — but
     // only when the module has not already imported them for wasm_block /
     // wasm_pollable_drop, since a duplicate import is an invalid module.
-    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_close")) { out = out + wasm_ir.wasi_sockets_imports(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_close") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_pollable")) { out = out + wasm_ir.wasi_sockets_imports(); }
     // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2).
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) { out = out + wasm_ir.wasi_stream_io_imports(); }
-    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") && !wasm_ir.module_emits_op_cached(ir_cache, "wasm_block")) { out = out + wasm_ir.wasi_pollable_block_import(); }
-    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") && !wasm_ir.module_emits_op_cached(ir_cache, "wasm_pollable_drop")) { out = out + wasm_ir.wasi_pollable_drop_import(); }
+    // tcp_listen / tcp_accept add bind + listen + accept; tcp_pollable and
+    // tcp_accept both need the sockets base set (subscribe + the drops).
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept")) { out = out + wasm_ir.wasi_sockets_server_imports(); }
+    if ((wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept")) && !wasm_ir.module_emits_op_cached(ir_cache, "wasm_block")) { out = out + wasm_ir.wasi_pollable_block_import(); }
+    if ((wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept")) && !wasm_ir.module_emits_op_cached(ir_cache, "wasm_pollable_drop")) { out = out + wasm_ir.wasi_pollable_drop_import(); }
     // wasm_poll: the LIST-typed wasi:io/poll.poll multiplexer (#4316). Its
     // helper is heap-backed (it allocates the 8-byte canonical return area), so
     // the heap gate below folds it in.
@@ -12665,7 +12668,7 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
             + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
         di = di + 1;
     }
-    if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "env") || wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk") || wasm_ir.module_emits_op_cached(ir_cache, "reader_close") || wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) {
+    if (wasm_ir.module_allocates(ir_cache) || wasm_ir.module_uses_i32_to_string(ir_cache) || wasm_ir.module_uses_chr(ir_cache) || wasm_ir.module_uses_strbuf(ir_cache) || wasm_ir.module_emits_op_cached(ir_cache, "env") || wasm_ir.module_emits_op_cached(ir_cache, "stat") || wasm_ir.module_emits_op_cached(ir_cache, "remove_file") || wasm_ir.module_emits_op_cached(ir_cache, "read_dir") || wasm_ir.module_emits_op_cached(ir_cache, "remove_dir_all") || wasm_ir.module_emits_op_cached(ir_cache, "temp_dir") || wasm_ir.module_emits_op_cached(ir_cache, "sleep_ms") || wasm_ir.module_emits_op_cached(ir_cache, "read_chunk") || wasm_ir.module_emits_op_cached(ir_cache, "reader_close") || wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_send") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept")) {
         out = out + heap_alloc_helpers(wasm_ir.heap_base_for(ir_cache), wasm_ir.fl_base_for(ir_cache), wasm_ir.fl_cells());
         out = out + rc_runtime_helpers(wasm_ir.heap_base_for(ir_cache));
     }
@@ -12760,10 +12763,14 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
     if (wasm_ir.module_emits_op_cached(ir_cache, "wasm_poll") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) { out = out + cabi_realloc_helper(); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
-    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect")) { out = out + wasm_ir.network_handle_func() + wasm_ir.tcp_connect_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect") || wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen")) { out = out + wasm_ir.network_handle_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_connect")) { out = out + wasm_ir.tcp_connect_func(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_close")) { out = out + wasm_ir.tcp_close_func(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_send")) { out = out + wasm_ir.tcp_send_func(); }
     if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_recv")) { out = out + wasm_ir.tcp_recv_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_listen")) { out = out + wasm_ir.tcp_listen_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_accept")) { out = out + wasm_ir.tcp_accept_func(); }
+    if (wasm_ir.module_emits_op_cached(ir_cache, "tcp_pollable")) { out = out + wasm_ir.tcp_pollable_func(); }
     // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
     // read/write the whole file, boxing a Result[string, IoError] /
     // Option[IoError]. They alloc via the heap runtime (module_allocates

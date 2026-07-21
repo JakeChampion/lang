@@ -1016,9 +1016,6 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // that subset has to be declared there before `component new` can
         // resolve it. Do wasm_poll (#4316) first — it is the smaller instance of
         // the identical problem and proves the pipeline.
-        && !module_emits_op_cached(cache, "tcp_pollable")
-        && !module_emits_op_cached(cache, "tcp_listen")
-        && !module_emits_op_cached(cache, "tcp_accept")
         && !module_emits_op_cached(cache, "writer_write")
         && !module_emits_op_cached(cache, "open_file")
         // subprocess is NOT deferred to the AST path — it is unsupportable on
@@ -1174,6 +1171,100 @@ pub function tcp_connect_func(): string {
     o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
     o = o + "    (local.get $st))\n";
+    return o;
+}
+
+// Server-half imports (#4318 slice 3): bind + listen. accept / subscribe /
+// the drops already come in via wasi_sockets_imports.
+pub function wasi_sockets_server_imports(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.start-bind\" (func $__fern_wasi_tcp_start_bind (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.finish-bind\" (func $__fern_wasi_tcp_finish_bind (param i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.start-listen\" (func $__fern_wasi_tcp_start_listen (param i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.finish-listen\" (func $__fern_wasi_tcp_finish_listen (param i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.accept\" (func $__fern_wasi_tcp_accept (param i32 i32)))\n";
+    return o;
+}
+
+// $__fern_tcp_listen(port) -> 12-byte LISTENER struct pointer, or -errno.
+//
+// create-tcp-socket -> start-bind + finish-bind(0.0.0.0:port) -> start-listen +
+// finish-listen. start-bind takes the same 15-i32 flattening of
+// ip-socket-address that start-connect does (disc + 11 payload slots, of which
+// ipv4 uses port + 4 octets), here bound to 0.0.0.0.
+//
+// The struct's STREAM SLOTS STAY ZERO: a listener has no input/output stream
+// until it accepts. tcp_close already guards each drop on a non-zero handle for
+// exactly this case — passing 0 to a resource-drop import traps host-side.
+pub function tcp_listen_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_listen (param $port i32) (result i32)\n";
+    o = o + "    (local $sock i32) (local $ret i32) (local $st i32)\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "    (call $__fern_wasi_create_tcp_socket (i32.const 0) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (call $__fern_wasi_tcp_start_bind (local.get $sock) (call $__fern_network_handle)\n";
+    o = o + "      (i32.const 0) (local.get $port)\n";
+    o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
+    o = o + "      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)\n";
+    o = o + "      (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (call $__fern_wasi_tcp_finish_bind (local.get $sock) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (call $__fern_wasi_tcp_start_listen (local.get $sock) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (call $__fern_wasi_tcp_finish_listen (local.get $sock) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $st) (local.get $sock))\n";
+    o = o + "    (i32.store offset=4 (local.get $st) (i32.const 0))\n";
+    o = o + "    (i32.store offset=8 (local.get $st) (i32.const 0))\n";
+    o = o + "    (local.get $st))\n";
+    return o;
+}
+
+// $__fern_tcp_accept(listener) -> a fresh 12-byte CONNECTION struct, or -errno.
+//
+// subscribe + block FIRST: accept is non-blocking on wasi:sockets, so calling it
+// straight away just yields would-block.
+//
+// accept's result is the widest in this file —
+// `result<tuple<tcp-socket, input-stream, output-stream>, error-code>` — laid
+// out as disc@+0, 3 pad, then the three handles at +4 / +8 / +12. Hence the
+// 16-byte retptr, where connect's tuple of two needed only the low 12.
+pub function tcp_accept_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_accept (param $l i32) (result i32)\n";
+    o = o + "    (local $sock i32) (local $p i32) (local $ret i32) (local $st i32)\n";
+    o = o + "    (local.set $sock (i32.load (local.get $l)))\n";
+    o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
+    o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
+    o = o + "    (call $__fern_wasi_pollable_drop (local.get $p))\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "    (call $__fern_wasi_tcp_accept (local.get $sock) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
+    o = o + "    (local.set $st (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
+    o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=12 (local.get $ret)))\n";
+    o = o + "    (local.get $st))\n";
+    return o;
+}
+
+// $__fern_tcp_pollable(conn) -> a wasi:io/poll pollable for the connection's
+// tcp-socket (mem[conn+0]). This is the handle std/async feeds to wasm_poll for
+// overlapped fan-out, so it composes directly with the multiplexer from #4316.
+pub function tcp_pollable_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_pollable (param $c i32) (result i32)\n";
+    o = o + "    (call $__fern_wasi_tcp_subscribe (i32.load (local.get $c))))\n";
     return o;
 }
 
@@ -1627,6 +1718,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // tcp_connect(host_be, port) -> 12-byte connection struct pointer,
             // or -errno. Both args are already on the stack (#4318).
             out = out + "    call $__fern_tcp_connect\n";
+        } else if (o.kind_tag == 200) {  // tcp_listen
+            // tcp_listen(port) -> 12-byte listener struct pointer, or -errno.
+            out = out + "    call $__fern_tcp_listen\n";
+        } else if (o.kind_tag == 201) {  // tcp_accept
+            // tcp_accept(listener) -> a fresh connection struct, or -errno.
+            out = out + "    call $__fern_tcp_accept\n";
+        } else if (o.kind_tag == 197) {  // tcp_pollable
+            // tcp_pollable(conn) -> a wasi:io/poll pollable for the socket.
+            out = out + "    call $__fern_tcp_pollable\n";
         } else if (o.kind_tag == 194) {  // tcp_send
             // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
             out = out + "    call $__fern_tcp_send\n";
