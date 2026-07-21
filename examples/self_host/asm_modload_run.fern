@@ -75,130 +75,6 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // invalidate the modules that merely call into it. Return types are read off the
 // INFERRED module (infer_ret_types_module has already run), so an inferred
 // return-type change is caught even when the source left the type implicit.
-function module_sig_string(mod: parser.Module): string {
-    var out: string = "";
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var f: parser.FuncDecl = mod.funcs[fi];
-        out = out + "fn " + f.receiver_type + "." + f.name + "(";
-        var pi: i32 = 0;
-        while (pi < f.params.len()) {
-            out = out + f.params[pi].type_name + ",";
-            pi = pi + 1;
-        }
-        out = out + ")" + f.ret_type + ";";
-        fi = fi + 1;
-    }
-    var si: i32 = 0;
-    while (si < mod.structs.len()) {
-        var sd: parser.StructDecl = mod.structs[si];
-        out = out + "st " + sd.name + "{";
-        var di: i32 = 0;
-        while (di < sd.fields.len()) {
-            out = out + sd.fields[di].name + ":" + sd.fields[di].type_name + ",";
-            di = di + 1;
-        }
-        out = out + "}";
-        si = si + 1;
-    }
-    return out;
-}
-
-// module_import_ns joins the base names of a module's direct imports (comma-
-// separated) — the per-import-edge dependency list the incremental cache keys a
-// module against. An importer's cache key folds in the SIGNATURE hash of each
-// name here, so a signature change in any module it calls into invalidates it.
-function module_import_ns(mod: parser.Module): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < mod.imports.len()) {
-        if (i > 0) { out = out + ","; }
-        out = out + modloader.base_name(mod.imports[i].path);
-        i = i + 1;
-    }
-    return out;
-}
-
-// module_import_path finds the ORIGINAL import path (e.g. "./sub/leaf",
-// "std/io") whose basename is `ns`, by scanning every loaded module's imports.
-// The bundler keys modules by basename, but resolving a module's source needs
-// its full sub-path — so we recover it from whichever module imported it.
-// Returns "" if no import edge names `ns` (i.e. the entry, or a not-found case).
-function module_import_path(parts: flatten.PerModule[], ns: string): string {
-    var j: i32 = 0;
-    while (j < parts.len()) {
-        var imps: parser.Import[] = parts[j].mod.imports;
-        var ii: i32 = 0;
-        while (ii < imps.len()) {
-            if (modloader.base_name(imps[ii].path) == ns) { return imps[ii].path; }
-            ii = ii + 1;
-        }
-        j = j + 1;
-    }
-    return "";
-}
-
-// module_src_hash fingerprints a module's own source. It resolves the module's
-// source THROUGH THE LOADER (modloader.resolve_module_src, keyed by the original
-// import path recovered via module_import_path) so a sub-directory module
-// (`import "std/io"` → <dir>/std/io.fern) is hashed at its real path, not just
-// the flat <dir><ns>.fern. The entry reads entry_path. Only a genuinely
-// unresolvable source yields "?", which callers MUST treat as always-rebuild:
-// sound (never reuses stale codegen), just not incremental for that module.
-function module_src_hash(dir: string, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
-    if (parts[idx].is_entry) {
-        match (read_file(entry_path)) {
-            Ok(esrc) => { return util.hash_key(esrc); },
-            Err(e) => { return "?"; },
-        }
-    }
-    var ip: string = module_import_path(parts, parts[idx].ns);
-    if (ip.len() > 0) {
-        match (modloader.resolve_module_src(dir, ip, parts[idx].ns)) {
-            Some(src) => { return util.hash_key(src); },
-            None => { },
-        }
-    }
-    // Fallback: flat sibling layout (no import edge found, e.g. a degenerate view).
-    match (read_file(dir + parts[idx].ns + ".fern")) {
-        Ok(msrc) => { return util.hash_key(msrc); },
-        Err(e) => { return "?"; },
-    }
-    return "?";
-}
-
-// module_cache_key builds the content-addressed key for module `idx`: its own
-// src_hash, folded with the SIGNATURE hash of every module it imports (walked in
-// parts order, so the key is deterministic without a sort). The entry also folds
-// in the runtime-need set it was asked to emit (pm_extra), since that set is part
-// of the entry unit's codegen inputs. `ns` is included so two modules with
-// byte-identical source but different namespaces (hence different mangled output)
-// never share a key. Returns "" when src_hash is "?" — the signal to skip the
-// cache and always emit.
-function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[]): string {
-    if (src_hash == "?") { return ""; }
-    var key: string = parts[idx].ns + "|" + src_hash;
-    var imps: parser.Import[] = infmods[idx].imports;
-    var j: i32 = 0;
-    while (j < parts.len()) {
-        var ii: i32 = 0;
-        var imported: boolean = false;
-        while (ii < imps.len()) {
-            if (modloader.base_name(imps[ii].path) == parts[j].ns) { imported = true; }
-            ii = ii + 1;
-        }
-        if (imported) { key = key + "#" + sighashes[j]; }
-        j = j + 1;
-    }
-    if (parts[idx].is_entry) {
-        var ex: string = "";
-        var ei: i32 = 0;
-        while (ei < extra.len()) { ex = ex + extra[ei] + ","; ei = ei + 1; }
-        key = key + "@" + util.hash_key(ex);
-    }
-    return key;
-}
-
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string): i32 {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
     if (pm_mode == "count") {
@@ -249,7 +125,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     if (pm_mode == "manifest" || (pm_mode == "emit" && cache_dir.len() > 0)) {
         var shi: i32 = 0;
         while (shi < parts.len()) {
-            sighashes = sighashes.append(util.hash_key(module_sig_string(infmods[shi])));
+            sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi])));
             shi = shi + 1;
         }
     }
@@ -277,8 +153,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // path through the loader; tracked as a follow-up on #3458.
         var mi: i32 = 0;
         while (mi < parts.len()) {
-            var src_hash: string = module_src_hash(dir, entry_path, parts, mi);
-            print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + module_import_ns(infmods[mi]) + "\n");
+            var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, mi);
+            print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + modloader.module_import_ns(infmods[mi]) + "\n");
             mi = mi + 1;
         }
         return 0;
@@ -314,8 +190,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // module_src_hash).
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
-        var src_hash: string = module_src_hash(dir, entry_path, parts, pm_index);
-        var key: string = module_cache_key(parts, infmods, sighashes, pm_index, src_hash, extra);
+        var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, pm_index);
+        var key: string = modloader.module_cache_key(parts, infmods, sighashes, pm_index, src_hash, extra);
         if (key.len() > 0) {
             cachefile = cache_dir + "/" + parts[pm_index].ns + "__" + util.hash_key(key) + ".s";
             match (read_file(cachefile)) {
