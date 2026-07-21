@@ -1016,8 +1016,6 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // that subset has to be declared there before `component new` can
         // resolve it. Do wasm_poll (#4316) first — it is the smaller instance of
         // the identical problem and proves the pipeline.
-        && !module_emits_op_cached(cache, "tcp_send")
-        && !module_emits_op_cached(cache, "tcp_recv")
         && !module_emits_op_cached(cache, "tcp_pollable")
         && !module_emits_op_cached(cache, "tcp_listen")
         && !module_emits_op_cached(cache, "tcp_accept")
@@ -1176,6 +1174,85 @@ pub function tcp_connect_func(): string {
     o = o + "    (i32.store offset=4 (local.get $st) (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
     o = o + "    (local.get $st))\n";
+    return o;
+}
+
+// Stream imports for tcp_send / tcp_recv (#4318 slice 2). Both are already in
+// the vendored cmd/fern/wit/deps/io/streams.wit, so unlike connect this slice
+// needs no WIT change.
+pub function wasi_stream_io_imports(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $__fern_wasi_stream_write (param i32 i32 i32 i32)))\n";
+    o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.blocking-read\" (func $__fern_wasi_stream_read (param i32 i64 i32)))\n";
+    return o;
+}
+
+// $__fern_tcp_send(conn, s) -> i32: bytes written, or -1 on a stream error.
+//
+// A self-host string block is `[len@+0][bytes@+4]` — ONE pointer, not native's
+// (ptr, len) pair, and no SSO form to normalise. That difference is the whole
+// reason this helper is not a transcription of native's buildTcpSendBody.
+//
+// The output-stream is mem[conn+8]. wasmtime caps blocking-write-and-flush at
+// 4 KiB per call, so anything longer drains through a chunked loop; a stream
+// error mid-flight short-circuits to -1 (preview-2 stream errors carry no errno
+// through the variant we use, so -1 is the only sensible negative sentinel).
+pub function tcp_send_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_send (param $c i32) (param $s i32) (result i32)\n";
+    o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32)\n";
+    o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
+    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (block $done\n";
+    o = o + "      (loop $more\n";
+    o = o + "        (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
+    o = o + "        (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
+    o = o + "        (if (i32.gt_u (local.get $n) (i32.const 4096))\n";
+    o = o + "          (then (local.set $n (i32.const 4096))))\n";
+    o = o + "        (call $__fern_wasi_stream_write (local.get $st)\n";
+    o = o + "          (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $off))\n";
+    o = o + "          (local.get $n) (local.get $ret))\n";
+    o = o + "        (if (i32.load8_u (local.get $ret)) (then (return (i32.const -1))))\n";
+    o = o + "        (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
+    o = o + "        (br $more)))\n";
+    o = o + "    (local.get $len))\n";
+    return o;
+}
+
+// $__fern_tcp_recv(conn, max) -> string: up to `max` bytes as a fresh string
+// block, or the EMPTY string on a stream error / clean EOF.
+//
+// The input-stream is mem[conn+4]. blocking-read's retptr is 12 bytes: disc@+0,
+// then the returned list as data-ptr@+4 and length@+8. The bytes are copied
+// into a `[len][bytes]` block rather than aliased, because the host buffer is
+// only valid until the next canonical-ABI call. The copy is a byte loop — the
+// self-host wasm backend does not emit bulk-memory (`memory.copy`), so using it
+// here would silently raise the module's required feature set.
+pub function tcp_recv_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_recv (param $c i32) (param $max i32) (result i32)\n";
+    o = o + "    (local $st i32) (local $ret i32) (local $n i32) (local $src i32) (local $box i32) (local $i i32)\n";
+    o = o + "    (local.set $st (i32.load offset=4 (local.get $c)))\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (call $__fern_wasi_stream_read (local.get $st)\n";
+    o = o + "      (i64.extend_i32_u (local.get $max)) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (local.set $box (call $__fern_str_box (i32.const 0)))\n";
+    o = o + "      (i32.store (local.get $box) (i32.const 0))\n";
+    o = o + "      (return (local.get $box))))\n";
+    o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (local.set $n (i32.load offset=8 (local.get $ret)))\n";
+    o = o + "    (local.set $box (call $__fern_str_box (local.get $n)))\n";
+    o = o + "    (i32.store (local.get $box) (local.get $n))\n";
+    o = o + "    (block $done\n";
+    o = o + "      (loop $more\n";
+    o = o + "        (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (i32.store8 (i32.add (i32.add (local.get $box) (i32.const 4)) (local.get $i))\n";
+    o = o + "          (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $more)))\n";
+    o = o + "    (local.get $box))\n";
     return o;
 }
 
@@ -1550,6 +1627,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // tcp_connect(host_be, port) -> 12-byte connection struct pointer,
             // or -errno. Both args are already on the stack (#4318).
             out = out + "    call $__fern_tcp_connect\n";
+        } else if (o.kind_tag == 194) {  // tcp_send
+            // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
+            out = out + "    call $__fern_tcp_send\n";
+        } else if (o.kind_tag == 195) {  // tcp_recv
+            // tcp_recv(conn, max) -> a fresh string block (empty on error/EOF).
+            out = out + "    call $__fern_tcp_recv\n";
         } else if (o.kind_tag == 196) {  // tcp_close
             // tcp_close(conn) -> 0. Drops the streams then the socket.
             out = out + "    call $__fern_tcp_close\n";
