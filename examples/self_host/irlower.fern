@@ -2852,6 +2852,47 @@ function map_kv_elem_tag(obj: parser.Expr, field: string, argc: i32, s: LowerSta
     return "";
 }
 
+// cell_elem_type returns the element type spelling of a Cell expression `e`
+// (a cell local or a struct field typed Cell[T]), or "" if `e` is not a cell.
+// Drives result-type propagation for c.get() (#5510).
+pub function cell_elem_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (s.is_cell_slot(sl)) { return s.cell_elem_of_slot(sl); }
+            return "";
+        },
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (ft.len() > 5 && ft[0:5] == "Cell[") { return ft[5 : ft.len() - 1] + ""; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+}
+
+// cell_get_elem returns the element type of a `X.get()` call where X is a cell,
+// or "" otherwise — the result type c.get() produces (#5510). Used by the type
+// predicates (expr_is_str etc.), which run on the ORIGINAL `c.get()` AST before
+// the get->c[0] desugar, so they need this to know its type.
+pub function cell_get_elem(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 0) { return ""; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "get") { return ""; }
+                    return cell_elem_type(fa.obj, s);
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+
 // expr_is_cell reports whether `e` denotes a Cell[T] (#5510) — a cell_new(...)
 // call or a slot marked is_cell at its binding. Drives the get/set desugar to
 // 1-element-array index ops.
@@ -3093,6 +3134,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprCall(c) => {
+            // c.get() on a Cell[string] yields a string (#5510) — classified
+            // here because this runs on the original `c.get()` before the
+            // get->c[0] desugar, so `c.get()[0]` / `.len()` see a string.
+            if (cell_get_elem(e, s) == "string") { return true; }
             // A string-valued if/match-EXPRESSION desugars to a 0-arg IIFE
             // `(function(): string { if (c) { return "a"; } … })()`. Classify it
             // by its first branch's returned value, so `var s = if (…) { … }`
@@ -12831,7 +12876,17 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // dispatches as a mapiter op instead of bailing on a Map.<method> call.
     if (is_mapiter_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
     else if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
-    else if (v.type_name.len() > 5 && v.type_name[0:5] == "Cell[") { sb = sb.mark_cell(slot, v.type_name[5 : v.type_name.len() - 1] + ""); }
+    else if (v.type_name.len() > 5 && v.type_name[0:5] == "Cell[") {
+        // Cell[T] is a 1-element array of T. mark_cell records is_cell (+is_arr);
+        // ALSO mark the element-KIND array flag so c[0] (the get desugar) reads
+        // the right type — without is_strarr a Cell[string] element loads as an
+        // i32, breaking `c.get()[0]` / `.len()`.
+        var celt: string = v.type_name[5 : v.type_name.len() - 1] + "";
+        sb = sb.mark_cell(slot, celt);
+        if (celt == "string") { sb = sb.mark_strarr(slot, true); }
+        else if (celt == "i64" || celt == "u64") { sb = sb.mark_i64arr(slot, true); }
+        else if (celt == "f64" || celt == "f32" || celt == "float") { sb = sb.mark_f64arr(slot, true); }
+    }
     else {
         // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
         // `: Map[K,V]`). The literal desugars to a
