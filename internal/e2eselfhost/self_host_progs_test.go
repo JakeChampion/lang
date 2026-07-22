@@ -46,6 +46,11 @@ var selfHostProgCases = []struct {
 	// exactly how lam_ctr/lamdefs thread through the lambda emitter. "hi" →
 	// "hi!" → "hi!!", len 4.
 	{"cell-string-shared", `struct Box { c: Cell[string] } function bump(b: Box) { b.c.set(b.c.get() + "!"); } function main(): i32 { var b: Box = Box { c: cell_new("hi") }; bump(b); bump(b); return b.c.get().len(); }`, 4},
+	// Cell[i64] — 8-byte element, exercises lower_i64's cell-get case + the
+	// width-64 store: 5e9 + 1e9 = 6e9, /1e9 = 6 (#5510).
+	{"cell-i64", `function main(): i32 { var c: Cell[i64] = cell_new(5000000000i64); c.set(c.get() + 1000000000i64); return (c.get() / 1000000000i64) as i32; }`, 6},
+	// Cell[f64] — 8-byte float element, arr_set(64) store: 3.5 + 2.5 = 6.0.
+	{"cell-f64", `function main(): i32 { var c: Cell[f64] = cell_new(3.5); c.set(c.get() + 2.5); return c.get() as i32; }`, 6},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.

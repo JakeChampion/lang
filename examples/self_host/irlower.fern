@@ -4360,6 +4360,9 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
 // f64-array element read `a[i]`. (A comparison is NOT f64 — it yields an i32
 // bool — so only the arithmetic ops propagate float-ness here.)
 pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
+    // A Cell[f64/float] get() is f64 (#5510).
+    var cf64e: string = cell_get_elem(e, s);
+    if (cf64e == "f64" || cf64e == "float") { return true; }
     match (e) {
         parser.ExprNumber(n) => { return n.is_float; },
         parser.ExprIdent(id) => {
@@ -4469,6 +4472,7 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
 // behavior-identical for the value ops and only the (unused-in-practice)
 // chained-`to_string` would differ.
 pub function expr_is_f32(e: parser.Expr, s: LowerState): boolean {
+    if (cell_get_elem(e, s) == "f32") { return true; }
     match (e) {
         parser.ExprIdent(id) => { return s.is_f32_slot(s.slot_of(id.name)); },
         parser.ExprBinary(b) => {
@@ -4644,6 +4648,7 @@ pub function expr_is_u64arr(e: parser.Expr, s: LowerState): boolean {
 }
 
 pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
+    if (cell_get_elem(e, s) == "u64") { return true; }
     match (e) {
         parser.ExprIdent(id) => { return s.is_u64_slot(s.slot_of(id.name)); },
         parser.ExprIndex(ix) => {
@@ -4805,6 +4810,9 @@ pub function is_eager_safe(e: parser.Expr): boolean {
 // i32 here — they only become i64 from an i64 context (see lower_i64), which is
 // what makes `var x: i64 = 5000000000` work without value-based parsing.
 pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
+    // A Cell[i64/u64] get() is width 64 (#5510).
+    var cwe: string = cell_get_elem(e, s);
+    if (cwe == "i64" || cwe == "u64") { return 64; }
     match (e) {
         parser.ExprNumber(num) => {
             // A bare integer literal whose value exceeds i32-max is unambiguously
@@ -4937,6 +4945,24 @@ pub function method_recv_tyname(obj: parser.Expr, s: LowerState): string {
 // comparison, i64 division/remainder — fails, bailing the module to the AST path
 // where full i64 already works.
 pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
+    // c.get() on a Cell[i64/u64] -> c[0], lowered as an 8-byte i64 load (#5510).
+    // Without this, c.get() in an i64 context (e.g. `c.get() + 1i64`) reaches
+    // lower_i64 as a bare call it cannot lower, truncating the function.
+    var i64ce: string = cell_get_elem(e, s);
+    if (i64ce == "i64" || i64ce == "u64") {
+        match (e) {
+            parser.ExprCall(i64cc) => {
+                match (i64cc.callee) {
+                    parser.ExprFieldAccess(i64cfa) => {
+                        var i64cz: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
+                        return lower_i64(parser.ExprIndex { array: i64cfa.obj, index: i64cz, unchecked: true }, s);
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+    }
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) { return s.fail(); }
@@ -8546,8 +8572,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // c.set(x): store x into c[0] and leave the cell on the
                             // stack (AST cell_set returns the cell, so value-position
                             // use works and a statement drops it). A scratch local
-                            // holds the cell across the store. Cell[i32]/Cell[string]
-                            // are 32-bit slots; i64/f64 cells are a later width slice.
+                            // holds the cell across the store. The store WIDTH follows
+                            // the element type: an i64/u64 cell stores 8 bytes via
+                            // lower_i64 + arr_set_i64, an f64/f32 cell via arr_set(64),
+                            // else the 32-bit path (i32 / string pointer) — mirroring
+                            // __set_index so a Cell[i64]/Cell[f64] is not truncated.
+                            var celt: string = cell_elem_type(fa.obj, s);
                             var cscr: string = "$cellset" + util.i32_to_string(s.locals.len());
                             var cst: LowerState = s.add_local(cscr);
                             var ctmp: i32 = cst.slot_of(cscr);
@@ -8556,9 +8586,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             cst = cst.emit(ir.op_store_local(ctmp));
                             cst = cst.emit(ir.op_load_local(ctmp));
                             cst = cst.emit(ir.op_const_i32(0));
-                            cst = lower_expr(c.args[0], cst);
-                            if (!cst.ok) { return cst; }
-                            cst = cst.emit(ir.op_arr_set(32));
+                            if (celt == "i64" || celt == "u64") {
+                                cst = lower_i64(c.args[0], cst);
+                                if (!cst.ok) { return cst; }
+                                cst = cst.emit(ir.op_arr_set_i64());
+                            } else if (celt == "f64" || celt == "f32" || celt == "float") {
+                                cst = lower_expr(c.args[0], cst);
+                                if (!cst.ok) { return cst; }
+                                cst = cst.emit(ir.op_arr_set(64));
+                            } else {
+                                cst = lower_expr(c.args[0], cst);
+                                if (!cst.ok) { return cst; }
+                                cst = cst.emit(ir.op_arr_set(32));
+                            }
                             return cst.emit(ir.op_load_local(ctmp));
                         }
                     }
