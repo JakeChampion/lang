@@ -82,30 +82,49 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
 // still matches and built (lowered) only when it does not. hit/miss goes to
 // stderr so a build, or a test, can observe exactly which modules were reused.
 function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], idx: i32, cache_dir: string): wasm_objfile.UnitObj {
-    var cachefile: string = "";
+    var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, idx, cache_dir);
+    if (lk.found) { return lk.obj; }
+    var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_structs, idx);
     if (cache_dir.len() > 0 && sighashes.len() > 0) {
-        var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, idx);
-        var key: string = modloader.module_cache_key(parts, infmods, sighashes, idx, src_hash, []);
-        if (key.len() > 0) {
-            cachefile = cache_dir + "/" + parts[idx].ns + "__" + util.hash_key(key) + ".wu";
-            match (read_file(cachefile)) {
-                Ok(cached) => {
-                    eprint("cache-hit " + parts[idx].ns + "\n");
-                    return wasm_objfile.decode(cached);
-                },
-                Err(e) => { },
+        var ck: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, idx, cache_dir);
+        if (ck.len() > 0) {
+            eprint("cache-miss " + parts[idx].ns + "\n");
+            match (write_file(ck, wasm_objfile.encode(obj))) {
+                Some(werr) => { eprint("wasm per-module: cache write failed for " + parts[idx].ns + "\n"); },
+                None => { },
             }
         }
     }
-    var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_structs, idx);
-    if (cachefile.len() > 0) {
-        eprint("cache-miss " + parts[idx].ns + "\n");
-        match (write_file(cachefile, wasm_objfile.encode(obj))) {
-            Some(werr) => { eprint("wasm per-module: cache write failed for " + parts[idx].ns + "\n"); },
-            None => { },
+    return obj;
+}
+
+// cache_file_for returns the object path for module idx, or "" when the module
+// has no stable key (module_src_hash == "?") or no cache is configured. The
+// single source of the path both the read and the write use.
+function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, cache_dir: string): string {
+    if (cache_dir.len() == 0 || sighashes.len() == 0) { return ""; }
+    var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, idx);
+    var key: string = modloader.module_cache_key(parts, infmods, sighashes, idx, src_hash, []);
+    if (key.len() == 0) { return ""; }
+    return cache_dir + "/" + parts[idx].ns + "__" + util.hash_key(key) + ".wu";
+}
+
+// cache_lookup reads module idx's object from the cache. It NEVER lowers, which
+// is what lets -link be hit-only: a whole-compiler link that lowered every
+// module in one process exhausts the bump arena (#3425). A miss returns
+// found=false; the caller decides whether to build (-emit) or error (-link).
+function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, cache_dir: string): wasm_objfile.MaybeUnit {
+    var cf: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, idx, cache_dir);
+    if (cf.len() > 0) {
+        match (read_file(cf)) {
+            Ok(cached) => {
+                eprint("cache-hit " + parts[idx].ns + "\n");
+                return wasm_objfile.MaybeUnit { found: true, obj: wasm_objfile.decode(cached) };
+            },
+            Err(e) => { },
         }
     }
-    return obj;
+    return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
 }
 
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, cache_dir: string): i32 {
@@ -172,9 +191,21 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var frt: string[] = [];
         var sdt: string[] = [];
         var aet: string[] = [];
+        // Hit-only: -link reads every unit from the cache and lowers NOTHING.
+        // A missing unit is an error naming the module, not a silent in-process
+        // build — that is the design that keeps a whole-compiler link off the
+        // arena wall (#3425). The orchestrator emits each miss with
+        // -per-module-emit (its own process) and links again.
+        var missing: string = "";
         var li: i32 = 0;
         while (li < parts.len()) {
-            var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, all_funcs, all_structs, li, cache_dir);
+            var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, li, cache_dir);
+            if (!lk.found) {
+                missing = missing + " " + parts[li].ns;
+                li = li + 1;
+                continue;
+            }
+            var obj: wasm_objfile.UnitObj = lk.obj;
             nss = nss.append(unit_ns(li));
             texts = texts.append(obj.text);
             var si: i32 = 0;
@@ -199,6 +230,11 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 ai2 = ai2 + 1;
             }
             li = li + 1;
+        }
+        if (missing.len() > 0) {
+            eprint("wasm -link: no cached object for:" + missing + "\n");
+            eprint("  emit each with `-per-module-emit N -cache-dir DIR` first (one process per module).\n");
+            return 1;
         }
         // The struct world is shared by every unit, so the RC helper bodies are
         // emitted once against the merged module. heap_base is a whole-LINK

@@ -41,6 +41,16 @@ pub struct UnitObj {
 
 // Cursor threads a decode position alongside its result. The self-host language
 // has tuples, but a named struct keeps the two-field returns below readable.
+// MaybeUnit is a cache-lookup result: `found` distinguishes a hit from a miss,
+// since UnitObj has no natural empty sentinel. Used by the hit-only link path.
+pub struct MaybeUnit { found: boolean, obj: UnitObj }
+
+// empty_unit is the placeholder a MaybeUnit carries on a miss; never read when
+// found is false.
+pub function empty_unit(): UnitObj {
+    return UnitObj { strs: [], fns: [], needs: [], arities: [], frt: [], sdt: [], aet: [], text: "" };
+}
+
 pub struct StrsAt { items: string[], pos: i32 }
 pub struct IntsAt { items: i32[], pos: i32 }
 
