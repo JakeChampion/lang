@@ -88,7 +88,20 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
     var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
     var cnf: string[] = irlower.const_fns_of(all_funcs);
-    var bp: string[] = irlower.borrowable_params_of(all_funcs);
+    // The emit path (emit_functions_view) lowers each function with the
+    // INTERPROCEDURAL borrowability + consume-safe fixpoint. RC drop/reclaim
+    // insertion is gated on those, so the metadata this cache feeds
+    // (field_reclaim_types / struct_drop_types / …) only matches the emitted
+    // text when this lowering uses the SAME analysis. Using per-function
+    // borrowability + an empty consume-safe set here (as an earlier version did)
+    // makes the collectors UNDER-report the drops emit actually generates, so a
+    // per-module link references a `$__field_reclaim_<T>` / `$__struct_drop_<T>`
+    // body the RC-body emission never produced — the flatten__RewriteCtx /
+    // parser__StructDecl gap the whole-compiler wasm link surfaced (#5508). A
+    // whole-program program with the same consume-rebind shape hit it too; the
+    // big never-before-wasm-emitted modules were just the first to.
+    var bp: string[] = irlower.borrowable_params_interproc(all_funcs);
+    var csp: string[] = irlower.consume_safe_params_interproc(all_funcs, bp);
     var fnames: string[] = irlower.fn_names_of(all_funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
@@ -99,7 +112,7 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(all_funcs, all_structs), cnf, bp, fnames, frsf, [], rfrsf, sfrf, ofrf, sfot, tfrf));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(all_funcs, all_structs), cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf));
         fi = fi + 1;
     }
     return out;
