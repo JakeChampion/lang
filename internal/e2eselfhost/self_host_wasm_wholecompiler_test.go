@@ -132,16 +132,13 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		emitWindow(idx, lo, mid)
 		emitWindow(idx, mid, hi)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if counts[i] <= window {
 			emitWindow(i, 0, counts[i])
 			continue
 		}
 		for lo := 0; lo < counts[i]; lo += window {
-			hi := lo + window
-			if hi > counts[i] {
-				hi = counts[i]
-			}
+			hi := min(lo+window, counts[i])
 			emitWindow(i, lo, hi)
 		}
 	}
