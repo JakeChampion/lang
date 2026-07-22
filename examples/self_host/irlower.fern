@@ -2141,7 +2141,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field_d(structs, t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field_d(structs, t) || is_map_type_name(t) || (t.len() > 5 && t[0:5] == "Cell[")) {
                     fi = fi + 1;
                     continue;
                 }
