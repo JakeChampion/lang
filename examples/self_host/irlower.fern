@@ -2720,27 +2720,14 @@ function expr_is_bool(e: parser.Expr, s: LowerState): boolean {
 // any other scalar defaults to "i32". This only drives the call-site label: a
 // label naming a non-existent method bails the whole module to the AST path
 // (calls_only_known), so an over-broad "i32" guess is safe, never a miscompile.
-pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
-    // A struct receiver is NOT a primitive — let the struct path handle it.
-    if (expr_struct_type(e, s) != "") { return ""; }
-    // An enum value is not a primitive either: a variant construction `V(x)`
-    // (call to a variant-struct name) or a unit variant `V` (bare ident naming
-    // one). Returning "" bails the module to AST rather than mis-dispatching to
-    // `i32.<method>` — its `<Enum>.<method>` dispatch needs the variant->enum
-    // map (a later slice). An enum value held in a LOCAL is dispatched earlier
-    // via expr_struct_type (the local carries the enum name).
-    match (e) {
-        parser.ExprCall(vc) => {
-            match (vc.callee) {
-                parser.ExprIdent(vci) => { if (decl_is_struct(s.structs, vci.name)) { return ""; } },
-                _ => {}
-            }
-        },
-        parser.ExprIdent(uvi) => { if (decl_is_struct(s.structs, uvi.name)) { return ""; } },
-        _ => {}
-    }
-    // Arrays / tuples / maps aren't primitive receivers either; their builtin
-    // methods (.len / .append / map ops) are intercepted before this fallback.
+// expr_scalar_type returns the scalar/string type of `e` — the single
+// classifier the per-type predicates (expr_is_str / expr_is_f64 / …) fold into.
+// This is the first seam of the typed-IR migration (fragility #3): today it is
+// the cascade lifted verbatim from expr_recv_prim_type, so callers stop chaining
+// the individual predicates; later slices can cache/annotate its result instead
+// of re-deriving. It assumes `e` is not a struct/enum receiver (the caller
+// excludes those — see expr_recv_prim_type); a non-scalar falls through to "i32".
+pub function expr_scalar_type(e: parser.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
     // f32 BEFORE f64: an f32 value is also is_f64 (stored 8-byte), but its
     // method dispatch must key "f32.<m>" (distinct from f64 for to_string/etc.).
@@ -2769,6 +2756,30 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // to_debug / eq) — any other keys an absent label and bails to AST, safe.
     if (expr_is_bool(e, s)) { return "boolean"; }
     return "i32";
+}
+
+pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
+    // A struct receiver is NOT a primitive — let the struct path handle it.
+    if (expr_struct_type(e, s) != "") { return ""; }
+    // An enum value is not a primitive either: a variant construction `V(x)`
+    // (call to a variant-struct name) or a unit variant `V` (bare ident naming
+    // one). Returning "" bails the module to AST rather than mis-dispatching to
+    // `i32.<method>` — its `<Enum>.<method>` dispatch needs the variant->enum
+    // map (a later slice). An enum value held in a LOCAL is dispatched earlier
+    // via expr_struct_type (the local carries the enum name).
+    match (e) {
+        parser.ExprCall(vc) => {
+            match (vc.callee) {
+                parser.ExprIdent(vci) => { if (decl_is_struct(s.structs, vci.name)) { return ""; } },
+                _ => {}
+            }
+        },
+        parser.ExprIdent(uvi) => { if (decl_is_struct(s.structs, uvi.name)) { return ""; } },
+        _ => {}
+    }
+    // Arrays / tuples / maps aren't primitive receivers either; their builtin
+    // methods (.len / .append / map ops) are intercepted before this fallback.
+    return expr_scalar_type(e, s);
 }
 
 // lower_dyn_arg lowers an expression that flows into a `dyn Trait` slot
