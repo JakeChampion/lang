@@ -106,7 +106,13 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	// clears the arena). Each job records its own plan lines; the plan is
 	// assembled in job order so it is deterministic regardless of interleaving.
 	const window = 150
-	const workers = 3
+	// 2 workers, not 3: each per-module wasm emit's peak RSS is ~2x the asm
+	// sibling's pmEmitWorkers=3 (heavier whole-program view + wasm emit), so 3
+	// concurrent window emits peaked at ~14.5 GB — over a 16 GB CI runner's
+	// headroom — OOMing the selfhost shard that hosts the capstone (exit 143, no
+	// assertion failure) reproducibly at the irlower windows. 2 keeps the peak
+	// ~10 GB at ~1.5x wall-clock, still well under the 18m test budget.
+	const workers = 2
 	isOOM := func(err error) bool {
 		var ee *exec.ExitError
 		return errors.As(err, &ee) && ee.ExitCode() == 137
