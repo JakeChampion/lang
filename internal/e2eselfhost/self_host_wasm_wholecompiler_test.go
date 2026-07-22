@@ -26,6 +26,13 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if os.Getenv("FERN_WHOLE_COMPILER") == "" {
 		t.Skip("whole-compiler sharded link is heavy (~40 min, sequential 15-module emit); set FERN_WHOLE_COMPILER=1. CI correctness is covered by TestSelfHostWasmFuncRangeShard (sharding) + the fixpoints (the RC-consistency lowering).")
 	}
+	// NOTE: this capstone does not yet reach a validated module. The sharding
+	// and the RC-helper metadata/emit fix (this PR, #5508) let it get PAST those
+	// two failures, but the whole-compiler emit then hits the NEXT missing-feature
+	// layer: the wasm-IR path does not lower the Cell primitives that asmcore /
+	// wasm use, so link fails with `unknown func $cell_new` (#5510). The test is
+	// kept as the driver for closing that and any further gaps; each fix peels one
+	// layer. It is expected to FAIL on #5510 until Cell lowering lands.
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping whole-compiler sharded link")
