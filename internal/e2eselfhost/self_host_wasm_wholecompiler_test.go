@@ -3,11 +3,13 @@ package e2eselfhost
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -23,16 +25,9 @@ import (
 // that assembled with mismatched namespaces, a missing runtime helper, or a
 // dangling funcref would fail it.
 func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
-	if os.Getenv("FERN_WHOLE_COMPILER") == "" {
-		t.Skip("whole-compiler sharded link is heavy (~40 min, sequential 15-module emit); set FERN_WHOLE_COMPILER=1. CI correctness is covered by TestSelfHostWasmFuncRangeShard (sharding) + the fixpoints (the RC-consistency lowering).")
+	if testing.Short() {
+		t.Skip("whole-compiler sharded link is heavy; skipped in -short")
 	}
-	// NOTE: this capstone does not yet reach a validated module. The sharding
-	// and the RC-helper metadata/emit fix (this PR, #5508) let it get PAST those
-	// two failures, but the whole-compiler emit then hits the NEXT missing-feature
-	// layer: the wasm-IR path does not lower the Cell primitives that asmcore /
-	// wasm use, so link fails with `unknown func $cell_new` (#5510). The test is
-	// kept as the driver for closing that and any further gaps; each fix peels one
-	// layer. It is expected to FAIL on #5510 until Cell lowering lands.
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping whole-compiler sharded link")
@@ -103,43 +98,74 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		t.Fatalf("func-counts returned %d lines, want %d", len(counts), n)
 	}
 
-	// Emit each module. A module over the window threshold is emitted in
-	// [lo,hi) slices, each its own process (fresh arena); one under it emits
-	// whole. If a window still OOMs (137), halve it — the safety net under the
-	// static threshold, mirroring the asm orchestrator's recursive split.
+	// Emit each module in FUNCTION WINDOWS, each its own process (fresh arena).
+	// Windows run on a bounded worker pool so the per-process parse floors
+	// overlap — the whole-compiler emit is CI-runnable this way, not a ~40-min
+	// serial slog (mirrors the asm sibling's runPmEmitJobs). A window that still
+	// OOMs (137) is halved by its own worker (rare; the static window already
+	// clears the arena). Each job records its own plan lines; the plan is
+	// assembled in job order so it is deterministic regardless of interleaving.
 	const window = 150
+	const workers = 3
 	isOOM := func(err error) bool {
 		var ee *exec.ExitError
 		return errors.As(err, &ee) && ee.ExitCode() == 137
 	}
-	var plan strings.Builder
-	var emitWindow func(idx, lo, hi int)
-	emitWindow = func(idx, lo, hi int) {
-		rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
-		_, se, err := drive(t, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
-		if err == nil {
-			plan.WriteString(strconv.Itoa(idx) + " " + strconv.Itoa(lo) + " " + strconv.Itoa(hi) + "\n")
-			return
-		}
-		if !isOOM(err) {
-			t.Fatalf("emit module %d [%d,%d) failed (not OOM): %v\n%s", idx, lo, hi, err, se)
-		}
-		if hi-lo <= 1 {
-			t.Fatalf("emit module %d single-func window [%d,%d) still OOMed; sharding cannot help", idx, lo, hi)
-		}
-		mid := lo + (hi-lo)/2
-		t.Logf("module %d window [%d,%d) OOMed; splitting at %d", idx, lo, hi, mid)
-		emitWindow(idx, lo, mid)
-		emitWindow(idx, mid, hi)
+	type job struct {
+		idx, lo, hi int
+		lines       []string
+		err         error
 	}
+	var jobs []*job
 	for i := range n {
 		if counts[i] <= window {
-			emitWindow(i, 0, counts[i])
+			jobs = append(jobs, &job{idx: i, lo: 0, hi: counts[i]})
 			continue
 		}
 		for lo := 0; lo < counts[i]; lo += window {
-			hi := min(lo+window, counts[i])
-			emitWindow(i, lo, hi)
+			jobs = append(jobs, &job{idx: i, lo: lo, hi: min(lo+window, counts[i])})
+		}
+	}
+	// emitWin emits [lo,hi), self-splitting on OOM; appends plan lines to *out.
+	var emitWin func(idx, lo, hi int, out *[]string) error
+	emitWin = func(idx, lo, hi int, out *[]string) error {
+		rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
+		_, se, err := drive(t, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
+		if err == nil {
+			*out = append(*out, strconv.Itoa(idx)+" "+strconv.Itoa(lo)+" "+strconv.Itoa(hi))
+			return nil
+		}
+		if !isOOM(err) {
+			return fmt.Errorf("emit module %d [%d,%d) failed (not OOM): %v\n%s", idx, lo, hi, err, se)
+		}
+		if hi-lo <= 1 {
+			return fmt.Errorf("emit module %d single-func window [%d,%d) still OOMed", idx, lo, hi)
+		}
+		mid := lo + (hi-lo)/2
+		if e := emitWin(idx, lo, mid, out); e != nil {
+			return e
+		}
+		return emitWin(idx, mid, hi, out)
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j *job) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			j.err = emitWin(j.idx, j.lo, j.hi, &j.lines)
+		}(j)
+	}
+	wg.Wait()
+	var plan strings.Builder
+	for _, j := range jobs {
+		if j.err != nil {
+			t.Fatalf("%v", j.err)
+		}
+		for _, ln := range j.lines {
+			plan.WriteString(ln + "\n")
 		}
 	}
 
