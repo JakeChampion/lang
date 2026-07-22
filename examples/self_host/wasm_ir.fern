@@ -1984,8 +1984,14 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(ns: string, fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[], consume_safe_params: string[]): string {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.closurearr_ret_fns_of(funcs, structs), irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs), irlower.str_fresh_ret_fns_of(funcs), irlower.opt_fresh_ret_fns_of(funcs, structs), irlower.strfld_reclaim_ok_types_of(funcs, structs), irlower.tuple_fresh_ret_fns_of(funcs));
+// emit_function_ir emits one function's WAT bodies from its PRE-LOWERED result
+// `r` (#5510 refactor / the wasm port of asm's #4394 lever 3). Previously it
+// re-lowered `fd` here — a SECOND lowering that had to be kept byte-identical to
+// the metadata lowering (lower_all_for_view) by hand, the divergence that caused
+// the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
+// by construction. `fd` supplies the func wrapper (name / receiver / ret); the
+// ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
+function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], fn_table: string[], funcs: parser.FuncDecl[]): string {
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -3090,29 +3096,16 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
     // ret-type-keyed call tagging matches the AST path (parity with the
     // x86 IR path in asm_ir.emit_module_ir).
     mod = parser.infer_ret_types_module(mod);
+    // Emit from the PRE-LOWERED `cache` (cache[fi] <-> mod.funcs[fi], both in
+    // mod.funcs order): no second lowering, so the emitted bodies match the
+    // metadata by construction. The dozen ret-fn / borrow side-tables that only
+    // fed the old per-function re-lowering are gone with it.
     var str_vals: string[] = str_values(cache);
-    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(all_funcs), mod.trait_reqs, "string[]");
-    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
-    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(all_funcs), mod.trait_reqs);
-    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
-    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
-    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
-    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs, "f64[]");
-    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
     var ft: string[] = fn_value_table(cache);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
-    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
-    var arf: string[] = asm_ir.array_ret_fns_of(all_funcs);
     var out: string = "";
-    // Inter-procedural borrowability computed ONCE per module (not per function —
-    // that OOMs the arm64 self-compile); threaded into every emit_function_ir.
-    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
-    var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(ns, mod.funcs[fi], str_vals, all_structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, all_funcs, bparams, csparams);
+        out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, all_structs, ft, all_funcs);
         fi = fi + 1;
     }
     return out;
