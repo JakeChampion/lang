@@ -356,6 +356,13 @@ function main(): i32 {
         return 1;
     }
 
+    // typed-IR (#5531): stamp each call expression with its checker-inferred
+    // result type so the IR lowering READS the type instead of re-deriving it
+    // (docs/TYPED-IR-REWRITE.md). Runs after the checker (its Scope resolves the
+    // types) and before emit_module's eligible-module IR routing, which is what
+    // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
+    merged = checker.annotate_module(merged);
+
     if (target == "arm64") {
         write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
         return 0;
