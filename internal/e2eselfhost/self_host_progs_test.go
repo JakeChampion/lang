@@ -51,6 +51,16 @@ var selfHostProgCases = []struct {
 	{"cell-i64", `function main(): i32 { var c: Cell[i64] = cell_new(5000000000i64); c.set(c.get() + 1000000000i64); return (c.get() / 1000000000i64) as i32; }`, 6},
 	// Cell[f64] — 8-byte float element, arr_set(64) store: 3.5 + 2.5 = 6.0.
 	{"cell-f64", `function main(): i32 { var c: Cell[f64] = cell_new(3.5); c.set(c.get() + 2.5); return c.get() as i32; }`, 6},
+	// Float/int type-classification edge cases (#5520) — each exercises a
+	// distinct arm of the expr_is_f64 / expr_is_f32 predicates that had NO
+	// dedicated coverage, and is the fast safety net for the typed-IR numeric
+	// merge (a mis-classified arm changes the emitted float ops -> wrong exit).
+	{"float-const-accessor", `const HALF: f64 = 2.5; function main(): i32 { return (HALF + 1.5) as i32; }`, 4},
+	{"f32-cast-arith", `function main(): i32 { var x: i32 = 7; var y: f32 = x as f32; return (y * 2.0) as i32; }`, 14},
+	{"float-struct-field", `struct P { x: f64 } function main(): i32 { var p: P = P { x: 3.5 }; return (p.x + 0.5) as i32; }`, 4},
+	{"f32-struct-field", `struct Q { v: f32 } function main(): i32 { var q: Q = Q { v: 4.5 }; return (q.v + 0.5) as i32; }`, 5},
+	{"float-tuple-elem", `function main(): i32 { var t: (f64, i32) = (3.5, 1); return (t.0 + 0.5) as i32; }`, 4},
+	{"float-array-index", `function main(): i32 { var a: f64[] = [1.5, 2.5]; return (a[1] + 0.5) as i32; }`, 3},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
