@@ -3180,6 +3180,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprCall(c) => {
+            // typed-IR (#5531): the annotate pass stamps c.ty with the checker's
+            // inferred result type; when present it is authoritative, retiring the
+            // str_ret_fns / string-builtin re-derivation below for annotated calls.
+            // "" (unannotated: asm_ir_run / native, or an unresolved call) falls
+            // through to the structural walk unchanged.
+            if (c.ty != "") { return c.ty == "string"; }
             // c.get() on a Cell[string] yields a string (#5510) — classified
             // here because this runs on the original `c.get()` before the
             // get->c[0] desugar, so `c.get()[0]` / `.len()` see a string.
