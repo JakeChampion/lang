@@ -208,8 +208,10 @@ polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
 the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
 wasm-IR exclusions that genuinely REMAIN are the deferral-gate set in
 `wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
-typevar param), `xs.join`, i64/u64-VALUE maps, `writer_write`,
-`open_file`, and `c_call`. The component-model async / readiness /
+typevar param), i64/u64-VALUE maps, `writer_write`,
+`open_file`, and `c_call`. (`xs.join` is no longer deferred — it lowers
+on the wasm IR path via the `$__fern_arr_str_join` shim over the
+`$__fern_str_join` WAT worker; #5328.) The component-model async / readiness /
 socket set that was once listed here — `poll` / `timer_fd` /
 `wasm_timer_pollable` / `wasm_pollable_drop` / `tcp_*` / `subprocess` —
 **has since LANDED** (the sub-issues #4315–#4320 are all closed, 2026-07):

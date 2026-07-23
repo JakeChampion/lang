@@ -163,8 +163,9 @@ pub function is_fern_helper(name: string): boolean {
         // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
         // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
         // emitted in emit_ir_runtime (x86) / asm_arm64.emit_runtime (arm64). Only
-        // irlower's lower_arr_str_join emits the call. wasm defers to its AST path
-        // ($__fern_str_join) — see wasm_ir_deferrals_ok.
+        // irlower's lower_arr_str_join emits the call. wasm emits a matching
+        // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
+        // (wasm.arr_str_join_helper).
         || name == "__fern_arr_str_join"
         // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
         // superseded old box (rc-guarded shallow free) unless it is `new` or the
