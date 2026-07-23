@@ -4383,6 +4383,20 @@ function field_or_tuple_type_tag(obj: parser.Expr, field: string, s: LowerState)
     return decl_field_type(s.structs, oty, field);
 }
 
+// method_recv_prim_key builds the "<RecvType>.<method>" registry key for a
+// method-call receiver `obj.field`, resolving the receiver's type from
+// expr_struct_type and falling back to the primitive receiver type
+// (expr_recv_prim_type) for a scalar VALUE receiver like `(3.5).m()`. Returns ""
+// when neither resolves. Shared by the f64/u32/u64 method-return-kind arms so the
+// receiver resolution can't drift across them (#5520). expr_is_str's method arm
+// keeps its own copy — it has a `dyn Trait` fallthrough after this resolution.
+function method_recv_prim_key(obj: parser.Expr, field: string, s: LowerState): string {
+    var crty: string = expr_struct_type(obj, s);
+    if (crty == "") { crty = expr_recv_prim_type(obj, s); }
+    if (crty == "") { return ""; }
+    return crty + "." + field;
+}
+
 // expr_is_f64 reports whether `e` evaluates to an f64 value — a float literal, an
 // f64-tracked local/param, an arithmetic combination of f64 operands, or an
 // f64-array element read `a[i]`. (A comparison is NOT f64 — it yields an i32
@@ -4464,15 +4478,12 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                     // (#5253, the f64 sibling of expr_is_u64's get_or arm).
                     if (cfa.field == "get_or" && c.args.len() == 2
                         && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "f64") { return true; }
-                    var crty: string = expr_struct_type(cfa.obj, s);
-                    // A scalar VALUE receiver (`(3.5).m()`) isn't struct-typed —
-                    // resolve its primitive receiver type so an f64-returning
-                    // method `<f64>.m` is recognised as an f64 value. Without this
-                    // `a.m() as i32` masked the double's low 32 bits (→ garbage)
-                    // instead of truncating via f64_to_i32.
-                    if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
-                    if (crty == "") { return false; }
-                    return s.is_f64_ret_fn(crty + "." + cfa.field);
+                    // A scalar VALUE receiver (`(3.5).m()`) resolves via
+                    // expr_recv_prim_type, so an f64-returning method `<f64>.m` is
+                    // recognised — else `a.m() as i32` masked the double's low 32
+                    // bits instead of truncating via f64_to_i32.
+                    var fk: string = method_recv_prim_key(cfa.obj, cfa.field, s);
+                    return fk != "" && s.is_f64_ret_fn(fk);
                 },
                 _ => { return false; }
             }
@@ -4633,10 +4644,8 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
                     return false;
                 },
                 parser.ExprFieldAccess(cfa) => {
-                    var crty: string = expr_struct_type(cfa.obj, s);
-                    if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
-                    if (crty == "") { return false; }
-                    return s.is_u32_ret_fn(crty + "." + cfa.field);
+                    var uk: string = method_recv_prim_key(cfa.obj, cfa.field, s);
+                    return uk != "" && s.is_u32_ret_fn(uk);
                 },
                 _ => { return false; }
             }
@@ -4748,10 +4757,8 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                     // `m.get_or(k, d)` on a u64-VALUED map is an unsigned 64-bit
                     // value, so a chained `m.get_or(...) >> 1` selects shr_u (#5253).
                     if (cfa.field == "get_or" && c.args.len() == 2 && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "u64") { return true; }
-                    var crty: string = expr_struct_type(cfa.obj, s);
-                    if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
-                    if (crty == "") { return false; }
-                    return s.is_u64_ret_fn(crty + "." + cfa.field);
+                    var u64k: string = method_recv_prim_key(cfa.obj, cfa.field, s);
+                    return u64k != "" && s.is_u64_ret_fn(u64k);
                 },
                 _ => { return false; }
             }
