@@ -5542,11 +5542,23 @@ pub function emit_module_ir(mod: parser.Module): string {
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // Module-level gates, mirroring eligible_core_known_main's pre-checks: no
-    // functions / over the merged-bundle size budget (#3425) / no `main` (the
-    // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
+    // functions / no `main` (the whole-program emit writes `_start` →
+    // `call __fn_main`) fall back to AST.
     if (mod.funcs.len() == 0) { return ""; }
-    if (mod.funcs.len() > 512) { return ""; }
     if (!asmcore.has_main(mod)) { return ""; }
+    // A LARGE whole-program module (was the `> 512` merged-bundle budget that
+    // fell back to AST, #3425) lowers each function TWICE — an eligibility-scan
+    // pass here that DISCARDS every LowerResult, then a bounded per-function emit
+    // pass (empty cache → emit_module_funcs re-lowers one function at a time) — so
+    // the live set stays ~one function's ops instead of Σ(all ops), the retention
+    // that OOM'd the whole-program IR path. Measurement: parser (~300 funcs) OOM'd
+    // at ~2 GB holding the full cache, ~6.6 MB/func, while the emitted asm is only
+    // ~3.4 KB/func — the cache, not the output, is what crosses the arena ceiling,
+    // so discarding it bounds the peak. A SMALL module keeps the single-lowering
+    // cache (fast — the #4394 lever). The two emit paths are byte-identical
+    // (emit_function_via_ir vs emit_function_via_ir_pre), so `big` trades
+    // re-lowering for bounded memory, never output.
+    var big: boolean = mod.funcs.len() > 512;
     // Infer ret types BEFORE lowering the cache so the side-tables see inferred
     // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
     // indices aligned with the module it emits).
@@ -5596,10 +5608,14 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
             }
             j = j + 1;
         }
-        cache = cache.append(r);
+        // Small module: keep the lowering for reuse at emit (#4394). Large module:
+        // discard it — emit re-lowers per-function so the cache never accumulates.
+        if (!big) { cache = cache.append(r); }
         i = i + 1;
     }
-    // Every function eligible — emit from the cache (no second lowering).
+    // Small: emit from the cache (no second lowering). Large: pass the empty cache
+    // so emit_module_funcs lowers each function on demand and discards it, keeping
+    // the live set bounded (#3425).
     return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, cache);
 }
 
