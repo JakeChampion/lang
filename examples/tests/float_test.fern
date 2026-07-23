@@ -91,12 +91,13 @@ function test_inf_handling(): test.TestOutcome {
     return test.assert_eq_f64_near(inf, also_inf, 0.0);
 }
 
-// to_string over the digit-formatting paths, incl. the large-magnitude
-// branch (|n| >= 2^63) that routes through __float_int_part — the
-// count-then-fill-backward buffer rewritten in #4379. Small integrals and a
-// fractional value exercise the ordinary i64 path; the >= 2^63 values exercise
-// the float-domain integer formatter whose digit builder is the one that was
-// quadratic.
+// to_string over the digit-formatting paths: the ordinary i64 path (small
+// integrals + a fraction), the large-integer float-domain formatter
+// __float_int_part (2^63 <= |n| < 1e21, the count-then-fill-backward buffer
+// from #4379), and the scientific-notation branch for |n| >= 1e21 (or the
+// tiny |n| < 1e-4 branch) added in #5538's follow-on (#5536). The scientific
+// mantissa is not yet correctly-rounded shortest — Ryu/Dragon4 is #5536, at
+// which point 1.5e30 will render as "1.5e+30" and this expectation updates.
 function test_to_string_paths(): test.TestOutcome {
     if ((42.0).to_string() != "42") { return test.fail("42.0"); }
     if ((1000000.0).to_string() != "1000000") { return test.fail("1e6"); }
@@ -104,7 +105,9 @@ function test_to_string_paths(): test.TestOutcome {
     if ((0.0 - 42.5).to_string() != "-42.5") { return test.fail("-42.5"); }
     if ((9223372036854775808.0).to_string() != "9223372036854776000") { return test.fail("2^63"); }
     if ((1e20).to_string() != "100000000000000000000") { return test.fail("1e20"); }
-    return test.assert_eq((1.5e30).to_string(), "1500000000000000600000000000000");
+    // >= 1e21 now routes to scientific notation (was an unmarked 31-digit
+    // integer). The mantissa is approximate until Ryu/Dragon4 (#5536).
+    return test.assert_eq((1.5e30).to_string(), "1.5000000000000004e+30");
 }
 
 function main(): i32 {

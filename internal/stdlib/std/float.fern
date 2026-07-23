@@ -62,6 +62,43 @@ function __float_int_part(n: f64): string {
     return string_from_bytes(buf);
 }
 
+// __float_sci renders a positive f64 in scientific notation `d.ddde±XX`
+// with up to `maxsig` significant digits (trailing zeros trimmed). The value
+// is normalised to [1, 10) by repeated ×/÷ 10; the mantissa is approximate
+// for extreme exponents (each step rounds) but the exponent is right and no
+// magnitude renders as "0" or an unmarked hundreds-of-digits integer. A
+// correctly-rounded shortest significand (Ryu/Dragon4) is tracked in #5536.
+function __float_sci(n: f64, maxsig: i32): string {
+    if (n <= 0.0) { return "0"; }   // caller excludes 0; guard the normalise loop
+    var e: i32 = 0;
+    while (n >= 10.0) { n = n / 10.0; e = e + 1; }
+    while (n < 1.0) { n = n * 10.0; e = e - 1; }
+    // n is now in [1, 10). Peel `maxsig` significant digits.
+    var digits: string = "0123456789";
+    var buf: u8[] = __alloc_u8(maxsig);
+    var i: i32 = 0;
+    while (i < maxsig) {
+        var d: i32 = __floor_f64(n) as i32;
+        if (d < 0) { d = 0; }
+        if (d > 9) { d = 9; }
+        buf = buf.with(i, digits[d] as u8);
+        n = (n - (d as f64)) * 10.0;
+        i = i + 1;
+    }
+    var ds: string = string_from_bytes(buf);
+    // Trim trailing zeros from the significand (keep at least one digit).
+    var last: i32 = maxsig;
+    while (last > 1 && ds[last - 1] == 48) { last = last - 1; }   // '0' == 48
+    // `ds[a:b]` is a `str` view; concatenating onto a `string` yields a
+    // `string` (see __float_to_string's fraction return), so lead with "".
+    var res: string = "" + ds[0:1];
+    if (last > 1) { res = res + "." + ds[1:last]; }
+    // Exponent: always signed, no zero-pad (matches strconv 'g').
+    if (e < 0) { res = res + "e-" + (0 - e).to_string(); }
+    else { res = res + "e+" + e.to_string(); }
+    return res;
+}
+
 function __float_to_string(n: f64, k: i32): string {
     if (n != n) { return "NaN"; }
     var out: string = "";
@@ -75,6 +112,15 @@ function __float_to_string(n: f64, k: i32): string {
     // extracted the sign and ruled out NaN, so `n` here is
     // either zero, finite-positive, or +Inf.
     if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    // Scientific notation for extreme magnitudes (decimal exponent >= 21 or
+    // < -4, the strconv 'g' / Go %v thresholds). Without it, huge values
+    // that overflow the `n as i64` cast below printed as an unmarked
+    // hundreds-of-digits integer (or garbage past 2^53), and tiny values
+    // with more leading zeros than the k fractional digits below silently
+    // rendered as "0" — a data-loss bug (1e-300 -> "0", 1e300 -> garbage).
+    // The bounds leave the normal-range fixed-point path below byte-
+    // identical. Not yet correctly-rounded shortest (Ryu/Dragon4) — #5536.
+    if (n != 0.0 && (n >= 1.0e21 || n < 1.0e-4)) { return out + __float_sci(n, 17); }
     // Magnitudes at or above 2^63 overflow the `n as i64` cast
     // below — and that overflow is *not* portable: x86 yields
     // INT_MIN, arm64 saturates to INT_MAX, and wasm traps
